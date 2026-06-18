@@ -278,7 +278,6 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.output_item.done",
             "response.usage.completed",
             "response.completed",
-            "done",
         ]
 
         self.assertEqual(events, expected)
@@ -420,7 +419,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(answer_data["delta"], "projected")
         self.assertIn("response.completed", events)
-        self.assertEqual(events[-1], "done")
+        self.assertEqual(events[-1], "response.completed")
         self.assertEqual(
             response.consumer_kwargs,
             {
@@ -443,19 +442,44 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             stream=True,
         )
 
-        class EmptyResponse:
+        class TerminalResponse:
             input_token_count = 0
             output_token_count = 0
             usage = None
 
             def __init__(self) -> None:
                 self.close_count = 0
+                self._items = iter(
+                    (
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=1,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            usage={},
+                            terminal_outcome=(StreamTerminalOutcome.COMPLETED),
+                        ),
+                    )
+                )
 
             def __aiter__(self) -> AsyncIterator[object]:
                 return self
 
             async def __anext__(self) -> object:
-                raise StopAsyncIteration
+                try:
+                    return next(self._items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
 
             async def aclose(self) -> None:
                 self.close_count += 1
@@ -463,6 +487,8 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         responses_module = self.responses
 
         class ClosingAdapter:
+            state = None
+
             @property
             def active_tool_call_id(self) -> str | None:
                 return None
@@ -478,7 +504,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                     ).message()
                 ]
 
-        response = EmptyResponse()
+        response = TerminalResponse()
 
         async def orchestrate_stub(request, logger, orch):
             return response, uuid4(), 0
@@ -502,7 +528,10 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         events = [block.split("\n")[0].split(": ")[1] for block in blocks]
 
         self.assertIn("response.output_text.done", events)
-        self.assertEqual(events[-2:], ["response.completed", "done"])
+        self.assertEqual(
+            events[-2:],
+            ["response.output_text.done", "response.completed"],
+        )
         self.assertEqual(response.close_count, 1)
         orchestrator.sync_messages.assert_awaited_once()
 
@@ -656,7 +685,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             ]
 
             self.assertIn("response.output_text.delta", "".join(chunks))
-            self.assertIn("event: done", chunks[-1])
+            self.assertIn("event: response.completed", chunks[-1])
             self.assertEqual(len(source_refs), previous_refs + 1)
             previous_refs = len(source_refs)
             del chunks
@@ -723,6 +752,192 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(left.can_coalesce(right))
         with self.assertRaises(AssertionError):
             left.coalesce(right)
+
+    def test_response_sse_event_coalesces_only_adjacent_matching_events(
+        self,
+    ) -> None:
+        left = self.responses._ResponsesSSEEvent(
+            event="response.output_text.delta",
+            data={
+                "type": "response.output_text.delta",
+                "delta": "a",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 1,
+            },
+            canonical_channel=StreamChannel.ANSWER,
+        )
+        right = self.responses._ResponsesSSEEvent(
+            event="response.output_text.delta",
+            data={
+                "type": "response.output_text.delta",
+                "delta": "b",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 2,
+            },
+            canonical_channel=StreamChannel.ANSWER,
+        )
+        gap = self.responses._ResponsesSSEEvent(
+            event="response.output_text.delta",
+            data={
+                "type": "response.output_text.delta",
+                "delta": "c",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 4,
+            },
+            canonical_channel=StreamChannel.ANSWER,
+        )
+        wrong_channel = self.responses._ResponsesSSEEvent(
+            event="response.output_text.delta",
+            data={
+                "type": "response.output_text.delta",
+                "delta": "d",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 2,
+            },
+            canonical_channel=StreamChannel.REASONING,
+        )
+        wrong_index = self.responses._ResponsesSSEEvent(
+            event="response.output_text.delta",
+            data={
+                "type": "response.output_text.delta",
+                "delta": "e",
+                "output_index": 1,
+                "content_index": 0,
+                "sequence_number": 2,
+            },
+            canonical_channel=StreamChannel.ANSWER,
+        )
+        missing_index = self.responses._ResponsesSSEEvent(
+            event="response.output_text.delta",
+            data={
+                "type": "response.output_text.delta",
+                "delta": "f",
+                "output_index": 0,
+                "sequence_number": 2,
+            },
+            canonical_channel=StreamChannel.ANSWER,
+        )
+        bool_index = self.responses._ResponsesSSEEvent(
+            event="response.output_text.delta",
+            data={
+                "type": "response.output_text.delta",
+                "delta": "g",
+                "output_index": True,
+                "content_index": 0,
+                "sequence_number": 2,
+            },
+            canonical_channel=StreamChannel.ANSWER,
+        )
+        left_tool = self.responses._ResponsesSSEEvent(
+            event="response.custom_tool_call_input.delta",
+            data={
+                "type": "response.custom_tool_call_input.delta",
+                "delta": "a",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 1,
+            },
+            correlation_key="call-1",
+            canonical_channel=StreamChannel.TOOL_CALL,
+        )
+        right_tool = self.responses._ResponsesSSEEvent(
+            event="response.custom_tool_call_input.delta",
+            data={
+                "type": "response.custom_tool_call_input.delta",
+                "delta": "b",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 2,
+            },
+            correlation_key="call-2",
+            canonical_channel=StreamChannel.TOOL_CALL,
+        )
+        tool_output = self.responses._ResponsesSSEEvent(
+            event="response.tool_execution.output",
+            data={
+                "type": "response.tool_execution.output",
+                "delta": "log",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 1,
+                "data": {"stream": "stderr"},
+            },
+            correlation_key="call-1",
+            canonical_channel=StreamChannel.TOOL_EXECUTION,
+        )
+        tool_output_next = self.responses._ResponsesSSEEvent(
+            event="response.tool_execution.output",
+            data={
+                "type": "response.tool_execution.output",
+                "delta": "line",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 2,
+            },
+            correlation_key="call-1",
+            canonical_channel=StreamChannel.TOOL_EXECUTION,
+        )
+
+        self.assertTrue(left.can_coalesce(right))
+        coalesced = left.coalesce(right)
+        self.assertEqual(coalesced.data["delta"], "ab")
+        self.assertEqual(coalesced.data["sequence_number"], 2)
+        self.assertFalse(left.can_coalesce(gap))
+        self.assertFalse(left.can_coalesce(wrong_channel))
+        self.assertFalse(left.can_coalesce(wrong_index))
+        self.assertFalse(left.can_coalesce(missing_index))
+        self.assertFalse(left.can_coalesce(bool_index))
+        self.assertFalse(left_tool.can_coalesce(right_tool))
+        self.assertFalse(tool_output.can_coalesce(tool_output_next))
+
+    def test_custom_tool_call_preserves_synthetic_legacy_id(self) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id="legacy-tool-call"),
+            text_delta="{}",
+        )
+        projection = project_canonical_stream_item(item)
+        adapter = self.responses._ResponsesSSEProjectionAdapter()
+
+        added_events = adapter.switch(projection)
+        delta_events = self.responses._token_to_sse_events(
+            projection,
+            projection.sequence,
+            adapter.active_tool_call_id,
+        )
+
+        added_data = loads(added_events[0].split("data: ", maxsplit=1)[1])
+        self.assertEqual(added_data["item"]["id"], "legacy-tool-call")
+        self.assertEqual(delta_events[0].data["id"], "legacy-tool-call")
+        self.assertEqual(
+            delta_events[0].correlation_key,
+            "legacy-tool-call",
+        )
+
+    def test_response_sse_item_state_rejects_invalid_values(self) -> None:
+        with self.assertRaises(AssertionError):
+            self.responses._ResponsesSSEItemState(
+                output_item_type="invalid",
+            )
+        with self.assertRaises(AssertionError):
+            self.responses._ResponsesSSEItemState(
+                output_item_type="output_text",
+                content_part_type="invalid",
+            )
+        with self.assertRaises(AssertionError):
+            self.responses._ResponsesSSEItemState(
+                output_item_type="custom_tool_call_input",
+                tool_call_id="",
+            )
 
     async def test_streaming_response_closes_source_on_completion(
         self,
@@ -1728,7 +1943,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         self.assertIn("response.cancelled", events)
         self.assertNotIn("response.completed", events)
-        self.assertEqual(events[-1], "done")
+        self.assertEqual(events[-1], "response.cancelled")
         orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_preserves_failed_terminal_error(self) -> None:
@@ -1817,7 +2032,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn("response.output_text.delta", events)
         self.assertIn("response.output_text.done", events)
         self.assertNotIn("response.completed", events)
-        self.assertEqual(events[-1], "done")
+        self.assertEqual(events[-1], "response.failed")
         self.assertEqual(failed_data["sequence_number"], 3)
         self.assertEqual(
             failed_data["error"],
@@ -1913,7 +2128,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn("response.output_text.delta", events)
         self.assertIn("response.output_text.done", events)
         self.assertNotIn("response.completed", events)
-        self.assertEqual(events[-1], "done")
+        self.assertEqual(events[-1], "response.failed")
         self.assertEqual(failed_data["sequence_number"], 3)
         self.assertEqual(
             failed_data["error"],
@@ -1976,6 +2191,48 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(StreamValidationError):
             async for _chunk in streaming_resp.body_iterator:
                 pass
+        orchestrator.sync_messages.assert_not_awaited()
+
+    async def test_streaming_rejects_empty_stream_missing_terminal(
+        self,
+    ) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        class EmptyResponse:
+            input_token_count = 0
+            output_token_count = 0
+
+            def __aiter__(self) -> AsyncIterator[object]:
+                return self
+
+            async def __anext__(self) -> object:
+                raise StopAsyncIteration
+
+        async def orchestrate_stub(request, logger, orch):
+            return EmptyResponse(), uuid4(), 0
+
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+
+        streaming_resp = await self.responses.create_response(
+            request, logger, orchestrator
+        )
+        iterator = streaming_resp.body_iterator
+        created = await anext(iterator)
+
+        self.assertIn("event: response.created", created)
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "stream missing terminal outcome",
+        ):
+            await anext(iterator)
         orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_rejects_mixed_stream_surfaces(self) -> None:
@@ -2294,7 +2551,6 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.output_item.done",
             "response.usage.completed",
             "response.completed",
-            "done",
         ]
 
         self.assertEqual(events, expected)
@@ -3150,7 +3406,6 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.output_item.done",
             "response.usage.completed",
             "response.completed",
-            "done",
         ]
 
         self.assertEqual(events, expected)

@@ -94,7 +94,7 @@ async def _run_canonical_trace_conforms_across_public_stream_surfaces() -> (
     _assert_stdout_projection(projections)
     await _assert_cli_projection(trace.items)
     _assert_flow_projection(projections)
-    _assert_chat_projection(trace.items, accumulator.final_usage)
+    _assert_chat_projection(projections, accumulator.final_usage)
     _assert_responses_projection(projections)
     await _assert_mcp_projection(trace.items)
     await _assert_a2a_projection(trace.items)
@@ -339,14 +339,6 @@ def test_canonical_trace_rejects_missing_terminal() -> None:
 def test_public_projection_helpers_reject_unsupported_items() -> None:
     for project, message in (
         (
-            lambda: chat._stream_projection(object(), 0),
-            "unsupported stream item for Chat SSE projection",
-        ),
-        (
-            lambda: responses._stream_projection(object(), 0),
-            "unsupported stream item for Responses SSE projection",
-        ),
-        (
             lambda: model_cmds._stream_projection(object()),  # type: ignore[arg-type]
             "unsupported CLI stream item",
         ),
@@ -357,25 +349,6 @@ def test_public_projection_helpers_reject_unsupported_items() -> None:
             assert message in str(exc)
         else:
             raise AssertionError(f"{message} was accepted")
-
-
-def test_default_projection_helpers_legacy_rejection_first_item() -> None:
-    for project, message in (
-        (
-            lambda: chat._stream_projection("legacy text", 0),
-            "unsupported stream item for Chat SSE projection",
-        ),
-        (
-            lambda: responses._stream_projection("legacy text", 0),
-            "unsupported stream item for Responses SSE projection",
-        ),
-    ):
-        try:
-            project()
-        except StreamValidationError as exc:
-            assert message in str(exc)
-        else:
-            raise AssertionError(f"{message} accepted a legacy string")
 
 
 def _assert_sdk_projection(
@@ -575,18 +548,17 @@ def _assert_flow_projection(
 
 
 def _assert_chat_projection(
-    items: tuple[CanonicalStreamItem, ...],
+    projections: tuple[StreamConsumerProjection, ...],
     usage: object | None,
 ) -> None:
     text = "".join(
-        chat._stream_text(chat._stream_projection(item, item.sequence)) or ""
-        for item in items
+        chat._stream_text(projection) or "" for projection in projections
     )
     assert text == "final answer"
     ignored_text = [
-        chat._stream_text(chat._stream_projection(item, item.sequence))
-        for item in items
-        if item.channel
+        chat._stream_text(projection)
+        for projection in projections
+        if projection.channel
         in {
             StreamChannel.REASONING,
             StreamChannel.TOOL_CALL,

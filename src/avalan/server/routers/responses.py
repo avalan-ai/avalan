@@ -1,10 +1,10 @@
 from ...agent.orchestrator import Orchestrator
 from ...model.stream import (
-    CanonicalStreamItem,
+    StreamChannel,
     StreamConsumerProjection,
     StreamItemKind,
     StreamTerminalOutcome,
-    project_stream_consumer_item,
+    StreamValidationError,
 )
 from ...server.entities import ResponsesRequest
 from ...utils import to_json
@@ -12,7 +12,6 @@ from .. import di_get_logger, di_get_orchestrator
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
 from .streaming import (
-    ProtocolStreamProjectionState,
     cleanup_stream_sources,
     protocol_stream_terminal_snapshot,
     stream_consumer_iterator,
@@ -58,17 +57,51 @@ _RESPONSE_SSE_CONTENT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType(
 _RESPONSE_SSE_UNSET = object()
 
 
+def _response_sse_index_value(
+    data: dict[str, Any],
+    key: str,
+) -> int | None:
+    value = data.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class _ResponsesSSEEvent:
     event: str
     data: dict[str, Any]
     correlation_key: str | None = None
+    canonical_channel: StreamChannel | None = None
 
     def message(self) -> str:
         return sse_message(to_json(self.data), event=self.event)
 
     def can_coalesce(self, other: "_ResponsesSSEEvent") -> bool:
         assert isinstance(other, _ResponsesSSEEvent)
+        self_sequence = self.data.get("sequence_number")
+        other_sequence = other.data.get("sequence_number")
+        if (
+            not isinstance(self_sequence, int)
+            or isinstance(self_sequence, bool)
+            or not isinstance(other_sequence, int)
+            or isinstance(other_sequence, bool)
+            or other_sequence != self_sequence + 1
+        ):
+            return False
+        if (
+            self.canonical_channel is None
+            or other.canonical_channel is None
+            or self.canonical_channel is not other.canonical_channel
+        ):
+            return False
+        if (
+            _response_sse_index_value(self.data, "output_index") is None
+            or _response_sse_index_value(other.data, "output_index") is None
+            or _response_sse_index_value(self.data, "content_index") is None
+            or _response_sse_index_value(other.data, "content_index") is None
+        ):
+            return False
         if self.event == "response.tool_execution.output" and (
             self.data.get("data") is not None
             or other.data.get("data") is not None
@@ -103,6 +136,7 @@ class _ResponsesSSEEvent:
             event=self.event,
             data=data,
             correlation_key=self.correlation_key,
+            canonical_channel=self.canonical_channel,
         )
 
     def coalesced_delta_length(self, other: "_ResponsesSSEEvent") -> int:
@@ -203,19 +237,14 @@ async def create_response(
     if request.stream:
 
         async def generate() -> AsyncIterator[str]:
-            seq = 0
             adapter = _ResponsesSSEProjectionAdapter()
             stream_envelope = _ResponsesSSEStreamEnvelope(
                 response_id=str(response_id),
                 timestamp=timestamp,
                 model_id=model_id,
             )
-            stream_state = ProtocolStreamProjectionState(
-                stream_session_id="responses-sse-stream",
-                run_id=str(response_id),
-                turn_id="responses-sse-turn",
-            )
             pending_event: _ResponsesSSEEvent | None = None
+            terminal_projection: StreamConsumerProjection | None = None
             iterator = stream_consumer_iterator(
                 response,
                 stream_session_id="responses-sse-stream",
@@ -253,22 +282,16 @@ async def create_response(
                 return messages
 
             try:
-                sync_messages = True
                 yield stream_envelope.created_event().message()
 
                 while True:
                     try:
-                        raw_token = await anext(iterator)
+                        token = await anext(iterator)
                     except StopAsyncIteration:
                         break
-                    token = stream_state.project(
-                        raw_token,
-                        seq,
-                        unsupported_message=(
-                            "unsupported stream item for Responses SSE"
-                            " projection"
-                        ),
-                    )
+
+                    if token.is_stream_terminal:
+                        terminal_projection = token
                     event_sequence = token.sequence
 
                     events = adapter.switch(token)
@@ -290,17 +313,12 @@ async def create_response(
                         for event in flush_event():
                             yield event
 
-                    seq += 1
-
                 for event in flush_event():
                     yield event
 
-                terminal_projection = None
-                if stream_state.has_canonical_items:
-                    stream_state.validate_complete()
-                    terminal_projection = stream_state.terminal_projection()
-                    sync_messages = stream_terminal_succeeded(
-                        terminal_projection
+                if terminal_projection is None:
+                    raise StreamValidationError(
+                        "stream missing terminal outcome"
                     )
 
                 events = adapter.close()
@@ -310,8 +328,7 @@ async def create_response(
                 for ev in _terminal_response_events(terminal_projection):
                     yield ev.message()
 
-                yield sse_message("{}", event="done")
-                if sync_messages:
+                if stream_terminal_succeeded(terminal_projection):
                     await orchestrator.sync_messages()
             except CancelledError:
                 cancelled = True
@@ -406,28 +423,10 @@ def _token_to_sse_events(
     return _canonical_item_to_sse_events(token, seq, active_tool_call_id)
 
 
-def _stream_projection(
-    token: CanonicalStreamItem | StreamConsumerProjection,
-    seq: int,
-) -> StreamConsumerProjection:
-    return project_stream_consumer_item(
-        token,
-        seq,
-        stream_session_id="responses-helper-stream",
-        run_id="responses-helper-run",
-        turn_id="responses-helper-turn",
-        unsupported_message=(
-            "unsupported stream item for Responses SSE projection"
-        ),
-    )
-
-
 def _stream_tool_call_protocol_id(
     item: StreamConsumerProjection,
 ) -> str | None:
     if item.kind is not StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
-        return None
-    if item.tool_call_id == "legacy-tool-call":
         return None
     return item.tool_call_id
 
@@ -457,6 +456,7 @@ def _canonical_item_to_sse_events(
                     item.text_delta or "",
                     seq,
                 ),
+                canonical_channel=item.channel,
             )
         ]
     if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
@@ -472,6 +472,7 @@ def _canonical_item_to_sse_events(
                         id_value=function_call["id"],
                     ),
                     correlation_key=str(function_call["id"]),
+                    canonical_channel=item.channel,
                 )
             ]
         protocol_id = (
@@ -489,6 +490,7 @@ def _canonical_item_to_sse_events(
                 event="response.custom_tool_call_input.delta",
                 data=data,
                 correlation_key=protocol_id,
+                canonical_channel=item.channel,
             )
         ]
     if item.kind is StreamItemKind.ANSWER_DELTA:
@@ -500,6 +502,7 @@ def _canonical_item_to_sse_events(
                     item.text_delta or "",
                     seq,
                 ),
+                canonical_channel=item.channel,
             )
         ]
     if item.kind in (
@@ -519,6 +522,7 @@ def _canonical_item_to_sse_events(
                     "usage": item.usage,
                     "sequence_number": seq,
                 },
+                canonical_channel=item.channel,
             )
         ]
     if item.kind is StreamItemKind.STREAM_COMPLETED and item.usage is not None:
@@ -530,6 +534,7 @@ def _canonical_item_to_sse_events(
                     "usage": item.usage,
                     "sequence_number": seq,
                 },
+                canonical_channel=item.channel,
             )
         ]
     if item.kind in {
@@ -551,6 +556,7 @@ def _canonical_item_to_sse_events(
                     "data": item.data,
                     "sequence_number": seq,
                 },
+                canonical_channel=item.channel,
             )
         ]
     return []
@@ -589,6 +595,7 @@ def _tool_execution_sse_event(
         event=event,
         data=data,
         correlation_key=item.tool_call_id,
+        canonical_channel=item.channel,
     )
 
 

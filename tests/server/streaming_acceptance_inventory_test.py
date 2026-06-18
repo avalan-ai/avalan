@@ -431,14 +431,14 @@ HARDENING_COVERAGE_TESTS = {
             "::test_chat_chunk_envelope_rejects_invalid_state"
         ),
         (
-            "tests/server/responses_utils_test.py"
-            "::ResponsesUtilsTestCase"
-            "::test_response_stream_envelope_rejects_invalid_state"
+            "tests/server/create_response_sse_test.py"
+            "::CreateResponseSSEEventsTestCase"
+            "::test_response_sse_event_rejects_incompatible_coalesce"
         ),
         (
-            "tests/server/responses_utils_test.py"
-            "::ResponsesUtilsTestCase"
-            "::test_response_sse_static_indexes_are_immutable"
+            "tests/server/create_response_sse_test.py"
+            "::CreateResponseSSEEventsTestCase"
+            "::test_response_sse_event_coalesces_only_adjacent_matching_events"
         ),
         (
             "tests/server/create_response_sse_test.py"
@@ -528,8 +528,8 @@ HARDENING_COVERAGE_TESTS = {
             "::test_stream_negative_acceptance_edges"
         ),
         (
-            "tests/server/responses_utils_test.py"
-            "::ResponsesUtilsTestCase"
+            "tests/server/create_response_sse_test.py"
+            "::CreateResponseSSEEventsTestCase"
             "::test_response_sse_item_state_rejects_invalid_values"
         ),
     ),
@@ -640,8 +640,9 @@ HARDENING_COVERAGE_TESTS = {
             "::test_public_projection_helpers_reject_unsupported_items"
         ),
         (
-            "tests/server/streaming_conformance_test.py"
-            "::test_default_projection_helpers_legacy_rejection_first_item"
+            "tests/server/create_response_sse_test.py"
+            "::CreateResponseSSEEventsTestCase"
+            "::test_streaming_rejects_empty_stream_missing_terminal"
         ),
     ),
     "protocol route negatives": (

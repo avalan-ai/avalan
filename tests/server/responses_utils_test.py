@@ -1,13 +1,7 @@
 from json import loads
 from unittest import TestCase
 
-from avalan.entities import (
-    ReasoningToken,
-    Token,
-    TokenDetail,
-    ToolCall,
-    ToolCallToken,
-)
+from avalan.entities import Token, ToolCall
 from avalan.event import Event, EventType
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -16,7 +10,7 @@ from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
-    StreamValidationError,
+    project_canonical_stream_item,
     stream_channel_for_kind,
 )
 from avalan.server.routers.responses import (
@@ -30,7 +24,6 @@ from avalan.server.routers.responses import (
     _ResponsesSSEItemState,
     _ResponsesSSEProjectionAdapter,
     _ResponsesSSEStreamEnvelope,
-    _stream_projection,
     _stream_tool_call_protocol_id,
     _switch_state,
     _terminal_response_events,
@@ -85,7 +78,7 @@ def _canonical_projection(
     terminal_outcome: StreamTerminalOutcome | None = None,
     metadata: dict[str, LooseJsonValue] | None = None,
 ) -> StreamConsumerProjection:
-    return _stream_projection(
+    return project_canonical_stream_item(
         _canonical_stream_item(
             kind,
             sequence,
@@ -95,8 +88,7 @@ def _canonical_projection(
             usage=usage,
             terminal_outcome=terminal_outcome,
             metadata=metadata,
-        ),
-        sequence,
+        )
     )
 
 
@@ -154,30 +146,6 @@ class ResponsesUtilsTestCase(TestCase):
         with self.assertRaises(AssertionError):
             _token_to_sse(legacy_rejection_token, 0)  # type: ignore[arg-type]
 
-    def test_stream_projection_rejects_unsupported_items(self) -> None:
-        with self.assertRaisesRegex(
-            StreamValidationError,
-            "unsupported stream item for Responses SSE projection",
-        ):
-            _stream_projection(object(), 0)  # type: ignore[arg-type]
-
-    def test_stream_projection_legacy_rejection_first_items(self) -> None:
-        legacy_rejection_items = (
-            "legacy",
-            Token(token="legacy"),
-            TokenDetail(token="legacy"),
-            ReasoningToken(token="legacy"),
-            ToolCallToken(token="legacy"),
-        )
-
-        for legacy_rejection_item in legacy_rejection_items:
-            with self.subTest(item=type(legacy_rejection_item).__name__):
-                with self.assertRaisesRegex(
-                    StreamValidationError,
-                    "unsupported stream item for Responses SSE projection",
-                ):
-                    _stream_projection(legacy_rejection_item, 0)
-
     def test_stream_tool_call_protocol_id_ignores_non_tool_projection(
         self,
     ) -> None:
@@ -211,6 +179,7 @@ class ResponsesUtilsTestCase(TestCase):
                 "content_index": 0,
                 "sequence_number": 1,
             },
+            canonical_channel=StreamChannel.ANSWER,
         )
         second = _ResponsesSSEEvent(
             event="response.output_text.delta",
@@ -221,6 +190,7 @@ class ResponsesUtilsTestCase(TestCase):
                 "content_index": 0,
                 "sequence_number": 2,
             },
+            canonical_channel=StreamChannel.ANSWER,
         )
         different_event = _ResponsesSSEEvent(
             event="response.reasoning_text.delta",
@@ -231,6 +201,7 @@ class ResponsesUtilsTestCase(TestCase):
                 "content_index": 0,
                 "sequence_number": 2,
             },
+            canonical_channel=StreamChannel.REASONING,
         )
         different_key = _ResponsesSSEEvent(
             event="response.custom_tool_call_input.delta",
@@ -242,6 +213,7 @@ class ResponsesUtilsTestCase(TestCase):
                 "sequence_number": 2,
             },
             correlation_key="call-2",
+            canonical_channel=StreamChannel.TOOL_CALL,
         )
 
         self.assertTrue(first.can_coalesce(second))
@@ -414,7 +386,9 @@ class ResponsesUtilsTestCase(TestCase):
             terminal_outcome=StreamTerminalOutcome.ERRORED,
         )
 
-        event = _terminal_response_events(_stream_projection(item, 5))[0]
+        event = _terminal_response_events(project_canonical_stream_item(item))[
+            0
+        ]
 
         self.assertEqual(event.event, "response.failed")
         self.assertEqual(event.data["sequence_number"], 5)
@@ -437,7 +411,7 @@ class ResponsesUtilsTestCase(TestCase):
         )
 
         with self.assertRaises(AssertionError):
-            _terminal_response_events(_stream_projection(item, 0))
+            _terminal_response_events(project_canonical_stream_item(item))
 
     def test_token_to_sse_maps_usage_items(self) -> None:
         update = CanonicalStreamItem(
@@ -460,14 +434,14 @@ class ResponsesUtilsTestCase(TestCase):
         )
 
         update_data = loads(
-            _token_to_sse(_stream_projection(update, 0), 0)[0].split("data: ")[
-                1
-            ]
-        )
-        completed_data = loads(
-            _token_to_sse(_stream_projection(completed, 1), 1)[0].split(
+            _token_to_sse(project_canonical_stream_item(update), 0)[0].split(
                 "data: "
             )[1]
+        )
+        completed_data = loads(
+            _token_to_sse(project_canonical_stream_item(completed), 1)[
+                0
+            ].split("data: ")[1]
         )
 
         self.assertEqual(update_data["type"], "response.usage.delta")
@@ -488,7 +462,7 @@ class ResponsesUtilsTestCase(TestCase):
             data={"category": "stdout"},
         )
 
-        event = _token_to_sse(_stream_projection(item, 7), 7)[0]
+        event = _token_to_sse(project_canonical_stream_item(item), 7)[0]
         data = loads(event.split("data: ")[1])
 
         self.assertIn("response.tool_execution.output", event)
@@ -508,7 +482,7 @@ class ResponsesUtilsTestCase(TestCase):
             data={"code": "stream.warning"},
         )
 
-        event = _token_to_sse(_stream_projection(item, 10), 10)[0]
+        event = _token_to_sse(project_canonical_stream_item(item), 10)[0]
         data = loads(event.split("data: ")[1])
 
         self.assertIn("response.diagnostic", event)
@@ -526,7 +500,10 @@ class ResponsesUtilsTestCase(TestCase):
             text_delta="answer",
         )
 
-        event = _canonical_item_to_sse(_stream_projection(item, 11), 11)[0]
+        event = _canonical_item_to_sse(
+            project_canonical_stream_item(item),
+            11,
+        )[0]
         data = loads(event.split("data: ")[1])
 
         self.assertIn("response.output_text.delta", event)
@@ -544,7 +521,7 @@ class ResponsesUtilsTestCase(TestCase):
         )
 
         with self.assertRaises(TypeError):
-            _token_to_sse(_stream_projection(item, 0), 0)
+            _token_to_sse(project_canonical_stream_item(item), 0)
 
     def test_token_to_sse_handles_canonical_tool_call_with_call_data(
         self,
@@ -580,7 +557,7 @@ class ResponsesUtilsTestCase(TestCase):
         self.assertEqual(len(events), 1)
         data = loads(events[0].split("data: ")[1])
         self.assertEqual(data["delta"], "raw-input")
-        self.assertNotIn("id", data)
+        self.assertEqual(data["id"], "legacy-tool-call")
 
     def test_token_to_sse_uses_active_tool_call_id_for_raw_input(
         self,
@@ -595,10 +572,10 @@ class ResponsesUtilsTestCase(TestCase):
         events = _token_to_sse_events(projection, 3, "c4")
 
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].correlation_key, "c4")
+        self.assertEqual(events[0].correlation_key, "legacy-tool-call")
         data = events[0].data
         self.assertEqual(data["delta"], "raw-input")
-        self.assertEqual(data["id"], "c4")
+        self.assertEqual(data["id"], "legacy-tool-call")
 
     def test_token_to_sse_uses_canonical_projection_call_data(self) -> None:
         item = CanonicalStreamItem(
@@ -613,10 +590,11 @@ class ResponsesUtilsTestCase(TestCase):
             data={"name": "math.add", "arguments": {"x": 1}},
         )
 
-        events = _token_to_sse(_stream_projection(item, 8), 8)
+        projection = project_canonical_stream_item(item)
+        events = _token_to_sse(projection, 8)
 
         self.assertEqual(len(events), 1)
-        state = _response_projection_state(_stream_projection(item, 8))
+        state = _response_projection_state(projection)
         self.assertEqual(
             state,
             _ResponsesSSEItemState(
@@ -654,10 +632,11 @@ class ResponsesUtilsTestCase(TestCase):
             data={"name": 1},
         )
 
-        events = _token_to_sse(_stream_projection(item, 9), 9)
+        projection = project_canonical_stream_item(item)
+        events = _token_to_sse(projection, 9)
 
         self.assertEqual(len(events), 1)
-        state = _response_projection_state(_stream_projection(item, 9))
+        state = _response_projection_state(projection)
         self.assertEqual(
             state,
             _ResponsesSSEItemState(
@@ -681,7 +660,7 @@ class ResponsesUtilsTestCase(TestCase):
             channel=StreamChannel.CONTROL,
         )
 
-        projection = _stream_projection(item, 0)
+        projection = project_canonical_stream_item(item)
         self.assertEqual(_token_to_sse(projection, 0), [])
         self.assertIsNone(_response_projection_state(projection))
         with self.assertRaises(AssertionError):
@@ -723,6 +702,7 @@ class ResponsesUtilsTestCase(TestCase):
             _ResponsesSSEItemState(
                 output_item_type="custom_tool_call_input",
                 content_part_type="input_text",
+                tool_call_id="legacy-tool-call",
             ),
         )
         names = [e.split("\n")[0].split(": ")[1] for e in events]
@@ -825,7 +805,7 @@ class ResponsesUtilsTestCase(TestCase):
 
         self.assertEqual(events, [])
 
-    def test_projection_adapter_carries_tool_call_id_to_raw_canonical_delta(
+    def test_projection_adapter_preserves_distinct_tool_call_id(
         self,
     ) -> None:
         projection = _canonical_projection(
@@ -850,14 +830,23 @@ class ResponsesUtilsTestCase(TestCase):
             [event.split("\n")[0].split(": ")[1] for event in open_events],
             ["response.output_item.added", "response.content_part.added"],
         )
-        self.assertEqual(carried_events, [])
-        self.assertEqual(adapter.active_tool_call_id, "call-1")
+        self.assertEqual(
+            [event.split("\n")[0].split(": ")[1] for event in carried_events],
+            [
+                "response.custom_tool_call_input.done",
+                "response.content_part.done",
+                "response.output_item.done",
+                "response.output_item.added",
+                "response.content_part.added",
+            ],
+        )
+        self.assertEqual(adapter.active_tool_call_id, "legacy-tool-call")
         self.assertEqual(
             adapter.state,
             _ResponsesSSEItemState(
                 output_item_type="custom_tool_call_input",
                 content_part_type="input_text",
-                tool_call_id="call-1",
+                tool_call_id="legacy-tool-call",
             ),
         )
 

@@ -238,9 +238,7 @@ class PrimaryConsumerProjectionGoldenTestCase(IsolatedAsyncioTestCase):
         )
 
         chat_text = "".join(
-            chat._stream_text(chat._stream_projection(item, item.sequence))
-            or ""
-            for item in trace.items
+            chat._stream_text(projection) or "" for projection in projections
         )
         self.assertEqual(chat_text, "lead tail")
         self.assertEqual(

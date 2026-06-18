@@ -8060,6 +8060,8 @@ class StreamContractTestCase(TestCase):
             - {
                 StreamLegacyBoundaryCategory.ORCHESTRATOR,
                 StreamLegacyBoundaryCategory.SDK_RESPONSE,
+                StreamLegacyBoundaryCategory.CHAT_SSE,
+                StreamLegacyBoundaryCategory.RESPONSES_SSE,
             },
         )
         self.assertEqual(
@@ -8116,8 +8118,6 @@ class StreamContractTestCase(TestCase):
                 "ToolCallResponseParser",
             ),
             ("avalan.cli.commands.model", "_stream_projection"),
-            ("avalan.server.routers.chat", "_stream_projection"),
-            ("avalan.server.routers.responses", "_stream_projection"),
             ("avalan.server.routers.mcp", "ResponseItem"),
             ("avalan.server.routers.mcp", "_MCPLegacyStreamAdapter.map"),
             ("avalan.server.routers.mcp", "_extract_append_streams"),
