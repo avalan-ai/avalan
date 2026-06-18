@@ -109,6 +109,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     _bos_token: str | None = None
     _stream_accumulator: CanonicalStreamAccumulator | None = None
     _last_stream_sequence: int | None = None
+    _count_stream_output_items: bool = True
     _can_think: bool = False
     _is_thinking: bool = False
     _manual_thinking: bool = False
@@ -148,6 +149,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         self._buffer = StringIO()
         self._stream_accumulator = None
         self._last_stream_sequence = None
+        self._count_stream_output_items = True
         self._can_think = bool(
             self._generation_settings
             and self._generation_settings.reasoning.enabled
@@ -292,9 +294,14 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         )
         if not self._use_async_generator:
             self._ensure_non_stream_prefetched()
+            prefetched_text = self._prefetched_text or ""
+            prefetched_usage = self._provider_usage()
+            self._reset_iteration_state()
+            self._output_token_count = len(prefetched_text)
+            self._final_text = None
             return self._record_canonical_stream_final_text(
                 self._canonical_stream_from_final_text(
-                    self._prefetched_text or "",
+                    prefetched_text,
                     stream_session_id=stream_session_id,
                     run_id=run_id,
                     turn_id=turn_id,
@@ -302,7 +309,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                     capabilities=capabilities
                     or self._default_stream_capabilities(provider_family),
                     close_after_terminal=close_after_terminal,
-                )
+                    usage=prefetched_usage,
+                ),
+                count_output=False,
             )
 
         canonical_stream = _explicit_canonical_stream(self._output_fn)
@@ -359,6 +368,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         provider_family: str,
         capabilities: StreamProviderCapabilities | None,
         close_after_terminal: bool,
+        usage: object | None = None,
     ) -> AsyncIterator[CanonicalStreamItem]:
         sequence = 0
         metadata: dict[str, Any] = {}
@@ -400,6 +410,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             )
             sequence += 1
 
+        terminal_usage = usage if usage is not None else self._provider_usage()
         yield CanonicalStreamItem(
             stream_session_id=stream_session_id,
             run_id=run_id,
@@ -407,7 +418,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             sequence=sequence,
             kind=StreamItemKind.STREAM_COMPLETED,
             channel=StreamChannel.CONTROL,
-            usage=cast(Any, self._provider_usage() or {}),
+            usage=cast(Any, terminal_usage or {}),
             terminal_outcome=StreamTerminalOutcome.COMPLETED,
             provider_family=provider_family,
         )
@@ -451,6 +462,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                     yield item
                 return
 
+            provider_usage = self._provider_usage()
             async for item in self._record_canonical_stream_final_text(
                 self._canonical_stream_from_final_text(
                     "",
@@ -460,7 +472,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                     provider_family=provider_family,
                     capabilities=capabilities,
                     close_after_terminal=close_after_terminal,
-                )
+                    usage=provider_usage,
+                ),
+                count_output=False,
             ):
                 yield item
         finally:
@@ -469,21 +483,31 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     async def _record_canonical_stream_final_text(
         self,
         items: AsyncIterator[CanonicalStreamItem],
+        *,
+        count_output: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
-        accumulator = CanonicalStreamAccumulator()
+        self._output = items
+        self._output_closed = False
+        self._count_stream_output_items = count_output
+        if self._stream_accumulator is None:
+            self._stream_accumulator = CanonicalStreamAccumulator()
         try:
             async for item in items:
-                accumulator.add(item)
-                yield item
-            accumulator.validate_complete()
-            if self._remember_terminal_exception(accumulator) is None:
-                self._final_text = accumulator.answer_text
-                await self._trigger_consumed()
+                yield await self._record_returned_item(
+                    item, count_output=count_output
+                )
+            await self._finalize_stream_accumulation(
+                raise_terminal_exception=False
+            )
         finally:
             aclose = getattr(items, "aclose", None)
-            if aclose is not None:
+            if aclose is not None and (
+                self._output is not items or not self._output_closed
+            ):
                 assert callable(aclose)
                 await self._close_output(cast(Callable[[], object], aclose))
+            if self._output is items:
+                self._output_closed = True
 
     def consumer_projections(
         self,
@@ -578,9 +602,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             item = await self._output.__anext__()
         except StopAsyncIteration:
             try:
-                if self._stream_accumulator is not None:
-                    self._stream_accumulator.validate_complete()
-                    self._remember_terminal_exception(self._stream_accumulator)
+                await self._finalize_stream_accumulation(
+                    raise_terminal_exception=False
+                )
             except StreamValidationError as exc:
                 self._validation_failure_message = str(exc)
                 await self.aclose()
@@ -588,24 +612,21 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             except (Exception, CancelledError):
                 await self.aclose()
                 raise
-            if self._terminal_failure_outcome is None:
-                await self._trigger_consumed()
-                self._final_text = (
-                    self._stream_accumulator.answer_text
-                    if self._stream_accumulator is not None
-                    else ""
-                )
             await self.aclose()
             raise
         except (Exception, CancelledError):
             await self.aclose()
             raise
 
-        return await self._record_returned_item(item)
+        return await self._record_returned_item(
+            item, count_output=self._count_stream_output_items
+        )
 
     async def _record_returned_item(
         self,
         item: object,
+        *,
+        count_output: bool = True,
     ) -> CanonicalStreamItem:
         try:
             if isinstance(item, StreamConsumerProjection):
@@ -623,7 +644,8 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                 )
             self._stream_accumulator.add(item)
             self._last_stream_sequence = item.sequence
-            self._output_token_count += 1
+            if count_output:
+                self._output_token_count += 1
             return item
         except StreamValidationError as exc:
             self._validation_failure_message = str(exc)
@@ -648,6 +670,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             await self._trigger_consumed()
             return self._final_text
 
+        if self._has_active_stream_session():
+            return await self._drain_stream_to_final_text()
+
         if not self._use_async_generator:
             self._ensure_non_stream_prefetched()
             if self._prefetched_text is None:
@@ -660,31 +685,66 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         if not self._output:
             self.__aiter__()
         assert self._output is not None
+        return await self._drain_stream_to_final_text()
 
+    def _has_active_stream_session(self) -> bool:
+        return (
+            self._output is not None
+            and not self._output_closed
+            and self._stream_accumulator is not None
+        )
+
+    async def _drain_stream_to_final_text(self) -> str:
+        assert self._output is not None
         while True:
             try:
                 await self.__anext__()
             except StopAsyncIteration:
                 break
 
-            accumulator = self._stream_accumulator
-            assert accumulator is not None
-            terminal_exception = self._remember_terminal_exception(accumulator)
-            if terminal_exception is not None:
-                await self.aclose()
+        return await self._finalize_stream_accumulation(
+            raise_terminal_exception=True
+        )
+
+    async def _finalize_stream_accumulation(
+        self,
+        *,
+        raise_terminal_exception: bool,
+    ) -> str:
+        terminal_exception = self._terminal_exception_from_state()
+        if terminal_exception is not None:
+            if raise_terminal_exception or isinstance(
+                terminal_exception, StreamValidationError
+            ):
                 raise terminal_exception
+            accumulator = self._stream_accumulator
+            return accumulator.answer_text if accumulator is not None else ""
 
         accumulator = self._stream_accumulator
         if accumulator is None:
+            if self._final_text is not None:
+                await self._trigger_consumed()
+                return self._final_text
             await self._trigger_consumed()
             self._final_text = ""
             return self._final_text
 
-        assert accumulator is not None
-        accumulator.validate_complete()
+        try:
+            accumulator.validate_complete()
+        except StreamValidationError as exc:
+            self._validation_failure_message = str(exc)
+            raise
+
         terminal_exception = self._remember_terminal_exception(accumulator)
         if terminal_exception is not None:
-            raise terminal_exception
+            if raise_terminal_exception:
+                raise terminal_exception
+            return accumulator.answer_text
+
+        if self._final_text is not None:
+            await self._trigger_consumed()
+            return self._final_text
+
         await self._trigger_consumed()
         self._final_text = accumulator.answer_text
         return self._final_text
