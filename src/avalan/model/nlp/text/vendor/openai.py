@@ -70,6 +70,7 @@ class OpenAIStream(TextGenerationVendorStream):
     _CANCELLED_EVENTS = {"response.cancelled", "response.canceled"}
     _stream: AsyncIterator[Any]
     _canonical_tool_calls: dict[str, dict[str, str | bool | None]]
+    _tool_call_ids_by_item_id: dict[str, str]
     _canonical_ready_tool_call_ids: set[str]
     _canonical_done_tool_call_ids: set[str]
 
@@ -81,6 +82,7 @@ class OpenAIStream(TextGenerationVendorStream):
     ) -> None:
         self._stream = stream
         self._canonical_tool_calls = {}
+        self._tool_call_ids_by_item_id = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
 
@@ -119,6 +121,7 @@ class OpenAIStream(TextGenerationVendorStream):
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
         self._canonical_tool_calls = {}
+        self._tool_call_ids_by_item_id = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
         return self._provider_canonical_stream(
@@ -284,13 +287,19 @@ class OpenAIStream(TextGenerationVendorStream):
         if not self._is_tool_call_item(item):
             return
         call_id = self._tool_call_id_from_item(item)
+        item_id = self._tool_item_id_from_item(item)
         name = self._tool_call_name_from_item(item)
         if call_id is None:
             return
-        self._canonical_tool_calls[call_id] = {
-            "name": name,
-            "arguments_seen": False,
-        }
+        self._record_tool_call_item_id(item_id, call_id)
+        state = self._canonical_tool_calls.setdefault(
+            call_id,
+            {"name": None, "arguments_seen": False},
+        )
+        if name is not None:
+            state["name"] = name
+        if item_id is not None:
+            state["protocol_item_id"] = item_id
 
     def _tool_argument_delta_events(
         self,
@@ -309,7 +318,7 @@ class OpenAIStream(TextGenerationVendorStream):
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                correlation=self._tool_call_correlation(event, call_id),
                 text_delta=delta,
                 provider_payload=provider_payload,
                 provider_event_type=event_type,
@@ -336,10 +345,27 @@ class OpenAIStream(TextGenerationVendorStream):
         if item is not None and not self._is_tool_call_item(item):
             return ()
         call_id = self._tool_call_id_from_item(item)
+        item_id = self._tool_item_id_from_item(item)
+        item_call_id = OpenAIClient._response_field(item, "call_id")
+        if (
+            call_id is not None
+            and item_id is not None
+            and call_id == item_id
+            and item_call_id is None
+        ):
+            call_id = self._tool_call_ids_by_item_id.get(item_id, call_id)
         if call_id is None:
             call_id = self._tool_call_id_from_event(event, required=False)
         if call_id is None:
             return ()
+        if item_id is not None and item_id != call_id:
+            item_state = self._canonical_tool_calls.get(item_id)
+            if item_state is not None and item_state.get("arguments_seen"):
+                call_id = item_id
+            else:
+                self._record_tool_call_item_id(item_id, call_id)
+        else:
+            self._record_tool_call_item_id(item_id, call_id)
         if call_id not in self._canonical_tool_calls:
             pending_call_ids = [
                 pending_call_id
@@ -379,7 +405,7 @@ class OpenAIStream(TextGenerationVendorStream):
         result.append(
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_DONE,
-                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                correlation=self._tool_call_correlation(item, call_id),
                 provider_payload=provider_payload,
                 provider_event_type=event_type,
             )
@@ -415,7 +441,7 @@ class OpenAIStream(TextGenerationVendorStream):
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                correlation=self._tool_call_correlation(item, call_id),
                 text_delta=arguments,
                 provider_payload=provider_payload,
                 provider_event_type=event_type,
@@ -438,7 +464,7 @@ class OpenAIStream(TextGenerationVendorStream):
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_READY,
-                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                correlation=self._state_tool_call_correlation(call_id, state),
                 data={"name": state.get("name")},
                 provider_payload=provider_payload,
                 provider_event_type=event_type,
@@ -448,12 +474,14 @@ class OpenAIStream(TextGenerationVendorStream):
     def _tool_call_id_from_event(
         self, event: object, *, required: bool = True
     ) -> str | None:
-        for field_name in ("id", "call_id", "item_id"):
+        for field_name in ("call_id", "id", "item_id"):
             value = OpenAIClient._response_field(event, field_name)
             if value is None:
                 continue
             if isinstance(value, str) and value.strip():
-                return value
+                if field_name == "call_id":
+                    return value
+                return self._tool_call_ids_by_item_id.get(value, value)
             raise ValueError(
                 "response tool call id must be a non-empty string"
             )
@@ -467,8 +495,8 @@ class OpenAIStream(TextGenerationVendorStream):
         custom = OpenAIClient._response_field(item, "custom_tool_call")
         for value in (
             OpenAIClient._response_field(custom, "id"),
-            OpenAIClient._response_field(item, "id"),
             OpenAIClient._response_field(item, "call_id"),
+            OpenAIClient._response_field(item, "id"),
         ):
             if value is None:
                 continue
@@ -478,6 +506,62 @@ class OpenAIStream(TextGenerationVendorStream):
                 "response tool call id must be a non-empty string"
             )
         return None
+
+    @staticmethod
+    def _tool_item_id_from_item(item: object) -> str | None:
+        if item is None:
+            return None
+        for field_name in ("item_id", "id"):
+            value = OpenAIClient._response_field(item, field_name)
+            if value is None:
+                continue
+            if isinstance(value, str) and value.strip():
+                return value
+            raise ValueError("response tool call item id must be a string")
+        return None
+
+    def _record_tool_call_item_id(
+        self,
+        item_id: str | None,
+        call_id: str,
+    ) -> None:
+        assert isinstance(call_id, str)
+        assert call_id.strip()
+        if item_id is None:
+            return
+        self._tool_call_ids_by_item_id[item_id] = call_id
+
+    def _tool_call_correlation(
+        self,
+        source: object,
+        call_id: str,
+    ) -> StreamItemCorrelation:
+        assert isinstance(call_id, str)
+        assert call_id.strip()
+        item_id = self._tool_item_id_from_item(source)
+        return StreamItemCorrelation(
+            tool_call_id=call_id,
+            protocol_item_id=(
+                item_id if item_id is not None and item_id != call_id else None
+            ),
+        )
+
+    @staticmethod
+    def _state_tool_call_correlation(
+        call_id: str,
+        state: dict[str, str | bool | None],
+    ) -> StreamItemCorrelation:
+        assert isinstance(call_id, str)
+        assert call_id.strip()
+        item_id = state.get("protocol_item_id")
+        return StreamItemCorrelation(
+            tool_call_id=call_id,
+            protocol_item_id=(
+                item_id
+                if isinstance(item_id, str) and item_id != call_id
+                else None
+            ),
+        )
 
     def _tool_call_name_from_item(self, item: object) -> str | None:
         if item is None:
@@ -491,7 +575,10 @@ class OpenAIStream(TextGenerationVendorStream):
             if value is None:
                 continue
             if isinstance(value, str):
-                return value
+                try:
+                    return TextGenerationVendor.decode_tool_name(value)
+                except AssertionError:
+                    return value
             raise ValueError("response tool call name must be a string")
         return None
 
@@ -680,7 +767,16 @@ class OpenAIClient(TextGenerationVendor):
         ]
         do_exclude_roles = [*(exclude_roles or []), "tool"]
         template_messages = super()._template_messages(
-            messages, do_exclude_roles
+            [
+                message
+                for message in messages
+                if not (
+                    message.role == MessageRole.ASSISTANT
+                    and message.content is None
+                    and message.tool_calls
+                )
+            ],
+            do_exclude_roles,
         )
         messages_out = cast(list[dict[str, Any]], template_messages)
         for message in messages_out:

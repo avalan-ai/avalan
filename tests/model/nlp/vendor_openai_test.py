@@ -20,6 +20,7 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    MessageToolCall,
     PromptCacheRetention,
     ReasoningEffort,
     ReasoningSettings,
@@ -1335,7 +1336,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(items[1].text_delta, "hi")
         self.assertIsNone(items[1].provider_payload)
 
-    async def test_canonical_stream_uses_response_item_id_for_function_call(
+    async def test_canonical_stream_uses_response_call_id_for_function_call(
         self,
     ):
         events = [
@@ -1363,7 +1364,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 item=SimpleNamespace(
                     type="function_call",
                     id="item-1",
-                    call_id="call-1",
                     name="pkg.search",
                     arguments='{"q":"avalan"}',
                 ),
@@ -1398,16 +1398,24 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 for item in items
                 if item.channel is StreamChannel.TOOL_CALL
             },
+            {"call-1"},
+        )
+        self.assertEqual(
+            {
+                item.correlation.protocol_item_id
+                for item in items
+                if item.channel is StreamChannel.TOOL_CALL
+            },
             {"item-1"},
         )
         accumulator = accumulate_canonical_stream_items(items)
         self.assertEqual(
             accumulator.tool_call_arguments,
-            {"item-1": '{"q":"avalan"}'},
+            {"call-1": '{"q":"avalan"}'},
         )
         self.assertEqual(items[3].data, {"name": "pkg.search"})
 
-    async def test_canonical_stream_rejects_mismatched_function_call_item_id(
+    async def test_canonical_stream_rejects_mismatched_function_call_id(
         self,
     ):
         events = [
@@ -1429,8 +1437,8 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 type="response.output_item.done",
                 item=SimpleNamespace(
                     type="function_call",
-                    id="item-2",
-                    call_id="call-1",
+                    id="item-1",
+                    call_id="call-2",
                     name="pkg.search",
                 ),
             ),
@@ -1460,7 +1468,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         error_data = items[3].data
         assert isinstance(error_data, dict)
         self.assertEqual(error_data["error_type"], "StreamValidationError")
-        self.assertIn("item-1", error_data["message"])
+        self.assertIn("call-1", error_data["message"])
 
     async def test_canonical_stream_handles_empty_responses_control_events(
         self,
@@ -1698,6 +1706,16 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 SimpleNamespace(
                     type="response.output_item.added",
                     item=SimpleNamespace(
+                        id=object(),
+                        custom_tool_call=SimpleNamespace(id="call-1"),
+                    ),
+                ),
+                "item id",
+            ),
+            (
+                SimpleNamespace(
+                    type="response.output_item.added",
+                    item=SimpleNamespace(
                         custom_tool_call=SimpleNamespace(
                             id="call-1", name=object()
                         )
@@ -1834,7 +1852,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         events = [
             SimpleNamespace(
                 type="response.function_call_arguments.delta",
-                id="c2",
+                call_id="c2",
                 delta="{",
             ),
             SimpleNamespace(
@@ -1956,7 +1974,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(ready.data, {"name": "pkg__search"})
 
-    async def test_function_call_added_item_preserves_provider_call_name(self):
+    async def test_function_call_added_item_decodes_provider_call_name(self):
         provider_name = self.mod.TextGenerationVendor.encode_tool_name(
             "math.calculator"
         )
@@ -2006,7 +2024,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             if item.kind is StreamItemKind.TOOL_CALL_READY
         )
         self.assertEqual(ready.correlation.tool_call_id, "fc_1")
-        self.assertEqual(ready.data, {"name": provider_name})
+        self.assertEqual(ready.data, {"name": "math.calculator"})
 
     async def test_function_call_events_reject_invalid_delta_id(self):
         stream = self.mod.OpenAIStream(
@@ -2989,6 +3007,49 @@ class TemplateAndToolSchemaTestCase(TestCase):
                 },
             ],
         )
+
+    def test_template_messages_skips_tool_only_assistant_placeholder(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        call = ToolCall(
+            id="call1",
+            name="math.calculator",
+            arguments={"expression": "(4 + 6) * 5 / 2"},
+        )
+        result = ToolCallResult(
+            id="call1",
+            name="math.calculator",
+            call=call,
+            result="25",
+        )
+
+        templated = client._template_messages(
+            [
+                Message(role=MessageRole.USER, content="calculate"),
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=[
+                        MessageToolCall(
+                            id="call1",
+                            name="math.calculator",
+                            arguments={"expression": "(4 + 6) * 5 / 2"},
+                        )
+                    ],
+                ),
+                Message(role=MessageRole.TOOL, tool_call_result=result),
+            ]
+        )
+
+        self.assertEqual(
+            templated[0], {"role": "user", "content": "calculate"}
+        )
+        self.assertNotIn(
+            {"role": "assistant", "content": "None"},
+            templated,
+        )
+        self.assertEqual(templated[1]["type"], "function_call")
+        self.assertEqual(templated[1]["call_id"], "call1")
+        self.assertEqual(templated[2]["type"], "function_call_output")
+        self.assertEqual(templated[2]["call_id"], "call1")
 
     def test_template_messages_tool_results_stringify_uuid_call_id(self):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
