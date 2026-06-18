@@ -28,6 +28,33 @@ from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from avalan.entities import Model
 from avalan.tool.shell import ShellToolSettings
 
+README_CALCULATOR_ROLE = (
+    "You are a helpful assistant named Tool, that can resolve user requests "
+    "using tools."
+)
+README_CALCULATOR_AGENT_RUN_ARGV = [
+    "avalan",
+    "agent",
+    "run",
+    "--engine-uri",
+    "NousResearch/Hermes-3-Llama-3.1-8B",
+    "--backend",
+    "mlx",
+    "--tool",
+    "math.calculator",
+    "--memory-recent",
+    "--run-max-new-tokens",
+    "8192",
+    "--name",
+    "Tool",
+    "--role",
+    README_CALCULATOR_ROLE,
+    "--stats",
+    "--display-events",
+    "--display-tools",
+    "--conversation",
+]
+
 
 def _collect_progs(parser: ArgumentParser) -> list[str]:
     progs: list[str] = []
@@ -2301,6 +2328,59 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
         self.logger = getLogger("cli-dispatch-test")
         with patch.object(sys, "argv", ["prog"]):
             self.cli = CLI(self.logger)
+
+    async def test_call_readme_calculator_agent_run_dispatches_shape(
+        self,
+    ) -> None:
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.get_styles.return_value = {}
+        theme.welcome.return_value = "welcome"
+        console = MagicMock(export_text=lambda: "")
+        hub = MagicMock(domain="hf")
+        hub_class = MagicMock(return_value=hub)
+
+        with (
+            patch.object(sys, "argv", README_CALCULATOR_AGENT_RUN_ARGV),
+            patch(
+                "avalan.cli.__main__.create_theme",
+                return_value=theme,
+            ),
+            patch("avalan.cli.__main__.Console", return_value=console),
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch(
+                "avalan.cli.__main__._huggingface_hub_class",
+                return_value=hub_class,
+            ),
+            patch("avalan.cli.__main__.find_spec", return_value=None),
+            patch("avalan.cli.__main__.logger_replace"),
+            patch("avalan.cli.__main__.filterwarnings"),
+            patch("avalan.cli.__main__.agent_run", AsyncMock()) as run_mock,
+        ):
+            await self.cli()
+
+        run_mock.assert_awaited_once()
+        parsed = run_mock.await_args.args[0]
+        self.assertEqual(parsed.command, "agent")
+        self.assertEqual(parsed.agent_command, "run")
+        self.assertIsNone(parsed.specifications_file)
+        self.assertEqual(
+            parsed.engine_uri,
+            "NousResearch/Hermes-3-Llama-3.1-8B",
+        )
+        self.assertEqual(parsed.backend, "mlx")
+        self.assertEqual(parsed.tool, ["math.calculator"])
+        self.assertTrue(parsed.memory_recent)
+        self.assertEqual(parsed.run_max_new_tokens, 8192)
+        self.assertEqual(parsed.name, "Tool")
+        self.assertEqual(parsed.role, README_CALCULATOR_ROLE)
+        self.assertTrue(parsed.stats)
+        self.assertTrue(parsed.display_events)
+        self.assertTrue(parsed.display_tools)
+        self.assertTrue(parsed.conversation)
+        self.assertIs(run_mock.await_args.args[1], console)
+        self.assertIs(run_mock.await_args.args[2], theme)
+        self.assertIs(run_mock.await_args.args[3], hub)
 
     async def test_main_dispatch(self):
         args_base = Namespace(

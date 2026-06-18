@@ -1,5 +1,8 @@
 import unittest
 from argparse import Namespace
+from asyncio import Event as AsyncioEvent
+from asyncio import create_task, wait_for
+from collections.abc import Callable
 from io import StringIO
 from logging import getLogger
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,6 +16,7 @@ from avalan.agent import (
 )
 from avalan.agent.engine import EngineAgent
 from avalan.cli.commands import agent as agent_cmds
+from avalan.cli.theme import Theme
 from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from avalan.entities import (
     EngineUri,
@@ -23,6 +27,9 @@ from avalan.entities import (
     OperationParameters,
     OperationTextParameters,
     ToolCall,
+    ToolCallContext,
+    ToolExecutionStreamEvent,
+    ToolExecutionStreamKind,
 )
 from avalan.entities import (
     Operation as EntitiesOperation,
@@ -37,8 +44,44 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamTerminalOutcome,
 )
+from avalan.tool import Tool, ToolSet
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.tool.math import MathToolSet
+
+
+README_CALCULATOR_PROMPT = (
+    "What is (4 + 6) and then that result times 5, divided by 2?"
+)
+ANSWER_PROTOCOL_MARKERS = (
+    "\x1b[",
+    "[bold",
+    "[cyan",
+    "[green",
+    "[red",
+    "[/",
+    "<tool_call",
+    "</tool_call>",
+    "<tool",
+    "<function_call",
+    "<function",
+    "<invoke",
+    "<DSML",
+    "<｜DSML",
+    "DSML",
+    "tool_calls",
+    "tool_call",
+    "tool_execute",
+    "tool_process",
+    "tool_progress",
+    "tool_result",
+    "Tool calls",
+    "arguments",
+    "math.calculator",
+    "parsed expression",
+    "computed result",
+    "progress",
+)
+
 
 def _canonical_answer_response(*text_deltas: str) -> TextGenerationResponse:
     async def gen():
@@ -160,6 +203,106 @@ def _canonical_tool_call_response() -> TextGenerationResponse:
     )
 
 
+def _basic_theme() -> Theme:
+    return create_theme(
+        "basic",
+        lambda message: message,
+        lambda singular, plural, count: singular if count == 1 else plural,
+    )
+
+
+def _render_text(renderable: object) -> str:
+    output = StringIO()
+    render_console = Console(
+        file=output,
+        force_terminal=False,
+        color_system=None,
+        width=160,
+    )
+    render_console.print(renderable)
+    return output.getvalue()
+
+
+def _console_print_text(
+    console: MagicMock,
+    *,
+    end: str | None = "",
+) -> str:
+    chunks: list[str] = []
+    for print_call in console.print.call_args_list:
+        if end is not None and print_call.kwargs.get("end") != end:
+            continue
+        chunks.extend(str(arg) for arg in print_call.args)
+    return "".join(chunks)
+
+
+def _live_text(live: MagicMock) -> str:
+    return "".join(
+        _render_text(update_call.args[0])
+        for update_call in live.update.call_args_list
+    )
+
+
+def _assert_answer_clean(
+    case: unittest.TestCase,
+    text: str,
+    *,
+    require_25: bool = True,
+) -> None:
+    if require_25:
+        case.assertIn("25", text)
+    lowered = text.lower()
+    for marker in ANSWER_PROTOCOL_MARKERS:
+        if marker == "\x1b[":
+            case.assertNotIn(marker, text)
+        else:
+            case.assertNotIn(marker.lower(), lowered)
+
+
+class GatedCalculatorTool(Tool):
+    """Calculate the README arithmetic expression with gated progress.
+
+    Args:
+        expression: Arithmetic expression to evaluate.
+
+    Returns:
+        Result of the expression formatted as a string.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.__name__ = "calculator"
+        self.first_progress = AsyncioEvent()
+        self.second_progress = AsyncioEvent()
+        self.release_second_progress = AsyncioEvent()
+        self.release_result = AsyncioEvent()
+
+    async def __call__(self, expression: str, context: ToolCallContext) -> str:
+        assert expression == "(4 + 6) * 5 / 2"
+        assert context.stream_event is not None
+        await context.stream_event(
+            ToolExecutionStreamEvent(
+                kind=ToolExecutionStreamKind.PROGRESS,
+                content="parsed expression",
+                progress=0.5,
+                metadata={"phase": "parse"},
+            )
+        )
+        self.first_progress.set()
+        await self.release_second_progress.wait()
+        await context.stream_event(
+            ToolExecutionStreamEvent(
+                kind=ToolExecutionStreamKind.PROGRESS,
+                content="computed result",
+                progress=1.0,
+                metadata={"phase": "compute"},
+            )
+        )
+        self.second_progress.set()
+        await self.release_result.wait()
+        return "25"
+
+
 class DummyEngine:
     model_id = "m"
     model_type = "t"
@@ -231,6 +374,7 @@ class DummyOrchestrator:
         *,
         engine=None,
         engine_uri: EngineUri | None = None,
+        tool_manager: ToolManager | None = None,
     ):
         self.id = "dummy-orchestrator"
         self.name = "Dummy"
@@ -242,10 +386,14 @@ class DummyOrchestrator:
         self.memory.start_session = AsyncMock()
         self.memory.continue_session = AsyncMock()
 
-        self.tool = ToolManager.create_instance(
-            available_toolsets=[MathToolSet(namespace="math")],
-            enable_tools=["math.calculator"],
-            settings=ToolManagerSettings(),
+        self.tool = (
+            tool_manager
+            if tool_manager is not None
+            else ToolManager.create_instance(
+                available_toolsets=[MathToolSet(namespace="math")],
+                enable_tools=["math.calculator"],
+                settings=ToolManagerSettings(),
+            )
         )
         self.engine_uri = engine_uri or EngineUri(
             host=None,
@@ -350,6 +498,44 @@ def make_args() -> Namespace:
 
 
 class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
+    async def _run_agent_with_orchestrator(
+        self,
+        args: Namespace,
+        console: MagicMock,
+        theme: Theme,
+        hub: MagicMock,
+        logger: MagicMock,
+        orch: DummyOrchestrator,
+        dummy_stack: AsyncMock,
+        *,
+        live_cm: MagicMock,
+        clock: Callable[[], float],
+    ) -> None:
+        with (
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=orch),
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                agent_cmds,
+                "get_input",
+                return_value=README_CALCULATOR_PROMPT,
+            ),
+            patch("avalan.cli.stream_coordinator.Live", return_value=live_cm),
+            patch("avalan.cli.stream_coordinator.perf_counter", clock),
+            patch("avalan.cli.display_reducer.perf_counter", clock),
+        ):
+            await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
+
     async def test_cli_run_math_tool(self):
         args = make_args()
         console = MagicMock()
@@ -388,10 +574,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds,
                 "get_input",
-                return_value=(
-                    "What is (4 + 6) and then that result times 5, divided"
-                    " by 2?"
-                ),
+                return_value=README_CALCULATOR_PROMPT,
             ),
             patch.object(
                 agent_cmds, "token_generation", new_callable=AsyncMock
@@ -400,6 +583,10 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
             await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
 
         tg_patch.assert_awaited_once()
+        self.assertEqual(
+            tg_patch.await_args.kwargs["input_string"],
+            README_CALCULATOR_PROMPT,
+        )
         resp = tg_patch.await_args.kwargs["response"]
         tokens = []
         async for t in resp:
@@ -477,10 +664,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                     patch.object(
                         agent_cmds,
                         "get_input",
-                        return_value=(
-                            "What is (4 + 6) and then that result times 5,"
-                            " divided by 2?"
-                        ),
+                        return_value=README_CALCULATOR_PROMPT,
                     ),
                     patch(
                         "avalan.cli.stream_coordinator.Live",
@@ -501,6 +685,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 rendered[label] = render_console.export_text()
 
                 self.assertIn("25", rendered[label])
+                self.assertRegex(rendered[label], r'The result is "?25"?\.')
                 self.assertIn("Tool calls", rendered[label])
                 self.assertIn("tool", rendered[label].lower())
 
@@ -529,11 +714,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         status_cm.__enter__.return_value = None
         status_cm.__exit__.return_value = False
         console.status.return_value = status_cm
-        theme = create_theme(
-            "basic",
-            lambda message: message,
-            lambda singular, plural, count: singular if count == 1 else plural,
-        )
+        theme = _basic_theme()
         hub = MagicMock()
         logger = MagicMock()
 
@@ -560,25 +741,258 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds,
                 "get_input",
-                return_value=(
-                    "What is (4 + 6) and then that result times 5, divided"
-                    " by 2?"
-                ),
+                return_value=README_CALCULATOR_PROMPT,
             ),
             patch("avalan.cli.stream_coordinator.Live") as live_patch,
         ):
             await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
 
         live_patch.assert_not_called()
-        answer_stdout = "".join(
-            str(args[0])
-            for args, kwargs in console.print.call_args_list
-            if kwargs.get("end") == ""
-        )
+        answer_stdout = _console_print_text(console)
         self.assertRegex(answer_stdout, r'The result is "?25"?\.')
-        self.assertNotIn("<tool_call", answer_stdout)
-        self.assertNotIn("arguments", answer_stdout)
-        self.assertNotIn("Tool calls", answer_stdout)
+        _assert_answer_clean(self, answer_stdout)
+        _assert_answer_clean(self, _console_print_text(console, end=None))
+
+    async def test_cli_run_math_tool_basic_display_tools_shows_progress(
+        self,
+    ) -> None:
+        args = make_args()
+        args.stats = False
+        args.display_events = False
+        args.display_tools = True
+        args.display_tools_events = None
+        args.display_tokens = 0
+        console = MagicMock()
+        console.width = 120
+        console.is_terminal = True
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+        theme = _basic_theme()
+        hub = MagicMock()
+        logger = MagicMock()
+
+        gated_tool = GatedCalculatorTool()
+        tool_manager = ToolManager.create_instance(
+            available_toolsets=[ToolSet(namespace="math", tools=[gated_tool])],
+            enable_tools=["math.calculator"],
+            settings=ToolManagerSettings(),
+        )
+        orch = DummyOrchestrator(tool_manager=tool_manager)
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+
+        live_frames: list[str] = []
+        start_frame_seen = AsyncioEvent()
+        progress_frame_seen = AsyncioEvent()
+        completion_frame_seen = AsyncioEvent()
+        live = MagicMock()
+        live.auto_refresh = True
+        live_cm = MagicMock()
+        live_cm.__enter__.return_value = live
+        live_cm.__exit__.return_value = False
+
+        def capture_live_update(renderable: object) -> None:
+            text = _render_text(renderable)
+            live_frames.append(text)
+            if "tool math.calculator starting" in text:
+                start_frame_seen.set()
+            if "tool math.calculator running" in text:
+                progress_frame_seen.set()
+            if (
+                "tool math.calculator completed" in text
+                and "tool math.calculator result:" in text
+                and '"25"' in text
+            ):
+                completion_frame_seen.set()
+
+        live.update.side_effect = capture_live_update
+        clock_value = 0.0
+
+        def clock() -> float:
+            nonlocal clock_value
+            clock_value += 1.0
+            return clock_value
+
+        run_task = create_task(
+            self._run_agent_with_orchestrator(
+                args,
+                console,
+                theme,
+                hub,
+                logger,
+                orch,
+                dummy_stack,
+                live_cm=live_cm,
+                clock=clock,
+            )
+        )
+        try:
+            await wait_for(gated_tool.first_progress.wait(), 2)
+            await wait_for(start_frame_seen.wait(), 2)
+            await wait_for(progress_frame_seen.wait(), 2)
+            gated_tool.release_second_progress.set()
+            await wait_for(gated_tool.second_progress.wait(), 2)
+            gated_tool.release_result.set()
+            await wait_for(run_task, 2)
+        finally:
+            if not run_task.done():
+                gated_tool.release_second_progress.set()
+                gated_tool.release_result.set()
+                run_task.cancel()
+                try:
+                    await run_task
+                except BaseException:
+                    pass
+
+        await wait_for(completion_frame_seen.wait(), 2)
+        answer_stdout = _console_print_text(console)
+        self.assertRegex(answer_stdout, r'The result is "?25"?\.')
+        _assert_answer_clean(self, answer_stdout)
+        live_text = "".join(live_frames) or _live_text(live)
+        self.assertIn("tool math.calculator starting", live_text)
+        self.assertIn("tool math.calculator running", live_text)
+        self.assertIn("tool math.calculator completed", live_text)
+        self.assertIn("tool math.calculator result:", live_text)
+        self.assertIn('"25"', live_text)
+
+    async def test_cli_run_math_tool_basic_noninteractive_uses_stderr(
+        self,
+    ) -> None:
+        args = make_args()
+        args.stats = False
+        args.display_events = False
+        args.display_tools = True
+        args.display_tools_events = None
+        args.display_tokens = 0
+        console = MagicMock()
+        console.width = 120
+        console.is_terminal = False
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+        theme = _basic_theme()
+        hub = MagicMock()
+        logger = MagicMock()
+
+        orch = DummyOrchestrator()
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+        diagnostic_output = StringIO()
+        diagnostic_console = Console(
+            file=diagnostic_output,
+            force_terminal=False,
+            color_system=None,
+            width=160,
+        )
+
+        with (
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=orch),
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                agent_cmds,
+                "get_input",
+                return_value=README_CALCULATOR_PROMPT,
+            ),
+            patch("avalan.cli.stream_coordinator.Live") as live_patch,
+            patch(
+                "avalan.cli.stream_coordinator.Console",
+                return_value=diagnostic_console,
+            ) as diagnostic_console_patch,
+        ):
+            await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
+
+        live_patch.assert_not_called()
+        diagnostic_console_patch.assert_called_once_with(
+            stderr=True,
+            force_terminal=False,
+        )
+        answer_stdout = _console_print_text(console)
+        self.assertRegex(answer_stdout, r'The result is "?25"?\.')
+        _assert_answer_clean(self, answer_stdout)
+        _assert_answer_clean(self, _console_print_text(console, end=None))
+        diagnostics = diagnostic_output.getvalue()
+        self.assertIn("tool math.calculator", diagnostics)
+        self.assertIn("tool math.calculator result:", diagnostics)
+        self.assertIn('"25"', diagnostics)
+
+    async def test_cli_run_math_tool_basic_quiet_ignores_display_flags(
+        self,
+    ) -> None:
+        args = make_args()
+        args.quiet = True
+        args.stats = True
+        args.display_events = True
+        args.display_tools = True
+        args.display_tools_events = 8
+        args.display_tokens = 15
+        args.record = True
+        console = MagicMock()
+        console.width = 120
+        console.is_terminal = True
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+        theme = _basic_theme()
+        hub = MagicMock()
+        logger = MagicMock()
+
+        orch = DummyOrchestrator()
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+
+        with (
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=orch),
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                agent_cmds,
+                "get_input",
+                return_value=README_CALCULATOR_PROMPT,
+            ),
+            patch("avalan.cli.stream_coordinator.Live") as live_patch,
+            patch(
+                "avalan.cli.stream_coordinator.Console"
+            ) as diagnostic_console_patch,
+        ):
+            await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
+
+        live_patch.assert_not_called()
+        diagnostic_console_patch.assert_not_called()
+        answer_stdout = _console_print_text(console)
+        self.assertRegex(answer_stdout, r'The result is "?25"?\.')
+        _assert_answer_clean(self, answer_stdout)
+        _assert_answer_clean(self, _console_print_text(console, end=None))
 
     async def test_cli_run_math_tool_display_tools_without_stats(self):
         args = make_args()
@@ -633,10 +1047,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds,
                 "get_input",
-                return_value=(
-                    "What is (4 + 6) and then that result times 5, divided"
-                    " by 2?"
-                ),
+                return_value=README_CALCULATOR_PROMPT,
             ),
             patch("avalan.cli.stream_coordinator.Live", return_value=live_cm),
         ):
@@ -673,9 +1084,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         hub = MagicMock()
         logger = MagicMock()
         stdin_mock = MagicMock()
-        stdin_mock.read.return_value = (
-            "What is (4 + 6) and then that result times 5, divided by 2?"
-        )
+        stdin_mock.read.return_value = README_CALCULATOR_PROMPT
 
         orch = DummyOrchestrator()
         dummy_stack = AsyncMock()
@@ -713,18 +1122,21 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         args = make_args()
         args.backend = "ds4"
         args.engine_uri = "ai://local/./ds4flash.gguf?backend=ds4&ds4_ctx=4096"
+        args.quiet = False
+        args.stats = False
+        args.display_events = False
+        args.display_tools = False
+        args.display_tokens = 0
+        args.skip_hub_access_check = False
         console = MagicMock()
+        console.width = 120
+        console.is_terminal = True
         status_cm = MagicMock()
         status_cm.__enter__.return_value = None
         status_cm.__exit__.return_value = False
         console.status.return_value = status_cm
 
-        theme = MagicMock()
-        theme._ = lambda s: s
-        theme.icons = {"user_input": ">", "agent_output": "<"}
-        theme.get_spinner.return_value = "sp"
-        theme.agent.return_value = "agent_panel"
-        theme.recent_messages.return_value = "recent_panel"
+        theme = _basic_theme()
         hub = MagicMock()
         hub.can_access.side_effect = AssertionError(
             "DS4 local model paths must not query Hugging Face access."
@@ -750,6 +1162,15 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         dummy_stack.__aenter__.return_value = dummy_stack
         dummy_stack.__aexit__.return_value = False
         dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+        tool_result_events: list[Event] = []
+
+        async def capture_tool_result(event: Event) -> None:
+            tool_result_events.append(event)
+
+        orch.event_manager.add_listener(
+            capture_tool_result,
+            [EventType.TOOL_RESULT],
+        )
 
         async def from_settings(settings, **_kwargs):
             self.assertEqual(settings.uri, args.engine_uri)
@@ -772,44 +1193,40 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds,
                 "get_input",
-                return_value=(
-                    "What is (4 + 6) and then that result times 5, divided"
-                    " by 2?"
-                ),
+                return_value=README_CALCULATOR_PROMPT,
             ),
             patch.object(
-                agent_cmds, "token_generation", new_callable=AsyncMock
-            ) as tg_patch,
+                agent_cmds,
+                "_agent_display_models",
+                wraps=agent_cmds._agent_display_models,
+            ) as display_models_patch,
+            patch("avalan.cli.stream_coordinator.Live") as live_patch,
         ):
             await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
 
         from_settings_patch.assert_awaited_once()
+        display_models_patch.assert_called_once()
         hub.can_access.assert_not_called()
         hub.model.assert_not_called()
-        theme.agent.assert_called_once()
-        self.assertEqual(theme.agent.call_args.kwargs["models"], ["m"])
-        tg_patch.assert_awaited_once()
-        resp = tg_patch.await_args.kwargs["response"]
-        tokens = []
-        async for t in resp:
-            tokens.append(t)
-
+        live_patch.assert_not_called()
         self.assertIs(DummyEngine.last_tool, orch.tool)
         self.assertTrue(
             any(
-                t.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED
-                and t.data
-                and t.data.get("name") == "math.calculator"
-                and t.data.get("result") == "25"
-                for t in tokens
+                print_call.args
+                for print_call in console.print.call_args_list
+                if print_call.kwargs.get("end") is None
             )
         )
+        answer_stdout = _console_print_text(console)
+        self.assertRegex(answer_stdout, r'The result is "?25"?\.')
+        _assert_answer_clean(self, answer_stdout)
         self.assertTrue(
             any(
-                t.kind is StreamItemKind.ANSWER_DELTA
-                and t.text_delta
-                and "25" in t.text_delta
-                for t in tokens
+                e.type == EventType.TOOL_RESULT
+                and isinstance(e.payload, dict)
+                and e.payload["result"].name == "math.calculator"
+                and e.payload["result"].result == "25"
+                for e in tool_result_events
             )
         )
 
