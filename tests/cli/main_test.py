@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
+from collections.abc import Callable
 from contextlib import ExitStack
 from datetime import datetime
 from io import StringIO
@@ -10,6 +11,7 @@ from tempfile import TemporaryDirectory
 from threading import Event as ThreadEvent
 from time import perf_counter
 from types import SimpleNamespace
+from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -21,7 +23,8 @@ from avalan.cli.__main__ import (
     _consume_task_input_field_args,
     _task_run_json_stdout,
 )
-from avalan.cli.theme_registry import DEFAULT_THEME_NAME
+from avalan.cli.display import cli_stream_display_config
+from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from avalan.entities import Model
 from avalan.tool.shell import ShellToolSettings
 
@@ -1328,6 +1331,145 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         self.assertIs(main_mock.await_args.args[1], theme)
         self.assertIs(main_mock.await_args.args[2], console)
 
+    async def test_call_omitted_theme_matches_fancy_model_run_flags(
+        self,
+    ) -> None:
+        captures: dict[str, dict[str, Any]] = {}
+        shared_args = [
+            "model",
+            "run",
+            "ai://openai/gpt-4o-mini",
+            "--stats",
+            "--display-tools",
+            "--display-events",
+            "--display-tools-events",
+            "0",
+            "--display-tokens",
+            "3",
+            "--display-probabilities",
+            "--record",
+        ]
+
+        for label, theme_args in {
+            "omitted": [],
+            "explicit": ["--theme", "fancy"],
+        }.items():
+            with self.subTest(label=label):
+                theme_names: list[str] = []
+                console_records: list[bool] = []
+                consoles: list[Console] = []
+
+                def create_real_theme(
+                    name: str,
+                    gettext: Callable[[str], str],
+                    ngettext: Callable[[str, str, int], str],
+                ) -> object:
+                    theme_names.append(name)
+                    return create_theme(name, gettext, ngettext)
+
+                def create_console(
+                    *args: object,
+                    **kwargs: object,
+                ) -> Console:
+                    _ = args
+                    console_records.append(bool(kwargs["record"]))
+                    console = Console(
+                        theme=kwargs["theme"],
+                        record=True,
+                        file=StringIO(),
+                        width=100,
+                    )
+                    consoles.append(console)
+                    return console
+
+                with (
+                    patch.object(
+                        sys,
+                        "argv",
+                        ["prog", *theme_args, *shared_args],
+                    ),
+                    patch(
+                        "avalan.cli.__main__.translation",
+                        return_value=self.translator,
+                    ),
+                    patch(
+                        "avalan.cli.__main__.create_theme",
+                        side_effect=create_real_theme,
+                    ) as theme_class,
+                    patch(
+                        "avalan.cli.__main__.Console",
+                        side_effect=create_console,
+                    ),
+                    patch.object(CLI, "_needs_hf_token", return_value=False),
+                    patch(
+                        "avalan.cli.__main__._huggingface_hub_class"
+                    ) as hub_class,
+                    patch(
+                        "avalan.cli.__main__.model_run",
+                        new_callable=AsyncMock,
+                    ) as model_run,
+                ):
+                    await self.cli()
+
+                theme_class.assert_called_once()
+                hub_class.assert_not_called()
+                model_run.assert_awaited_once()
+                args = model_run.await_args.args[0]
+                display_config = cli_stream_display_config(
+                    args,
+                    refresh_per_second=CLI._REFRESH_RATE,
+                    interactive=True,
+                )
+                captures[label] = {
+                    "args": args,
+                    "display_config": display_config,
+                    "record": console_records[0],
+                    "selected_theme": theme_names[0],
+                    "theme_type": type(model_run.await_args.args[2]).__name__,
+                }
+
+        omitted = captures["omitted"]
+        explicit = captures["explicit"]
+        self.assertEqual(omitted["selected_theme"], DEFAULT_THEME_NAME)
+        self.assertEqual(explicit["selected_theme"], "fancy")
+        self.assertEqual(omitted["theme_type"], explicit["theme_type"])
+        self.assertTrue(omitted["record"])
+        self.assertTrue(explicit["record"])
+
+        omitted_args = omitted["args"]
+        explicit_args = explicit["args"]
+        for name in (
+            "command",
+            "model_command",
+            "model",
+            "stats",
+            "display_tools",
+            "display_events",
+            "display_tools_events",
+            "display_tokens",
+            "display_probabilities",
+            "record",
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    getattr(omitted_args, name),
+                    getattr(explicit_args, name),
+                )
+        self.assertEqual(
+            getattr(omitted_args, "theme", DEFAULT_THEME_NAME),
+            "fancy",
+        )
+        self.assertEqual(explicit_args.theme, "fancy")
+
+        omitted_config = omitted["display_config"]
+        explicit_config = explicit["display_config"]
+        self.assertEqual(omitted_config, explicit_config)
+        self.assertTrue(omitted_config.show_stats)
+        self.assertTrue(omitted_config.show_tools)
+        self.assertTrue(omitted_config.show_events)
+        self.assertTrue(omitted_config.show_probabilities)
+        self.assertEqual(omitted_config.display_tools_events, 0)
+
     async def test_call_dispatches_cache_list_with_theme_flags(
         self,
     ) -> None:
@@ -1492,6 +1634,112 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         self.assertIn("Access: yes", outputs["basic"])
         self.assertIn(model_id, outputs["fancy"])
         self.assertIn("access granted", outputs["fancy"])
+
+    async def test_call_omitted_theme_matches_fancy_cache_list_output(
+        self,
+    ) -> None:
+        captures: dict[str, dict[str, Any]] = {}
+
+        for label, theme_args in {
+            "omitted": [],
+            "explicit": ["--theme", "fancy"],
+        }.items():
+            with self.subTest(label=label):
+                consoles: list[Console] = []
+                console_records: list[bool] = []
+                theme_names: list[str] = []
+                hub = MagicMock()
+                hub.cache_dir = "/cache"
+                hub.cache_scan.return_value = []
+                hub_class = MagicMock(return_value=hub)
+
+                def create_real_theme(
+                    name: str,
+                    gettext: Callable[[str], str],
+                    ngettext: Callable[[str, str, int], str],
+                ) -> object:
+                    theme_names.append(name)
+                    return create_theme(name, gettext, ngettext)
+
+                def create_console(
+                    *args: object,
+                    **kwargs: object,
+                ) -> Console:
+                    _ = args
+                    console_records.append(bool(kwargs["record"]))
+                    console = Console(
+                        theme=kwargs["theme"],
+                        record=True,
+                        file=StringIO(),
+                        width=100,
+                    )
+                    consoles.append(console)
+                    return console
+
+                with (
+                    patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "prog",
+                            *theme_args,
+                            "--quiet",
+                            "--record",
+                            "cache",
+                            "list",
+                        ],
+                    ),
+                    patch(
+                        "avalan.cli.__main__.translation",
+                        return_value=self.translator,
+                    ),
+                    patch(
+                        "avalan.cli.__main__.create_theme",
+                        side_effect=create_real_theme,
+                    ) as theme_class,
+                    patch(
+                        "avalan.cli.__main__.Console",
+                        side_effect=create_console,
+                    ),
+                    patch.object(CLI, "_needs_hf_token", return_value=False),
+                    patch(
+                        "avalan.cli.__main__._huggingface_hub_class",
+                        return_value=hub_class,
+                    ),
+                ):
+                    await self.cli()
+
+                theme_class.assert_called_once()
+                hub_class.assert_called_once()
+                hub.cache_scan.assert_called_once_with()
+                captures[label] = {
+                    "output": consoles[0].export_text(),
+                    "record": console_records[0],
+                    "selected_theme": theme_names[0],
+                }
+
+        self.assertEqual(
+            captures["omitted"]["selected_theme"],
+            DEFAULT_THEME_NAME,
+        )
+        self.assertEqual(captures["explicit"]["selected_theme"], "fancy")
+        self.assertFalse(captures["omitted"]["record"])
+        self.assertFalse(captures["explicit"]["record"])
+        fragments = ("Model", "Size on disk")
+        for fragment in fragments:
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, captures["omitted"]["output"])
+                self.assertIn(fragment, captures["explicit"]["output"])
+        self.assertEqual(
+            {
+                fragment: fragment in str(captures["omitted"]["output"])
+                for fragment in fragments
+            },
+            {
+                fragment: fragment in str(captures["explicit"]["output"])
+                for fragment in fragments
+            },
+        )
 
     async def test_call_raises_when_huggingface_hub_is_missing(self):
         with (

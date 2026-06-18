@@ -1,7 +1,10 @@
 import unittest
 from argparse import Namespace
+from io import StringIO
 from logging import getLogger
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from rich.console import Console
 
 from avalan.agent import (
     AgentOperation,
@@ -10,6 +13,7 @@ from avalan.agent import (
 )
 from avalan.agent.engine import EngineAgent
 from avalan.cli.commands import agent as agent_cmds
+from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from avalan.entities import (
     EngineUri,
     GenerationSettings,
@@ -228,6 +232,8 @@ class DummyOrchestrator:
         engine=None,
         engine_uri: EngineUri | None = None,
     ):
+        self.id = "dummy-orchestrator"
+        self.name = "Dummy"
         self.event_manager = EventManager()
         self.memory = MagicMock()
         self.memory.has_recent_message = False
@@ -414,6 +420,97 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 and "25" in t.text_delta
                 for t in tokens
             )
+        )
+
+    async def test_cli_run_math_tool_with_default_and_explicit_fancy_theme(
+        self,
+    ) -> None:
+        rendered: dict[str, str] = {}
+        for label, theme_name in {
+            "omitted": DEFAULT_THEME_NAME,
+            "explicit": "fancy",
+        }.items():
+            with self.subTest(label=label):
+                args = make_args()
+                args.display_tokens = 0
+                console = MagicMock()
+                console.width = 120
+                console.is_terminal = True
+                status_cm = MagicMock()
+                status_cm.__enter__.return_value = None
+                status_cm.__exit__.return_value = False
+                console.status.return_value = status_cm
+                live = MagicMock()
+                live_cm = MagicMock()
+                live_cm.__enter__.return_value = live
+                live_cm.__exit__.return_value = False
+                theme = create_theme(
+                    theme_name,
+                    lambda message: message,
+                    lambda singular, plural, count: (
+                        singular if count == 1 else plural
+                    ),
+                )
+                hub = MagicMock()
+                logger = MagicMock()
+
+                orch = DummyOrchestrator()
+                dummy_stack = AsyncMock()
+                dummy_stack.__aenter__.return_value = dummy_stack
+                dummy_stack.__aexit__.return_value = False
+                dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+
+                with (
+                    patch.object(
+                        agent_cmds, "AsyncExitStack", return_value=dummy_stack
+                    ),
+                    patch.object(
+                        agent_cmds.OrchestratorLoader,
+                        "from_settings",
+                        new=AsyncMock(return_value=orch),
+                    ),
+                    patch.object(
+                        agent_cmds.OrchestratorLoader,
+                        "from_file",
+                        new=AsyncMock(),
+                    ),
+                    patch.object(
+                        agent_cmds,
+                        "get_input",
+                        return_value=(
+                            "What is (4 + 6) and then that result times 5,"
+                            " divided by 2?"
+                        ),
+                    ),
+                    patch(
+                        "avalan.cli.stream_coordinator.Live",
+                        return_value=live_cm,
+                    ),
+                ):
+                    await agent_cmds.agent_run(
+                        args, console, theme, hub, logger, 1
+                    )
+
+                render_console = Console(
+                    file=StringIO(),
+                    record=True,
+                    width=160,
+                )
+                for update_call in live.update.call_args_list:
+                    render_console.print(update_call.args[0])
+                rendered[label] = render_console.export_text()
+
+                self.assertIn("25", rendered[label])
+                self.assertIn("Tool calls", rendered[label])
+                self.assertIn("tool", rendered[label].lower())
+
+        self.assertEqual(
+            "Tool calls" in rendered["omitted"],
+            "Tool calls" in rendered["explicit"],
+        )
+        self.assertEqual(
+            "25" in rendered["omitted"],
+            "25" in rendered["explicit"],
         )
 
     async def test_cli_run_math_tool_display_tools_without_stats(self):

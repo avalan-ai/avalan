@@ -10,8 +10,12 @@ from ...cli.theme import (
     TokenRenderState,
 )
 from ...cli.theme.stream_presenter import (
+    CliStreamAnswerPresenter,
     CliStreamPresenter,
-    LegacyThemeStreamPresenter,
+    CliStreamPresenterItem,
+    CliStreamPresenterRequest,
+    CliStreamRenderableFrame,
+    StreamFrameRole,
 )
 from ...entities import (
     EngineMessage,
@@ -31,7 +35,7 @@ from ...entities import (
     ToolCallError,
     User,
 )
-from ...event import TOOL_TYPES, Event, EventType
+from ...event import TOOL_TYPES, Event, EventStats, EventType
 from ...memory.permanent import PermanentMemoryPartition
 from ...utils import (
     _j,
@@ -39,6 +43,18 @@ from ...utils import (
     to_json,
     tool_call_diagnostic_payload,
     tool_call_error_payload,
+)
+from ..display_snapshot import (
+    CliDisplayTokenCandidateSnapshot,
+    CliDisplayTokenSnapshot,
+    CliEventSummarySnapshot,
+    CliProjectionMetadataSummarySnapshot,
+    CliStreamSnapshot,
+    CliToolDiagnosticSummarySnapshot,
+    CliToolEventSummarySnapshot,
+    CliToolExecutionSummarySnapshot,
+    CliToolResultSummarySnapshot,
+    CliUsageSummarySnapshot,
 )
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -133,9 +149,7 @@ class FancyTheme(Theme):
         *,
         event_stats: EventStats | None = None,
     ) -> CliStreamPresenter:
-        return LegacyThemeStreamPresenter(
-            self, logger, event_stats=event_stats
-        )
+        return FancyStreamPresenter(self, logger, event_stats=event_stats)
 
     @property
     def icons(self) -> dict[Data, str]:
@@ -3001,6 +3015,1007 @@ class FancyTheme(Theme):
             elif not skip_blank_lines:
                 lines.append("")
         return lines
+
+
+class FancyStreamPresenter:
+    """Present immutable stream snapshots with the Fancy layout."""
+
+    def __init__(
+        self,
+        theme: FancyTheme,
+        logger: Logger,
+        *,
+        event_stats: EventStats | None = None,
+    ) -> None:
+        assert isinstance(theme, FancyTheme)
+        assert isinstance(logger, Logger)
+        assert event_stats is None or isinstance(event_stats, EventStats)
+        self._answer_presenter = CliStreamAnswerPresenter()
+        self._event_stats = event_stats
+        self._logger = logger
+        self._theme = theme
+        self._visible_roles: set[StreamFrameRole] = set()
+
+    def reset(self) -> None:
+        """Forget answer text and previously visible role frames."""
+        self._answer_presenter.reset()
+        self._visible_roles.clear()
+
+    async def present(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> AsyncGenerator[CliStreamPresenterItem, None]:
+        """Yield Fancy frames or answer text chunks for one snapshot."""
+        assert isinstance(request, CliStreamPresenterRequest)
+        if request.mode == "answer":
+            async for chunk in self._answer_presenter.present(request):
+                yield chunk
+            return
+
+        role_renderables: tuple[
+            tuple[StreamFrameRole, RenderableType | None],
+            ...,
+        ] = (
+            ("tools", self._tool_panel(request)),
+            ("events", self._event_panel(request)),
+            (
+                "stats",
+                (
+                    self._stats_panel(request.snapshot)
+                    if request.display_config.show_stats
+                    else None
+                ),
+            ),
+        )
+        for role, role_renderable in role_renderables:
+            frame = self._role_frame(role, role_renderable)
+            if frame is not None:
+                yield frame
+
+        if not request.display_config.show_stats:
+            async for chunk in self._answer_presenter.present(
+                _fancy_answer_request(request)
+            ):
+                yield chunk
+            return
+
+        stream_renderable, current_token = self._stream_renderable(request)
+        yield CliStreamRenderableFrame(
+            renderable=stream_renderable,
+            current_token=current_token,
+        )
+
+    def _role_frame(
+        self,
+        role: StreamFrameRole,
+        renderable: RenderableType | None,
+    ) -> CliStreamRenderableFrame | None:
+        if renderable is not None:
+            self._visible_roles.add(role)
+            return CliStreamRenderableFrame(renderable=renderable, role=role)
+        if role not in self._visible_roles:
+            return None
+        self._visible_roles.remove(role)
+        return CliStreamRenderableFrame(renderable="", role=role)
+
+    def _stream_renderable(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> tuple[RenderableType, CliDisplayTokenSnapshot | None]:
+        snapshot = request.snapshot
+        display_config = request.display_config
+        context = request.context
+        max_width = max(1, context.console_width - 4)
+        progress_title = self._progress_title(request)
+        fixed_panel_height = 6
+        fixed_panel_padding = 1
+        fixed_panel_content_lines = (
+            fixed_panel_height - 2 * fixed_panel_padding
+        )
+        think_output = _fancy_wrapped_output(
+            snapshot.reasoning_text,
+            max_width=max_width,
+            height=fixed_panel_height,
+            padding=fixed_panel_padding,
+            limit_height=True,
+            visible_line_count=fixed_panel_content_lines,
+            skip_blank_lines=True,
+        )
+        tool_output = _fancy_wrapped_output(
+            snapshot.tool_call_request_text,
+            max_width=max_width,
+            height=fixed_panel_height,
+            padding=fixed_panel_padding,
+            limit_height=True,
+            visible_line_count=fixed_panel_content_lines,
+        )
+        answer_output = _fancy_wrapped_output(
+            snapshot.answer_text,
+            max_width=max_width,
+            height=display_config.answer_height,
+            padding=1,
+            limit_height=not display_config.answer_height_expand,
+        )
+        think_panel = self._reasoning_panel(
+            context.model_id,
+            think_output,
+            progress_title=progress_title,
+            show_progress=answer_output is None,
+        )
+        tool_panel = self._tool_request_panel(tool_output)
+        answer_panel = self._answer_panel(
+            context.model_id,
+            answer_output,
+            progress_title=progress_title,
+            show_title=think_output is None,
+            limit_height=not display_config.answer_height_expand,
+            answer_height=display_config.answer_height,
+        )
+        stats_panel = self._token_stats_panel(
+            progress_title,
+            visible=think_panel is None and answer_panel is None,
+        )
+        tokens_panel, current_token = self._token_distribution_panel(request)
+        renderables: list[RenderableType] = _lf(
+            [
+                stats_panel,
+                think_panel,
+                tool_panel,
+                answer_panel,
+                tokens_panel,
+            ]
+        )
+        return Group(*renderables), current_token
+
+    def _progress_title(self, request: CliStreamPresenterRequest) -> str:
+        _ = self._theme._
+        _n = self._theme._n
+        _f = self._theme._f
+        snapshot = request.snapshot
+        token_counts = snapshot.token_counts
+        input_token_count = (
+            token_counts.input_tokens
+            if token_counts.input_tokens is not None
+            else request.context.input_token_count
+        )
+        total_tokens = _fancy_output_token_count(snapshot)
+        elapsed = _fancy_elapsed_seconds(snapshot)
+        tokens_rate = total_tokens / elapsed if elapsed > 0 else 0.0
+        timing = snapshot.timing
+        config = request.display_config
+
+        return " · ".join(
+            _lf(
+                [
+                    _f(
+                        "input_token_count",
+                        _n(
+                            "{total_tokens} token in",
+                            "{total_tokens} tokens in",
+                            input_token_count,
+                        ).format(total_tokens=input_token_count),
+                    ),
+                    _f(
+                        "total_tokens",
+                        _n(
+                            "{total_tokens} token out",
+                            "{total_tokens} tokens out",
+                            total_tokens,
+                        ).format(total_tokens=total_tokens),
+                    ),
+                    (
+                        _f(
+                            "tool_tokens",
+                            _n(
+                                "{total_tokens} tool token",
+                                "{total_tokens} tool tokens",
+                                token_counts.tool_call_tokens,
+                            ).format(
+                                total_tokens=token_counts.tool_call_tokens
+                            ),
+                        )
+                        if token_counts.tool_call_tokens
+                        else None
+                    ),
+                    (
+                        _f(
+                            "ttft",
+                            _("ttft: {ttft} s").format(
+                                ttft=f"{timing.first_token_seconds:.2f}"
+                            ),
+                        )
+                        if timing.first_token_seconds
+                        else None
+                    ),
+                    (
+                        _f(
+                            "ttnt",
+                            _("ttnt: {ttnt} s").format(
+                                ttnt=f"{timing.time_to_n_token_seconds:.1f}"
+                            ),
+                        )
+                        if config.display_time_to_n_token is not None
+                        and timing.time_to_n_token_seconds
+                        else None
+                    ),
+                    (
+                        _f(
+                            "ttsr",
+                            _("rt: {ttsr} s").format(
+                                ttsr=f"{timing.reasoning_seconds:.1f}"
+                            ),
+                        )
+                        if config.display_reasoning_time
+                        and timing.reasoning_seconds
+                        else None
+                    ),
+                    _f(
+                        "tokens_rate",
+                        _("{tokens_rate} t/s").format(
+                            tokens_rate=f"{tokens_rate:.2f}"
+                        ),
+                    ),
+                    self._event_count_title(),
+                    self._event_type_count_title(
+                        EventType.TOOL_EXECUTE,
+                        singular="{total} tool call",
+                        plural="{total} tool calls",
+                        style="tool_calls",
+                    ),
+                    self._event_type_count_title(
+                        EventType.TOOL_RESULT,
+                        singular="{total} result",
+                        plural="{total} results",
+                        style="tool_call_results",
+                    ),
+                ]
+            )
+        )
+
+    def _event_count_title(self) -> str | None:
+        if self._event_stats is None:
+            return None
+        total = self._event_stats.total_triggers
+        return self._theme._f(
+            "events",
+            self._theme._n(
+                "{total} event",
+                "{total} events",
+                total,
+            ).format(total=total),
+        )
+
+    def _event_type_count_title(
+        self,
+        event_type: EventType,
+        *,
+        singular: str,
+        plural: str,
+        style: str,
+    ) -> str | None:
+        if self._event_stats is None:
+            return None
+        if event_type not in self._event_stats.triggers:
+            return None
+        total = self._event_stats.triggers[event_type]
+        if not total:
+            return None
+        return self._theme._f(
+            style,
+            self._theme._n(singular, plural, total).format(total=total),
+        )
+
+    def _reasoning_panel(
+        self,
+        model_id: str,
+        output: str | None,
+        *,
+        progress_title: str,
+        show_progress: bool,
+    ) -> Panel | None:
+        if output is None:
+            return None
+        return Panel(
+            Align(
+                f"[light_pink1]{output}[/light_pink1]",
+                vertical="top",
+            ),
+            title=self._theme._("{model_id} reasoning").format(
+                model_id=self._theme._f("id", model_id)
+            ),
+            title_align="left",
+            subtitle=progress_title if show_progress else None,
+            subtitle_align="right",
+            height=8,
+            padding=1,
+            expand=True,
+            box=box.SQUARE,
+        )
+
+    def _tool_request_panel(self, output: str | None) -> Panel | None:
+        if output is None:
+            return None
+        return Panel(
+            Align(f"[cyan]{output}[/cyan]", vertical="top"),
+            title=self._theme._("Tool call requests"),
+            title_align="left",
+            height=8,
+            padding=1,
+            expand=True,
+            box=box.SQUARE,
+            border_style="bright_cyan",
+            style="gray35 on gray3",
+        )
+
+    def _answer_panel(
+        self,
+        model_id: str,
+        output: str | None,
+        *,
+        progress_title: str,
+        show_title: bool,
+        limit_height: bool,
+        answer_height: int,
+    ) -> Panel | None:
+        if output is None:
+            return None
+        return Panel(
+            Align(output, vertical="top"),
+            title=(
+                self._theme._("{model_id} response").format(
+                    model_id=self._theme._f("id", model_id)
+                )
+                if show_title
+                else None
+            ),
+            title_align="left",
+            subtitle=progress_title,
+            subtitle_align="right",
+            height=answer_height + 2 if limit_height else None,
+            padding=1,
+            expand=True,
+            box=box.SQUARE,
+        )
+
+    def _token_stats_panel(
+        self,
+        progress_title: str,
+        *,
+        visible: bool,
+    ) -> Panel | None:
+        if not visible:
+            return None
+        return Panel(
+            progress_title,
+            title=self._theme._("Token stats"),
+            title_align="left",
+            padding=(0, 1),
+            expand=True,
+            box=box.SQUARE,
+            border_style="bright_black",
+            style="gray35 on gray3",
+        )
+
+    def _token_distribution_panel(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> tuple[Panel | None, CliDisplayTokenSnapshot | None]:
+        snapshot = request.snapshot
+        display_tokens = snapshot.display_tokens
+        if not display_tokens:
+            return None, None
+
+        selected_tokens = _fancy_selected_display_tokens(request)
+        current_token = (
+            selected_tokens[0]
+            if request.display_config.show_probabilities and selected_tokens
+            else None
+        )
+        tokens_panel = self._display_tokens_panel(
+            display_tokens,
+            request.context.tokenizer_tokens,
+            request.context.tokenizer_special_tokens,
+            current_token=current_token,
+            selected_tokens=selected_tokens,
+        )
+        probability_renderables = self._probability_renderables(
+            current_token,
+            request.context.token_probability_pick,
+        )
+        renderables: list[RenderableType] = _lf(
+            [
+                tokens_panel,
+                *probability_renderables,
+            ]
+        )
+        return (
+            Panel(
+                (
+                    Group(*renderables)
+                    if probability_renderables
+                    else tokens_panel
+                ),
+                title=self._theme._("token distribution"),
+                title_align="left",
+                border_style="bright_black",
+            ),
+            current_token,
+        )
+
+    def _display_tokens_panel(
+        self,
+        display_tokens: tuple[CliDisplayTokenSnapshot, ...],
+        added_tokens: tuple[str, ...] | None,
+        special_tokens: tuple[str, ...] | None,
+        *,
+        current_token: CliDisplayTokenSnapshot | None,
+        selected_tokens: tuple[CliDisplayTokenSnapshot, ...],
+    ) -> Panel:
+        token_panels = [
+            Panel(
+                Padding(
+                    Text(
+                        token.text,
+                        style=(
+                            "white on dark_green"
+                            if current_token is not None
+                            and token == current_token
+                            else ""
+                        ),
+                    ),
+                    pad=(0, 1, 0, 1),
+                ),
+                padding=(0, 0),
+                border_style=_fancy_display_token_border_style(
+                    token,
+                    added_tokens,
+                    special_tokens,
+                    current_token=current_token,
+                    selected_tokens=selected_tokens,
+                ),
+                box=box.SQUARE,
+            )
+            for token in display_tokens
+        ]
+        return Panel(
+            Align(
+                Columns(token_panels, equal=False, expand=False, padding=0),
+                align="center",
+            ),
+            box=box.MINIMAL,
+        )
+
+    def _probability_renderables(
+        self,
+        current_token: CliDisplayTokenSnapshot | None,
+        pick: int,
+    ) -> tuple[RenderableType, ...]:
+        if current_token is None or pick <= 0:
+            return ()
+        candidates = current_token.candidates[:pick]
+        if not candidates:
+            return (
+                Align(
+                    _fancy_current_token_panel(current_token),
+                    align="center",
+                ),
+            )
+
+        probabilities = [
+            candidate.probability
+            for candidate in candidates
+            if candidate.probability is not None
+        ]
+        chart = _fancy_probability_chart(probabilities, pick)
+        candidate_tables = self._candidate_tables(
+            current_token,
+            candidates,
+            pick,
+        )
+        return (
+            Align(_fancy_current_token_panel(current_token), align="center"),
+            chart,
+            Align(Columns(candidate_tables), align="center"),
+        )
+
+    def _candidate_tables(
+        self,
+        current_token: CliDisplayTokenSnapshot,
+        candidates: tuple[CliDisplayTokenCandidateSnapshot, ...],
+        pick: int,
+    ) -> tuple[Table, ...]:
+        pick_first = ceil(pick / 2) if pick > 1 else pick
+        first = (
+            candidates
+            if len(candidates) <= pick_first
+            else candidates[:pick_first]
+        )
+        second = (
+            () if len(candidates) <= pick_first else candidates[pick_first:]
+        )
+        max_candidate = max(
+            candidates,
+            key=lambda candidate: candidate.probability or 0.0,
+        )
+        return tuple(
+            table
+            for table in (
+                _fancy_candidate_table(first, current_token, max_candidate),
+                (
+                    _fancy_candidate_table(
+                        second,
+                        current_token,
+                        max_candidate,
+                    )
+                    if second
+                    else None
+                ),
+            )
+            if table is not None
+        )
+
+    def _tool_panel(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> Panel | None:
+        if not request.display_config.show_tools:
+            return None
+        snapshot = request.snapshot
+        active_lines = [
+            _fancy_active_tool_line(tool) for tool in snapshot.active_tools
+        ]
+        history_lines = [
+            *(
+                _fancy_completed_tool_line(tool)
+                for tool in snapshot.completed_tools
+            ),
+            *(
+                _fancy_tool_result_line(result)
+                for result in snapshot.tool_results
+            ),
+            *(
+                _fancy_tool_diagnostic_line(diagnostic)
+                for diagnostic in snapshot.tool_diagnostics
+            ),
+            *(_fancy_tool_event_line(event) for event in snapshot.tool_events),
+        ]
+        limit = request.display_config.display_tools_events
+        if limit is not None:
+            history_lines = history_lines[-limit:] if limit else []
+        lines = [*active_lines, *history_lines]
+        if not lines:
+            return None
+        return Panel(
+            _j("\n", lines),
+            title=self._theme._("Tool calls"),
+            title_align="left",
+            height=_fancy_history_panel_height(
+                len(lines),
+                request.display_config.display_tools_events,
+            ),
+            padding=(0, 0, 0, 1),
+            expand=True,
+            box=box.SQUARE,
+            border_style="cyan",
+            style="gray50 on gray15",
+        )
+
+    def _event_panel(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> Panel | None:
+        if not request.display_config.show_events:
+            return None
+        lines = [_fancy_event_line(event) for event in request.snapshot.events]
+        if not lines:
+            return None
+        return Panel(
+            _j("\n", lines),
+            title=self._theme._("Events"),
+            title_align="left",
+            height=_fancy_history_panel_height(len(lines), 4),
+            padding=(0, 0, 0, 1),
+            expand=True,
+            box=box.SQUARE,
+            border_style="gray23",
+            style="gray35 on gray3",
+        )
+
+    def _stats_panel(
+        self,
+        snapshot: CliStreamSnapshot,
+    ) -> Panel | None:
+        lines = [
+            *(_fancy_usage_line(usage) for usage in snapshot.usage_summaries),
+            *(
+                _fancy_projection_line(projection)
+                for projection in snapshot.projection_metadata_summaries
+            ),
+        ]
+        if not lines:
+            return None
+        return Panel(
+            _j("\n", lines),
+            title=self._theme._("Stats"),
+            title_align="left",
+            padding=(0, 1),
+            expand=True,
+            box=box.SQUARE,
+            border_style="bright_black",
+            style="gray35 on gray3",
+        )
+
+
+def _fancy_wrapped_output(
+    text: str,
+    *,
+    max_width: int,
+    height: int,
+    padding: int,
+    limit_height: bool,
+    visible_line_count: int | None = None,
+    skip_blank_lines: bool = False,
+) -> str | None:
+    lines = FancyTheme._wrap_lines(
+        [text],
+        max_width,
+        skip_blank_lines=skip_blank_lines,
+    )
+    if limit_height:
+        visible_lines = max(
+            1,
+            (
+                visible_line_count
+                if visible_line_count is not None
+                else height - padding
+            ),
+        )
+        lines = lines[-visible_lines:]
+    output = "\n".join(lines).rstrip() if lines else None
+    return output or None
+
+
+def _fancy_output_token_count(snapshot: CliStreamSnapshot) -> int:
+    return (
+        snapshot.token_counts.output_tokens
+        if snapshot.token_counts.output_tokens is not None
+        else (
+            snapshot.token_counts.answer_tokens
+            + snapshot.token_counts.reasoning_tokens
+        )
+    )
+
+
+def _fancy_elapsed_seconds(snapshot: CliStreamSnapshot) -> float:
+    if snapshot.timing.elapsed_seconds is not None:
+        return snapshot.timing.elapsed_seconds
+    if (
+        snapshot.timing.started_at is not None
+        and snapshot.timing.updated_at is not None
+    ):
+        return max(
+            0.0,
+            snapshot.timing.updated_at - snapshot.timing.started_at,
+        )
+    return 0.0
+
+
+def _fancy_answer_request(
+    request: CliStreamPresenterRequest,
+) -> CliStreamPresenterRequest:
+    return CliStreamPresenterRequest(
+        snapshot=request.snapshot,
+        display_config=request.display_config,
+        context=request.context,
+        mode="answer",
+    )
+
+
+def _fancy_selected_display_tokens(
+    request: CliStreamPresenterRequest,
+) -> tuple[CliDisplayTokenSnapshot, ...]:
+    if (
+        not request.display_config.show_probabilities
+        or request.context.token_probability_pick <= 0
+        or request.display_config.display_probabilities_maximum <= 0
+    ):
+        return ()
+    return tuple(
+        token
+        for token in request.snapshot.display_tokens
+        if _fancy_display_token_is_focused(
+            token,
+            maximum=request.display_config.display_probabilities_maximum,
+            sample_minimum=(
+                request.display_config.display_probabilities_sample_minimum
+            ),
+        )
+    )
+
+
+def _fancy_display_token_is_focused(
+    token: CliDisplayTokenSnapshot,
+    *,
+    maximum: float,
+    sample_minimum: float,
+) -> bool:
+    if token.probability is not None and token.probability < maximum:
+        return True
+    return any(
+        candidate.token_id != token.token_id
+        and candidate.probability is not None
+        and candidate.probability >= sample_minimum
+        for candidate in token.candidates
+    )
+
+
+def _fancy_display_token_border_style(
+    token: CliDisplayTokenSnapshot,
+    added_tokens: tuple[str, ...] | None,
+    special_tokens: tuple[str, ...] | None,
+    *,
+    current_token: CliDisplayTokenSnapshot | None,
+    selected_tokens: tuple[CliDisplayTokenSnapshot, ...],
+) -> str:
+    if current_token is not None and token == current_token:
+        return "green on dark_green"
+    if token in selected_tokens:
+        return "cyan"
+    if (added_tokens and token.text in added_tokens) or (
+        special_tokens and token.text in special_tokens
+    ):
+        return "magenta"
+    return "gray30"
+
+
+def _fancy_current_token_panel(token: CliDisplayTokenSnapshot) -> Panel:
+    text = Text()
+    text.append(f" #{_fancy_token_id(token.token_id)} ", style="gray50")
+    text.append(token.text)
+    return Panel.fit(
+        text,
+        border_style="green",
+        padding=0,
+    )
+
+
+def _fancy_probability_chart(
+    probabilities: Sequence[float | None],
+    pick: int,
+) -> Align:
+    chart_height = 5
+    values = [value or 0.0 for value in probabilities]
+    if values:
+        indices = FancyTheme._symmetric_indices(values)
+        values = [values[index] for index in indices if index < len(values)]
+    else:
+        values = [0.0 for _ in range(pick)]
+
+    rows: list[str] = []
+    for level in range(chart_height, 0, -1):
+        row = ""
+        for value in values:
+            row += (
+                "[green]█ [/green]" if value * chart_height >= level else "  "
+            )
+        rows.append(row)
+    labels = " ".join(f"{index + 1}" for index in range(len(values))) or " "
+    rows.append(f"[gray30]{labels}[/gray30]")
+    return Align(
+        Panel(Group(*rows), border_style="gray30"),
+        align="center",
+    )
+
+
+def _fancy_candidate_table(
+    candidates: tuple[CliDisplayTokenCandidateSnapshot, ...],
+    current_token: CliDisplayTokenSnapshot,
+    max_candidate: CliDisplayTokenCandidateSnapshot,
+) -> Table:
+    table = Table(
+        show_footer=False,
+        show_header=False,
+        show_edge=True,
+        show_lines=True,
+        border_style="gray58",
+    )
+    table.add_column()
+    table.add_column(justify="right")
+    table.add_column()
+    for candidate in candidates:
+        is_current_token = candidate.token_id == current_token.token_id
+        is_max_candidate = candidate == max_candidate
+        style = (
+            "bold green"
+            if is_current_token and is_max_candidate
+            else (
+                "green"
+                if is_current_token
+                else "cyan" if is_max_candidate else "gray58"
+            )
+        )
+        table.add_row(
+            Text(f"#{_fancy_token_id(candidate.token_id)}", style="gray50"),
+            Text(candidate.text, style=style),
+            Text(
+                FancyTheme._percentage(candidate.probability or 0.0),
+                style=style,
+            ),
+        )
+    return table
+
+
+def _fancy_history_panel_height(
+    line_count: int,
+    limit: int | None,
+) -> int | None:
+    if limit is None:
+        return None
+    return 2 + max(1, min(line_count, limit or 1))
+
+
+def _fancy_active_tool_line(
+    tool: CliToolExecutionSummarySnapshot,
+) -> str:
+    arguments = tool.arguments_summary or tool.tool_call_id
+    return (
+        "Executing tool [gray78]"
+        + tool.name
+        + "[/gray78] call #[gray78]"
+        + _fancy_short_id(tool.tool_call_id)
+        + "[/gray78] with [gray78]"
+        + arguments
+        + "[/gray78]."
+    )
+
+
+def _fancy_completed_tool_line(
+    tool: CliToolExecutionSummarySnapshot,
+) -> str:
+    return (
+        "Completed tool [gray78]"
+        + tool.name
+        + "[/gray78] call #[gray78]"
+        + _fancy_short_id(tool.tool_call_id)
+        + "[/gray78] with status [gray78]"
+        + tool.status
+        + "[/gray78]."
+    )
+
+
+def _fancy_tool_result_line(
+    result: CliToolResultSummarySnapshot,
+) -> str:
+    elapsed = (
+        " in [gray78]"
+        + precisedelta(
+            timedelta(seconds=result.elapsed_seconds),
+            minimum_unit="microseconds",
+        )
+        + "[/gray78]"
+        if result.elapsed_seconds is not None
+        else ""
+    )
+    result_style = "red" if result.status == "error" else "spring_green3"
+    return (
+        "Executed tool [gray78]"
+        + result.name
+        + "[/gray78] call #[gray78]"
+        + _fancy_short_id(result.tool_call_id)
+        + "[/gray78] with "
+        + str(result.arguments_count)
+        + ' arguments. Got result "['
+        + result_style
+        + "]"
+        + result.result_summary
+        + "[/"
+        + result_style
+        + ']"'
+        + elapsed
+        + "."
+    )
+
+
+def _fancy_tool_diagnostic_line(
+    diagnostic: CliToolDiagnosticSummarySnapshot,
+) -> str:
+    tool_name = (
+        diagnostic.canonical_name or diagnostic.requested_name or "tool"
+    )
+    call_id = diagnostic.tool_call_id or diagnostic.diagnostic_id
+    details = (
+        " " + diagnostic.details_summary
+        if diagnostic.details_summary is not None
+        else ""
+    )
+    retryable = " Retryable." if diagnostic.retryable else ""
+    return (
+        "Tool diagnostic [yellow]"
+        + diagnostic.code
+        + "[/yellow] at [gray78]"
+        + diagnostic.stage
+        + "[/gray78] for [gray78]"
+        + tool_name
+        + "[/gray78] call #[gray78]"
+        + _fancy_short_id(call_id)
+        + "[/gray78]: [yellow]"
+        + diagnostic.message
+        + "[/yellow]."
+        + details
+        + retryable
+    )
+
+
+def _fancy_tool_event_line(event: CliToolEventSummarySnapshot) -> str:
+    subject = event.name or event.tool_call_id or "tool"
+    summary = _fancy_summary_text(
+        event.payload_summary,
+        event.observability_summary,
+    )
+    elapsed = _fancy_elapsed_text(event.elapsed)
+    return (
+        elapsed
+        + "Tool event [gray78]"
+        + event.event_type
+        + "[/gray78] for [gray78]"
+        + subject
+        + "[/gray78]"
+        + (": " + summary if summary else "")
+        + "."
+    )
+
+
+def _fancy_event_line(event: CliEventSummarySnapshot) -> str:
+    summary = _fancy_summary_text(
+        event.payload_summary,
+        event.observability_summary,
+    )
+    elapsed = _fancy_elapsed_text(event.elapsed)
+    return (
+        elapsed
+        + "<"
+        + event.event_type
+        + ">"
+        + (": " + summary if summary else "")
+    )
+
+
+def _fancy_usage_line(usage: CliUsageSummarySnapshot) -> str:
+    return "usage " + (usage.kind or "usage") + ": " + usage.usage_summary
+
+
+def _fancy_projection_line(
+    projection: CliProjectionMetadataSummarySnapshot,
+) -> str:
+    return (
+        "projection "
+        + (projection.kind or "projection")
+        + ": "
+        + _fancy_summary_text(
+            projection.data_summary,
+            projection.metadata_summary,
+        )
+    )
+
+
+def _fancy_summary_text(*values: str | None) -> str:
+    return next((value for value in values if value), "")
+
+
+def _fancy_elapsed_text(elapsed: float | None) -> str:
+    return (
+        "[" + precisedelta(timedelta(seconds=elapsed)) + "] "
+        if elapsed is not None
+        else ""
+    )
+
+
+def _fancy_token_id(token_id: int | str | None) -> str:
+    return "-" if token_id is None else str(token_id)
+
+
+def _fancy_short_id(value: str | None) -> str:
+    return _fancy_token_id(value)[:8]
 
 
 def _flow_run_styled_mermaid_source(

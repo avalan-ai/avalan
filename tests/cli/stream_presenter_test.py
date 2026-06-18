@@ -24,7 +24,7 @@ from avalan.cli.stream_presenter import (
     LegacyThemeStreamPresenter,
 )
 from avalan.cli.theme import Theme
-from avalan.cli.theme.fancy import FancyTheme
+from avalan.cli.theme.fancy import FancyStreamPresenter, FancyTheme
 from avalan.entities import Token, TokenDetail
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -585,12 +585,14 @@ class SnapshotStreamPresenterTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             await _collect(presenter, object())  # type: ignore[arg-type]
 
-    def test_fancy_presenter_factory_uses_legacy_adapter(self) -> None:
+    def test_fancy_presenter_factory_uses_snapshot_native_presenter(
+        self,
+    ) -> None:
         theme = FancyTheme(lambda message: message, lambda s, p, n: s)
 
         presenter = theme.stream_presenter(getLogger(__name__))
 
-        self.assertIsInstance(presenter, LegacyThemeStreamPresenter)
+        self.assertIsInstance(presenter, FancyStreamPresenter)
 
 
 class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):

@@ -17,6 +17,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 from async_helpers import run_async
+from rich.console import Console
 
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator import OrchestratorResponse
@@ -1067,6 +1068,118 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(request.mode, "answer")
         self.assertEqual(request.snapshot.answer_text, "answer")
         console.print.assert_called_once_with("answer", end="")
+
+    async def test_token_generation_fancy_uses_snapshot_presenter(
+        self,
+    ) -> None:
+        items = [
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                },
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+                async def gen() -> AsyncIterator[CanonicalStreamItem]:
+                    for item in items:
+                        yield item
+
+                return gen()
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+        console = MagicMock()
+        console.width = 100
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        theme = FancyTheme(lambda message: message, lambda s, p, n: s)
+        display_config = self._display_config(stats=True)
+
+        with (
+            patch("avalan.cli.stream_coordinator.Live", return_value=live),
+            patch.object(
+                FancyTheme,
+                "tokens",
+                side_effect=AssertionError("legacy tokens should not run"),
+            ),
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=display_config,
+            )
+
+        rendered = Console(file=StringIO(), record=True, width=120)
+        for update_call in live.update.call_args_list:
+            rendered.print(update_call.args[0])
+        output = rendered.export_text()
+        self.assertIn("m response", output)
+        self.assertIn("answer", output)
+        self.assertIn("1 token in", output)
 
     async def test_print_plain_stdout_response_filters_channels(
         self,
