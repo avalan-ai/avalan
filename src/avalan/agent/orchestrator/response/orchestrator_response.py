@@ -70,113 +70,9 @@ _T = TypeVar("_T")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class LegacyToolEventShim:
-    event_type: EventType
-    canonical_kind: StreamItemKind
-    canonical_channel: StreamChannel
-    owner: str
-    removal_condition: str
-
-    def __post_init__(self) -> None:
-        assert isinstance(self.event_type, EventType)
-        assert self.event_type.value.startswith("tool_")
-        assert isinstance(self.canonical_kind, StreamItemKind)
-        assert isinstance(self.canonical_channel, StreamChannel)
-        assert self.canonical_channel is stream_channel_for_kind(
-            self.canonical_kind
-        )
-        assert isinstance(self.owner, str)
-        assert self.owner.strip()
-        assert isinstance(self.removal_condition, str)
-        assert self.removal_condition.strip()
-
-
-_LEGACY_TOOL_EVENT_SHIMS: tuple[LegacyToolEventShim, ...] = (
-    LegacyToolEventShim(
-        event_type=EventType.TOOL_DETECT,
-        canonical_kind=StreamItemKind.STREAM_DIAGNOSTIC,
-        canonical_channel=StreamChannel.CONTROL,
-        owner="agent.orchestrator.response",
-        removal_condition=(
-            "Tool detection listeners consume canonical stream diagnostics."
-        ),
-    ),
-    LegacyToolEventShim(
-        event_type=EventType.TOOL_EXECUTE,
-        canonical_kind=StreamItemKind.TOOL_EXECUTION_STARTED,
-        canonical_channel=StreamChannel.TOOL_EXECUTION,
-        owner="agent.orchestrator.response",
-        removal_condition=(
-            "Tool execution listeners consume canonical execution items."
-        ),
-    ),
-    LegacyToolEventShim(
-        event_type=EventType.TOOL_RESULT,
-        canonical_kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
-        canonical_channel=StreamChannel.TOOL_EXECUTION,
-        owner="agent.orchestrator.response",
-        removal_condition=(
-            "Tool result listeners consume canonical terminal execution items."
-        ),
-    ),
-    LegacyToolEventShim(
-        event_type=EventType.TOOL_DIAGNOSTIC,
-        canonical_kind=StreamItemKind.TOOL_EXECUTION_ERROR,
-        canonical_channel=StreamChannel.TOOL_EXECUTION,
-        owner="agent.orchestrator.response",
-        removal_condition=(
-            "Tool diagnostic listeners consume canonical diagnostic items."
-        ),
-    ),
-    LegacyToolEventShim(
-        event_type=EventType.TOOL_MODEL_RUN,
-        canonical_kind=StreamItemKind.MODEL_CONTINUATION_STARTED,
-        canonical_channel=StreamChannel.CONTROL,
-        owner="agent.orchestrator.response",
-        removal_condition=(
-            "Continuation listeners consume canonical continuation items."
-        ),
-    ),
-    LegacyToolEventShim(
-        event_type=EventType.TOOL_MODEL_RESPONSE,
-        canonical_kind=StreamItemKind.MODEL_CONTINUATION_COMPLETED,
-        canonical_channel=StreamChannel.CONTROL,
-        owner="agent.orchestrator.response",
-        removal_condition=(
-            "Continuation listeners consume canonical continuation items."
-        ),
-    ),
-    LegacyToolEventShim(
-        event_type=EventType.TOOL_PROGRESS,
-        canonical_kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
-        canonical_channel=StreamChannel.TOOL_EXECUTION,
-        owner="agent.orchestrator.response",
-        removal_condition=(
-            "Live tool listeners consume canonical execution progress items."
-        ),
-    ),
-)
-
-
-def legacy_tool_event_shim_inventory() -> tuple[LegacyToolEventShim, ...]:
-    return _LEGACY_TOOL_EVENT_SHIMS
-
-
-def classify_legacy_tool_event_shim(
-    event_type: EventType,
-) -> LegacyToolEventShim:
-    assert isinstance(event_type, EventType)
-    for shim in _LEGACY_TOOL_EVENT_SHIMS:
-        if shim.event_type is event_type:
-            return shim
-    raise StreamValidationError("unknown legacy tool event shim")
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
 class _ToolExecutionOutcome:
     call: ToolCall
     context: ToolCallContext
-    event: Event
     planned_index: int
     result: ToolCallOutcome | None
 
@@ -200,24 +96,6 @@ _TOOL_CALL_LIFECYCLE_KINDS = frozenset(
     }
 )
 _INVALID_TOOL_CALL_ARGUMENTS = object()
-
-
-def _legacy_tool_event(
-    event_type: EventType,
-    *,
-    payload: dict[str, Any] | None = None,
-    started: float | None = None,
-    finished: float | None = None,
-    elapsed: float | None = None,
-) -> Event:
-    classify_legacy_tool_event_shim(event_type)
-    return Event(
-        type=event_type,
-        payload=payload,
-        started=started,
-        finished=finished,
-        elapsed=elapsed,
-    )
 
 
 class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
@@ -1343,22 +1221,16 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
 
             model_context = self._make_child_context(messages)
             continuation_id = str(uuid4())
-            self._append_canonical_model_continuation(
+            continuation_item = self._append_canonical_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_STARTED,
                 continuation_id,
             )
             try:
                 await self._raise_if_cancelled(finish_stream=False)
-                event_tool_model_run = _legacy_tool_event(
+                await self._trigger_canonical_observability_event(
                     EventType.TOOL_MODEL_RUN,
-                    payload={
-                        "model_id": self._engine_agent.engine.model_id,
-                        "messages": messages,
-                        "engine_args": self._engine_args,
-                    },
+                    continuation_item,
                 )
-                if self._event_manager:
-                    await self._event_manager.trigger(event_tool_model_run)
                 inner_response = await self._await_with_session_cancellation(
                     self._engine_agent(model_context)
                 )
@@ -1394,18 +1266,6 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             self._set_active_model_continuation(continuation_id)
             self._prepare_iteration(reset_yield_index=False)
 
-            event_tool_model_response = _legacy_tool_event(
-                EventType.TOOL_MODEL_RESPONSE,
-                payload={
-                    "response": inner_response,
-                    "model_id": self._engine_agent.engine.model_id,
-                    "messages": messages,
-                    "engine_args": self._engine_args,
-                },
-            )
-            if self._event_manager:
-                await self._event_manager.trigger(event_tool_model_response)
-
             return None
 
         try:
@@ -1419,8 +1279,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             await self._process_canonical_response_item(canonical_item)
         except StopAsyncIteration:
             self._response_drained = True
-            self._finish_active_model_continuation(
+            continuation_item = self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED
+            )
+            await self._trigger_canonical_observability_event(
+                EventType.TOOL_MODEL_RESPONSE,
+                continuation_item,
             )
             try:
                 await self._flush_canonical_text_tool_call_parser_stage()
@@ -1634,10 +1498,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         current_response = response
         delta = text
         while True:
-            if self._event_manager:
-                await self._event_manager.trigger(
-                    _legacy_tool_event(EventType.TOOL_DETECT)
-                )
+            await self._trigger_derived_canonical_observability_event(
+                EventType.TOOL_DETECT,
+                StreamItemKind.STREAM_DIAGNOSTIC,
+                summary={"stage": "tool_detection"},
+            )
 
             calls = (
                 structured_calls
@@ -1836,31 +1701,20 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                         StreamItemKind.STREAM_CANCELLED
                     )
                     raise CommandAbortException()
-                event = _legacy_tool_event(
-                    EventType.TOOL_RESULT,
-                    payload={
-                        "call": call,
-                        "planned_index": planned_index,
-                        "result": diagnostic,
-                    },
-                )
                 return _ToolExecutionOutcome(
                     call=call,
                     context=self._tool_context or ToolCallContext(),
-                    event=event,
                     planned_index=planned_index,
                     result=diagnostic,
                 )
 
         start = perf_counter()
-        execute_event = _legacy_tool_event(
+        started_item = self._append_canonical_tool_execution_started(call)
+        await self._trigger_canonical_observability_event(
             EventType.TOOL_EXECUTE,
-            payload={"call": call},
+            started_item,
             started=start,
         )
-        self._append_canonical_tool_execution_started(call)
-        if self._event_manager:
-            await self._event_manager.trigger(execute_event)
 
         context = ToolCallContext(
             input=self._tool_context.input if self._tool_context else None,
@@ -1904,34 +1758,30 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
             raise CancelledError()
 
-        self._append_canonical_tool_execution_terminal(call, result)
+        terminal_item = self._append_canonical_tool_execution_terminal(
+            call, result
+        )
 
         end = perf_counter()
-        result_event = _legacy_tool_event(
-            EventType.TOOL_RESULT,
-            payload={
-                "call": call,
-                "planned_index": planned_index,
-                "result": result,
-            },
-            started=start,
-            finished=end,
-            elapsed=end - start,
-        )
         if self._event_manager:
             await self._trigger_tool_diagnostic_event(
-                call=call,
                 result=result,
+                item=terminal_item,
                 started=start,
                 finished=end,
                 elapsed=end - start,
             )
-            await self._event_manager.trigger(result_event)
+        await self._trigger_canonical_observability_event(
+            EventType.TOOL_RESULT,
+            terminal_item,
+            started=start,
+            finished=end,
+            elapsed=end - start,
+        )
 
         return _ToolExecutionOutcome(
             call=call,
             context=context,
-            event=result_event,
             planned_index=planned_index,
             result=result,
         )
@@ -1987,19 +1837,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     call,
                     diagnostic,
                 )
-            event = _legacy_tool_event(
-                EventType.TOOL_RESULT,
-                payload={
-                    "call": call,
-                    "planned_index": index,
-                    "result": diagnostic,
-                },
-            )
             outcomes.append(
                 _ToolExecutionOutcome(
                     call=call,
                     context=self._tool_context or ToolCallContext(),
-                    event=event,
                     planned_index=index,
                     result=diagnostic,
                 )
@@ -2304,31 +2145,26 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 token_id = ids[0] if ids else None
 
         assert self._event_manager
-        payload = {
-            "token_id": token_id,
-            "model_id": self._engine_agent.engine.model_id,
-            "token": token_str,
-            "token_type": CanonicalStreamItem.__qualname__,
-            "step": self._step,
-        }
-        await self._event_manager.trigger(
-            Event(
-                type=EventType.TOKEN_GENERATED,
-                payload=payload,
-                observability_payload=(
-                    EventObservabilityPayload.canonical_stream(
-                        stream_observability_payload(item)
-                    )
-                ),
-            )
+        data = stream_observability_payload(item)
+        summary = dict(cast(dict[str, Any], data.get("summary", {})))
+        summary["model_id"] = self._engine_agent.engine.model_id
+        summary["step"] = self._step
+        if isinstance(token_id, int):
+            summary["token_id"] = token_id
+        data["summary"] = cast(Any, summary)
+        payload = EventObservabilityPayload.canonical_stream(data)
+        event = Event.from_observability_payload(
+            type=EventType.TOKEN_GENERATED,
+            observability_payload=payload,
         )
+        await self._event_manager.trigger(event)
 
     def _should_emit_token_generated_event(self) -> bool:
         if not self._event_manager:
             return False
         should_emit = getattr(self._event_manager, "should_emit", None)
         if not callable(should_emit):
-            return True
+            return False
         result = should_emit(EventType.TOKEN_GENERATED)
         return result if isinstance(result, bool) else False
 
@@ -2403,22 +2239,16 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
 
         context = self._make_child_context(messages)
         continuation_id = str(uuid4())
-        self._append_canonical_model_continuation(
+        continuation_item = self._append_canonical_model_continuation(
             StreamItemKind.MODEL_CONTINUATION_STARTED,
             continuation_id,
         )
         try:
             await self._raise_if_cancelled(finish_stream=False)
-            event_tool_model_run = _legacy_tool_event(
+            await self._trigger_canonical_observability_event(
                 EventType.TOOL_MODEL_RUN,
-                payload={
-                    "model_id": self._engine_agent.engine.model_id,
-                    "messages": messages,
-                    "engine_args": self._engine_args,
-                },
+                continuation_item,
             )
-            if self._event_manager:
-                await self._event_manager.trigger(event_tool_model_run)
             response = await self._await_with_session_cancellation(
                 self._engine_agent(context)
             )
@@ -2559,28 +2389,20 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     async def _trigger_tool_diagnostic_event(
         self,
         *,
-        call: ToolCall,
         result: ToolCallOutcome | None,
+        item: CanonicalStreamItem | None,
         started: float,
         finished: float,
         elapsed: float,
     ) -> None:
         if not isinstance(result, ToolCallDiagnostic):
             return
-        assert self._event_manager
-        await self._event_manager.trigger(
-            _legacy_tool_event(
-                EventType.TOOL_DIAGNOSTIC,
-                payload={
-                    "call": call,
-                    "diagnostic": result,
-                    "diagnostics": [result],
-                    "result": result,
-                },
-                started=started,
-                finished=finished,
-                elapsed=elapsed,
-            )
+        await self._trigger_canonical_observability_event(
+            EventType.TOOL_DIAGNOSTIC,
+            item,
+            started=started,
+            finished=finished,
+            elapsed=elapsed,
         )
 
     def _repeated_call_diagnostic(
@@ -2927,6 +2749,72 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     def _notify_canonical_item_available(self) -> None:
         self._canonical_item_available.set()
 
+    async def _trigger_canonical_observability_event(
+        self,
+        event_type: EventType,
+        item: CanonicalStreamItem | None,
+        *,
+        started: float | None = None,
+        finished: float | None = None,
+        elapsed: float | None = None,
+    ) -> None:
+        assert isinstance(event_type, EventType)
+        if self._event_manager is None or item is None:
+            return
+        payload = EventObservabilityPayload.canonical_stream(
+            stream_observability_payload(item)
+        )
+        await self._event_manager.trigger(
+            Event.from_observability_payload(
+                type=event_type,
+                observability_payload=payload,
+                started=started,
+                finished=finished,
+                elapsed=elapsed,
+            )
+        )
+
+    async def _trigger_derived_canonical_observability_event(
+        self,
+        event_type: EventType,
+        kind: StreamItemKind,
+        *,
+        correlation: StreamItemCorrelation | None = None,
+        summary: dict[str, Any] | None = None,
+        started: float | None = None,
+        finished: float | None = None,
+        elapsed: float | None = None,
+    ) -> None:
+        assert isinstance(event_type, EventType)
+        assert isinstance(kind, StreamItemKind)
+        if self._event_manager is None:
+            return
+        data: dict[str, Any] = {
+            "stream_session_id": self._canonical_stream_session_id,
+            "run_id": self._canonical_run_id,
+            "turn_id": self._canonical_turn_id,
+            "sequence": self._canonical_sequence,
+            "kind": kind.value,
+            "channel": stream_channel_for_kind(kind).value,
+            "visibility": "public",
+            "derived": True,
+        }
+        trace = (correlation or self._canonical_correlation).to_trace_dict()
+        if trace:
+            data["correlation"] = trace
+        if summary:
+            data["summary"] = summary
+        payload = EventObservabilityPayload.canonical_stream(cast(Any, data))
+        await self._event_manager.trigger(
+            Event.from_observability_payload(
+                type=event_type,
+                observability_payload=payload,
+                started=started,
+                finished=finished,
+                elapsed=elapsed,
+            )
+        )
+
     def _finish_canonical_stream(
         self,
         kind: StreamItemKind,
@@ -3021,15 +2909,17 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         )
         return ready_item
 
-    def _append_canonical_tool_execution_started(self, call: ToolCall) -> None:
+    def _append_canonical_tool_execution_started(
+        self, call: ToolCall
+    ) -> CanonicalStreamItem | None:
         tool_call_id = self._canonical_tool_call_id(call)
         if (
             tool_call_id in self._canonical_tool_execution_started_ids
             or tool_call_id in self._canonical_tool_execution_terminal_ids
         ):
-            return
+            return None
         self._canonical_tool_execution_started_ids.add(tool_call_id)
-        self._append_canonical_item(
+        return self._append_canonical_item(
             StreamItemKind.TOOL_EXECUTION_STARTED,
             data={"name": call.name},
             correlation=self._canonical_tool_correlation(call),
@@ -3039,9 +2929,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self,
         call: ToolCall,
         result: ToolCallOutcome | None,
-    ) -> None:
+    ) -> CanonicalStreamItem | None:
         if isinstance(result, ToolCallError):
-            self._append_canonical_tool_execution_result(
+            return self._append_canonical_tool_execution_result(
                 StreamItemKind.TOOL_EXECUTION_ERROR,
                 call,
                 {
@@ -3052,19 +2942,19 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             )
         elif self._is_cancellation_diagnostic(result):
             assert isinstance(result, ToolCallDiagnostic)
-            self._append_canonical_tool_execution_result(
+            return self._append_canonical_tool_execution_result(
                 StreamItemKind.TOOL_EXECUTION_CANCELLED,
                 call,
                 self._canonical_tool_diagnostic_payload(call, result),
             )
         elif isinstance(result, ToolCallDiagnostic):
-            self._append_canonical_tool_execution_result(
+            return self._append_canonical_tool_execution_result(
                 StreamItemKind.TOOL_EXECUTION_ERROR,
                 call,
                 self._canonical_tool_diagnostic_payload(call, result),
             )
         elif isinstance(result, ToolCallResult):
-            self._append_canonical_tool_execution_result(
+            return self._append_canonical_tool_execution_result(
                 StreamItemKind.TOOL_EXECUTION_COMPLETED,
                 call,
                 {
@@ -3074,7 +2964,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 },
             )
         else:
-            self._append_canonical_tool_execution_result(
+            return self._append_canonical_tool_execution_result(
                 StreamItemKind.TOOL_EXECUTION_COMPLETED,
                 call,
                 None,
@@ -3110,7 +3000,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         kind: StreamItemKind,
         call: ToolCall,
         data: Any | None,
-    ) -> None:
+    ) -> CanonicalStreamItem | None:
         if kind in {
             StreamItemKind.TOOL_EXECUTION_COMPLETED,
             StreamItemKind.TOOL_EXECUTION_ERROR,
@@ -3118,9 +3008,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         }:
             tool_call_id = self._canonical_tool_call_id(call)
             if tool_call_id in self._canonical_tool_execution_terminal_ids:
-                return
+                return None
             self._canonical_tool_execution_terminal_ids.add(tool_call_id)
-        self._append_canonical_item(
+        return self._append_canonical_item(
             kind,
             data=data,
             correlation=self._canonical_tool_correlation(call),
@@ -3202,7 +3092,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 ToolExecutionStreamKind.STDERR,
                 ToolExecutionStreamKind.LOG,
             }:
-                self._append_canonical_item(
+                item = self._append_canonical_item(
                     StreamItemKind.TOOL_EXECUTION_OUTPUT,
                     text_delta=event.content,
                     data={
@@ -3212,8 +3102,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     },
                     correlation=correlation,
                 )
+                await self._trigger_canonical_observability_event(
+                    EventType.TOOL_PROGRESS,
+                    item,
+                )
                 return
-            self._append_canonical_item(
+            item = self._append_canonical_item(
                 StreamItemKind.TOOL_EXECUTION_PROGRESS,
                 data={
                     "category": event.kind.value,
@@ -3222,6 +3116,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     "metadata": cast(Any, metadata),
                 },
                 correlation=correlation,
+            )
+            await self._trigger_canonical_observability_event(
+                EventType.TOOL_PROGRESS,
+                item,
             )
 
         return emit
@@ -3242,8 +3140,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         continuation_id: str,
         *,
         data: Any | None = None,
-    ) -> None:
-        self._append_canonical_item(
+    ) -> CanonicalStreamItem | None:
+        return self._append_canonical_item(
             kind,
             data=data,
             correlation=StreamItemCorrelation(
@@ -3260,12 +3158,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         kind: StreamItemKind,
         *,
         data: Any | None = None,
-    ) -> None:
+    ) -> CanonicalStreamItem | None:
         continuation_id = self._active_model_continuation_id
         if continuation_id is None:
-            return
+            return None
         self._active_model_continuation_id = None
-        self._append_canonical_model_continuation(
+        return self._append_canonical_model_continuation(
             kind,
             continuation_id,
             data=data,

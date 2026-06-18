@@ -370,19 +370,13 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             if c.args[0].type == EventType.TOKEN_GENERATED
         ]
         self.assertEqual(len(token_events), 2)
-        self.assertEqual(
-            token_events[0].payload,
-            {
-                "token_id": 1,
-                "token_type": "CanonicalStreamItem",
-                "model_id": "m",
-                "token": "a",
-                "step": 0,
-            },
-        )
         self.assertIs(
             token_events[0].observability.kind,
             EventPayloadKind.CANONICAL_STREAM,
+        )
+        self.assertEqual(
+            token_events[0].payload,
+            token_events[0].observability.data,
         )
         self.assertEqual(
             token_events[0].observability.data["kind"],
@@ -391,20 +385,24 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         summary = token_events[0].observability.data["summary"]
         self.assertIsInstance(summary, dict)
         self.assertEqual(summary["text_delta_length"], 1)
+        self.assertEqual(summary["model_id"], "m")
+        self.assertEqual(summary["step"], 0)
+        self.assertEqual(summary["token_id"], 1)
+        self.assertNotIn("token", token_events[0].payload)
         self.assertEqual(
             token_events[1].payload,
-            {
-                "token_id": 2,
-                "token_type": "CanonicalStreamItem",
-                "model_id": "m",
-                "token": "b",
-                "step": 1,
-            },
+            token_events[1].observability.data,
         )
         self.assertEqual(
             token_events[1].observability.data["kind"],
             "answer.delta",
         )
+        summary = token_events[1].observability.data["summary"]
+        self.assertIsInstance(summary, dict)
+        self.assertEqual(summary["text_delta_length"], 1)
+        self.assertEqual(summary["model_id"], "m")
+        self.assertEqual(summary["step"], 1)
+        self.assertEqual(summary["token_id"], 2)
 
         memory.__exit__.assert_called_once()
 

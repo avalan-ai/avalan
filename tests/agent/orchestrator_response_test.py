@@ -667,19 +667,13 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             if c.args[0].type == EventType.TOKEN_GENERATED
         ]
         self.assertEqual(len(token_events), 2)
-        self.assertEqual(
-            token_events[0].payload,
-            {
-                "token_id": 42,
-                "token_type": "CanonicalStreamItem",
-                "model_id": "m",
-                "token": "a",
-                "step": 0,
-            },
-        )
         self.assertIs(
             token_events[0].observability.kind,
             EventPayloadKind.CANONICAL_STREAM,
+        )
+        self.assertEqual(
+            token_events[0].payload,
+            token_events[0].observability.data,
         )
         self.assertEqual(
             token_events[0].observability.data["kind"],
@@ -691,22 +685,22 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             token_events[0].observability.data["summary"],
-            {"text_delta_length": 1},
+            {
+                "text_delta_length": 1,
+                "model_id": "m",
+                "step": 0,
+                "token_id": 42,
+            },
         )
         self.assertNotIn("token", token_events[0].observability.data)
         self.assertEqual(
-            token_events[1].payload,
-            {
-                "token_id": 42,
-                "token_type": "CanonicalStreamItem",
-                "model_id": "m",
-                "token": "b",
-                "step": 1,
-            },
-        )
-        self.assertEqual(
             token_events[1].observability.data["summary"],
-            {"text_delta_length": 1},
+            {
+                "text_delta_length": 1,
+                "model_id": "m",
+                "step": 1,
+                "token_id": 42,
+            },
         )
 
     async def test_consumer_projections_align_token_event_sequences(
@@ -1029,8 +1023,12 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
 
         event = event_manager.trigger.await_args.args[0]
         self.assertIs(event.type, EventType.TOKEN_GENERATED)
-        self.assertIsNone(event.payload["token_id"])
-        self.assertEqual(event.payload["token"], "a")
+        self.assertEqual(event.payload, event.observability.data)
+        self.assertEqual(event.payload["summary"]["text_delta_length"], 1)
+        self.assertEqual(event.payload["summary"]["model_id"], "m")
+        self.assertEqual(event.payload["summary"]["step"], 0)
+        self.assertNotIn("token", event.payload)
+        self.assertNotIn("token_id", event.payload["summary"])
 
     async def test_iteration_skips_token_events_without_subscriber(self):
         engine = _DummyEngine()
@@ -2592,6 +2590,8 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = _dummy_operation()
         call = ToolCall(id="call1", name="calc", arguments={"x": 1})
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
         result = ToolCallResult(
             id="result1",
             call=call,
@@ -2605,6 +2605,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             agent,
             operation,
             {},
+            event_manager=event_manager,
         )
         response._append_canonical_tool_call_ready(call)
         response._append_canonical_tool_execution_started(call)
@@ -2614,6 +2615,13 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ToolExecutionStreamEvent(
                 kind=ToolExecutionStreamKind.LOG,
                 content="before",
+            )
+        )
+        await emit(
+            ToolExecutionStreamEvent(
+                kind=ToolExecutionStreamKind.PROGRESS,
+                content="half",
+                progress=0.5,
             )
         )
         response._append_canonical_tool_execution_terminal(call, result)
@@ -2629,6 +2637,49 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         )
 
         validate_tool_lifecycle_items(response.canonical_items)
+        events = [
+            call.args[0] for call in event_manager.trigger.await_args_list
+        ]
+        self.assertEqual(
+            [event.type for event in events],
+            [EventType.TOOL_PROGRESS, EventType.TOOL_PROGRESS],
+        )
+        output_payload = events[0].payload
+        progress_payload = events[1].payload
+        assert output_payload is not None
+        self.assertEqual(
+            output_payload["kind"],
+            StreamItemKind.TOOL_EXECUTION_OUTPUT.value,
+        )
+        self.assertEqual(
+            output_payload["correlation"],
+            {"tool_call_id": "call1"},
+        )
+        self.assertEqual(
+            output_payload["summary"],
+            {
+                "text_delta_length": 6,
+                "data_keys": ["category", "content", "metadata"],
+            },
+        )
+        self.assertNotIn("before", repr(output_payload))
+        assert progress_payload is not None
+        self.assertEqual(
+            progress_payload["kind"],
+            StreamItemKind.TOOL_EXECUTION_PROGRESS.value,
+        )
+        self.assertEqual(
+            progress_payload["summary"],
+            {
+                "data_keys": [
+                    "category",
+                    "content",
+                    "metadata",
+                    "progress",
+                ],
+            },
+        )
+        self.assertNotIn("half", repr(progress_payload))
         self.assertEqual(
             [item.kind for item in response.canonical_items],
             [
@@ -2637,10 +2688,11 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.TOOL_CALL_DONE,
                 StreamItemKind.TOOL_EXECUTION_STARTED,
                 StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                StreamItemKind.TOOL_EXECUTION_PROGRESS,
                 StreamItemKind.TOOL_EXECUTION_COMPLETED,
             ],
         )
-        self.assertEqual(response.canonical_items[-2].text_delta, "before")
+        self.assertEqual(response.canonical_items[-3].text_delta, "before")
 
     async def test_duplicate_tool_lifecycle_boundaries_are_idempotent(
         self,
@@ -4503,6 +4555,12 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             error_item.data,
             {"error_type": "RuntimeError", "message": "stream failed"},
         )
+        self.assertFalse(
+            any(
+                call.args[0].type is EventType.TOOL_MODEL_RESPONSE
+                for call in event_manager.trigger.await_args_list
+            )
+        )
 
     async def test_model_continuation_cancellation_records_cancel_terminal(
         self,
@@ -4561,6 +4619,12 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.STREAM_CANCELLED,
                 StreamItemKind.STREAM_CLOSED,
             ],
+        )
+        self.assertFalse(
+            any(
+                call.args[0].type is EventType.TOOL_MODEL_RESPONSE
+                for call in event_manager.trigger.await_args_list
+            )
         )
 
     async def test_model_continuation_stream_cancellation_records_terminal(
@@ -4628,6 +4692,12 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.STREAM_CANCELLED,
                 StreamItemKind.STREAM_CLOSED,
             ],
+        )
+        self.assertFalse(
+            any(
+                call.args[0].type is EventType.TOOL_MODEL_RESPONSE
+                for call in event_manager.trigger.await_args_list
+            )
         )
 
     async def test_response_cancellation_records_cancel_terminal(self) -> None:
@@ -7184,20 +7254,50 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             for index, event in enumerate(events)
             if event.type is EventType.TOOL_MODEL_RESPONSE
         ]
+        model_run_events = [
+            event for event in events if event.type is EventType.TOOL_MODEL_RUN
+        ]
+        model_response_events = [
+            event
+            for event in events
+            if event.type is EventType.TOOL_MODEL_RESPONSE
+        ]
         result_events = [
             event for event in events if event.type is EventType.TOOL_RESULT
         ]
         self.assertEqual(len(result_events), 3)
         self.assertEqual(len(model_response_positions), 1)
+        self.assertEqual(len(model_run_events), 1)
+        self.assertEqual(len(model_response_events), 1)
         self.assertLess(max(result_positions), model_response_positions[0])
         self.assertEqual(
+            model_run_events[0].payload,
+            model_run_events[0].observability.data,
+        )
+        self.assertEqual(
+            model_response_events[0].payload,
+            model_response_events[0].observability.data,
+        )
+        self.assertEqual(
+            model_run_events[0].payload["kind"],
+            StreamItemKind.MODEL_CONTINUATION_STARTED.value,
+        )
+        self.assertEqual(
+            model_response_events[0].payload["kind"],
+            StreamItemKind.MODEL_CONTINUATION_COMPLETED.value,
+        )
+        self.assertNotIn("messages", model_run_events[0].payload)
+        self.assertNotIn("response", model_response_events[0].payload)
+        self.assertEqual(
             [
-                event.payload["call"].id
+                event.observability.data["correlation"]["tool_call_id"]
                 for event in result_events
-                if event.payload is not None
             ],
             ["call-2", "call-1", "call-3"],
         )
+        for event in result_events:
+            self.assertEqual(event.payload, event.observability.data)
+            self.assertNotIn("call", event.payload)
         agent.assert_awaited_once()
         child_context = agent.await_args.args[0]
         continuation_messages = cast(list[Message], child_context.input)
@@ -8649,11 +8749,28 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         result_payload = result_events[0].payload
         assert diagnostic_payload is not None
         assert result_payload is not None
-        self.assertEqual(diagnostic_payload["call"], call)
-        self.assertIs(diagnostic_payload["diagnostic"], diagnostic)
-        self.assertEqual(diagnostic_payload["diagnostics"], [diagnostic])
-        self.assertIs(diagnostic_payload["result"], diagnostic)
-        self.assertIs(result_payload["result"], diagnostic)
+        self.assertEqual(
+            diagnostic_payload, diagnostic_event.observability.data
+        )
+        self.assertEqual(result_payload, result_events[0].observability.data)
+        self.assertEqual(
+            diagnostic_payload["correlation"]["tool_call_id"],
+            "call1",
+        )
+        self.assertEqual(
+            result_payload["correlation"]["tool_call_id"],
+            "call1",
+        )
+        self.assertEqual(
+            diagnostic_payload["kind"],
+            StreamItemKind.TOOL_EXECUTION_ERROR.value,
+        )
+        self.assertEqual(
+            result_payload["kind"],
+            StreamItemKind.TOOL_EXECUTION_ERROR.value,
+        )
+        self.assertNotIn("call", diagnostic_payload)
+        self.assertNotIn("result", result_payload)
 
     async def test_to_str_returns_empty_tool_name_diagnostic_to_model(self):
         engine = _DummyEngine()
@@ -8940,10 +9057,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             _ToolExecutionOutcome(
                 call=ToolCall(id="call-1", name="tool", arguments=None),
                 context=ToolCallContext(),
-                event=Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": None},
-                ),
                 planned_index=0,
                 result=None,
             )

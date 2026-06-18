@@ -17,12 +17,10 @@ from uuid import uuid4
 
 from avalan.agent import AgentOperation, EngineEnvironment, Specification
 from avalan.agent.engine import EngineAgent
+from avalan.agent.orchestrator.response import orchestrator_response
 from avalan.agent.orchestrator.response.orchestrator_response import (
-    LegacyToolEventShim,
     OrchestratorResponse,
     _ToolExecutionOutcome,
-    classify_legacy_tool_event_shim,
-    legacy_tool_event_shim_inventory,
 )
 from avalan.cli import CommandAbortException
 from avalan.entities import (
@@ -42,7 +40,7 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
-from avalan.event import TOOL_TYPES, Event, EventPayloadKind, EventType
+from avalan.event import Event, EventPayloadKind, EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
@@ -1115,72 +1113,15 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(StreamValidationError):
             await iterator.__anext__()
 
-    async def test_legacy_tool_event_shim_inventory_covers_tool_events(self):
-        inventory = legacy_tool_event_shim_inventory()
-
-        self.assertEqual(
-            {shim.event_type for shim in inventory},
-            TOOL_TYPES - {EventType.TOOL_PROCESS},
+    async def test_legacy_tool_event_shim_apis_are_removed_from_runtime(self):
+        self.assertFalse(hasattr(orchestrator_response, "LegacyToolEventShim"))
+        self.assertFalse(
+            hasattr(orchestrator_response, "legacy_tool_event_shim_inventory")
         )
-        self.assertEqual(
-            len(inventory), len({shim.event_type for shim in inventory})
+        self.assertFalse(
+            hasattr(orchestrator_response, "classify_legacy_tool_event_shim")
         )
-        for shim in inventory:
-            with self.subTest(event_type=shim.event_type):
-                self.assertIs(
-                    classify_legacy_tool_event_shim(shim.event_type),
-                    shim,
-                )
-                self.assertIs(
-                    shim.canonical_channel,
-                    stream_channel_for_kind(shim.canonical_kind),
-                )
-                self.assertTrue(shim.owner)
-                self.assertTrue(shim.removal_condition)
-
-        with self.assertRaises(StreamValidationError):
-            classify_legacy_tool_event_shim(EventType.END)
-        with self.assertRaises(StreamValidationError):
-            classify_legacy_tool_event_shim(EventType.TOOL_PROCESS)
-        with self.assertRaises(AssertionError):
-            classify_legacy_tool_event_shim("tool_result")  # type: ignore[arg-type]
-
-    async def test_legacy_tool_event_shim_rejects_malformed_entries(self):
-        invalid_entries = (
-            lambda: LegacyToolEventShim(
-                event_type=EventType.END,
-                canonical_kind=StreamItemKind.STREAM_DIAGNOSTIC,
-                canonical_channel=StreamChannel.CONTROL,
-                owner="agent.orchestrator.response",
-                removal_condition="done",
-            ),
-            lambda: LegacyToolEventShim(
-                event_type=EventType.TOOL_RESULT,
-                canonical_kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
-                canonical_channel=StreamChannel.CONTROL,
-                owner="agent.orchestrator.response",
-                removal_condition="done",
-            ),
-            lambda: LegacyToolEventShim(
-                event_type=EventType.TOOL_RESULT,
-                canonical_kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
-                canonical_channel=StreamChannel.TOOL_EXECUTION,
-                owner="",
-                removal_condition="done",
-            ),
-            lambda: LegacyToolEventShim(
-                event_type=EventType.TOOL_RESULT,
-                canonical_kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
-                canonical_channel=StreamChannel.TOOL_EXECUTION,
-                owner="agent.orchestrator.response",
-                removal_condition="",
-            ),
-        )
-
-        for build_entry in invalid_entries:
-            with self.subTest(build_entry=build_entry):
-                with self.assertRaises(AssertionError):
-                    build_entry()
+        self.assertFalse(hasattr(orchestrator_response, "_legacy_tool_event"))
 
     async def test_usage_returns_none_without_provider_usage(self):
         engine = _DummyEngine()
@@ -1543,8 +1484,8 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(text, "ab")
         self.assertEqual(calls, [])
         self.assertEqual(
-            [event.payload["token"] for event in token_events],
-            ["a", "b"],
+            [event.payload for event in token_events],
+            [event.observability.data for event in token_events],
         )
         self.assertEqual(
             [event.observability.kind for event in token_events],
@@ -1563,6 +1504,18 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             ],
             [1, 1],
         )
+        self.assertEqual(
+            [
+                cast(
+                    dict[str, object],
+                    event.observability.data["summary"],
+                )["step"]
+                for event in token_events
+            ],
+            [0, 1],
+        )
+        for event in token_events:
+            self.assertNotIn("token", event.payload)
         self.assertEqual(
             [event.observability.data["sequence"] for event in token_events],
             [0, 1],
@@ -2321,10 +2274,6 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             _ToolExecutionOutcome(
                 call=result.call,
                 context=ToolCallContext(),
-                event=Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": result},
-                ),
                 planned_index=0,
                 result=result,
             )
@@ -2388,7 +2337,45 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(resp._should_enrich_token_ids())
 
         resp._event_manager = cast(EventManager, object())
-        self.assertTrue(resp._should_emit_token_generated_event())
+        self.assertFalse(resp._should_emit_token_generated_event())
+
+    async def test_derived_observability_event_includes_correlation_trace(
+        self,
+    ):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+        )
+
+        await response._trigger_derived_canonical_observability_event(
+            EventType.TOOL_DETECT,
+            StreamItemKind.STREAM_DIAGNOSTIC,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            summary={"stage": "tool_detection"},
+        )
+
+        event = event_manager.trigger.await_args.args[0]
+        self.assertIs(event.type, EventType.TOOL_DETECT)
+        self.assertIs(
+            event.observability.kind,
+            EventPayloadKind.CANONICAL_STREAM,
+        )
+        self.assertEqual(event.payload, event.observability.data)
+        self.assertEqual(
+            event.payload["correlation"],
+            {"tool_call_id": "call-1"},
+        )
+        self.assertEqual(event.payload["summary"], {"stage": "tool_detection"})
 
     async def test_tool_call_error_message(self):
         engine = _DummyEngine()
@@ -3068,7 +3055,6 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
                 _ToolExecutionOutcome(
                     call=call,
                     context=ToolCallContext(),
-                    event=Event(type=EventType.TOOL_RESULT),
                     planned_index=0,
                     result=result,
                 )

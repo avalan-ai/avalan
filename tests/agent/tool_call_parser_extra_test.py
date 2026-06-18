@@ -321,7 +321,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(items[0], ToolCallToken)
         self.assertEqual(items[1].type, EventType.TOOL_PROCESS)
-        event_manager.trigger.assert_awaited_once()
+        event_manager.trigger.assert_not_awaited()
         manager.get_calls.assert_called_once_with("<tool_call></tool_call>")
         self.assertEqual(parser._buffer.getvalue(), "")
         self.assertFalse(parser._inside_call)
@@ -344,7 +344,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         items = await parser.push("no_call")
 
         self.assertEqual(items, ["no_call"])
-        event_manager.trigger.assert_awaited_once()
+        event_manager.trigger.assert_not_awaited()
         manager.get_calls.assert_called_once_with("no_call")
 
     async def test_self_closing_tag(self):
@@ -529,8 +529,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(call.name, "browser.open")
         self.assertEqual(call.arguments, {"url": "https://example.com"})
         manager.get_calls.assert_any_call(text + "<|call|>")
-        trigger_event = event_manager.trigger.await_args_list[0].args[0]
-        self.assertEqual(trigger_event.type, EventType.TOOL_DETECT)
+        event_manager.trigger.assert_not_awaited()
         self.assertFalse(parser._inside_call)
 
     async def test_harmony_final_channel_closes_missing_call_marker(
@@ -1454,13 +1453,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(first[1].payload[0].name, "math.calculator")
         self.assertEqual(first[2], "\n```xml\n")
         self.assertEqual(second, [fenced_tool])
-        self.assertEqual(
-            [
-                call.args[0].type
-                for call in event_manager.trigger.await_args_list
-            ],
-            [EventType.TOOL_DETECT],
-        )
+        event_manager.trigger.assert_not_awaited()
 
     def test_split_visible_prefix_rejects_unconfirmed_marker(self) -> None:
         manager = MagicMock()
@@ -1868,16 +1861,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         )
         self.assertFalse(parser._inside_call)
         self.assertEqual(parser._buffer.getvalue(), "")
-        self.assertEqual(
-            event_manager.trigger.await_args_list[0].args[0].type,
-            EventType.TOOL_DETECT,
-        )
-        self.assertTrue(
-            any(
-                call.args[0].type == EventType.TOOL_DIAGNOSTIC
-                for call in event_manager.trigger.await_args_list
-            )
-        )
+        event_manager.trigger.assert_not_awaited()
 
     async def test_malformed_tool_tag_stream_emits_diagnostic_event(self):
         manager = ToolManager.create_instance(enable_tools=[])
@@ -1934,13 +1918,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(diagnostics[0].requested_name, "bad..name")
         self.assertEqual(process_event.payload[0].name, "math.calculator")
         self.assertEqual(process_event.payload[0].arguments, {"x": 1})
-        self.assertEqual(
-            [
-                call.args[0].type
-                for call in event_manager.trigger.await_args_list
-            ],
-            [EventType.TOOL_DETECT, EventType.TOOL_DIAGNOSTIC],
-        )
+        event_manager.trigger.assert_not_awaited()
         self.assertEqual(parser._buffer.getvalue(), "")
 
     async def test_stream_defers_complete_call_before_open_sibling(
@@ -2184,13 +2162,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(process_events[0].payload[0].name, "first")
         self.assertEqual(second[-1], fenced_suffix)
         self.assertEqual(parser._buffer.getvalue(), fenced_suffix)
-        self.assertEqual(
-            [
-                call.args[0].type
-                for call in event_manager.trigger.await_args_list
-            ],
-            [EventType.TOOL_DETECT],
-        )
+        event_manager.trigger.assert_not_awaited()
 
     async def test_stream_reports_malformed_open_sibling_after_valid_call(
         self,
@@ -2261,13 +2233,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
                 for item in items
             )
         )
-        self.assertEqual(
-            [
-                call.args[0].type
-                for call in event_manager.trigger.await_args_list
-            ],
-            [EventType.TOOL_DETECT],
-        )
+        event_manager.trigger.assert_not_awaited()
 
     async def test_subclassed_manager_closed_stream_uses_diagnostics(
         self,

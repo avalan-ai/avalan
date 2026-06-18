@@ -39,7 +39,12 @@ from avalan.entities import (
     ToolCallError,
     User,
 )
-from avalan.event import Event, EventStats, EventType
+from avalan.event import (
+    Event,
+    EventObservabilityPayload,
+    EventStats,
+    EventType,
+)
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import PermanentMemoryPartition
 
@@ -887,6 +892,103 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         self.assertNotIn("secret", log[1])
         self.assertNotIn("Tool failed.", log[1])
         self.assertIn("bad", log[2])
+
+    def test_events_log_canonical_tool_payloads(self):
+        def event(
+            event_type: EventType,
+            kind: str,
+            correlation: dict[str, str],
+        ) -> Event:
+            return Event.from_observability_payload(
+                type=event_type,
+                observability_payload=EventObservabilityPayload.canonical_stream(
+                    {
+                        "stream_session_id": "stream-1",
+                        "run_id": "run-1",
+                        "turn_id": "turn-1",
+                        "sequence": 1,
+                        "kind": kind,
+                        "channel": "tool.execution",
+                        "visibility": "public",
+                        "correlation": correlation,
+                    }
+                ),
+            )
+
+        events = [
+            event(
+                EventType.TOOL_EXECUTE,
+                "tool.execution.started",
+                {"tool_call_id": "call-1"},
+            ),
+            event(
+                EventType.TOOL_MODEL_RUN,
+                "model.continuation.started",
+                {"model_continuation_id": "cont-1"},
+            ),
+            event(
+                EventType.TOOL_MODEL_RESPONSE,
+                "model.continuation.completed",
+                {"model_continuation_id": "cont-1"},
+            ),
+            event(
+                EventType.TOOL_RESULT,
+                "tool.execution.completed",
+                {"tool_call_id": "call-1"},
+            ),
+            event(
+                EventType.TOOL_DIAGNOSTIC,
+                "tool.execution.error",
+                {"tool_call_id": "call-2"},
+            ),
+            event(
+                EventType.TOOL_PROGRESS,
+                "tool.execution.progress",
+                {"tool_call_id": "call-1"},
+            ),
+        ]
+
+        log = self.theme._events_log(
+            events,
+            events_limit=None,
+            include_tokens=False,
+            include_tool_detect=False,
+            include_tools=True,
+            include_non_tools=False,
+        )
+
+        assert log is not None
+        self.assertEqual(len(log), 6)
+        self.assertIn("tool_execute", log[0])
+        self.assertIn("tool.execution.started", log[0])
+        self.assertIn("call #call-1", log[0])
+        self.assertIn("tool_model_response", log[2])
+        self.assertIn("continuation #cont-1", log[2])
+        self.assertIn("tool_progress", log[5])
+
+    def test_canonical_event_payload_helpers_cover_fallbacks(self):
+        self.assertIsNone(self.theme._canonical_event_payload("bad"))
+        self.assertIsNone(
+            self.theme._canonical_event_payload(
+                {
+                    "stream_session_id": "stream-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "kind": "tool.execution.started",
+                    "channel": 1,
+                }
+            )
+        )
+        self.assertEqual(
+            self.theme._canonical_event_correlation_detail({}),
+            "",
+        )
+        self.assertEqual(
+            self.theme._canonical_event_correlation_detail(
+                {"correlation": {"artifact_id": "artifact-1"}}
+            ),
+            "",
+        )
 
     def test_tool_diagnostic_from_payload_variants(self):
         diagnostic = ToolCallDiagnostic(

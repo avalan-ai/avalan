@@ -649,6 +649,7 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         manager = EventManager()
 
         self.assertEqual(manager.history_config.max_events, 512)
+        self.assertEqual(manager.history_config.max_bytes, 1_048_576)
         self.assertTrue(manager.listen_config.enabled)
         self.assertEqual(manager.listen_config.queue_limit, 512)
         self.assertIs(
@@ -728,6 +729,7 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         manager = EventManager(mode=EventManagerMode.CLI)
 
         self.assertEqual(manager.history_config.max_events, 256)
+        self.assertEqual(manager.history_config.max_bytes, 524_288)
         self.assertIs(
             manager.default_delivery_config.policy,
             EventDeliveryPolicy.COALESCE,
@@ -743,6 +745,7 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         manager = EventManager(mode=EventManagerMode.TEST)
 
         self.assertEqual(manager.history_config.max_events, 1024)
+        self.assertEqual(manager.history_config.max_bytes, 2_097_152)
         self.assertIs(
             manager.default_delivery_config.policy,
             EventDeliveryPolicy.BLOCK,
