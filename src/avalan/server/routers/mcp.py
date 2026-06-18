@@ -529,7 +529,6 @@ class _MCPStreamProjectionState:
             run_id=self.legacy_adapter.run_id,
             turn_id=self.legacy_adapter.turn_id,
             accumulate=False,
-            legacy_item_mapper=self.legacy_adapter.map,
         )
 
     @property

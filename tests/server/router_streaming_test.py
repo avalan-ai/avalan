@@ -619,6 +619,27 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             protocol_stream_terminal_snapshot(projection)
 
+    def test_protocol_stream_projection_state_legacy_rejection_first_item(
+        self,
+    ) -> None:
+        state = ProtocolStreamProjectionState(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+
+        with self.assertRaisesRegex(
+            StreamValidationError, "unsupported stream item"
+        ):
+            state.project(
+                "legacy",
+                0,
+                unsupported_message="unsupported stream item",
+            )
+
+        self.assertTrue(state.legacy_stream_seen)
+        self.assertFalse(state.has_canonical_items)
+
     def test_protocol_stream_projection_state_rejects_mixed_surfaces(
         self,
     ) -> None:
@@ -630,35 +651,26 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
             kind=StreamItemKind.STREAM_STARTED,
             channel=StreamChannel.CONTROL,
         )
-        cases = (
-            (
-                ("legacy", canonical_item),
-                "canonical stream item after legacy stream item",
-            ),
-            (
-                (canonical_item, "legacy"),
-                "legacy stream item after canonical stream item",
-            ),
+        state = ProtocolStreamProjectionState(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+        state.project(
+            canonical_item,
+            0,
+            unsupported_message="unsupported stream item",
         )
 
-        for items, message in cases:
-            with self.subTest(message=message):
-                state = ProtocolStreamProjectionState(
-                    stream_session_id="stream",
-                    run_id="run",
-                    turn_id="turn",
-                )
-                state.project(
-                    items[0],
-                    0,
-                    unsupported_message="unsupported stream item",
-                )
-                with self.assertRaisesRegex(StreamValidationError, message):
-                    state.project(
-                        items[1],
-                        1,
-                        unsupported_message="unsupported stream item",
-                    )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "legacy stream item after canonical stream item",
+        ):
+            state.project(
+                "legacy",
+                1,
+                unsupported_message="unsupported stream item",
+            )
 
     def test_protocol_stream_projection_state_rejects_unsupported_items(
         self,

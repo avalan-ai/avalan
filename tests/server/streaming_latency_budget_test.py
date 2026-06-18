@@ -35,6 +35,8 @@ from avalan.event.manager import (
     EventManager,
 )
 from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
     StreamItemKind,
     StreamPerformanceBudget,
     StreamProducerBackend,
@@ -247,6 +249,32 @@ def _hosted_provider_capabilities() -> StreamProviderCapabilities:
         supports_cancellation=True,
         supports_terminal_events=True,
         max_queue_depth=StreamPerformanceBudget().max_queue_depth,
+    )
+
+
+def _canonical_answer_delta_items(
+    text: str,
+) -> tuple[CanonicalStreamItem, ...]:
+    assert isinstance(text, str)
+    assert text
+    return (
+        CanonicalStreamItem(
+            stream_session_id="latency-stream",
+            run_id="latency-run",
+            turn_id="latency-turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        ),
+        CanonicalStreamItem(
+            stream_session_id="latency-stream",
+            run_id="latency-run",
+            turn_id="latency-turn",
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=text,
+        ),
     )
 
 
@@ -576,7 +604,7 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
         return elapsed_ms
 
     async def _chat_sse_close_latency(self) -> float:
-        source = _LatencyResponse(("partial",))
+        source = _LatencyResponse(_canonical_answer_delta_items("partial"))
         response = await self._chat_sse_response(source)
         iterator = cast(AsyncIterator[str], response.body_iterator)
         first = await anext(iterator)
@@ -605,14 +633,14 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
         return elapsed_ms
 
     async def _responses_sse_close_latency(self) -> float:
-        source = _LatencyResponse(("partial",))
+        source = _LatencyResponse(_canonical_answer_delta_items("partial"))
         response = await self._responses_sse_response(source)
         iterator = cast(AsyncIterator[str], response.body_iterator)
         created = await anext(iterator)
         self.assertIn("response.created", created)
         partial = await anext(iterator)
         self.assertIn("response.output_item.added", partial)
-        self.assertEqual(source.read_count, 1)
+        self.assertEqual(source.read_count, 2)
 
         elapsed_ms = await _elapsed_ms(lambda: cast(Any, iterator).aclose())
 
@@ -642,7 +670,7 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
         return elapsed_ms
 
     async def _mcp_stream_response_close_latency(self) -> float:
-        source = _LatencyResponse(("partial",))
+        source = _LatencyResponse(_canonical_answer_delta_items("partial"))
         stream = self._mcp_stream_response(source)
         first = await anext(stream)
         self.assertIn(b"answer.delta", first)
@@ -672,7 +700,7 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
         return elapsed_ms
 
     async def _a2a_route_close_latency(self) -> float:
-        source = _LatencyResponse(("partial",))
+        source = _LatencyResponse(_canonical_answer_delta_items("partial"))
         response = await self._a2a_streaming_response(source)
         iterator = cast(AsyncIterator[str], response.body_iterator)
         while source.read_count == 0:

@@ -3610,11 +3610,6 @@ class StreamProjectionState:
     legacy_item_mapper: (
         Callable[[object], Iterable[CanonicalStreamItem] | None] | None
     ) = None
-    _legacy_adapter: object | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -3665,38 +3660,21 @@ class StreamProjectionState:
             )
 
         self.legacy_stream_seen = True
-        if self.legacy_item_mapper is not None:
-            try:
-                mapped = self.legacy_item_mapper(item)
-            except AssertionError as exc:
-                raise StreamValidationError(unsupported_message) from exc
-            if mapped is not None:
-                mapped_items = tuple(mapped)
-                return tuple(
-                    self._project_mapped_legacy_item(mapped_item)
-                    for mapped_item in mapped_items
-                )
+        if self.legacy_item_mapper is None:
+            raise StreamValidationError(unsupported_message)
 
         try:
-            return (
-                project_canonical_stream_item(
-                    self._get_legacy_adapter().item_from_token(
-                        item,
-                        sequence,
-                    )
-                ),
-            )
+            mapped = self.legacy_item_mapper(item)
         except AssertionError as exc:
             raise StreamValidationError(unsupported_message) from exc
+        if mapped is None:
+            raise StreamValidationError(unsupported_message)
 
-    def _get_legacy_adapter(self) -> "_LegacyTokenStreamAdapter":
-        if self._legacy_adapter is None:
-            self._legacy_adapter = _LegacyTokenStreamAdapter(
-                stream_session_id=self.stream_session_id,
-                run_id=self.run_id,
-                turn_id=self.turn_id,
-            )
-        return cast("_LegacyTokenStreamAdapter", self._legacy_adapter)
+        mapped_items = tuple(mapped)
+        return tuple(
+            self._project_mapped_legacy_item(mapped_item)
+            for mapped_item in mapped_items
+        )
 
     def validate_complete(self) -> None:
         if self.has_canonical_items and self.accumulate:

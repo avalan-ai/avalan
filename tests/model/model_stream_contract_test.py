@@ -8,12 +8,16 @@ from ast import (
     BitOr,
     Call,
     ClassDef,
+    Constant,
+    Dict,
     FunctionDef,
     Import,
     ImportFrom,
     Name,
     NodeVisitor,
+    Subscript,
     Tuple,
+    iter_child_nodes,
     parse,
 )
 from asyncio import (
@@ -32,7 +36,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, cast
 from unittest import TestCase
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 from avalan.entities import (
     ReasoningToken,
@@ -299,32 +303,16 @@ async def _collect_projection_items(
     )
 
 
-_LEGACY_CLASSIFIER_MODULE_PATHS = {
-    "avalan.model.stream": Path("src/avalan/model/stream.py"),
-    "avalan.model.response.text": Path("src/avalan/model/response/text.py"),
-    "avalan.agent.orchestrator.response.orchestrator_response": Path(
-        "src/avalan/agent/orchestrator/response/orchestrator_response.py"
-    ),
-    "avalan.cli.theme.fancy": Path("src/avalan/cli/theme/fancy.py"),
-    "avalan.cli.commands.model": Path("src/avalan/cli/commands/model.py"),
-    "avalan.server.routers.chat": Path("src/avalan/server/routers/chat.py"),
-    "avalan.server.routers.responses": Path(
-        "src/avalan/server/routers/responses.py"
-    ),
-    "avalan.server.routers.mcp": Path("src/avalan/server/routers/mcp.py"),
-    "avalan.server.a2a.router": Path("src/avalan/server/a2a/router.py"),
-}
-_LEGACY_CLASSIFIER_SCAN_ROOTS = (
-    Path("src/avalan/model/nlp/text"),
-    Path("src/avalan/server"),
-)
-
 _LEGACY_CLASSIFIER_SYMBOL_SURFACES = {
     "Token": StreamLegacySurface.TOKEN,
     "TokenDetail": StreamLegacySurface.TOKEN_DETAIL,
     "ReasoningToken": StreamLegacySurface.REASONING_TOKEN,
     "ToolCallToken": StreamLegacySurface.TOOL_CALL_TOKEN,
     "Event": StreamLegacySurface.EVENT,
+}
+_LEGACY_CLASSIFIER_EVENT_IMPORT_MODULES = {
+    "avalan.event",
+    "event",
 }
 
 _LEGACY_CLASSIFIER_STRING_SITES = {
@@ -377,27 +365,460 @@ _TEMPORARY_LEGACY_SURFACE_CLASSIFICATIONS = {
     StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM,
 }
 
+_PHASE_1_1_LEGACY_CLASSIFIER_DEBT_CEILING = {
+    (
+        "avalan.agent.orchestrator.response.orchestrator_response",
+        "OrchestratorResponse._stream_item_projection",
+    ): frozenset(
+        {
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+            StreamLegacySurface.EVENT,
+        }
+    ),
+    ("avalan.cli.commands.agent", "agent_run._event_listener"): frozenset(
+        {StreamLegacySurface.EVENT}
+    ),
+    (
+        "avalan.flow.runtime",
+        "_node_scoped_event_listener.observe",
+    ): frozenset({StreamLegacySurface.EVENT}),
+    (
+        "avalan.flow.stream",
+        "FlowCanonicalEventListener.__call__",
+    ): frozenset({StreamLegacySurface.EVENT}),
+    (
+        "avalan.flow.stream",
+        "canonical_flow_item_from_event",
+    ): frozenset({StreamLegacySurface.EVENT}),
+    (
+        "avalan.flow.stream",
+        "flow_event_is_projectable",
+    ): frozenset({StreamLegacySurface.EVENT}),
+    (
+        "avalan.model.nlp.text.ds4",
+        "Ds4Worker._generate_dsml_tool_chunks",
+    ): frozenset({StreamLegacySurface.TOKEN_DETAIL}),
+    (
+        "avalan.model.nlp.text.ds4",
+        "Ds4Worker._generate_text_chunks",
+    ): frozenset({StreamLegacySurface.TOKEN_DETAIL}),
+    (
+        "avalan.model.nlp.text.ds4",
+        "Ds4Worker.generate_string_async",
+    ): frozenset(
+        {
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        }
+    ),
+    (
+        "avalan.model.nlp.text.mlxlm",
+        "MlxLmModel._stream_generator",
+    ): frozenset({StreamLegacySurface.STRING}),
+    (
+        "avalan.model.nlp.text.mlxlm",
+        "MlxLmStream.__anext__",
+    ): frozenset(
+        {
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        }
+    ),
+    (
+        "avalan.model.nlp.text.mlxlm",
+        "MlxLmStream.__init__._generator",
+    ): frozenset(
+        {
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        }
+    ),
+    (
+        "avalan.model.nlp.text.vendor.anthropic",
+        "AnthropicClient._non_stream_response_content",
+    ): frozenset({StreamLegacySurface.STRING}),
+    (
+        "avalan.model.nlp.text.vendor.openai",
+        "OpenAIClient._non_stream_response_content",
+    ): frozenset({StreamLegacySurface.STRING}),
+    (
+        "avalan.model.nlp.text.vllm",
+        "VllmModel._stream_generator",
+    ): frozenset({StreamLegacySurface.STRING}),
+    (
+        "avalan.model.response.text",
+        "TextGenerationResponse.__aiter__",
+    ): frozenset({StreamLegacySurface.STRING}),
+    (
+        "avalan.model.response.text",
+        "TextGenerationResponse.__anext__",
+    ): frozenset(
+        {
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        }
+    ),
+    (
+        "avalan.model.response.text",
+        "TextGenerationResponse._record_returned_token",
+    ): frozenset({StreamLegacySurface.TOOL_CALL_TOKEN}),
+    (
+        "avalan.model.response.text",
+        "_text_from_non_stream_result",
+    ): frozenset({StreamLegacySurface.STRING}),
+    (
+        "avalan.model.stream",
+        "_LegacyTokenStreamAdapter.events_from_token",
+    ): frozenset({StreamLegacySurface.STRING}),
+    (
+        "avalan.model.stream",
+        "_LegacyTokenStreamAdapter.item_from_token",
+    ): frozenset(
+        {
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        }
+    ),
+    (
+        "avalan.server.a2a.router",
+        "_A2ALegacyStreamAdapter.map",
+    ): frozenset(
+        {
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        }
+    ),
+    (
+        "avalan.server.routers.mcp",
+        "_MCPLegacyStreamAdapter.map",
+    ): frozenset(
+        {
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.EVENT,
+        }
+    ),
+    (
+        "avalan.server.routers.mcp",
+        "_extract_append_streams",
+    ): frozenset({StreamLegacySurface.STRING}),
+    ("avalan.task.event", "_raw_event_payload"): frozenset(
+        {StreamLegacySurface.EVENT}
+    ),
+    ("avalan.task.event", "_raw_event_type"): frozenset(
+        {StreamLegacySurface.EVENT}
+    ),
+    (
+        "avalan.task.targets.flow",
+        "_flow_node_event_listener.observe",
+    ): frozenset({StreamLegacySurface.EVENT}),
+}
+
+_PROTOCOL_PROJECTION_STATE_NAMES = {
+    "ProtocolStreamProjectionState",
+    "StreamProjectionState",
+}
+_LEGACY_ITEM_MAPPER_KEYWORD = "legacy_item_mapper"
+
+_STREAMING_RETURN_CONTAINER_NAMES = {
+    "AsyncIterator",
+    "AsyncGenerator",
+    "AsyncIterable",
+    "Iterator",
+}
+_STREAMING_RETURN_ALIAS_NAMES = {"OutputGenerator"}
+_LEGACY_STREAMING_RETURN_SYMBOL_NAMES = {
+    "str",
+    "Token",
+    "TokenDetail",
+    "ReasoningToken",
+    "ToolCallToken",
+    "Event",
+    "OutputItem",
+    "LegacyOutputItem",
+    "OutputGenerator",
+    "ResponseItem",
+}
+_NON_STRING_LEGACY_STREAMING_RETURN_SYMBOL_NAMES = (
+    _LEGACY_STREAMING_RETURN_SYMBOL_NAMES - {"str"}
+)
+_PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING = {
+    (
+        "avalan.agent.orchestrator.response.orchestrator_response",
+        "OrchestratorResponse",
+        "base",
+    ): frozenset({"Event", "Token", "TokenDetail"}),
+    (
+        "avalan.cli.commands.model",
+        "TokenFrameStream",
+        "alias",
+    ): frozenset({"Token"}),
+    (
+        "avalan.cli.theme.__init__",
+        "Theme.tokens",
+        "return",
+    ): frozenset({"Token"}),
+    (
+        "avalan.cli.theme.fancy",
+        "FancyTheme.tokens",
+        "return",
+    ): frozenset({"Token"}),
+    ("avalan.event.manager", "EventManager.listen", "return"): frozenset(
+        {"Event"}
+    ),
+    ("avalan.model.__init__", "OutputGenerator", "alias"): frozenset(
+        {
+            "Token",
+            "TokenDetail",
+            "str",
+        }
+    ),
+    ("avalan.model.__init__", "OutputFunction", "alias"): frozenset(
+        {"OutputGenerator"}
+    ),
+    (
+        "avalan.model.nlp.text.ds4",
+        "Ds4Worker.stream",
+        "return",
+    ): frozenset({"TokenDetail", "ToolCallToken", "str"}),
+    (
+        "avalan.model.nlp.text.ds4",
+        "Ds4Worker._generate_chunks",
+        "return",
+    ): frozenset({"TokenDetail", "ToolCallToken", "str"}),
+    (
+        "avalan.model.nlp.text.ds4",
+        "Ds4Worker._generate_dsml_tool_chunks",
+        "return",
+    ): frozenset({"ToolCallToken", "str"}),
+    (
+        "avalan.model.nlp.text.ds4",
+        "Ds4Worker._generate_text_chunks",
+        "return",
+    ): frozenset({"TokenDetail", "str"}),
+    (
+        "avalan.model.nlp.text.ds4",
+        "Ds4Model._generation_stream",
+        "return",
+    ): frozenset({"TokenDetail", "ToolCallToken", "str"}),
+    (
+        "avalan.model.nlp.text.generation",
+        "TextGenerationModel._stream_generator",
+        "return",
+    ): frozenset({"str"}),
+    (
+        "avalan.model.nlp.text.generation",
+        "TextGenerationModel._token_generator",
+        "return",
+    ): frozenset({"Token", "TokenDetail"}),
+    (
+        "avalan.model.nlp.text.mlxlm",
+        "MlxLmModel._stream_generator",
+        "return",
+    ): frozenset({"str"}),
+    (
+        "avalan.model.nlp.text.vendor.bedrock",
+        "BedrockClient.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.nlp.text.vendor.google",
+        "GoogleClient.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.nlp.text.vendor.huggingface",
+        "HuggingfaceClient.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.nlp.text.vendor.litellm",
+        "LiteLLMClient.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.nlp.text.vendor.ollama",
+        "OllamaClient.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.nlp.text.vendor.openai",
+        "OpenAIClient.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.nlp.text.vllm",
+        "VllmModel._stream_generator",
+        "return",
+    ): frozenset({"str"}),
+    (
+        "avalan.model.nlp.text.vllm",
+        "VllmModel.__call__",
+        "return",
+    ): frozenset({"str"}),
+    (
+        "avalan.model.response.text",
+        "OutputGenerator",
+        "alias",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.response.text",
+        "OutputFunction",
+        "alias",
+    ): frozenset({"OutputGenerator"}),
+    (
+        "avalan.model.response.text",
+        "TextGenerationResponse",
+        "base",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.response.text",
+        "TextGenerationResponse.__aiter__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.response.text",
+        "TextGenerationResponse._string_output_generator",
+        "return",
+    ): frozenset({"OutputGenerator"}),
+    ("avalan.model.stream", "TextGenerationStream", "base"): frozenset(
+        {
+            "Token",
+            "TokenDetail",
+            "str",
+        }
+    ),
+    (
+        "avalan.model.stream",
+        "TextGenerationStream.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.stream",
+        "TextGenerationStream.__aiter__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.stream",
+        "TextGenerationSingleStream.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.stream",
+        "TextGenerationSingleStream.__aiter__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.vendor",
+        "TextGenerationVendor.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.vendor",
+        "TextGenerationVendorStream._generator",
+        "alias",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.vendor",
+        "TextGenerationVendorStream.__call__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.model.vendor",
+        "TextGenerationVendorStream.__aiter__",
+        "return",
+    ): frozenset({"Token", "TokenDetail", "str"}),
+    (
+        "avalan.server.routers.mcp",
+        "StreamResponse._response_iterator",
+        "alias",
+    ): frozenset({"Event", "Token", "str"}),
+    (
+        "avalan.server.routers.mcp",
+        "StreamResponse.__aiter__",
+        "return",
+    ): frozenset({"Event", "Token", "str"}),
+}
+
+_PHASE_1_1_INHERITED_TEXT_STREAM_CANONICALIZATION_CEILING = {
+    ("avalan.model.stream", "TextGenerationSingleStream"),
+    ("avalan.model.nlp.text.mlxlm", "MlxLmStream"),
+    ("avalan.model.nlp.text.vendor.google", "GoogleStream"),
+    ("avalan.model.nlp.text.vendor.huggingface", "HuggingfaceStream"),
+    ("avalan.model.nlp.text.vendor.ollama", "OllamaStream"),
+    ("avalan.model.nlp.text.vllm", "VllmStream"),
+    ("avalan.model.vendor", "TextGenerationVendorStream"),
+}
+_TEXT_STREAM_LEGACY_CANONICALIZATION_BASE_NAMES = {
+    "TextGenerationStream",
+    "TextGenerationVendorStream",
+}
+
 
 class _LegacyStreamClassifierVisitor(NodeVisitor):
     def __init__(self, module: str) -> None:
         self.module = module
         self.stack: list[str] = []
         self.sites: dict[tuple[str, str], set[StreamLegacySurface]] = {}
+        self._legacy_classifier_surface_name_scopes = [
+            {
+                name: frozenset({surface})
+                for name, surface in _LEGACY_CLASSIFIER_SYMBOL_SURFACES.items()
+            }
+        ]
 
     def visit_ClassDef(self, node: ClassDef) -> None:
         self.stack.append(node.name)
+        self._push_scope()
         self.generic_visit(node)
+        self._pop_scope()
         self.stack.pop()
 
     def visit_FunctionDef(self, node: FunctionDef) -> None:
         self.stack.append(node.name)
+        self._push_scope()
         self.generic_visit(node)
+        self._pop_scope()
         self.stack.pop()
 
     def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> None:
         self.stack.append(node.name)
+        self._push_scope()
         self.generic_visit(node)
+        self._pop_scope()
         self.stack.pop()
+
+    def visit_ImportFrom(self, node: ImportFrom) -> None:
+        module = node.module or ""
+        for alias in node.names:
+            surface = self._legacy_classifier_import_surface(
+                module,
+                alias.name,
+            )
+            if surface is not None:
+                self._record_legacy_classifier_alias(
+                    alias.asname or alias.name,
+                    {surface},
+                )
+
+    def visit_Assign(self, node: Assign) -> None:
+        self._record_assignment_aliases(tuple(node.targets), node.value)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: AnnAssign) -> None:
+        if node.value is not None:
+            self._record_assignment_aliases((node.target,), node.value)
+        self.generic_visit(node)
 
     def visit_Call(self, node: Call) -> None:
         if (
@@ -421,8 +842,7 @@ class _LegacyStreamClassifierVisitor(NodeVisitor):
                 if self._tracks_string_classifier(key):
                     return {StreamLegacySurface.STRING}
                 return set()
-            surface = _LEGACY_CLASSIFIER_SYMBOL_SURFACES.get(node.id)
-            return set() if surface is None else {surface}
+            return self._legacy_classifier_surfaces_for_name(node.id)
         if isinstance(node, Attribute):
             surface = _LEGACY_CLASSIFIER_SYMBOL_SURFACES.get(node.attr)
             return set() if surface is None else {surface}
@@ -436,6 +856,81 @@ class _LegacyStreamClassifierVisitor(NodeVisitor):
                 node.left, key
             ) | self._surfaces_for_node(node.right, key)
         return set()
+
+    def _push_scope(self) -> None:
+        self._legacy_classifier_surface_name_scopes.append({})
+
+    def _pop_scope(self) -> None:
+        self._legacy_classifier_surface_name_scopes.pop()
+
+    def _record_assignment_aliases(
+        self,
+        targets: tuple[AST, ...],
+        value: AST,
+    ) -> None:
+        surfaces = self._alias_surfaces_for_node(value)
+        if not surfaces:
+            return
+        target_names: set[str] = set()
+        for target in targets:
+            _add_defined_target_name(target_names, target)
+        for target_name in target_names:
+            self._record_legacy_classifier_alias(target_name, surfaces)
+
+    def _alias_surfaces_for_node(
+        self,
+        node: AST,
+    ) -> set[StreamLegacySurface]:
+        if isinstance(node, Name):
+            if node.id == "str":
+                return set()
+            return self._legacy_classifier_surfaces_for_name(node.id)
+        if isinstance(node, Attribute):
+            surface = _LEGACY_CLASSIFIER_SYMBOL_SURFACES.get(node.attr)
+            return set() if surface is None else {surface}
+        if isinstance(node, Tuple):
+            surfaces: set[StreamLegacySurface] = set()
+            for element in node.elts:
+                surfaces.update(self._alias_surfaces_for_node(element))
+            return surfaces
+        if isinstance(node, BinOp) and isinstance(node.op, BitOr):
+            return self._alias_surfaces_for_node(
+                node.left
+            ) | self._alias_surfaces_for_node(node.right)
+        return set()
+
+    def _legacy_classifier_surfaces_for_name(
+        self,
+        name: str,
+    ) -> set[StreamLegacySurface]:
+        for scope in reversed(self._legacy_classifier_surface_name_scopes):
+            surfaces = scope.get(name)
+            if surfaces is not None:
+                return set(surfaces)
+        return set()
+
+    def _record_legacy_classifier_alias(
+        self,
+        name: str,
+        surfaces: set[StreamLegacySurface],
+    ) -> None:
+        self._legacy_classifier_surface_name_scopes[-1][name] = frozenset(
+            surfaces
+        )
+
+    @staticmethod
+    def _legacy_classifier_import_surface(
+        module: str,
+        name: str,
+    ) -> StreamLegacySurface | None:
+        surface = _LEGACY_CLASSIFIER_SYMBOL_SURFACES.get(name)
+        if surface is None:
+            return None
+        if name != "Event":
+            return surface
+        if module in _LEGACY_CLASSIFIER_EVENT_IMPORT_MODULES:
+            return surface
+        return None
 
     @staticmethod
     def _tracks_string_classifier(key: tuple[str, str]) -> bool:
@@ -475,13 +970,10 @@ def _source_legacy_stream_classifier_sites(
 
 
 def _legacy_classifier_module_paths(root: Path) -> dict[str, Path]:
-    paths = dict(_LEGACY_CLASSIFIER_MODULE_PATHS)
-    for scan_root in _LEGACY_CLASSIFIER_SCAN_ROOTS:
-        for path in (root / scan_root).rglob("*.py"):
-            relative = path.relative_to(root)
-            module = ".".join(relative.with_suffix("").parts[1:])
-            paths.setdefault(module, relative)
-    return paths
+    return {
+        _module_name_from_source_path(root, path): path.relative_to(root)
+        for path in sorted((root / "src" / "avalan").rglob("*.py"))
+    }
 
 
 def _inventory_legacy_stream_classifier_sites() -> (
@@ -537,6 +1029,713 @@ def _module_defined_qualnames(tree: AST) -> set[str]:
             for alias in node.names:
                 names.add(alias.asname or alias.name.split(".", maxsplit=1)[0])
     return names
+
+
+def _module_name_from_source_path(root: Path, path: Path) -> str:
+    return ".".join(path.relative_to(root / "src").with_suffix("").parts)
+
+
+def _runtime_source_test_import_sites(tree: AST) -> set[tuple[int, str]]:
+    sites: set[tuple[int, str]] = set()
+
+    def visit(node: AST) -> None:
+        if isinstance(node, Import):
+            for alias in node.names:
+                if _is_tests_module(alias.name):
+                    sites.add((node.lineno, alias.name))
+        if isinstance(node, ImportFrom):
+            module = node.module or ""
+            if _is_tests_module(module):
+                sites.add((node.lineno, module))
+        for child in iter_child_nodes(node):
+            visit(child)
+
+    visit(tree)
+    return sites
+
+
+def _is_tests_module(module: str) -> bool:
+    return module == "tests" or module.startswith("tests.")
+
+
+def _ast_root_name(node: AST) -> str | None:
+    if isinstance(node, Name):
+        return node.id
+    if isinstance(node, Attribute):
+        return node.attr
+    if isinstance(node, Subscript):
+        return _ast_root_name(node.value)
+    return None
+
+
+def _subscript_args(node: Subscript) -> tuple[AST, ...]:
+    if isinstance(node.slice, Tuple):
+        return tuple(node.slice.elts)
+    return (node.slice,)
+
+
+def _legacy_streaming_item_symbols(
+    node: AST,
+    *,
+    allow_string: bool,
+    item_alias_symbols: dict[str, frozenset[str]] | None = None,
+) -> set[str]:
+    if isinstance(node, Name):
+        if item_alias_symbols is not None and node.id in item_alias_symbols:
+            return set(item_alias_symbols[node.id])
+        if node.id == "str":
+            return {"str"} if allow_string else set()
+        if node.id in _NON_STRING_LEGACY_STREAMING_RETURN_SYMBOL_NAMES:
+            return {node.id}
+        return set()
+    if isinstance(node, Attribute):
+        if node.attr in _NON_STRING_LEGACY_STREAMING_RETURN_SYMBOL_NAMES:
+            return {node.attr}
+        return set()
+    if isinstance(node, BinOp) and isinstance(node.op, BitOr):
+        return _legacy_streaming_item_symbols(
+            node.left,
+            allow_string=True,
+            item_alias_symbols=item_alias_symbols,
+        ) | _legacy_streaming_item_symbols(
+            node.right,
+            allow_string=True,
+            item_alias_symbols=item_alias_symbols,
+        )
+    if isinstance(node, Tuple):
+        symbols: set[str] = set()
+        for element in node.elts:
+            symbols.update(
+                _legacy_streaming_item_symbols(
+                    element,
+                    allow_string=allow_string,
+                    item_alias_symbols=item_alias_symbols,
+                )
+            )
+        return symbols
+    if isinstance(node, Subscript):
+        root_name = _ast_root_name(node.value)
+        symbols = set[str]()
+        for element in _subscript_args(node):
+            symbols.update(
+                _legacy_streaming_item_symbols(
+                    element,
+                    allow_string=root_name in {"tuple", "Tuple"},
+                    item_alias_symbols=item_alias_symbols,
+                )
+            )
+        return symbols
+    return set()
+
+
+def _streaming_return_legacy_symbols(
+    node: AST,
+    *,
+    container_names: set[str] | None = None,
+    item_alias_symbols: dict[str, frozenset[str]] | None = None,
+) -> set[str]:
+    streaming_container_names = (
+        _STREAMING_RETURN_CONTAINER_NAMES
+        if container_names is None
+        else container_names
+    )
+    if isinstance(node, Name):
+        if node.id in _STREAMING_RETURN_ALIAS_NAMES:
+            return {node.id}
+        return set()
+    if isinstance(node, Attribute):
+        if node.attr in _STREAMING_RETURN_ALIAS_NAMES:
+            return {node.attr}
+        return set()
+    if isinstance(node, BinOp) and isinstance(node.op, BitOr):
+        return _streaming_return_legacy_symbols(
+            node.left,
+            container_names=streaming_container_names,
+            item_alias_symbols=item_alias_symbols,
+        ) | _streaming_return_legacy_symbols(
+            node.right,
+            container_names=streaming_container_names,
+            item_alias_symbols=item_alias_symbols,
+        )
+    if isinstance(node, Tuple):
+        symbols: set[str] = set()
+        for element in node.elts:
+            symbols.update(
+                _streaming_return_legacy_symbols(
+                    element,
+                    container_names=streaming_container_names,
+                    item_alias_symbols=item_alias_symbols,
+                )
+            )
+        return symbols
+    if isinstance(node, Subscript):
+        root_name = _ast_root_name(node.value)
+        args = _subscript_args(node)
+        if root_name in streaming_container_names and args:
+            return _legacy_streaming_item_symbols(
+                args[0],
+                allow_string=True,
+                item_alias_symbols=item_alias_symbols,
+            )
+        symbols = set[str]()
+        for element in args:
+            symbols.update(
+                _streaming_return_legacy_symbols(
+                    element,
+                    container_names=streaming_container_names,
+                    item_alias_symbols=item_alias_symbols,
+                )
+            )
+        return symbols
+    return set()
+
+
+def _target_name(node: AST) -> str | None:
+    if isinstance(node, Name):
+        return node.id
+    if isinstance(node, Attribute):
+        return node.attr
+    return None
+
+
+class _PublicStreamingReturnVisitor(NodeVisitor):
+    def __init__(self, module: str) -> None:
+        self.module = module
+        self.stack: list[str] = []
+        self.sites: dict[tuple[str, str, str], frozenset[str]] = {}
+        self._streaming_container_name_scopes = [
+            set(_STREAMING_RETURN_CONTAINER_NAMES)
+        ]
+        self._legacy_item_alias_symbol_scopes: list[
+            dict[str, frozenset[str]]
+        ] = [{}]
+
+    def visit_ClassDef(self, node: ClassDef) -> None:
+        for base in node.bases:
+            symbols = _streaming_return_legacy_symbols(
+                base,
+                container_names=self._streaming_container_names(),
+                item_alias_symbols=self._legacy_item_alias_symbols(),
+            )
+            if symbols:
+                self.sites[(self.module, node.name, "base")] = frozenset(
+                    symbols
+                )
+        self.stack.append(node.name)
+        self._push_scope()
+        for child in node.body:
+            if isinstance(
+                child,
+                (
+                    FunctionDef,
+                    AsyncFunctionDef,
+                    ClassDef,
+                    Assign,
+                    AnnAssign,
+                    ImportFrom,
+                ),
+            ):
+                self.visit(child)
+        self._pop_scope()
+        self.stack.pop()
+
+    def visit_FunctionDef(self, node: FunctionDef) -> None:
+        self._visit_function_return(node)
+
+    def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> None:
+        self._visit_function_return(node)
+
+    def visit_ImportFrom(self, node: ImportFrom) -> None:
+        for alias in node.names:
+            if alias.name in self._streaming_container_names():
+                self._streaming_container_name_scopes[-1].add(
+                    alias.asname or alias.name
+                )
+
+    def visit_Assign(self, node: Assign) -> None:
+        self._record_streaming_container_aliases(
+            tuple(node.targets),
+            node.value,
+        )
+        symbols = _streaming_return_legacy_symbols(
+            node.value,
+            container_names=self._streaming_container_names(),
+            item_alias_symbols=self._legacy_item_alias_symbols(),
+        )
+        self._record_legacy_item_aliases(tuple(node.targets), node.value)
+        if not symbols:
+            return
+        for target in node.targets:
+            target_name = _target_name(target)
+            if target_name is not None:
+                self.sites[
+                    (
+                        self.module,
+                        ".".join(self.stack + [target_name]),
+                        "alias",
+                    )
+                ] = frozenset(symbols)
+
+    def visit_AnnAssign(self, node: AnnAssign) -> None:
+        value = node.value or node.annotation
+        if value is None:
+            return
+        if node.value is not None:
+            self._record_streaming_container_aliases(
+                (node.target,),
+                node.value,
+            )
+        symbols = _streaming_return_legacy_symbols(
+            value,
+            container_names=self._streaming_container_names(),
+            item_alias_symbols=self._legacy_item_alias_symbols(),
+        )
+        self._record_legacy_item_aliases((node.target,), value)
+        target_name = _target_name(node.target)
+        if symbols and target_name is not None:
+            self.sites[
+                (self.module, ".".join(self.stack + [target_name]), "alias")
+            ] = frozenset(symbols)
+
+    def _visit_function_return(
+        self, node: FunctionDef | AsyncFunctionDef
+    ) -> None:
+        if node.returns is None:
+            return
+        symbols = _streaming_return_legacy_symbols(
+            node.returns,
+            container_names=self._streaming_container_names(),
+            item_alias_symbols=self._legacy_item_alias_symbols(),
+        )
+        if symbols:
+            self.sites[
+                (self.module, ".".join(self.stack + [node.name]), "return")
+            ] = frozenset(symbols)
+
+    def _push_scope(self) -> None:
+        self._streaming_container_name_scopes.append(set())
+        self._legacy_item_alias_symbol_scopes.append({})
+
+    def _pop_scope(self) -> None:
+        self._streaming_container_name_scopes.pop()
+        self._legacy_item_alias_symbol_scopes.pop()
+
+    def _streaming_container_names(self) -> set[str]:
+        names: set[str] = set()
+        for scope in self._streaming_container_name_scopes:
+            names.update(scope)
+        return names
+
+    def _record_streaming_container_aliases(
+        self,
+        targets: tuple[AST, ...],
+        value: AST,
+    ) -> None:
+        if not isinstance(value, (Name, Attribute)):
+            return
+        if not self._is_streaming_container_reference(value):
+            return
+
+        target_names: set[str] = set()
+        for target in targets:
+            _add_defined_target_name(target_names, target)
+        self._streaming_container_name_scopes[-1].update(target_names)
+
+    def _is_streaming_container_reference(self, node: AST) -> bool:
+        root_name = _ast_root_name(node)
+        return (
+            root_name is not None
+            and root_name in self._streaming_container_names()
+        )
+
+    def _record_legacy_item_aliases(
+        self,
+        targets: tuple[AST, ...],
+        value: AST,
+    ) -> None:
+        root_name = (
+            _ast_root_name(value.value)
+            if isinstance(value, Subscript)
+            else None
+        )
+        if root_name in self._streaming_container_names():
+            return
+
+        symbols = _legacy_streaming_item_symbols(
+            value,
+            allow_string=True,
+            item_alias_symbols=self._legacy_item_alias_symbols(),
+        )
+        if not symbols:
+            return
+
+        target_names: set[str] = set()
+        for target in targets:
+            _add_defined_target_name(target_names, target)
+        for target_name in target_names:
+            self._legacy_item_alias_symbol_scopes[-1][target_name] = frozenset(
+                symbols
+            )
+
+    def _legacy_item_alias_symbols(self) -> dict[str, frozenset[str]]:
+        aliases: dict[str, frozenset[str]] = {}
+        for scope in self._legacy_item_alias_symbol_scopes:
+            aliases.update(scope)
+        return aliases
+
+
+def _source_public_streaming_return_legacy_sites(
+    root: Path,
+) -> dict[tuple[str, str, str], frozenset[str]]:
+    sites: dict[tuple[str, str, str], frozenset[str]] = {}
+    for path in (root / "src" / "avalan").rglob("*.py"):
+        visitor = _PublicStreamingReturnVisitor(
+            _module_name_from_source_path(root, path)
+        )
+        visitor.visit(parse(path.read_text(encoding="utf-8")))
+        sites.update(visitor.sites)
+    return sites
+
+
+class _ProtocolProjectionMapperVisitor(NodeVisitor):
+    def __init__(self, module: str) -> None:
+        self.module = module
+        self.stack: list[str] = []
+        self.sites: set[tuple[str, str, int]] = set()
+        self._projection_state_name_scopes = [
+            set(_PROTOCOL_PROJECTION_STATE_NAMES)
+        ]
+        self._legacy_mapper_kwargs_name_scopes = [set[str]()]
+        self._legacy_mapper_key_name_scopes = [set[str]()]
+
+    def visit_Module(self, node: AST) -> None:
+        self._prime_scope_references(list(getattr(node, "body", ())))
+        self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ClassDef) -> None:
+        self.stack.append(node.name)
+        self._push_scope()
+        self._prime_scope_references(node.body)
+        self.generic_visit(node)
+        self._pop_scope()
+        self.stack.pop()
+
+    def visit_FunctionDef(self, node: FunctionDef) -> None:
+        self._record_projection_state_wrapper(node)
+        self.stack.append(node.name)
+        self._push_scope()
+        self._prime_scope_references(node.body)
+        self.generic_visit(node)
+        self._pop_scope()
+        self.stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> None:
+        self._record_projection_state_wrapper(node)
+        self.stack.append(node.name)
+        self._push_scope()
+        self._prime_scope_references(node.body)
+        self.generic_visit(node)
+        self._pop_scope()
+        self.stack.pop()
+
+    def visit_ImportFrom(self, node: ImportFrom) -> None:
+        self._record_import_aliases(node)
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: Assign) -> None:
+        self._record_assignment_aliases(tuple(node.targets), node.value)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: AnnAssign) -> None:
+        if node.value is not None:
+            self._record_assignment_aliases((node.target,), node.value)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: Call) -> None:
+        if self._is_projection_state_reference(
+            node.func
+        ) and self._call_has_legacy_item_mapper(node):
+            self.sites.add(
+                (
+                    self.module,
+                    ".".join(self.stack) or "<module>",
+                    node.lineno,
+                )
+            )
+        self.generic_visit(node)
+
+    def _push_scope(self) -> None:
+        self._projection_state_name_scopes.append(set())
+        self._legacy_mapper_kwargs_name_scopes.append(set())
+        self._legacy_mapper_key_name_scopes.append(set())
+
+    def _pop_scope(self) -> None:
+        self._projection_state_name_scopes.pop()
+        self._legacy_mapper_kwargs_name_scopes.pop()
+        self._legacy_mapper_key_name_scopes.pop()
+
+    def _prime_scope_references(self, body: list[AST]) -> None:
+        for child in body:
+            if isinstance(child, ImportFrom):
+                self._record_import_aliases(child)
+        for child in body:
+            if isinstance(child, Assign):
+                self._record_assignment_aliases(
+                    tuple(child.targets),
+                    child.value,
+                )
+            if isinstance(child, AnnAssign) and child.value is not None:
+                self._record_assignment_aliases((child.target,), child.value)
+        for child in body:
+            if isinstance(child, (FunctionDef, AsyncFunctionDef)):
+                self._record_projection_state_wrapper(child)
+
+    def _record_import_aliases(self, node: ImportFrom) -> None:
+        for alias in node.names:
+            if alias.name in _PROTOCOL_PROJECTION_STATE_NAMES:
+                self._projection_state_name_scopes[-1].add(
+                    alias.asname or alias.name
+                )
+
+    def _record_assignment_aliases(
+        self,
+        targets: tuple[AST, ...],
+        value: AST,
+    ) -> None:
+        target_names: set[str] = set()
+        for target in targets:
+            _add_defined_target_name(target_names, target)
+        if not target_names:
+            return
+        if self._is_projection_state_reference(value):
+            self._projection_state_name_scopes[-1].update(target_names)
+        if self._is_legacy_item_mapper_key(value):
+            self._legacy_mapper_key_name_scopes[-1].update(target_names)
+        if self._kwargs_value_has_legacy_item_mapper(value):
+            self._legacy_mapper_kwargs_name_scopes[-1].update(target_names)
+
+    def _record_projection_state_wrapper(
+        self,
+        node: FunctionDef | AsyncFunctionDef,
+    ) -> None:
+        if self._function_forwards_kwargs_to_projection_state(node):
+            self._projection_state_name_scopes[-1].add(node.name)
+
+    def _function_forwards_kwargs_to_projection_state(
+        self,
+        node: FunctionDef | AsyncFunctionDef,
+    ) -> bool:
+        if node.args.kwarg is None:
+            return False
+        forwarded_names = {node.args.kwarg.arg}
+        projection_state_names = self._projection_state_names()
+        return any(
+            self._node_forwards_kwargs_to_projection_state(
+                child,
+                forwarded_names,
+                projection_state_names,
+            )
+            for child in node.body
+        )
+
+    def _node_forwards_kwargs_to_projection_state(
+        self,
+        node: AST,
+        forwarded_names: set[str],
+        projection_state_names: set[str],
+    ) -> bool:
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            return False
+        if isinstance(node, Assign):
+            self._record_projection_state_aliases(
+                tuple(node.targets),
+                node.value,
+                projection_state_names,
+            )
+        if isinstance(node, AnnAssign) and node.value is not None:
+            self._record_projection_state_aliases(
+                (node.target,),
+                node.value,
+                projection_state_names,
+            )
+        if isinstance(node, Call) and self._node_root_name_is_in(
+            node.func,
+            projection_state_names,
+        ):
+            return any(
+                keyword.arg is None
+                and isinstance(keyword.value, Name)
+                and keyword.value.id in forwarded_names
+                for keyword in node.keywords
+            )
+        return any(
+            self._node_forwards_kwargs_to_projection_state(
+                child,
+                forwarded_names,
+                projection_state_names,
+            )
+            for child in iter_child_nodes(node)
+        )
+
+    def _record_projection_state_aliases(
+        self,
+        targets: tuple[AST, ...],
+        value: AST,
+        projection_state_names: set[str],
+    ) -> None:
+        if not self._node_root_name_is_in(value, projection_state_names):
+            return
+        for target in targets:
+            _add_defined_target_name(projection_state_names, target)
+
+    @staticmethod
+    def _node_root_name_is_in(node: AST, names: set[str]) -> bool:
+        root_name = _ast_root_name(node)
+        return root_name is not None and root_name in names
+
+    def _is_projection_state_reference(self, node: AST) -> bool:
+        root_name = _ast_root_name(node)
+        return (
+            root_name is not None
+            and root_name in self._projection_state_names()
+        )
+
+    def _projection_state_names(self) -> set[str]:
+        names: set[str] = set()
+        for scope in self._projection_state_name_scopes:
+            names.update(scope)
+        return names
+
+    def _legacy_mapper_kwargs_names(self) -> set[str]:
+        names: set[str] = set()
+        for scope in self._legacy_mapper_kwargs_name_scopes:
+            names.update(scope)
+        return names
+
+    def _legacy_mapper_key_names(self) -> set[str]:
+        names: set[str] = set()
+        for scope in self._legacy_mapper_key_name_scopes:
+            names.update(scope)
+        return names
+
+    def _call_has_legacy_item_mapper(self, node: Call) -> bool:
+        for keyword in node.keywords:
+            if keyword.arg == _LEGACY_ITEM_MAPPER_KEYWORD:
+                return True
+            if (
+                keyword.arg is None
+                and self._kwargs_value_has_legacy_item_mapper(keyword.value)
+            ):
+                return True
+        return False
+
+    def _kwargs_value_has_legacy_item_mapper(self, node: AST) -> bool:
+        if isinstance(node, Name):
+            return node.id in self._legacy_mapper_kwargs_names()
+        if isinstance(node, Dict):
+            for key, value in zip(node.keys, node.values):
+                if self._is_legacy_item_mapper_key(key):
+                    return True
+                if key is None and self._kwargs_value_has_legacy_item_mapper(
+                    value
+                ):
+                    return True
+            return False
+        if isinstance(node, Call) and _ast_root_name(node.func) == "dict":
+            for arg in node.args:
+                if self._kwargs_value_has_legacy_item_mapper(arg):
+                    return True
+            return any(
+                keyword.arg == _LEGACY_ITEM_MAPPER_KEYWORD
+                or (
+                    keyword.arg is None
+                    and self._kwargs_value_has_legacy_item_mapper(
+                        keyword.value
+                    )
+                )
+                for keyword in node.keywords
+            )
+        return False
+
+    def _is_legacy_item_mapper_key(self, node: AST | None) -> bool:
+        if (
+            isinstance(node, Constant)
+            and node.value == _LEGACY_ITEM_MAPPER_KEYWORD
+        ):
+            return True
+        if (
+            isinstance(node, Name)
+            and node.id in self._legacy_mapper_key_names()
+        ):
+            return True
+        return False
+
+
+def _source_protocol_projection_legacy_mapper_sites(
+    root: Path,
+) -> set[tuple[str, str, int]]:
+    sites: set[tuple[str, str, int]] = set()
+    for path in (root / "src" / "avalan" / "server").rglob("*.py"):
+        visitor = _ProtocolProjectionMapperVisitor(
+            _module_name_from_source_path(root, path)
+        )
+        visitor.visit(parse(path.read_text(encoding="utf-8")))
+        sites.update(visitor.sites)
+    return sites
+
+
+def _source_inherited_text_stream_canonicalization_sites(
+    root: Path,
+) -> set[tuple[str, str]]:
+    module_trees = {
+        _module_name_from_source_path(root, path): parse(
+            path.read_text(encoding="utf-8")
+        )
+        for path in sorted((root / "src" / "avalan").rglob("*.py"))
+    }
+    return _inherited_text_stream_canonicalization_sites(module_trees)
+
+
+def _inherited_text_stream_canonicalization_sites(
+    module_trees: dict[str, AST],
+) -> set[tuple[str, str]]:
+    class_defs: dict[tuple[str, str], tuple[set[str], bool]] = {}
+    for module, tree in module_trees.items():
+        for node in getattr(tree, "body", ()):
+            if not isinstance(node, ClassDef):
+                continue
+            base_names = {
+                root_name
+                for base in node.bases
+                if (root_name := _ast_root_name(base)) is not None
+            }
+            class_defs[(module, node.name)] = (
+                base_names,
+                _class_defines_canonical_stream(node),
+            )
+
+    legacy_stream_names = set(_TEXT_STREAM_LEGACY_CANONICALIZATION_BASE_NAMES)
+    sites: set[tuple[str, str]] = set()
+    changed = True
+    while changed:
+        changed = False
+        for key, (base_names, defines_canonical_stream) in class_defs.items():
+            if key in sites or defines_canonical_stream:
+                continue
+            if base_names.isdisjoint(legacy_stream_names):
+                continue
+            sites.add(key)
+            legacy_stream_names.add(key[1])
+            changed = True
+    return sites
+
+
+def _class_defines_canonical_stream(node: ClassDef) -> bool:
+    return any(
+        isinstance(child, (FunctionDef, AsyncFunctionDef))
+        and child.name == "canonical_stream"
+        for child in node.body
+    )
 
 
 class StreamContractTestCase(TestCase):
@@ -930,7 +2129,7 @@ class StreamContractTestCase(TestCase):
 
         self.assertIsNone(state.terminal_projection())
 
-    def test_stream_projection_state_projects_legacy_tokens_with_fallback_ids(
+    def test_stream_projection_state_legacy_rejection_first_item(
         self,
     ) -> None:
         state = StreamProjectionState(
@@ -938,108 +2137,73 @@ class StreamContractTestCase(TestCase):
             run_id="fallback-run",
             turn_id="fallback-turn",
         )
+        legacy_rejection_token = Token(token="legacy")
 
-        projection = state.project(
-            Token(token="legacy"),
-            7,
-            unsupported_message="unsupported stream item",
-        )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item",
+        ):
+            state.project(
+                legacy_rejection_token,
+                7,
+                unsupported_message="unsupported stream item",
+            )
 
-        state.validate_complete()
         self.assertFalse(state.has_canonical_items)
         self.assertTrue(state.legacy_stream_seen)
-        self.assertEqual(projection.stream_session_id, "fallback-stream")
-        self.assertEqual(projection.sequence, 7)
-        self.assertEqual(projection.text_delta, "legacy")
 
-    def test_stream_projection_state_reuses_legacy_adapter(self) -> None:
-        original_adapter = _LegacyTokenStreamAdapter(
-            stream_session_id="fallback-stream",
-            run_id="fallback-run",
-            turn_id="fallback-turn",
-        )
-        adapter = MagicMock()
-        adapter.item_from_token.side_effect = original_adapter.item_from_token
-
+    def test_stream_projection_state_legacy_rejection_skips_default_adapter(
+        self,
+    ) -> None:
         with patch(
             "avalan.model.stream._LegacyTokenStreamAdapter",
-            return_value=adapter,
         ) as adapter_class:
             state = StreamProjectionState(
                 stream_session_id="fallback-stream",
                 run_id="fallback-run",
                 turn_id="fallback-turn",
             )
-            first = state.project(
-                "one",
-                1,
-                unsupported_message="unsupported stream item",
-            )
-            second = state.project(
-                Token(token="two"),
-                2,
-                unsupported_message="unsupported stream item",
-            )
+            with self.assertRaisesRegex(
+                StreamValidationError,
+                "unsupported stream item",
+            ):
+                state.project(
+                    "legacy",
+                    1,
+                    unsupported_message="unsupported stream item",
+                )
 
-        adapter_class.assert_called_once_with(
-            stream_session_id="fallback-stream",
-            run_id="fallback-run",
-            turn_id="fallback-turn",
-        )
-        adapter.item_from_token.assert_has_calls(
-            [
-                call("one", 1),
-                call(Token(token="two"), 2),
-            ]
-        )
-        self.assertEqual(first.text_delta, "one")
-        self.assertEqual(second.text_delta, "two")
+        adapter_class.assert_not_called()
 
-    def test_stream_projection_state_does_not_share_legacy_adapters(
+    def test_stream_projection_state_rejects_legacy_per_state(
         self,
     ) -> None:
-        first_adapter = _LegacyTokenStreamAdapter(
-            stream_session_id="first-stream",
-            run_id="first-run",
-            turn_id="first-turn",
-        )
-        second_adapter = _LegacyTokenStreamAdapter(
-            stream_session_id="second-stream",
-            run_id="second-run",
-            turn_id="second-turn",
-        )
-
-        with patch(
-            "avalan.model.stream._LegacyTokenStreamAdapter",
-            side_effect=[first_adapter, second_adapter],
-        ) as adapter_class:
-            first_state = StreamProjectionState(
+        states = (
+            StreamProjectionState(
                 stream_session_id="first-stream",
                 run_id="first-run",
                 turn_id="first-turn",
-            )
-            second_state = StreamProjectionState(
+            ),
+            StreamProjectionState(
                 stream_session_id="second-stream",
                 run_id="second-run",
                 turn_id="second-turn",
-            )
+            ),
+        )
 
-            first = first_state.project(
-                "first",
-                0,
-                unsupported_message="unsupported stream item",
-            )
-            second = second_state.project(
-                "second",
-                0,
-                unsupported_message="unsupported stream item",
-            )
-
-        self.assertEqual(adapter_class.call_count, 2)
-        self.assertEqual(first.stream_session_id, "first-stream")
-        self.assertEqual(second.stream_session_id, "second-stream")
-        self.assertEqual(first.text_delta, "first")
-        self.assertEqual(second.text_delta, "second")
+        for state in states:
+            with self.subTest(stream_session_id=state.stream_session_id):
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "unsupported stream item",
+                ):
+                    state.project(
+                        "legacy",
+                        0,
+                        unsupported_message="unsupported stream item",
+                    )
+                self.assertTrue(state.legacy_stream_seen)
+                self.assertFalse(state.has_canonical_items)
 
     def test_project_stream_consumer_item_uses_shared_projection_state(
         self,
@@ -1052,7 +2216,7 @@ class StreamContractTestCase(TestCase):
             turn_id="turn",
             text_delta="canonical",
         )
-        legacy = Token(token="legacy")
+        legacy_rejection_token = Token(token="legacy")
 
         canonical_projection = project_stream_consumer_item(
             canonical,
@@ -1062,23 +2226,107 @@ class StreamContractTestCase(TestCase):
             turn_id="fallback-turn",
             unsupported_message="unsupported helper stream item",
         )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported helper stream item",
+        ):
+            project_stream_consumer_item(
+                legacy_rejection_token,
+                5,
+                stream_session_id="fallback-stream",
+                run_id="fallback-run",
+                turn_id="fallback-turn",
+                unsupported_message="unsupported helper stream item",
+            )
+
+        self.assertEqual(canonical_projection.stream_session_id, "stream")
+        self.assertEqual(canonical_projection.sequence, 3)
+        self.assertEqual(canonical_projection.text_delta, "canonical")
+
+    def test_project_stream_consumer_item_accepts_legacy_fixture_mapper(
+        self,
+    ) -> None:
+        legacy_fixture_token = Token(token="legacy")
+
+        def legacy_fixture_mapper(
+            item: object,
+        ) -> tuple[CanonicalStreamItem, ...]:
+            if item != legacy_fixture_token:
+                return ()
+            return (
+                _item(
+                    StreamItemKind.ANSWER_DELTA,
+                    5,
+                    stream_session_id="mapped-stream",
+                    run_id="mapped-run",
+                    turn_id="mapped-turn",
+                    text_delta="legacy",
+                ),
+            )
+
         legacy_projection = project_stream_consumer_item(
-            legacy,
+            legacy_fixture_token,
             5,
             stream_session_id="fallback-stream",
             run_id="fallback-run",
             turn_id="fallback-turn",
             unsupported_message="unsupported helper stream item",
+            legacy_item_mapper=legacy_fixture_mapper,
         )
 
-        self.assertEqual(canonical_projection.stream_session_id, "stream")
-        self.assertEqual(canonical_projection.sequence, 3)
-        self.assertEqual(canonical_projection.text_delta, "canonical")
-        self.assertEqual(
-            legacy_projection.stream_session_id, "fallback-stream"
-        )
+        self.assertEqual(legacy_projection.stream_session_id, "mapped-stream")
         self.assertEqual(legacy_projection.sequence, 5)
         self.assertEqual(legacy_projection.text_delta, "legacy")
+
+    def test_stream_projection_state_legacy_fixture_mapper_is_one_way(
+        self,
+    ) -> None:
+        legacy_fixture_token = Token(token="legacy")
+
+        def legacy_fixture_mapper(
+            item: object,
+        ) -> tuple[CanonicalStreamItem, ...]:
+            assert item is legacy_fixture_token
+            return (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.ANSWER_DELTA,
+                    1,
+                    text_delta="legacy",
+                ),
+            )
+
+        with patch(
+            "avalan.model.stream._LegacyTokenStreamAdapter",
+        ) as adapter_class:
+            state = StreamProjectionState(
+                stream_session_id="fallback-stream",
+                run_id="fallback-run",
+                turn_id="fallback-turn",
+                legacy_item_mapper=legacy_fixture_mapper,
+            )
+            projections = state.project_many(
+                legacy_fixture_token,
+                0,
+                unsupported_message="unsupported stream item",
+            )
+            with self.assertRaisesRegex(
+                StreamValidationError,
+                "canonical stream item after legacy stream item",
+            ):
+                state.project(
+                    _item(StreamItemKind.ANSWER_DONE, 2),
+                    2,
+                    unsupported_message="unsupported stream item",
+                )
+
+        adapter_class.assert_not_called()
+        self.assertEqual(
+            [projection.sequence for projection in projections],
+            [0, 1],
+        )
+        self.assertTrue(state.legacy_stream_seen)
+        self.assertFalse(state.has_canonical_items)
 
     def test_project_stream_consumer_item_rejects_invalid_values(
         self,
@@ -1110,7 +2358,9 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         sentinel = object()
 
-        def map_legacy(item: object) -> tuple[CanonicalStreamItem, ...]:
+        def legacy_fixture_mapper(
+            item: object,
+        ) -> tuple[CanonicalStreamItem, ...]:
             if item is not sentinel:
                 return ()
             return (
@@ -1151,7 +2401,7 @@ class StreamContractTestCase(TestCase):
             stream_session_id="fallback-stream",
             run_id="fallback-run",
             turn_id="fallback-turn",
-            legacy_item_mapper=map_legacy,
+            legacy_item_mapper=legacy_fixture_mapper,
         )
 
         projections = state.project_many(
@@ -1198,14 +2448,16 @@ class StreamContractTestCase(TestCase):
     def test_stream_projection_state_wraps_mapper_assertion(
         self,
     ) -> None:
-        def map_legacy(_: object) -> tuple[CanonicalStreamItem, ...]:
+        def legacy_fixture_mapper(
+            _: object,
+        ) -> tuple[CanonicalStreamItem, ...]:
             raise AssertionError("bad legacy item")
 
         state = StreamProjectionState(
             stream_session_id="fallback-stream",
             run_id="fallback-run",
             turn_id="fallback-turn",
-            legacy_item_mapper=map_legacy,
+            legacy_item_mapper=legacy_fixture_mapper,
         )
 
         with self.assertRaisesRegex(
@@ -1215,6 +2467,63 @@ class StreamContractTestCase(TestCase):
             state.project_many(
                 object(),
                 0,
+                unsupported_message="unsupported stream item",
+            )
+
+    def test_stream_projection_state_rejects_none_mapped_legacy_items(
+        self,
+    ) -> None:
+        def legacy_fixture_mapper(
+            _: object,
+        ) -> tuple[CanonicalStreamItem, ...] | None:
+            return None
+
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+            legacy_item_mapper=legacy_fixture_mapper,
+        )
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item",
+        ):
+            state.project_many(
+                object(),
+                0,
+                unsupported_message="unsupported stream item",
+            )
+
+        self.assertTrue(state.legacy_stream_seen)
+
+    def test_stream_projection_state_rejects_projection_after_legacy_item(
+        self,
+    ) -> None:
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+            legacy_item_mapper=lambda _: (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+            ),
+        )
+        projection = StreamConsumerProjection.from_item(
+            _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="canonical")
+        )
+        state.project_many(
+            object(),
+            0,
+            unsupported_message="unsupported stream item",
+        )
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "canonical stream item after legacy stream item",
+        ):
+            state.project(
+                projection,
+                1,
                 unsupported_message="unsupported stream item",
             )
 
@@ -1242,16 +2551,16 @@ class StreamContractTestCase(TestCase):
             turn_id="fallback-turn",
         )
         mixed_state.project(
-            "legacy",
+            _item(StreamItemKind.STREAM_STARTED, 0),
             0,
             unsupported_message="unsupported stream item",
         )
         with self.assertRaisesRegex(
             StreamValidationError,
-            "canonical stream item after legacy stream item",
+            "legacy stream item after canonical stream item",
         ):
             mixed_state.project(
-                _item(StreamItemKind.STREAM_STARTED, 0),
+                "legacy",
                 1,
                 unsupported_message="unsupported stream item",
             )
@@ -7316,21 +8625,326 @@ class StreamContractTestCase(TestCase):
             source = path.read_text(encoding="utf-8")
             tree = parse(source)
             with self.subTest(path=relative_path):
-                for node in getattr(tree, "body", ()):
-                    if isinstance(node, Import):
-                        imported_modules = {alias.name for alias in node.names}
-                        self.assertFalse(
-                            any(
-                                module == "tests"
-                                or module.startswith("tests.")
-                                for module in imported_modules
-                            )
-                        )
-                    if isinstance(node, ImportFrom):
-                        module = node.module or ""
-                        self.assertFalse(
-                            module == "tests" or module.startswith("tests.")
-                        )
+                self.assertEqual(
+                    _runtime_source_test_import_sites(tree),
+                    set(),
+                )
+
+    def test_runtime_source_import_guard_detects_local_test_imports(
+        self,
+    ) -> None:
+        tree = parse("""def build_fixture():
+    from tests.model import model_stream_contract_test
+    import tests.model.model_stream_contract_test
+    return model_stream_contract_test
+""")
+
+        self.assertEqual(
+            {module for _, module in _runtime_source_test_import_sites(tree)},
+            {
+                "tests.model",
+                "tests.model.model_stream_contract_test",
+            },
+        )
+
+    def test_legacy_classifier_source_debt_snapshot_does_not_grow(
+        self,
+    ) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        current = _source_legacy_stream_classifier_sites(repository_root)
+        ceiling = _PHASE_1_1_LEGACY_CLASSIFIER_DEBT_CEILING
+
+        new_sites = set(current) - set(ceiling)
+        grown_surfaces = {
+            key: current[key] - ceiling[key]
+            for key in set(current).intersection(ceiling)
+            if current[key] - ceiling[key]
+        }
+
+        self.assertEqual(new_sites, set())
+        self.assertEqual(grown_surfaces, {})
+
+    def test_production_legacy_classifier_inventory_has_no_temporary_entries(
+        self,
+    ) -> None:
+        invalid_entries = tuple(
+            entry
+            for entry in legacy_stream_classifier_inventory()
+            if (
+                entry.scope is StreamLegacyInventoryScope.PRODUCTION_RUNTIME
+                and entry.classification
+                is not StreamLegacySurfaceClassification.REMOVE_NOW
+            )
+        )
+
+        self.assertEqual(invalid_entries, ())
+
+    def test_public_streaming_return_type_debt_snapshot_does_not_grow(
+        self,
+    ) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        current = _source_public_streaming_return_legacy_sites(repository_root)
+        ceiling = _PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING
+
+        new_sites = set(current) - set(ceiling)
+        grown_symbols = {
+            key: current[key] - ceiling[key]
+            for key in set(current).intersection(ceiling)
+            if current[key] - ceiling[key]
+        }
+
+        self.assertEqual(new_sites, set())
+        self.assertEqual(grown_symbols, {})
+
+    def test_public_streaming_return_guard_detects_aliased_containers(
+        self,
+    ) -> None:
+        tree = parse("""from collections.abc import AsyncIterator as Stream
+AssignedStream = AsyncIterator
+ChainedStream = AssignedStream
+
+def imported_alias() -> Stream[Token]:
+    ...
+
+def assignment_alias() -> AssignedStream[TokenDetail]:
+    ...
+
+class AliasedBase(ChainedStream[ReasoningToken]):
+    pass
+""")
+
+        visitor = _PublicStreamingReturnVisitor("avalan.synthetic")
+        visitor.visit(tree)
+
+        self.assertEqual(
+            visitor.sites,
+            {
+                (
+                    "avalan.synthetic",
+                    "imported_alias",
+                    "return",
+                ): frozenset({"Token"}),
+                (
+                    "avalan.synthetic",
+                    "assignment_alias",
+                    "return",
+                ): frozenset({"TokenDetail"}),
+                (
+                    "avalan.synthetic",
+                    "AliasedBase",
+                    "base",
+                ): frozenset({"ReasoningToken"}),
+            },
+        )
+
+    def test_public_streaming_return_guard_detects_legacy_item_aliases(
+        self,
+    ) -> None:
+        tree = parse("""from collections.abc import AsyncIterator as Stream
+LegacyAnswer = Token | str
+LegacyTool = ToolCallToken
+LegacyPair = tuple[ReasoningToken, ToolCallToken]
+
+def alias_stream() -> Stream[LegacyAnswer]:
+    ...
+
+def chained_alias_stream() -> AsyncIterator[LegacyPair]:
+    ...
+
+class AliasedBase(Stream[LegacyTool]):
+    pass
+
+class Holder:
+    InnerLegacy = TokenDetail
+
+    def stream(self) -> Stream[InnerLegacy | LegacyAnswer]:
+        ...
+""")
+
+        visitor = _PublicStreamingReturnVisitor("avalan.synthetic")
+        visitor.visit(tree)
+
+        self.assertEqual(
+            visitor.sites,
+            {
+                (
+                    "avalan.synthetic",
+                    "alias_stream",
+                    "return",
+                ): frozenset({"Token", "str"}),
+                (
+                    "avalan.synthetic",
+                    "chained_alias_stream",
+                    "return",
+                ): frozenset({"ReasoningToken", "ToolCallToken"}),
+                (
+                    "avalan.synthetic",
+                    "AliasedBase",
+                    "base",
+                ): frozenset({"ToolCallToken"}),
+                (
+                    "avalan.synthetic",
+                    "Holder.stream",
+                    "return",
+                ): frozenset({"Token", "TokenDetail", "str"}),
+            },
+        )
+
+    def test_protocol_projection_state_construction_is_canonical_only(
+        self,
+    ) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+
+        self.assertEqual(
+            _source_protocol_projection_legacy_mapper_sites(repository_root),
+            set(),
+        )
+
+    def test_protocol_projection_mapper_guard_detects_alias_and_kwargs(
+        self,
+    ) -> None:
+        tree = parse("""def direct(mapper):
+    return StreamProjectionState(legacy_item_mapper=mapper)
+
+def alias(mapper):
+    State = StreamProjectionState
+    return State(legacy_item_mapper=mapper)
+
+def kwargs(mapper):
+    options = {"legacy_item_mapper": mapper}
+    ProtocolState = ProtocolStreamProjectionState
+    return ProtocolState(**options)
+
+def dict_kwargs(mapper):
+    return StreamProjectionState(**dict(legacy_item_mapper=mapper))
+
+def make_state(**kwargs):
+    return ProtocolStreamProjectionState(**kwargs)
+
+def wrapper_direct_keyword(mapper):
+    return make_state(legacy_item_mapper=mapper)
+
+def wrapper_kwargs(mapper):
+    options = {"legacy_item_mapper": mapper}
+    return make_state(**options)
+""")
+
+        visitor = _ProtocolProjectionMapperVisitor("avalan.server.synthetic")
+        visitor.visit(tree)
+
+        self.assertEqual(
+            {(module, qualname) for module, qualname, _ in visitor.sites},
+            {
+                ("avalan.server.synthetic", "direct"),
+                ("avalan.server.synthetic", "alias"),
+                ("avalan.server.synthetic", "kwargs"),
+                ("avalan.server.synthetic", "dict_kwargs"),
+                ("avalan.server.synthetic", "wrapper_direct_keyword"),
+                ("avalan.server.synthetic", "wrapper_kwargs"),
+            },
+        )
+        self.assertEqual(len(visitor.sites), 6)
+
+    def test_protocol_projection_mapper_guard_detects_merged_constant_keys(
+        self,
+    ) -> None:
+        tree = parse("""LEGACY_MAPPER_KEY = "legacy_item_mapper"
+
+def constant_key(mapper):
+    options = {LEGACY_MAPPER_KEY: mapper}
+    return StreamProjectionState(**options)
+
+def merged_kwargs(mapper):
+    legacy_options = {LEGACY_MAPPER_KEY: mapper}
+    return ProtocolStreamProjectionState(
+        **{"accumulate": False, **legacy_options}
+    )
+
+def dict_merge(mapper):
+    legacy_options = dict(**{LEGACY_MAPPER_KEY: mapper})
+    State = StreamProjectionState
+    return State(**dict({"accumulate": False}, **legacy_options))
+""")
+
+        visitor = _ProtocolProjectionMapperVisitor("avalan.server.synthetic")
+        visitor.visit(tree)
+
+        self.assertEqual(
+            {(module, qualname) for module, qualname, _ in visitor.sites},
+            {
+                ("avalan.server.synthetic", "constant_key"),
+                ("avalan.server.synthetic", "merged_kwargs"),
+                ("avalan.server.synthetic", "dict_merge"),
+            },
+        )
+        self.assertEqual(len(visitor.sites), 3)
+
+    def test_protocol_projection_mapper_guard_detects_forward_wrapper(
+        self,
+    ) -> None:
+        tree = parse("""def forward_direct(mapper):
+    return make_state(legacy_item_mapper=mapper)
+
+def forward_kwargs(mapper):
+    options = {"legacy_item_mapper": mapper}
+    return make_state(**options)
+
+def make_state(**kwargs):
+    return StreamProjectionState(**kwargs)
+""")
+
+        visitor = _ProtocolProjectionMapperVisitor("avalan.server.synthetic")
+        visitor.visit(tree)
+
+        self.assertEqual(
+            {(module, qualname) for module, qualname, _ in visitor.sites},
+            {
+                ("avalan.server.synthetic", "forward_direct"),
+                ("avalan.server.synthetic", "forward_kwargs"),
+            },
+        )
+        self.assertEqual(len(visitor.sites), 2)
+
+    def test_text_stream_canonicalization_guard_detects_indirect_subclasses(
+        self,
+    ) -> None:
+        tree = parse("""class LegacyBase(TextGenerationVendorStream):
+    pass
+
+class IndirectLegacy(LegacyBase):
+    pass
+
+class CanonicalBase(TextGenerationVendorStream):
+    def canonical_stream(self):
+        pass
+
+class InheritsCanonical(CanonicalBase):
+    pass
+""")
+
+        self.assertEqual(
+            _inherited_text_stream_canonicalization_sites(
+                {"avalan.synthetic": tree}
+            ),
+            {
+                ("avalan.synthetic", "LegacyBase"),
+                ("avalan.synthetic", "IndirectLegacy"),
+            },
+        )
+
+    def test_text_provider_inherited_canonicalization_debt_does_not_grow(
+        self,
+    ) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        current = _source_inherited_text_stream_canonicalization_sites(
+            repository_root
+        )
+
+        self.assertTrue(
+            current.issubset(
+                _PHASE_1_1_INHERITED_TEXT_STREAM_CANONICALIZATION_CEILING
+            )
+        )
 
     def test_legacy_runtime_boundary_inventory_rejects_malformed_entries(
         self,
@@ -7465,13 +9079,22 @@ class StreamContractTestCase(TestCase):
             helper_entry.scope, StreamLegacyInventoryScope.HELPER_ONLY
         )
 
-    def test_legacy_classifier_inventory_matches_source(self) -> None:
+    def test_legacy_classifier_inventory_entries_resolve_to_source(
+        self,
+    ) -> None:
         repository_root = Path(__file__).resolve().parents[2]
 
-        self.assertEqual(
-            _source_legacy_stream_classifier_sites(repository_root),
-            _inventory_legacy_stream_classifier_sites(),
-        )
+        source_sites = _source_legacy_stream_classifier_sites(repository_root)
+        inventory_sites = _inventory_legacy_stream_classifier_sites()
+        extra_inventory_sites = set(inventory_sites) - set(source_sites)
+        extra_inventory_surfaces = {
+            key: inventory_sites[key] - source_sites[key]
+            for key in set(source_sites).intersection(inventory_sites)
+            if inventory_sites[key] - source_sites[key]
+        }
+
+        self.assertEqual(extra_inventory_sites, set())
+        self.assertEqual(extra_inventory_surfaces, {})
 
         inventory = legacy_stream_classifier_inventory()
         self.assertEqual(
@@ -7693,6 +9316,89 @@ def consume(item):
         self.assertNotIn(
             ("avalan.new_consumer", "consume"),
             _inventory_legacy_stream_classifier_sites(),
+        )
+
+    def test_legacy_classifier_guard_detects_import_and_assignment_aliases(
+        self,
+    ) -> None:
+        tree = parse(
+            """from avalan.entities import ReasoningToken as ThoughtToken
+from avalan.entities import Token
+from avalan.entities import Token as LegacyToken
+from avalan.entities import TokenDetail as LegacyTokenDetail
+from avalan.entities import ToolCallToken as LegacyToolCallToken
+from avalan.event import Event as LegacyEvent
+from asyncio import Event as AsyncEvent
+
+AliasToken = LegacyToken
+DirectAliasToken = Token
+AliasTokenDetail = LegacyTokenDetail
+AliasReasoningToken = ThoughtToken
+AliasToolCallToken = LegacyToolCallToken
+AliasEvent = LegacyEvent
+AsyncAlias = AsyncEvent
+
+def consume(item):
+    if isinstance(item, LegacyToken):
+        return item
+    if isinstance(item, AliasTokenDetail):
+        return item
+    if isinstance(item, DirectAliasToken):
+        return item
+    if isinstance(item, AliasReasoningToken):
+        return item
+    if isinstance(item, AliasToolCallToken):
+        return item
+    if isinstance(item, AliasEvent):
+        return item
+    if isinstance(item, AsyncAlias):
+        return item
+    return None
+"""
+        )
+
+        sites = _legacy_stream_classifier_sites("avalan.new_consumer", tree)
+
+        self.assertEqual(
+            sites,
+            {
+                ("avalan.new_consumer", "consume"): {
+                    StreamLegacySurface.TOKEN,
+                    StreamLegacySurface.TOKEN_DETAIL,
+                    StreamLegacySurface.REASONING_TOKEN,
+                    StreamLegacySurface.TOOL_CALL_TOKEN,
+                    StreamLegacySurface.EVENT,
+                }
+            },
+        )
+
+    def test_legacy_classifier_guard_detects_grouped_aliases(
+        self,
+    ) -> None:
+        tree = parse("""
+LegacyTextSurfaces = Token | ToolCallToken
+LegacyEventSurfaces: object = (ReasoningToken, Event)
+
+def consume(item):
+    if isinstance(item, LegacyTextSurfaces):
+        return item
+    if isinstance(item, LegacyEventSurfaces):
+        return item
+    return None
+""")
+
+        sites = _legacy_stream_classifier_sites("avalan.new_consumer", tree)
+
+        self.assertEqual(
+            sites,
+            {
+                ("avalan.new_consumer", "consume"): {
+                    StreamLegacySurface.TOKEN,
+                    StreamLegacySurface.TOOL_CALL_TOKEN,
+                    StreamLegacySurface.REASONING_TOKEN,
+                    StreamLegacySurface.EVENT,
+                }
+            },
         )
 
     def test_legacy_classifier_guard_detects_tracked_string_classifiers(

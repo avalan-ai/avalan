@@ -534,7 +534,6 @@ class A2AResponseTranslator:
             run_id=self._legacy_adapter.run_id,
             turn_id=self._legacy_adapter.turn_id,
             accumulate=False,
-            legacy_item_mapper=self._legacy_adapter.map,
         )
 
     @property

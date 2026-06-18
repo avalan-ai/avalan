@@ -241,6 +241,59 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_projection_appends_unmatched_legacy_token_item(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        response._append_canonical_projection_item(Token(token="unmatched"))
+
+        items = response.canonical_items
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(items[0].text_delta, "unmatched")
+        self.assertEqual(items[0].sequence, 0)
+
+    async def test_finish_canonical_stream_closes_open_reasoning_channel(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        response._append_canonical_item(StreamItemKind.STREAM_STARTED)
+        response._append_canonical_item(
+            StreamItemKind.REASONING_DELTA,
+            text_delta="thinking",
+        )
+        response._finish_canonical_stream(StreamItemKind.STREAM_COMPLETED)
+
+        self.assertEqual(
+            [item.kind for item in response.canonical_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        validate_canonical_stream_items(response.canonical_items)
+
     async def test_iteration_projects_raw_response_event_through_emit(self):
         class Response:
             is_async_generator = True
