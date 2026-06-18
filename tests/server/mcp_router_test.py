@@ -595,6 +595,7 @@ class MCPUtilityTestCase(TestCase):
                 {
                     "input_text_tokens": 1,
                     "input_tokens": 99,
+                    "totals": {"input_tokens": 100},
                 },
                 "input_text_tokens",
                 7,
@@ -614,6 +615,19 @@ class MCPUtilityTestCase(TestCase):
                 aliases=("input_tokens",),
             ),
             2,
+        )
+
+    def test_usage_count_reads_canonical_totals_before_fallback(
+        self,
+    ) -> None:
+        self.assertEqual(
+            mcp_router._usage_count(
+                {"totals": {"input_tokens": 5}},
+                "input_text_tokens",
+                7,
+                aliases=("input_tokens",),
+            ),
+            5,
         )
 
     def test_usage_count_ignores_bool_and_non_int_alias_values(

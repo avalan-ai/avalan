@@ -1744,6 +1744,20 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(usage.completion_tokens, 4)
         self.assertEqual(usage.total_tokens, 4)
 
+        canonical_usage = self.chat._chat_usage(
+            {
+                "totals": {
+                    "input_tokens": 5,
+                    "output_tokens": 6,
+                    "total_tokens": 11,
+                }
+            }
+        )
+        assert canonical_usage is not None
+        self.assertEqual(canonical_usage.prompt_tokens, 5)
+        self.assertEqual(canonical_usage.completion_tokens, 6)
+        self.assertEqual(canonical_usage.total_tokens, 11)
+
     async def test_message_content_string(self) -> None:
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)

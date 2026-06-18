@@ -31,6 +31,7 @@ from .streaming import (
     canonical_flow_public_metadata,
     cleanup_stream_sources,
     protocol_stream_retention_settings,
+    protocol_stream_usage_mappings,
     stream_consumer_iterator,
 )
 
@@ -1528,9 +1529,9 @@ def _usage_count(
     *,
     aliases: tuple[str, ...] = (),
 ) -> int:
-    if isinstance(usage, dict):
+    for usage_mapping in protocol_stream_usage_mappings(usage):
         for usage_key in (key, *aliases):
-            value = usage.get(usage_key)
+            value = usage_mapping.get(usage_key)
             if isinstance(value, int) and not isinstance(value, bool):
                 return value
     return fallback
