@@ -1,4 +1,6 @@
-from ..event import Event, EventType
+from ..event import EventType
+from ..model.stream import CanonicalStreamItem
+from ..types import assert_non_empty_string
 from .condition import FlowConditionOperator, FlowConditionValueType
 from .definition import (
     FlowEdgeKind,
@@ -32,7 +34,8 @@ from .selector import FlowSelector, resolve_flow_selector_value
 from .state import FlowEdgeState, FlowExecutionTrace, FlowNodeState
 from .stream import (
     FlowStreamSession,
-    canonical_flow_event_listener,
+    FlowStreamSink,
+    canonical_flow_item,
     flow_stream_session,
 )
 
@@ -40,7 +43,7 @@ from asyncio import CancelledError, gather, sleep, wait_for
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib import import_module
 from inspect import isawaitable
 from time import monotonic
@@ -54,13 +57,13 @@ FlowPlanNodeRunner: TypeAlias = Callable[
     [FlowNodePlan, Mapping[str, object]],
     object | Awaitable[object],
 ]
-FlowEventListener: TypeAlias = Callable[[Event], Awaitable[None] | None]
+FlowStreamListener: TypeAlias = FlowStreamSink
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _FlowExecutionOptions:
     cancellation_checker: CancellationChecker | None = None
-    event_listener: FlowEventListener | None = None
+    event_listener: FlowStreamListener | None = None
     stream_session: FlowStreamSession | None = None
 
 
@@ -365,7 +368,7 @@ async def execute_flow_plan(
     *,
     inputs: Mapping[str, object] | None = None,
     cancellation_checker: CancellationChecker | None = None,
-    event_listener: FlowEventListener | None = None,
+    event_listener: FlowStreamListener | None = None,
     stream_session: FlowStreamSession | None = None,
     concurrency_limit: int = 1,
     resume_trace: FlowExecutionTrace | None = None,
@@ -403,13 +406,6 @@ async def execute_flow_plan(
         stream_session,
         cancellation_checker,
     )
-    if event_listener is not None:
-        event_listener = canonical_flow_event_listener(
-            event_listener,
-            stream_session_id=stream_session.stream_session_id,
-            run_id=stream_session.run_id,
-            turn_id=stream_session.turn_id,
-        )
     input_values = _freeze_mapping(inputs or {})
     node_outputs: dict[str, Mapping[str, object]] = {
         node: _freeze_mapping(outputs)
@@ -439,6 +435,7 @@ async def execute_flow_plan(
     flow_started_at = monotonic()
     await _emit_flow_event(
         event_listener,
+        stream_session,
         EventType.FLOW_VALIDATION,
         plan,
         payload={
@@ -450,12 +447,18 @@ async def execute_flow_plan(
     )
     await _emit_flow_event(
         event_listener,
+        stream_session,
         EventType.FLOW_STARTED,
         plan,
         payload={"status": "started"},
         started=flow_started_at,
     )
-    await _emit_flow_event_drafts(event_listener, plan, event_drafts)
+    await _emit_flow_event_drafts(
+        event_listener,
+        stream_session,
+        plan,
+        event_drafts,
+    )
 
     try:
         while ready:
@@ -473,6 +476,7 @@ async def execute_flow_plan(
                 started_at = monotonic()
                 await _emit_flow_event(
                     event_listener,
+                    stream_session,
                     EventType.FLOW_NODE_STARTED,
                     plan,
                     payload={
@@ -547,6 +551,7 @@ async def execute_flow_plan(
                 diagnostics.extend(outcome.diagnostics)
                 await _emit_node_outcome_event(
                     event_listener,
+                    stream_session,
                     plan,
                     outcome,
                 )
@@ -592,6 +597,7 @@ async def execute_flow_plan(
                     diagnostics.extend(join_diagnostics)
                 await _emit_flow_event_drafts(
                     event_listener,
+                    stream_session,
                     plan,
                     route_event_drafts,
                 )
@@ -601,6 +607,7 @@ async def execute_flow_plan(
         finished_at = monotonic()
         await _emit_flow_event(
             event_listener,
+            stream_session,
             EventType.FLOW_CANCELLED,
             plan,
             payload={"status": "cancelled"},
@@ -609,6 +616,7 @@ async def execute_flow_plan(
         )
         await _emit_flow_event(
             event_listener,
+            stream_session,
             EventType.FLOW_COMPLETED,
             plan,
             payload={"status": "cancelled"},
@@ -621,6 +629,7 @@ async def execute_flow_plan(
         finished_at = monotonic()
         await _emit_flow_event(
             event_listener,
+            stream_session,
             EventType.FLOW_COMPLETED,
             plan,
             payload={"status": "paused"},
@@ -643,6 +652,7 @@ async def execute_flow_plan(
     for node_name in skipped_nodes:
         await _emit_flow_event(
             event_listener,
+            stream_session,
             EventType.FLOW_NODE_SKIPPED,
             plan,
             payload={"node": node_name, "status": "skipped"},
@@ -655,6 +665,7 @@ async def execute_flow_plan(
     if output_diagnostics:
         await _emit_flow_event(
             event_listener,
+            stream_session,
             EventType.FLOW_OUTPUT_SELECTED,
             plan,
             payload={
@@ -666,6 +677,7 @@ async def execute_flow_plan(
         for output_name in outputs:
             await _emit_flow_event(
                 event_listener,
+                stream_session,
                 EventType.FLOW_OUTPUT_SELECTED,
                 plan,
                 payload={
@@ -676,6 +688,7 @@ async def execute_flow_plan(
     finished_at = monotonic()
     await _emit_flow_event(
         event_listener,
+        stream_session,
         EventType.FLOW_COMPLETED,
         plan,
         payload={
@@ -1011,7 +1024,7 @@ async def _run_plan_node(
     cancellation_checker: CancellationChecker | None,
     *,
     plan: FlowExecutionPlan,
-    event_listener: FlowEventListener | None,
+    event_listener: FlowStreamListener | None,
     stream_session: FlowStreamSession,
 ) -> _NodeRunOutcome:
     if node.loop is not None:
@@ -1043,7 +1056,7 @@ async def _run_plan_node_attempts(
     cancellation_checker: CancellationChecker | None,
     *,
     plan: FlowExecutionPlan,
-    event_listener: FlowEventListener | None,
+    event_listener: FlowStreamListener | None,
     stream_session: FlowStreamSession,
 ) -> _NodeRunOutcome:
     started_at = monotonic()
@@ -1097,6 +1110,7 @@ async def _run_plan_node_attempts(
         delay_seconds = _retry_delay_seconds(node.retry, attempts)
         await _emit_flow_event(
             event_listener,
+            stream_session,
             EventType.FLOW_NODE_RETRYING,
             plan,
             payload={
@@ -1120,7 +1134,7 @@ async def _run_loop_plan_node(
     cancellation_checker: CancellationChecker | None,
     *,
     plan: FlowExecutionPlan,
-    event_listener: FlowEventListener | None,
+    event_listener: FlowStreamListener | None,
     stream_session: FlowStreamSession,
 ) -> _NodeRunOutcome:
     assert node.loop is not None
@@ -1163,6 +1177,7 @@ async def _run_loop_plan_node(
         )
         await _emit_flow_event_drafts(
             event_listener,
+            stream_session,
             plan,
             loop_event_drafts,
         )
@@ -1296,7 +1311,8 @@ def _elapsed_ms_between(started_at: float, finished_at: float) -> float:
 
 
 async def _emit_flow_event(
-    event_listener: FlowEventListener | None,
+    event_listener: FlowStreamListener | None,
+    stream_session: FlowStreamSession,
     event_type: EventType,
     plan: FlowExecutionPlan,
     *,
@@ -1304,33 +1320,31 @@ async def _emit_flow_event(
     started: float | None = None,
     finished: float | None = None,
 ) -> None:
+    assert isinstance(stream_session, FlowStreamSession)
     if event_listener is None:
         return
-    result = event_listener(
-        Event(
-            type=event_type,
-            payload=_flow_event_payload(plan, payload or {}),
-            started=started,
-            finished=finished,
-            elapsed=(
-                finished - started
-                if started is not None and finished is not None
-                else None
-            ),
-        )
+    item = canonical_flow_item(
+        stream_session=stream_session,
+        event_type=event_type,
+        payload=_flow_event_payload(plan, payload or {}),
+        started=started,
+        finished=finished,
     )
+    result = event_listener(item)
     if result is not None:
         await result
 
 
 async def _emit_flow_event_drafts(
-    event_listener: FlowEventListener | None,
+    event_listener: FlowStreamListener | None,
+    stream_session: FlowStreamSession,
     plan: FlowExecutionPlan,
     drafts: list[_FlowEventDraft],
 ) -> None:
     for draft in drafts:
         await _emit_flow_event(
             event_listener,
+            stream_session,
             draft.type,
             plan,
             payload=draft.payload,
@@ -1340,7 +1354,8 @@ async def _emit_flow_event_drafts(
 
 
 async def _emit_node_outcome_event(
-    event_listener: FlowEventListener | None,
+    event_listener: FlowStreamListener | None,
+    stream_session: FlowStreamSession,
     plan: FlowExecutionPlan,
     outcome: _NodeRunOutcome,
 ) -> None:
@@ -1358,6 +1373,7 @@ async def _emit_node_outcome_event(
         payload["duration_ms"] = outcome.duration_ms
     await _emit_flow_event(
         event_listener,
+        stream_session,
         event_type,
         plan,
         payload=payload,
@@ -1566,12 +1582,13 @@ async def _run_plan_node_once(
     runner: FlowPlanNodeRunner,
     cancellation_checker: CancellationChecker | None,
     *,
-    event_listener: FlowEventListener | None,
+    event_listener: FlowStreamListener | None,
     stream_session: FlowStreamSession,
 ) -> _NodeRunOutcome:
-    node_event_listener = _node_scoped_event_listener(
+    node_event_listener = _node_scoped_stream_listener(
         node.name,
         event_listener,
+        stream_session,
     )
     token = _FLOW_EXECUTION_OPTIONS.set(
         _FlowExecutionOptions(
@@ -1667,28 +1684,39 @@ async def _run_plan_node_once(
         _FLOW_EXECUTION_OPTIONS.reset(token)
 
 
-def _node_scoped_event_listener(
+def _node_scoped_stream_listener(
     node_name: str,
-    event_listener: FlowEventListener | None,
-) -> FlowEventListener | None:
-    assert isinstance(node_name, str) and node_name.strip()
+    event_listener: FlowStreamListener | None,
+    stream_session: FlowStreamSession,
+) -> FlowStreamListener | None:
+    assert_non_empty_string(node_name, "node_name")
+    assert isinstance(stream_session, FlowStreamSession)
     if event_listener is None:
         return None
     assert callable(event_listener)
 
-    def observe(event: Event) -> Awaitable[None] | None:
-        assert isinstance(event, Event)
-        payload: dict[str, object] = {}
-        if isinstance(event.payload, Mapping):
-            payload.update(event.payload)
-        payload["flow_node"] = node_name
+    def observe(item: CanonicalStreamItem) -> Awaitable[None] | None:
+        assert isinstance(item, CanonicalStreamItem)
+        assert item.stream_session_id == stream_session.stream_session_id
+        assert item.run_id == stream_session.run_id
+        assert item.turn_id == stream_session.turn_id
+        assert isinstance(item.data, Mapping)
+        data = dict(item.data)
+        data.setdefault("flow_node", node_name)
+        metadata = dict(item.metadata)
+        metadata["parent_node_id"] = node_name
+        if item.correlation.node_id is not None:
+            metadata.setdefault("child_node_id", item.correlation.node_id)
+        correlation = replace(
+            item.correlation,
+            node_id=item.correlation.node_id or node_name,
+        )
         return event_listener(
-            Event(
-                type=event.type,
-                payload=payload,
-                started=event.started,
-                finished=event.finished,
-                elapsed=event.elapsed,
+            replace(
+                item,
+                correlation=correlation,
+                data=data,
+                metadata=metadata,
             )
         )
 

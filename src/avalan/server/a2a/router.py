@@ -18,6 +18,7 @@ from ..entities import ChatCompletionRequest, ChatMessage
 from ..routers import orchestrate
 from ..routers.streaming import (
     ProtocolStreamAccumulator,
+    canonical_flow_public_metadata,
     cleanup_stream_sources,
     stream_consumer_iterator,
 )
@@ -590,6 +591,9 @@ class A2AResponseTranslator:
             )
             events.extend(await self._handle_canonical_tool_execution(item))
             return events
+        if item.kind is StreamItemKind.FLOW_EVENT:
+            events.extend(await self._handle_canonical_flow_event(item))
+            return events
         if item.kind is StreamItemKind.TOOL_CALL_DONE:
             return events
         if item.kind is not StreamItemKind.ANSWER_DELTA:
@@ -656,6 +660,16 @@ class A2AResponseTranslator:
         if item.terminal_outcome is StreamTerminalOutcome.ERRORED:
             self._terminal_error = _stream_terminal_error(item)
         return []
+
+    async def _handle_canonical_flow_event(
+        self, item: CanonicalStreamItem
+    ) -> list[dict[str, Any]]:
+        assert item.kind is StreamItemKind.FLOW_EVENT
+        return await self._store.add_status_event(
+            self._task_id,
+            status="in_progress",
+            metadata=_canonical_flow_status_metadata(item),
+        )
 
     async def _switch_channel(
         self, channel: StreamChannel | None, call_id: str | None
@@ -1508,6 +1522,25 @@ def _canonical_tool_execution_status(item: CanonicalStreamItem) -> str:
     if item.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED:
         return "completed"
     return "in_progress"
+
+
+def _canonical_flow_status_metadata(
+    item: CanonicalStreamItem,
+) -> dict[str, Any]:
+    assert item.kind is StreamItemKind.FLOW_EVENT
+    flow_metadata = canonical_flow_public_metadata(item)
+    metadata: dict[str, Any] = {
+        "phase": item.kind.value,
+        "sequence": item.sequence,
+        "flow_run_id": item.correlation.flow_run_id,
+        "node_id": item.correlation.node_id,
+        "parent_sequence": item.correlation.parent_sequence,
+        "flow_metadata": flow_metadata,
+    }
+    event_type = flow_metadata.get("event_type")
+    if isinstance(event_type, str) and event_type:
+        metadata["flow_event_type"] = event_type
+    return metadata
 
 
 def _stream_terminal_error(item: CanonicalStreamItem) -> str:

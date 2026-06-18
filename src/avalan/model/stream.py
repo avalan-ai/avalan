@@ -1651,7 +1651,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
         categories=(
             StreamLegacyBoundaryCategory.PARSER,
             StreamLegacyBoundaryCategory.EVENTING,
-            StreamLegacyBoundaryCategory.FLOW,
         ),
         scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="event",
@@ -1936,27 +1935,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         (StreamLegacyBoundaryDirection.PROJECTS,),
         "cli.model",
         "CLI stdout and rendering consume canonical projections only.",
-    ),
-    _runtime_boundary(
-        "avalan.flow.stream",
-        "FlowEventSink",
-        (StreamLegacySurface.EVENT,),
-        StreamLegacyBoundaryCategory.FLOW,
-        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
-        "flow.stream",
-        "Flow stream subscribers consume canonical flow items.",
-    ),
-    _runtime_boundary(
-        "avalan.flow.stream",
-        "FlowCanonicalEventListener.__call__",
-        (StreamLegacySurface.EVENT,),
-        StreamLegacyBoundaryCategory.FLOW,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "flow.stream",
-        "Flow event projection is canonical-only.",
     ),
 )
 

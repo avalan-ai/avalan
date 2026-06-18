@@ -23,9 +23,9 @@ from .plan import (
 )
 from .registry import FlowNodeRegistry
 from .runtime import (
-    FlowEventListener,
     FlowPlanExecutionResult,
     FlowPlanNodeRunner,
+    FlowStreamListener,
     execute_flow_plan,
     flow_node_registry_runner,
 )
@@ -140,7 +140,7 @@ class FlowExecutor:
         registry: FlowNodeRegistry | None = None,
         runner: FlowPlanNodeRunner | None = None,
         cancellation_checker: FlowCancellationChecker | None = None,
-        event_listener: FlowEventListener | None = None,
+        event_listener: FlowStreamListener | None = None,
         concurrency_limit: int = 1,
     ) -> None:
         if registry is not None:
@@ -167,7 +167,7 @@ class FlowExecutor:
         inputs: Mapping[str, object] | None = None,
         runner: FlowPlanNodeRunner | None = None,
         cancellation_checker: FlowCancellationChecker | None = None,
-        event_listener: FlowEventListener | None = None,
+        event_listener: FlowStreamListener | None = None,
         concurrency_limit: int | None = None,
     ) -> FlowExecutorRunResult:
         if inputs is not None:
@@ -211,7 +211,7 @@ class FlowExecutor:
         inputs: Mapping[str, object] | None = None,
         runner: FlowPlanNodeRunner | None = None,
         cancellation_checker: FlowCancellationChecker | None = None,
-        event_listener: FlowEventListener | None = None,
+        event_listener: FlowStreamListener | None = None,
         concurrency_limit: int | None = None,
     ) -> FlowExecutorRunResult:
         assert isinstance(decisions, Mapping)

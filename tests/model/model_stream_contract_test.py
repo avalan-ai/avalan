@@ -359,22 +359,6 @@ _PHASE_1_1_LEGACY_CLASSIFIER_DEBT_CEILING = {
         {StreamLegacySurface.EVENT}
     ),
     (
-        "avalan.flow.runtime",
-        "_node_scoped_event_listener.observe",
-    ): frozenset({StreamLegacySurface.EVENT}),
-    (
-        "avalan.flow.stream",
-        "FlowCanonicalEventListener.__call__",
-    ): frozenset({StreamLegacySurface.EVENT}),
-    (
-        "avalan.flow.stream",
-        "canonical_flow_item_from_event",
-    ): frozenset({StreamLegacySurface.EVENT}),
-    (
-        "avalan.flow.stream",
-        "flow_event_is_projectable",
-    ): frozenset({StreamLegacySurface.EVENT}),
-    (
         "avalan.model.nlp.text.vendor.anthropic",
         "AnthropicClient._non_stream_response_content",
     ): frozenset({StreamLegacySurface.STRING}),
@@ -8026,6 +8010,7 @@ class StreamContractTestCase(TestCase):
                 StreamLegacyBoundaryCategory.ORCHESTRATOR,
                 StreamLegacyBoundaryCategory.SDK_RESPONSE,
                 StreamLegacyBoundaryCategory.CHAT_SSE,
+                StreamLegacyBoundaryCategory.FLOW,
                 StreamLegacyBoundaryCategory.MCP,
                 StreamLegacyBoundaryCategory.RESPONSES_SSE,
             },
@@ -8084,8 +8069,6 @@ class StreamContractTestCase(TestCase):
                 "ToolCallResponseParser",
             ),
             ("avalan.cli.commands.model", "_stream_projection"),
-            ("avalan.flow.stream", "FlowEventSink"),
-            ("avalan.flow.stream", "FlowCanonicalEventListener.__call__"),
         }
         inventory_keys = {
             (entry.module, entry.qualname) for entry in inventory
@@ -8107,14 +8090,6 @@ class StreamContractTestCase(TestCase):
                 (
                     StreamLegacyBoundaryDirection.EMITS,
                     StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-                ),
-            ),
-            ("avalan.flow.stream", "FlowCanonicalEventListener.__call__"): (
-                (StreamLegacySurface.EVENT,),
-                StreamLegacyBoundaryCategory.FLOW,
-                (
-                    StreamLegacyBoundaryDirection.ACCEPTS,
-                    StreamLegacyBoundaryDirection.PROJECTS,
                 ),
             ),
         }
@@ -8166,6 +8141,34 @@ class StreamContractTestCase(TestCase):
                     "avalan.model.stream",
                     "StreamProjectionState.project",
                 )
+
+    def test_legacy_runtime_boundary_inventory_has_no_flow_listeners(
+        self,
+    ) -> None:
+        inventory = legacy_stream_runtime_boundary_inventory()
+        inventory_keys = {
+            (entry.module, entry.qualname) for entry in inventory
+        }
+        removed_flow_listener_boundaries = {
+            ("avalan.flow.executor", "FlowExecutor.run"),
+            ("avalan.flow.runtime", "execute_flow_plan"),
+            ("avalan.task.targets.flow", "_emit_flow_event"),
+            ("avalan.task.targets.flow", "_flow_node_event_listener"),
+            ("avalan.task.targets.flow", "_task_flow_stream_listener"),
+        }
+
+        self.assertTrue(
+            removed_flow_listener_boundaries.isdisjoint(inventory_keys)
+        )
+        self.assertEqual(
+            [
+                (entry.module, entry.qualname)
+                for entry in inventory
+                if entry.category is StreamLegacyBoundaryCategory.FLOW
+                and StreamLegacySurface.EVENT in entry.surfaces
+            ],
+            [],
+        )
 
     def test_legacy_runtime_boundary_inventory_entries_resolve_to_source(
         self,

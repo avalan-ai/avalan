@@ -35,6 +35,7 @@ from avalan.server.routers.streaming import (
     ProtocolStreamProjectionState,
     ProtocolStreamRetentionSettings,
     cancellable_stream_iterator,
+    canonical_flow_public_metadata,
     cleanup_stream_sources,
     protocol_stream_retention_settings,
     protocol_stream_terminal_snapshot,
@@ -1596,6 +1597,73 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
             ],
         )
         accumulator.validate_complete()
+
+    def test_canonical_flow_public_metadata_filters_private_fields(
+        self,
+    ) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.FLOW_EVENT,
+            channel=StreamChannel.FLOW,
+            correlation=StreamItemCorrelation(
+                flow_run_id="flow-1",
+                node_id="node-1",
+                parent_sequence=7,
+            ),
+            data={
+                "state": "paused",
+                "status": "waiting",
+                "private_output": "secret",
+            },
+            metadata={
+                "event_type": "flow_node_paused",
+                "state": "paused",
+                "status": "waiting",
+                "attempt": 2,
+                "progress_percent": 50.0,
+                "parent_node_id": "parent",
+                "child_node_id": "child",
+                "private_output": "secret",
+                "debug_payload": {"raw": "secret"},
+            },
+        )
+
+        metadata = canonical_flow_public_metadata(item)
+
+        self.assertEqual(
+            metadata,
+            {
+                "event_type": "flow_node_paused",
+                "state": "paused",
+                "status": "waiting",
+                "attempt": 2,
+                "progress_percent": 50.0,
+                "parent_node_id": "parent",
+                "child_node_id": "child",
+            },
+        )
+        self.assertEqual(metadata["state"], "paused")
+        self.assertNotIn("private_output", metadata)
+        self.assertNotIn("debug_payload", metadata)
+
+    def test_canonical_flow_public_metadata_rejects_non_flow_items(
+        self,
+    ) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="answer",
+        )
+
+        with self.assertRaises(AssertionError):
+            canonical_flow_public_metadata(item)
 
     async def test_protocol_stream_accumulator_rejects_duplicate_terminal(
         self,

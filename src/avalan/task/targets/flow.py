@@ -1,4 +1,4 @@
-from ...event import Event, EventType
+from ...event import Event, EventObservabilityPayload, EventType
 from ...flow.definition import (
     FlowDefinition,
     FlowInputDefinition,
@@ -37,6 +37,7 @@ from ...flow.registry import (
     tool_flow_node_registry,
 )
 from ...flow.runtime import (
+    FlowStreamListener,
     execute_flow_plan,
     flow_node_registry_runner,
 )
@@ -59,6 +60,7 @@ from ...flow.store import (
     FlowStateStore,
 )
 from ...flow.validator import validate_flow_definition
+from ...model.stream import CanonicalStreamItem, stream_observability_payload
 from ..artifact import TaskArtifactRef, TaskArtifactRetention
 from ..context import TaskInputFile, TaskTargetContext
 from ..converters import (
@@ -427,7 +429,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                         files=context.files,
                     ),
                     cancellation_checker=context.check_cancelled,
-                    event_listener=context.event_listener,
+                    event_listener=_task_flow_stream_listener(context),
                     concurrency_limit=self._concurrency_limit,
                     resume_trace=(
                         record.trace
@@ -2729,6 +2731,52 @@ async def _emit_flow_event(
     )
     if result is not None:
         await result
+
+
+def _task_flow_stream_listener(
+    context: TaskTargetContext,
+) -> FlowStreamListener | None:
+    assert isinstance(context, TaskTargetContext)
+    if context.event_listener is None:
+        return None
+    listener = context.event_listener
+
+    def observe(item: CanonicalStreamItem) -> Awaitable[None] | None:
+        assert isinstance(item, CanonicalStreamItem)
+        event_type = item.metadata.get("event_type")
+        assert isinstance(event_type, str)
+        typed_event_type = _flow_event_type_value(event_type)
+        payload = item.data if isinstance(item.data, Mapping) else {}
+        result = listener(
+            Event(
+                type=cast(Any, typed_event_type),
+                payload=payload,
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        stream_observability_payload(item)
+                    )
+                ),
+                started=_optional_float(item.metadata.get("started")),
+                finished=_optional_float(item.metadata.get("finished")),
+                elapsed=_optional_float(item.metadata.get("elapsed")),
+            )
+        )
+        return result
+
+    return observe
+
+
+def _optional_float(value: object) -> float | None:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _flow_event_type_value(value: str) -> EventType | str:
+    try:
+        return EventType(value)
+    except ValueError:
+        return value
 
 
 def _single_start_node_name(flow: Flow) -> str | None:

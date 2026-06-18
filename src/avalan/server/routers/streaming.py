@@ -2,6 +2,7 @@ from ...model.stream import (
     CanonicalStreamAccumulator,
     CanonicalStreamItem,
     StreamConsumerProjection,
+    StreamItemKind,
     StreamProjectionState,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
@@ -30,6 +31,36 @@ from contextlib import suppress
 from dataclasses import dataclass
 from inspect import isawaitable
 from typing import Any, cast
+
+_FLOW_PUBLIC_METADATA_FIELDS = frozenset(
+    {
+        "event_type",
+        "started",
+        "finished",
+        "elapsed",
+        "state",
+        "status",
+        "attempt",
+        "attempts",
+        "duration_ms",
+        "elapsed_ms",
+        "route_kind",
+        "edge_kind",
+        "edge_index",
+        "source",
+        "target",
+        "output_name",
+        "node_count",
+        "edge_count",
+        "progress",
+        "progress_percent",
+        "matched",
+        "eligible",
+        "ready",
+        "parent_node_id",
+        "child_node_id",
+    }
+)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -160,6 +191,18 @@ class ProtocolStreamAccumulator:
 
     def validate_complete(self) -> None:
         self._accumulator.validate_complete()
+
+
+def canonical_flow_public_metadata(
+    item: CanonicalStreamItem,
+) -> dict[str, LooseJsonValue]:
+    assert isinstance(item, CanonicalStreamItem)
+    assert item.kind is StreamItemKind.FLOW_EVENT
+    return {
+        key: value
+        for key, value in item.metadata.items()
+        if key in _FLOW_PUBLIC_METADATA_FIELDS
+    }
 
 
 ProtocolStreamProjectionState = StreamProjectionState

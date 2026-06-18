@@ -1,11 +1,10 @@
-from ..event import Event, EventObservabilityPayload, EventType
+from ..event import EventType
 from ..model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemCorrelation,
     StreamItemKind,
     StreamRetentionPolicy,
-    stream_observability_payload,
 )
 from ..types import LooseJsonValue, assert_non_empty_string
 from .node import CancellationChecker
@@ -16,18 +15,42 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from inspect import isawaitable
 from math import isfinite
+from typing import cast
 
-FlowEventSink = Callable[[Event], Awaitable[None] | None]
+FlowStreamSink = Callable[[CanonicalStreamItem], Awaitable[None] | None]
+_FLOW_TEXT_METADATA_FIELDS: tuple[str, ...] = (
+    "state",
+    "status",
+    "route_kind",
+    "edge_kind",
+    "source",
+    "target",
+    "output_name",
+)
+_FLOW_INT_METADATA_FIELDS: tuple[str, ...] = (
+    "attempt",
+    "attempts",
+    "edge_index",
+    "node_count",
+    "edge_count",
+)
+_FLOW_FLOAT_METADATA_FIELDS: tuple[str, ...] = (
+    "duration_ms",
+    "elapsed_ms",
+    "progress",
+    "progress_percent",
+)
+_FLOW_BOOL_METADATA_FIELDS: tuple[str, ...] = (
+    "matched",
+    "eligible",
+    "ready",
+)
 
 
 @dataclass(slots=True)
-class FlowCanonicalEventListener:
-    downstream: FlowEventSink
-    stream_session_id: str
-    run_id: str
-    turn_id: str
+class FlowStreamRecorder:
+    downstream: FlowStreamSink
     history_item_limit: int = StreamRetentionPolicy().flow_history_item_limit
-    _sequence: int = 0
     _items: list[CanonicalStreamItem] = field(default_factory=list)
     _ui_items: dict[
         tuple[str | None, str | None, str], CanonicalStreamItem
@@ -35,9 +58,6 @@ class FlowCanonicalEventListener:
 
     def __post_init__(self) -> None:
         assert callable(self.downstream)
-        assert_non_empty_string(self.stream_session_id, "stream_session_id")
-        assert_non_empty_string(self.run_id, "run_id")
-        assert_non_empty_string(self.turn_id, "turn_id")
         assert isinstance(self.history_item_limit, int)
         assert not isinstance(self.history_item_limit, bool)
         assert self.history_item_limit >= 0
@@ -52,63 +72,29 @@ class FlowCanonicalEventListener:
             sorted(self._ui_items.values(), key=lambda item: item.sequence)
         )
 
-    def __call__(self, event: Event) -> Awaitable[None] | None:
-        assert isinstance(event, Event)
-        projected, item = self._project_event(event)
-        result = self.downstream(projected)
+    def __call__(self, item: CanonicalStreamItem) -> Awaitable[None] | None:
+        _assert_flow_stream_item(item)
+        result = self.downstream(item)
         if isawaitable(result):
             return self._record_after_await(result, item)
         assert result is None
-        if item is not None:
-            self._record(item)
+        self._record(item)
         return None
 
     async def _record_after_await(
         self,
         result: Awaitable[None],
-        item: CanonicalStreamItem | None,
+        item: CanonicalStreamItem,
     ) -> None:
         await result
-        if item is not None:
-            self._record(item)
-
-    def _project_event(
-        self, event: Event
-    ) -> tuple[Event, CanonicalStreamItem | None]:
-        if not flow_event_is_projectable(event):
-            return event, None
-        sequence = self._sequence
-        self._sequence += 1
-        item = canonical_flow_item_from_event(
-            event,
-            stream_session_id=self.stream_session_id,
-            run_id=self.run_id,
-            turn_id=self.turn_id,
-            sequence=sequence,
-        )
-        return (
-            Event(
-                type=event.type,
-                payload=event.payload,
-                observability_payload=(
-                    EventObservabilityPayload.canonical_stream(
-                        stream_observability_payload(item)
-                    )
-                ),
-                started=event.started,
-                finished=event.finished,
-                elapsed=event.elapsed,
-            ),
-            item,
-        )
+        self._record(item)
 
     def _record(self, item: CanonicalStreamItem) -> None:
-        assert item.sequence < self._sequence
+        if self.history_item_limit == 0:
+            return
         assert all(
             existing.sequence != item.sequence for existing in self._items
         )
-        if self.history_item_limit == 0:
-            return
         self._items.append(item)
         self._items.sort(key=lambda current: current.sequence)
         if len(self._items) > self.history_item_limit:
@@ -133,6 +119,7 @@ class FlowStreamSession:
         init=False,
         repr=False,
     )
+    _sequence: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         assert_non_empty_string(self.stream_session_id, "stream_session_id")
@@ -147,6 +134,11 @@ class FlowStreamSession:
 
     def cancel(self) -> None:
         self._cancel_event.set()
+
+    def next_sequence(self) -> int:
+        sequence = self._sequence
+        self._sequence += 1
+        return sequence
 
     async def check_cancelled(self) -> None:
         if self.cancelled:
@@ -177,74 +169,89 @@ def flow_stream_session(
     )
 
 
-def canonical_flow_event_listener(
-    downstream: FlowEventSink,
+def flow_stream_recorder(
+    downstream: FlowStreamSink,
     *,
-    stream_session_id: str,
-    run_id: str,
-    turn_id: str,
     history_item_limit: int = StreamRetentionPolicy().flow_history_item_limit,
-) -> FlowCanonicalEventListener:
+) -> FlowStreamRecorder:
     assert callable(downstream)
-    return FlowCanonicalEventListener(
+    return FlowStreamRecorder(
         downstream=downstream,
-        stream_session_id=stream_session_id,
-        run_id=run_id,
-        turn_id=turn_id,
         history_item_limit=history_item_limit,
     )
 
 
-def canonical_flow_item_from_event(
-    event: Event,
+def canonical_flow_item(
     *,
-    stream_session_id: str,
-    run_id: str,
-    turn_id: str,
-    sequence: int,
+    stream_session: FlowStreamSession,
+    event_type: EventType | str,
+    payload: Mapping[str, object],
+    sequence: int | None = None,
+    started: float | None = None,
+    finished: float | None = None,
+    parent_sequence: int | None = None,
 ) -> CanonicalStreamItem:
-    assert isinstance(event, Event)
-    assert flow_event_is_projectable(event)
-    assert_non_empty_string(stream_session_id, "stream_session_id")
-    assert_non_empty_string(run_id, "run_id")
-    assert_non_empty_string(turn_id, "turn_id")
+    assert isinstance(stream_session, FlowStreamSession)
+    event_type_value = _flow_event_type_value(event_type)
+    assert event_type_value.startswith("flow_")
+    assert isinstance(payload, Mapping)
+    if sequence is None:
+        sequence = stream_session.next_sequence()
     assert isinstance(sequence, int)
     assert not isinstance(sequence, bool)
     assert sequence >= 0
-    payload = _payload_mapping(event)
+    if started is not None:
+        assert isinstance(started, int | float)
+        assert not isinstance(started, bool)
+    if finished is not None:
+        assert isinstance(finished, int | float)
+        assert not isinstance(finished, bool)
+    if parent_sequence is not None:
+        assert isinstance(parent_sequence, int)
+        assert not isinstance(parent_sequence, bool)
+        assert parent_sequence >= 0
     flow_run_id = _optional_string(payload.get("flow_id"))
     node_id = _optional_string(payload.get("node"))
     if node_id is None:
         node_id = _optional_string(payload.get("flow_node"))
     return CanonicalStreamItem(
-        stream_session_id=stream_session_id,
-        run_id=run_id,
-        turn_id=turn_id,
+        stream_session_id=stream_session.stream_session_id,
+        run_id=stream_session.run_id,
+        turn_id=stream_session.turn_id,
         sequence=sequence,
         kind=StreamItemKind.FLOW_EVENT,
         channel=StreamChannel.FLOW,
         correlation=StreamItemCorrelation(
-            flow_run_id=flow_run_id,
+            flow_run_id=flow_run_id or stream_session.run_id,
             node_id=node_id,
+            parent_sequence=parent_sequence,
         ),
         data=_loose_mapping(payload),
-        metadata=_flow_event_metadata(event),
+        metadata=_flow_item_metadata(
+            event_type_value,
+            payload=payload,
+            started=started,
+            finished=finished,
+        ),
     )
 
 
-def flow_event_is_projectable(event: Event) -> bool:
-    assert isinstance(event, Event)
-    event_type = event.type
+def _assert_flow_stream_item(item: CanonicalStreamItem) -> None:
+    assert isinstance(item, CanonicalStreamItem)
+    assert item.kind is StreamItemKind.FLOW_EVENT
+    assert item.channel is StreamChannel.FLOW
+    assert isinstance(item.data, Mapping)
+    event_type = item.metadata.get("event_type")
+    assert_non_empty_string(event_type, "event_type")
+    event_type_value = cast(str, event_type)
+    assert event_type_value.startswith("flow_")
+
+
+def _flow_event_type_value(event_type: EventType | str) -> str:
     if isinstance(event_type, EventType):
-        return event_type.value.startswith("flow_")
-    return event_type.startswith("flow_")
-
-
-def _payload_mapping(event: Event) -> Mapping[str, object]:
-    if event.payload is None:
-        return {}
-    assert isinstance(event.payload, Mapping)
-    return event.payload
+        return event_type.value
+    assert_non_empty_string(event_type, "event_type")
+    return event_type
 
 
 def _loose_mapping(payload: Mapping[str, object]) -> dict[str, object]:
@@ -273,20 +280,76 @@ def _loose_float(value: float) -> LooseJsonValue:
     return {"type": "float", "value": str(value)}
 
 
-def _flow_event_metadata(event: Event) -> dict[str, LooseJsonValue]:
-    event_type = (
-        event.type.value
-        if isinstance(event.type, EventType)
-        else (str(event.type))
-    )
+def _flow_item_metadata(
+    event_type: str,
+    *,
+    payload: Mapping[str, object],
+    started: float | None,
+    finished: float | None,
+) -> dict[str, LooseJsonValue]:
     metadata: dict[str, LooseJsonValue] = {"event_type": event_type}
-    if event.started is not None:
-        metadata["started"] = _loose_float(float(event.started))
-    if event.finished is not None:
-        metadata["finished"] = _loose_float(float(event.finished))
-    if event.elapsed is not None:
-        metadata["elapsed"] = _loose_float(float(event.elapsed))
+    if started is not None:
+        metadata["started"] = _loose_float(float(started))
+    if finished is not None:
+        metadata["finished"] = _loose_float(float(finished))
+    if started is not None and finished is not None:
+        metadata["elapsed"] = _loose_float(float(finished - started))
+    metadata.update(_flow_payload_metadata(payload))
     return metadata
+
+
+def _flow_payload_metadata(
+    payload: Mapping[str, object],
+) -> dict[str, LooseJsonValue]:
+    metadata: dict[str, LooseJsonValue] = {}
+    for key in _FLOW_TEXT_METADATA_FIELDS:
+        text_value = _metadata_string(payload.get(key))
+        if text_value is not None:
+            metadata[key] = text_value
+    for key in _FLOW_INT_METADATA_FIELDS:
+        int_value = _metadata_non_negative_int(payload.get(key))
+        if int_value is not None:
+            metadata[key] = int_value
+    for key in _FLOW_FLOAT_METADATA_FIELDS:
+        number_value = _metadata_non_negative_number(payload.get(key))
+        if number_value is not None:
+            metadata[key] = number_value
+    for key in _FLOW_BOOL_METADATA_FIELDS:
+        bool_value = _metadata_bool(payload.get(key))
+        if bool_value is not None:
+            metadata[key] = bool_value
+    if "state" not in metadata and "status" in metadata:
+        metadata["state"] = metadata["status"]
+    return metadata
+
+
+def _metadata_string(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _metadata_non_negative_int(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _metadata_non_negative_number(value: object) -> int | float | None:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return None
+    number = float(value)
+    if not isfinite(number) or number < 0:
+        return None
+    if isinstance(value, int):
+        return value
+    return number
+
+
+def _metadata_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    return None
 
 
 def _optional_string(value: object) -> str | None:

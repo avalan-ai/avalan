@@ -14,13 +14,12 @@ from a2a import types as a2a_types
 from streaming_trace_fixtures import (
     TERMINAL_ERROR_DATA,
     async_items,
+    canonical_stream_trace,
     terminal_outcome_trace,
 )
 
 from avalan.cli.commands import model as model_cmds
 from avalan.entities import MessageRole
-from avalan.event import Event, EventType
-from avalan.flow.stream import canonical_flow_event_listener
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -169,7 +168,13 @@ def _canonical_items(
     }
     return (
         _stream_item(0, StreamItemKind.STREAM_STARTED),
-        replace(flow_item, sequence=1),
+        replace(
+            flow_item,
+            stream_session_id="stream-1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=1,
+        ),
         _stream_item(2, StreamItemKind.REASONING_DELTA, text_delta="plan"),
         _stream_item(3, StreamItemKind.REASONING_DONE),
         _stream_item(
@@ -240,41 +245,139 @@ def _canonical_items(
     )
 
 
+def _fixture_flow_item() -> CanonicalStreamItem:
+    flow_items = [
+        item
+        for item in canonical_stream_trace().items
+        if item.kind is StreamItemKind.FLOW_EVENT
+    ]
+    assert len(flow_items) == 1
+    return flow_items[0]
+
+
+def _flow_item_from_stream(
+    items: tuple[CanonicalStreamItem, ...],
+) -> CanonicalStreamItem:
+    flow_items = [
+        item for item in items if item.kind is StreamItemKind.FLOW_EVENT
+    ]
+    assert len(flow_items) == 1
+    return flow_items[0]
+
+
 def test_same_canonical_stream_projects_through_protocols() -> None:
     asyncio.run(_run_same_canonical_stream_projects_through_protocols())
 
 
 async def _run_same_canonical_stream_projects_through_protocols() -> None:
-    flow_events: list[Event] = []
-    flow_listener = canonical_flow_event_listener(
-        flow_events.append,
-        stream_session_id="stream-1",
-        run_id="run-1",
-        turn_id="turn-1",
+    flow_item = replace(
+        _fixture_flow_item(),
+        data={
+            "flow_id": "flow-1",
+            "node": "node-1",
+            "status": "started",
+            "private_output": {"secret": "customer"},
+        },
+        metadata={
+            "event_type": "flow_node_started",
+            "state": "running",
+            "status": "started",
+            "attempt": 1,
+            "private_output": "customer-secret",
+        },
     )
-    result = flow_listener(
-        Event(
-            type=EventType.FLOW_NODE_STARTED,
-            payload={
-                "flow_id": "flow-1",
-                "node": "node-1",
-                "status": "started",
-            },
-        )
-    )
-    if result is not None:
-        await result
 
-    assert len(flow_listener.items) == 1
-    assert len(flow_listener.ui_items) == 1
-    flow_item = flow_listener.items[0]
     assert flow_item.kind is StreamItemKind.FLOW_EVENT
     assert flow_item.correlation.flow_run_id == "flow-1"
     assert flow_item.correlation.node_id == "node-1"
 
     items = _canonical_items(flow_item)
-    await _assert_mcp_projection(items)
-    await _assert_a2a_projection(items)
+    expected_flow_item = _flow_item_from_stream(items)
+    assert expected_flow_item.data == flow_item.data
+    assert expected_flow_item.metadata == flow_item.metadata
+    expected_flow_metadata = {
+        "event_type": "flow_node_started",
+        "state": "running",
+        "status": "started",
+        "attempt": 1,
+    }
+    await _assert_mcp_projection(
+        items,
+        expected_flow_item,
+        expected_flow_metadata,
+    )
+    await _assert_a2a_projection(
+        items,
+        expected_flow_item,
+        expected_flow_metadata,
+    )
+
+
+def test_a2a_flow_events_are_sideband_during_answer_channel() -> None:
+    asyncio.run(_run_a2a_flow_events_are_sideband_during_answer_channel())
+
+
+async def _run_a2a_flow_events_are_sideband_during_answer_channel() -> None:
+    flow_item = replace(
+        _fixture_flow_item(),
+        stream_session_id="stream-1",
+        run_id="run-1",
+        turn_id="turn-1",
+        sequence=2,
+        metadata={
+            "event_type": "flow_node_started",
+            "status": "started",
+        },
+    )
+    items = (
+        _stream_item(0, StreamItemKind.STREAM_STARTED),
+        _stream_item(1, StreamItemKind.ANSWER_DELTA, text_delta="A"),
+        flow_item,
+        _stream_item(3, StreamItemKind.ANSWER_DELTA, text_delta="B"),
+        _stream_item(4, StreamItemKind.ANSWER_DONE),
+        _stream_item(5, StreamItemKind.USAGE_COMPLETED, usage={}),
+        _stream_item(
+            6,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    )
+    store = TaskStore()
+    task_id = "flow-sideband"
+    await store.create_task(
+        task_id,
+        model="test-model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    async for _ in translator.run_stream(_iter_items(items)):
+        continue
+
+    task = await store.get_task(task_id)
+    events = await store.get_events(task_id)
+    artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
+    answer_events = [
+        event
+        for event in events
+        if event["event"] in {"artifact.delta", "artifact.completed"}
+        and cast(dict[str, object], event["data"])
+        .get("artifact", {})
+        .get("id")
+        == "answer"
+    ]
+
+    assert artifacts["answer"]["content"] == [
+        {"type": "text", "text": "A"},
+        {"type": "text", "text": "B"},
+    ]
+    assert [event["event"] for event in answer_events] == [
+        "artifact.delta",
+        "artifact.delta",
+        "artifact.completed",
+    ]
 
 
 def test_terminal_outcome_traces_project_through_protocols() -> None:
@@ -710,6 +813,8 @@ async def _assert_a2a_legacy_rejection_first_item() -> None:
 
 async def _assert_mcp_projection(
     items: tuple[CanonicalStreamItem, ...],
+    expected_flow_item: CanonicalStreamItem,
+    expected_flow_metadata: dict[str, object],
 ) -> None:
     response = _CanonicalResponse(items)
     orchestrator = _SyncingOrchestrator()
@@ -755,6 +860,17 @@ async def _assert_mcp_projection(
         for payload in payloads
         if payload.get("method") == "notifications/message"
     ]
+    flow_messages = [
+        message for message in messages if message.get("type") == "flow.event"
+    ]
+    assert len(flow_messages) == 1
+    assert flow_messages[0]["event"] == "flow_node_started"
+    assert flow_messages[0]["flowRunId"] == "flow-1"
+    assert flow_messages[0]["nodeId"] == "node-1"
+    assert flow_messages[0]["sequence"] == expected_flow_item.sequence
+    assert flow_messages[0]["metadata"] == expected_flow_metadata
+    assert "data" not in flow_messages[0]
+    assert "private_output" not in dumps(flow_messages[0], sort_keys=True)
     assert {"type": "reasoning", "delta": "plan"} in messages
     assert any(
         message.get("type") == "tool.input_delta"
@@ -817,6 +933,8 @@ async def _assert_mcp_projection(
 
 async def _assert_a2a_projection(
     items: tuple[CanonicalStreamItem, ...],
+    expected_flow_item: CanonicalStreamItem,
+    expected_flow_metadata: dict[str, object],
 ) -> None:
     store = TaskStore()
     task_id = "protocol-stream"
@@ -849,6 +967,21 @@ async def _assert_a2a_projection(
             artifact_updates.append(response.result)
 
     assert translator.text == "final answer"
+    flow_updates = [
+        update
+        for update in status_updates
+        if update.metadata and update.metadata.get("phase") == "flow.event"
+    ]
+    assert len(flow_updates) == 1
+    flow_metadata = flow_updates[0].metadata
+    assert flow_metadata
+    assert flow_metadata["flow_event_type"] == "flow_node_started"
+    assert flow_metadata["flow_run_id"] == "flow-1"
+    assert flow_metadata["node_id"] == "node-1"
+    assert flow_metadata["sequence"] == expected_flow_item.sequence
+    assert flow_metadata["flow_metadata"] == expected_flow_metadata
+    assert "flow_data" not in flow_metadata
+    assert "private_output" not in dumps(flow_metadata, sort_keys=True)
     task = await store.get_task(task_id)
     event_history = await store.get_events(task_id)
     payload = dumps(

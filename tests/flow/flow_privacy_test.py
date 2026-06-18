@@ -1,9 +1,9 @@
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from async_helpers import run_async
 
-from avalan.event import Event
+from avalan.event import Event, EventObservabilityPayload, EventType
 from avalan.flow import (
     FlowDiagnostic,
     FlowDiagnosticCategory,
@@ -30,6 +30,10 @@ from avalan.flow import (
     loads_flow_definition_result,
     parse_flow_selector,
 )
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    stream_observability_payload,
+)
 
 _async_loads_flow_definition_result = loads_flow_definition_result
 
@@ -53,6 +57,48 @@ _SENSITIVE_VALUES = (
     "private-output-selection",
     "private-record-output",
 )
+
+
+class _FlowEventCollector:
+    def __init__(self) -> None:
+        self._events: list[Event] = []
+
+    def append(self, item: CanonicalStreamItem) -> None:
+        assert isinstance(item, CanonicalStreamItem)
+        event_type = item.metadata.get("event_type")
+        assert isinstance(event_type, str)
+        typed_event_type = _event_type_value(event_type)
+        payload = item.data if isinstance(item.data, Mapping) else {}
+        self._events.append(
+            Event(
+                type=typed_event_type,
+                payload=payload,
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        stream_observability_payload(item)
+                    )
+                ),
+            )
+        )
+
+    def __iter__(self) -> Iterator[Event]:
+        return iter(self._events)
+
+    def __getitem__(self, index: int) -> Event:
+        return self._events[index]
+
+    def __len__(self) -> int:
+        return len(self._events)
+
+    def __str__(self) -> str:
+        return str(self._events)
+
+
+def _event_type_value(value: str) -> EventType | str:
+    try:
+        return EventType(value)
+    except ValueError:
+        return value
 
 
 class FlowMalformedInputPrivacyTestCase(TestCase):
@@ -125,7 +171,7 @@ class FlowExecutionFailurePrivacyTestCase(IsolatedAsyncioTestCase):
                 ),
             ),
         )
-        events: list[Event] = []
+        events = _FlowEventCollector()
 
         def runner(
             _: FlowNodePlan,
@@ -208,7 +254,7 @@ class FlowExecutionFailurePrivacyTestCase(IsolatedAsyncioTestCase):
                 ),
             ),
         )
-        events: list[Event] = []
+        events = _FlowEventCollector()
 
         def runner(
             _: FlowNodePlan,
