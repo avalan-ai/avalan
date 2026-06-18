@@ -156,7 +156,7 @@ ACCEPTANCE_HARNESS_TESTS = {
         (
             "tests/model/text_generation_response_more_test.py"
             "::TextGenerationResponseMoreTestCase"
-            "::test_hosted_projection_disconnect_closes_no_read_ahead"
+            "::test_hosted_projection_disconnect_closes_after_first_item"
         ),
         (
             "tests/model/nlp/text_generation_methods_more_test.py"
@@ -330,7 +330,7 @@ ACCEPTANCE_HARNESS_TESTS = {
         (
             "tests/model/text_generation_response_more_test.py"
             "::TextGenerationResponseMoreTestCase"
-            "::test_consumer_projections_parse_split_reasoning_markers"
+            "::test_consumer_projections_preserve_split_reasoning_whitespace"
         ),
         (
             "tests/model/text_generation_response_more_test.py"
@@ -1378,7 +1378,7 @@ FINAL_GATE_ACCEPTANCE_HARNESSES = {
             (
                 "tests/model/text_generation_response_more_test.py"
                 "::TextGenerationResponseMoreTestCase"
-                "::test_hosted_projection_disconnect_closes_no_read_ahead"
+                "::test_hosted_projection_disconnect_closes_after_first_item"
             ),
             (
                 "tests/model/text_generation_response_more_test.py"
@@ -1597,7 +1597,7 @@ FINAL_GATE_ACCEPTANCE_HARNESSES = {
             (
                 "tests/model/text_generation_response_more_test.py"
                 "::TextGenerationResponseMoreTestCase"
-                "::test_consumer_projections_parse_split_reasoning_markers"
+                "::test_consumer_projections_preserve_split_reasoning_whitespace"
             ),
             (
                 "tests/model/text_generation_response_more_test.py"

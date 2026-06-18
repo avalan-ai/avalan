@@ -1680,48 +1680,6 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
         ),
     ),
     StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.nlp.text.mlxlm",
-        qualname="MlxLmModel._stream_generator",
-        surfaces=(StreamLegacySurface.STRING,),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.PRODUCER,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.mlxlm",
-        removal_condition=(
-            "MLX-LM model generation emits canonical stream items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.nlp.text.mlxlm",
-        qualname="MlxLmStream.__init__._generator",
-        surfaces=(
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.PRODUCER,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.mlxlm",
-        removal_condition=(
-            "MLX-LM stream construction receives canonical stream items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.nlp.text.mlxlm",
-        qualname="MlxLmStream.__anext__",
-        surfaces=(
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.PRODUCER,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.mlxlm",
-        removal_condition=(
-            "MLX-LM stream iteration emits canonical stream items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
         module="avalan.model.nlp.text.vllm",
         qualname="VllmModel._stream_generator",
         surfaces=(StreamLegacySurface.STRING,),
@@ -1909,67 +1867,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
     StreamLegacyRuntimeBoundaryInventoryEntry, ...
 ] = (
     _runtime_boundary(
-        "avalan.model.stream",
-        "TextGenerationStream.__aiter__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.stream",
-        "Producer streams expose canonical stream items directly.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "TextGenerationSingleStream.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.stream",
-        "Single-result producer streams expose canonical stream items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "TextGenerationSingleStream.__aiter__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.stream",
-        "Single-result producer iteration yields canonical stream items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "TextGenerationSingleStream.__anext__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.stream",
-        "Single-result producer emission yields canonical stream items.",
-    ),
-    _runtime_boundary(
         "avalan.model.vendor",
         "TextGenerationVendor.__call__",
         (
@@ -1984,19 +1881,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
     ),
     _runtime_boundary(
         "avalan.model.vendor",
-        "TextGenerationVendorStream.__anext__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.vendor",
-        "Vendor stream iteration yields canonical stream items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.vendor",
         "TextGenerationVendorStream.__init__",
         (
             StreamLegacySurface.STRING,
@@ -2007,47 +1891,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         (StreamLegacyBoundaryDirection.ACCEPTS,),
         "model.vendor",
         "Vendor stream constructors accept canonical stream sources.",
-    ),
-    _runtime_boundary(
-        "avalan.model.vendor",
-        "TextGenerationVendorStream.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
-        "model.vendor",
-        "Vendor stream calls expose canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.vendor",
-        "TextGenerationVendorStream.__aiter__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
-        "model.vendor",
-        "Vendor stream async iteration exposes canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.openai",
-        "OpenAIStream.__anext__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.vendor.openai",
-        "OpenAI streaming uses provider canonical events directly.",
     ),
     _runtime_boundary(
         "avalan.model.nlp.text.vendor.openai",
@@ -2069,20 +1912,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
     ),
     _runtime_boundary(
         "avalan.model.nlp.text.vendor.anthropic",
-        "AnthropicStream.__anext__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.vendor.anthropic",
-        "Anthropic streaming uses provider canonical events directly.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.anthropic",
         "AnthropicClient.__call__",
         (
             StreamLegacySurface.STRING,
@@ -2097,21 +1926,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         ),
         "model.vendor.anthropic",
         "Anthropic client call surfaces return canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.bedrock",
-        "BedrockStream.__anext__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.vendor.bedrock",
-        "Bedrock streaming uses provider canonical events directly.",
     ),
     _runtime_boundary(
         "avalan.model.nlp.text.vendor.bedrock",
@@ -2165,19 +1979,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
     ),
     _runtime_boundary(
         "avalan.model.nlp.text.vendor.ollama",
-        "OllamaStream.__anext__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.vendor.ollama",
-        "Ollama streaming yields canonical stream items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.ollama",
         "OllamaClient.__call__",
         (
             StreamLegacySurface.STRING,
@@ -2207,28 +2008,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         ),
         "model.vendor.huggingface",
         "HuggingFace streaming returns canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.mlxlm",
-        "MlxLmStream.__anext__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.local.mlxlm",
-        "MLX-LM streaming yields canonical stream items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vllm",
-        "VllmStream.__anext__",
-        (StreamLegacySurface.STRING,),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.local.vllm",
-        "vLLM streaming yields canonical stream items.",
     ),
     _runtime_boundary(
         "avalan.model.nlp.text.ds4",
@@ -2339,7 +2118,7 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
     ),
     _runtime_boundary(
         "avalan.model.stream",
-        "normalize_local_stream",
+        "_normalize_local_stream",
         (
             StreamLegacySurface.STRING,
             StreamLegacySurface.TOKEN,
@@ -3809,7 +3588,7 @@ async def normalize_provider_stream(
         await close_provider_stream()
 
 
-async def normalize_local_stream(
+async def _normalize_local_stream(
     tokens: AsyncIterable[Token | TokenDetail | str],
     *,
     stream_session_id: str,
@@ -4667,20 +4446,20 @@ class _ProviderStreamNormalizer:
         )
 
 
-class TextGenerationStream(AsyncIterator[Token | TokenDetail | str], ABC):
-    _generator: AsyncIterator[Token | TokenDetail | str] | None = None
+class TextGenerationStream(AsyncIterator[CanonicalStreamItem], ABC):
+    _generator: AsyncIterator[CanonicalStreamItem] | None = None
 
     @abstractmethod
     def __call__(
         self, *args: Any, **kwargs: Any
-    ) -> AsyncIterator[Token | TokenDetail | str]:
+    ) -> AsyncIterator[CanonicalStreamItem]:
         raise NotImplementedError()
 
     @abstractmethod
-    async def __anext__(self) -> Token | TokenDetail | str:
+    async def __anext__(self) -> CanonicalStreamItem:
         raise NotImplementedError()
 
-    def __aiter__(self) -> AsyncIterator[Token | TokenDetail | str]:
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
         assert self._generator
         return self
 
@@ -4694,24 +4473,20 @@ class TextGenerationStream(AsyncIterator[Token | TokenDetail | str], ABC):
         capabilities: StreamProviderCapabilities | None = None,
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
-        return normalize_local_stream(
-            self.__aiter__(),
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-            provider_family=(
-                provider_family
-                or getattr(self, "provider_family", None)
-                or ProviderFamily.LOCAL
-            ),
-            capabilities=capabilities,
-            close_after_terminal=close_after_terminal,
-        )
+        _assert_non_empty_string(stream_session_id, "stream_session_id")
+        _assert_non_empty_string(run_id, "run_id")
+        _assert_non_empty_string(turn_id, "turn_id")
+        if provider_family is not None:
+            provider_family_value(provider_family)
+        if capabilities is not None:
+            assert isinstance(capabilities, StreamProviderCapabilities)
+        assert isinstance(close_after_terminal, bool)
+        return self.__aiter__()
 
 
 class TextGenerationSingleStream(TextGenerationStream):
     _content: str | Token | TokenDetail
-    _consumed: bool = False
+    _item_index: int = 0
     _provider_family: str | None = None
     _usage: object | None = None
 
@@ -4740,58 +4515,122 @@ class TextGenerationSingleStream(TextGenerationStream):
 
     @property
     def canonical_items(self) -> tuple[CanonicalStreamItem, ...]:
+        return self._canonical_items(
+            stream_session_id="single-stream",
+            run_id="single-run",
+            turn_id="single-turn",
+            provider_family=self._provider_family,
+            capabilities=None,
+            close_after_terminal=True,
+        )
+
+    def _canonical_items(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: ProviderFamily | str | None,
+        capabilities: StreamProviderCapabilities | None,
+        close_after_terminal: bool,
+    ) -> tuple[CanonicalStreamItem, ...]:
         text = token_text(self._content)
         usage = self._usage if self._usage is not None else {}
-        return (
+        normalized_provider_family = provider_family_value(provider_family)
+        metadata: dict[str, LooseJsonValue] = {}
+        if capabilities is not None:
+            metadata["capabilities"] = cast(
+                LooseJsonValue, capabilities.to_metadata()
+            )
+        items = [
             CanonicalStreamItem(
-                stream_session_id="single-stream",
-                run_id="single-run",
-                turn_id="single-turn",
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
                 sequence=0,
                 kind=StreamItemKind.STREAM_STARTED,
                 channel=StreamChannel.CONTROL,
-                provider_family=self._provider_family,
+                metadata=metadata,
+                provider_family=normalized_provider_family,
             ),
             CanonicalStreamItem(
-                stream_session_id="single-stream",
-                run_id="single-run",
-                turn_id="single-turn",
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
                 sequence=1,
                 kind=StreamItemKind.ANSWER_DELTA,
                 channel=StreamChannel.ANSWER,
                 text_delta=text,
-                provider_family=self._provider_family,
+                provider_family=normalized_provider_family,
             ),
             CanonicalStreamItem(
-                stream_session_id="single-stream",
-                run_id="single-run",
-                turn_id="single-turn",
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
                 sequence=2,
                 kind=StreamItemKind.ANSWER_DONE,
                 channel=StreamChannel.ANSWER,
-                provider_family=self._provider_family,
+                provider_family=normalized_provider_family,
             ),
             CanonicalStreamItem(
-                stream_session_id="single-stream",
-                run_id="single-run",
-                turn_id="single-turn",
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
                 sequence=3,
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage=cast(Any, usage),
                 terminal_outcome=StreamTerminalOutcome.COMPLETED,
-                provider_family=self._provider_family,
+                provider_family=normalized_provider_family,
             ),
-            CanonicalStreamItem(
-                stream_session_id="single-stream",
-                run_id="single-run",
-                turn_id="single-turn",
-                sequence=4,
-                kind=StreamItemKind.STREAM_CLOSED,
-                channel=StreamChannel.CONTROL,
-                provider_family=self._provider_family,
-            ),
+        ]
+        if close_after_terminal:
+            items.append(
+                CanonicalStreamItem(
+                    stream_session_id=stream_session_id,
+                    run_id=run_id,
+                    turn_id=turn_id,
+                    sequence=4,
+                    kind=StreamItemKind.STREAM_CLOSED,
+                    channel=StreamChannel.CONTROL,
+                    provider_family=normalized_provider_family,
+                )
+            )
+        return tuple(items)
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: ProviderFamily | str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        _assert_non_empty_string(stream_session_id, "stream_session_id")
+        _assert_non_empty_string(run_id, "run_id")
+        _assert_non_empty_string(turn_id, "turn_id")
+        if capabilities is not None:
+            assert isinstance(capabilities, StreamProviderCapabilities)
+        assert isinstance(close_after_terminal, bool)
+        return self._iterate_canonical_items(
+            self._canonical_items(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                provider_family=provider_family or self._provider_family,
+                capabilities=capabilities,
+                close_after_terminal=close_after_terminal,
+            )
         )
+
+    @staticmethod
+    async def _iterate_canonical_items(
+        items: tuple[CanonicalStreamItem, ...],
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        for item in items:
+            yield item
 
     @property
     def accumulator(self) -> CanonicalStreamAccumulator:
@@ -4806,19 +4645,21 @@ class TextGenerationSingleStream(TextGenerationStream):
 
     def __call__(
         self, *args: Any, **kwargs: Any
-    ) -> AsyncIterator[str | Token | TokenDetail]:
-        self._consumed = False
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        self._item_index = 0
         return self
 
-    def __aiter__(self) -> AsyncIterator[str | Token | TokenDetail]:
-        self._consumed = False
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+        self._item_index = 0
         return self
 
-    async def __anext__(self) -> str | Token | TokenDetail:
-        if self._consumed:
+    async def __anext__(self) -> CanonicalStreamItem:
+        items = self.canonical_items
+        if self._item_index >= len(items):
             raise StopAsyncIteration
-        self._consumed = True
-        return self._content
+        item = items[self._item_index]
+        self._item_index += 1
+        return item
 
 
 @dataclass(slots=True)

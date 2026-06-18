@@ -5,8 +5,6 @@ from ..entities import (
     MessageContentFile,
     MessageContentImage,
     MessageContentText,
-    Token,
-    TokenDetail,
     ToolCall,
     ToolCallToken,
     ToolValue,
@@ -18,11 +16,21 @@ from .message import (
     TemplateMessageRole,
 )
 from .provider import ProviderFamily, provider_family_value
-from .stream import TextGenerationStream
+from .stream import (
+    CanonicalStreamItem,
+    StreamItemKind,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
+    StreamValidationError,
+    TextGenerationStream,
+    normalize_provider_stream,
+)
 
 from abc import ABC
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from binascii import Error as BinasciiError
+from collections.abc import AsyncIterable
+from dataclasses import replace
 from inspect import isawaitable
 from json import JSONDecodeError, dumps, loads
 from re import compile as compile_regex
@@ -44,7 +52,7 @@ class TextGenerationVendor(ABC):
         instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> TextGenerationStream | AsyncIterator[Token | TokenDetail | str]:
+    ) -> TextGenerationStream | AsyncIterator[Any] | str:
         raise NotImplementedError()
 
     def _system_prompt(self, messages: list[Message]) -> str | None:
@@ -215,16 +223,21 @@ class TextGenerationVendor(ABC):
 
 
 class TextGenerationVendorStream(TextGenerationStream):
-    _generator: AsyncIterator[Token | TokenDetail | str]
+    _DEFAULT_STREAM_SESSION_ID = "vendor-stream"
+    _DEFAULT_RUN_ID = "vendor-run"
+    _DEFAULT_TURN_ID = "vendor-turn"
+
+    _generator: AsyncIterator[Any]
     _provider_family: str | None
     _stream_sources: tuple[object, ...]
     _stream_closed: bool
     _stream_cancelled: bool
     _usage: object | None
+    _direct_iterator: AsyncIterator[CanonicalStreamItem] | None
 
     def __init__(
         self,
-        generator: AsyncIterator[Token | TokenDetail | str],
+        generator: AsyncIterator[Any],
         *,
         provider_family: ProviderFamily | str | None = None,
         sources: Iterable[object] = (),
@@ -236,6 +249,7 @@ class TextGenerationVendorStream(TextGenerationStream):
         self._stream_closed = False
         self._stream_cancelled = False
         self._usage = usage
+        self._direct_iterator = None
 
     @property
     def provider_family(self) -> str | None:
@@ -247,15 +261,187 @@ class TextGenerationVendorStream(TextGenerationStream):
 
     def __call__(
         self, *args: Any, **kwargs: Any
-    ) -> AsyncIterator[Token | TokenDetail | str]:
+    ) -> AsyncIterator[CanonicalStreamItem]:
         return self.__aiter__()
 
-    def __aiter__(self) -> AsyncIterator[Token | TokenDetail | str]:
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
         assert self._generator
-        return self
+        return self.canonical_stream(
+            stream_session_id=self._DEFAULT_STREAM_SESSION_ID,
+            run_id=self._DEFAULT_RUN_ID,
+            turn_id=self._DEFAULT_TURN_ID,
+        )
 
-    async def __anext__(self) -> Token | TokenDetail | str:
-        return await self._generator.__anext__()
+    async def __anext__(self) -> CanonicalStreamItem:
+        if self._direct_iterator is None:
+            self._direct_iterator = self.__aiter__()
+        return await self._direct_iterator.__anext__()
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: ProviderFamily | str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        provider_family_value = self._effective_provider_family(
+            provider_family,
+            capabilities,
+        )
+        return self._close_stream_on_exit(
+            self._canonical_stream(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                provider_family=provider_family_value,
+                capabilities=capabilities,
+                close_after_terminal=close_after_terminal,
+            )
+        )
+
+    async def _canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: str | None,
+        capabilities: StreamProviderCapabilities | None,
+        close_after_terminal: bool,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        _ = stream_session_id
+        _ = run_id
+        _ = turn_id
+        _ = close_after_terminal
+        iterator = self._generator.__aiter__()
+        try:
+            first = await iterator.__anext__()
+        except StopAsyncIteration:
+            first = None
+
+        if first is not None and not isinstance(first, CanonicalStreamItem):
+            raise StreamValidationError(
+                "unsupported legacy vendor stream item"
+            )
+
+        if first is None:
+            return
+
+        async for item in self._canonical_items_from_first(first, iterator):
+            yield self._vendor_item(
+                item,
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                provider_family=provider_family,
+                capabilities=capabilities,
+            )
+
+    async def _canonical_items_from_first(
+        self,
+        first: CanonicalStreamItem,
+        iterator: AsyncIterator[Any],
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        yield first
+        async for item in iterator:
+            if not isinstance(item, CanonicalStreamItem):
+                raise StreamValidationError(
+                    "unsupported legacy vendor stream item"
+                )
+            yield item
+
+    def _provider_canonical_stream(
+        self,
+        events: AsyncIterable[StreamProviderEvent],
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: ProviderFamily | str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        provider_family_value = self._effective_provider_family(
+            provider_family,
+            capabilities,
+        )
+        return self._close_stream_on_exit(
+            normalize_provider_stream(
+                events,
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                provider_family=provider_family_value,
+                capabilities=capabilities,
+                close_after_terminal=close_after_terminal,
+            )
+        )
+
+    def _vendor_item(
+        self,
+        item: CanonicalStreamItem,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: str | None,
+        capabilities: StreamProviderCapabilities | None,
+    ) -> CanonicalStreamItem:
+        assert isinstance(item, CanonicalStreamItem)
+        usage = self._usage
+        if (
+            item.stream_session_id != stream_session_id
+            or item.run_id != run_id
+            or item.turn_id != turn_id
+        ):
+            item = replace(
+                item,
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+            )
+        if provider_family is not None and item.provider_family is None:
+            item = replace(item, provider_family=provider_family)
+        if (
+            capabilities is not None
+            and item.kind is StreamItemKind.STREAM_STARTED
+            and "capabilities" not in item.metadata
+        ):
+            item = replace(
+                item,
+                metadata={
+                    **item.metadata,
+                    "capabilities": cast(
+                        Any,
+                        capabilities.to_metadata(),
+                    ),
+                },
+            )
+        if (
+            usage is not None
+            and item.kind is StreamItemKind.STREAM_COMPLETED
+            and not item.usage
+        ):
+            item = replace(item, usage=cast(Any, usage))
+        return item
+
+    def _effective_provider_family(
+        self,
+        provider_family: ProviderFamily | str | None,
+        capabilities: StreamProviderCapabilities | None,
+    ) -> str | None:
+        return (
+            provider_family_value(provider_family)
+            or self._provider_family
+            or (
+                capabilities.normalized_provider_family
+                if capabilities is not None
+                else None
+            )
+        )
 
     async def _close_stream_on_exit(
         self,

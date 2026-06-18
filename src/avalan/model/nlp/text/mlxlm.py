@@ -1,12 +1,18 @@
 from ....entities import (
     GenerationSettings,
     Input,
-    Token,
-    TokenDetail,
     TransformerEngineSettings,
 )
 from ....model.response.text import TextGenerationResponse
+from ....model.stream import (
+    CanonicalStreamItem,
+    StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
+)
 from ....tool.manager import ToolManager
+from ....types import LooseJsonValue
 from ...vendor import TextGenerationVendorStream
 from .generation import TextGenerationModel
 
@@ -20,7 +26,7 @@ from importlib.util import find_spec
 from logging import Logger, getLogger
 from subprocess import DEVNULL, TimeoutExpired, run
 from sys import executable, modules
-from typing import Any, AsyncGenerator, Literal, cast
+from typing import Any, AsyncGenerator, AsyncIterator, Literal, cast
 
 from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
@@ -99,19 +105,9 @@ class MlxLmStream(TextGenerationVendorStream):
             self._iterator = None
             self._iterator_factory = generator
 
-        async def _generator() -> (
-            AsyncGenerator[Token | TokenDetail | str, None]
-        ):
-            while True:
-                item = await self._next_raw()
-                if item is self._SENTINEL:
-                    return
-                if isinstance(item, (Token, TokenDetail, str)):
-                    yield item
-                    continue
-                text = getattr(item, "text", None)
-                if isinstance(text, str):
-                    yield text
+        async def _generator() -> AsyncGenerator[CanonicalStreamItem, None]:
+            if False:
+                yield cast(CanonicalStreamItem, None)
 
         super().__init__(_generator())
 
@@ -156,16 +152,124 @@ class MlxLmStream(TextGenerationVendorStream):
             self.close()
         return chunk
 
-    async def __anext__(self) -> str:
-        chunk = await self._next_raw()
-        if chunk is self._SENTINEL:
-            raise StopAsyncIteration
+    async def __anext__(self) -> CanonicalStreamItem:
+        return await super().__anext__()
+
+    async def cancel(self) -> None:
+        try:
+            await super().cancel()
+        finally:
+            self.close()
+
+    async def aclose(self) -> None:
+        try:
+            await super().aclose()
+        finally:
+            self.close()
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        return self._provider_canonical_stream(
+            self._provider_events(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=provider_family or "mlx",
+            capabilities=capabilities
+            or StreamProviderCapabilities(
+                backend=StreamProducerBackend.LOCAL,
+                provider_family="mlx",
+                supports_cancellation=True,
+            ),
+            close_after_terminal=close_after_terminal,
+        )
+
+    async def _provider_events(
+        self,
+    ) -> AsyncGenerator[StreamProviderEvent, None]:
+        try:
+            while True:
+                chunk = await self._next_raw()
+                if chunk is self._SENTINEL:
+                    return
+                text, metadata = self._chunk_text_and_metadata(chunk)
+                if text is None:
+                    continue
+                yield StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=text,
+                    metadata=metadata,
+                    provider_event_type="mlx_lm.delta",
+                )
+        finally:
+            self.close()
+
+    @staticmethod
+    def _chunk_text_and_metadata(
+        chunk: object,
+    ) -> tuple[str | None, dict[str, LooseJsonValue]]:
         if isinstance(chunk, str):
-            return chunk
-        if isinstance(chunk, (Token, TokenDetail)):
-            return chunk.token
-        text = getattr(chunk, "text", None)
-        return text if isinstance(text, str) else ""
+            return chunk, {}
+        token = getattr(chunk, "token", None)
+        if not isinstance(token, str):
+            text = getattr(chunk, "text", None)
+            return (text, {}) if isinstance(text, str) else (None, {})
+
+        metadata: dict[str, LooseJsonValue] = {}
+        token_id = getattr(chunk, "id", None)
+        if isinstance(token_id, int) and token_id >= 0:
+            metadata["token_id"] = token_id
+        probability = getattr(chunk, "probability", None)
+        if isinstance(probability, int | float):
+            metadata["probability"] = float(probability)
+        step = getattr(chunk, "step", None)
+        if isinstance(step, int):
+            metadata["step"] = step
+        probability_distribution = getattr(
+            chunk,
+            "probability_distribution",
+            None,
+        )
+        if probability_distribution is not None:
+            metadata["probability_distribution"] = cast(
+                LooseJsonValue,
+                probability_distribution,
+            )
+        candidates = getattr(chunk, "tokens", None)
+        if isinstance(candidates, list):
+            metadata["tokens"] = cast(
+                LooseJsonValue,
+                [
+                    candidate
+                    for item in candidates
+                    if (candidate := MlxLmStream._candidate_metadata(item))
+                ],
+            )
+        return token, metadata
+
+    @staticmethod
+    def _candidate_metadata(
+        candidate: object,
+    ) -> dict[str, LooseJsonValue] | None:
+        text = getattr(candidate, "token", None)
+        if not isinstance(text, str):
+            return None
+        metadata: dict[str, LooseJsonValue] = {"token": text}
+        token_id = getattr(candidate, "id", None)
+        if isinstance(token_id, int) and token_id >= 0:
+            metadata["token_id"] = token_id
+        probability = getattr(candidate, "probability", None)
+        if isinstance(probability, int | float):
+            metadata["probability"] = float(probability)
+        return metadata
 
 
 class MlxLmModel(TextGenerationModel):
@@ -204,7 +308,7 @@ class MlxLmModel(TextGenerationModel):
         inputs: dict[str, Tensor] | BatchEncoding | Tensor,
         settings: GenerationSettings,
         skip_special_tokens: bool,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[CanonicalStreamItem, None]:
         sampler, prompt = self._get_sampler_and_prompt(
             inputs, settings, skip_special_tokens
         )
@@ -225,9 +329,12 @@ class MlxLmModel(TextGenerationModel):
             use_executor=False,
         )
         try:
-            async for chunk in stream:
-                if isinstance(chunk, str):
-                    yield chunk
+            while True:
+                try:
+                    chunk = await stream.__anext__()
+                except StopAsyncIteration:
+                    break
+                yield chunk
         finally:
             stream.close()
 

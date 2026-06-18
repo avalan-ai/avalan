@@ -6,6 +6,7 @@ from importlib.machinery import ModuleSpec
 from json import loads
 from sys import modules
 from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -49,6 +50,10 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
+
+
+async def _legacy_stream_next(stream: Any) -> Any:
+    return await stream._generator.__anext__()
 
 
 class FakeBedrockError(Exception):
@@ -204,7 +209,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             out = []
             while True:
                 try:
-                    out.append(await stream.__anext__())
+                    out.append(await _legacy_stream_next(stream))
                 except StopAsyncIteration:
                     break
 
@@ -219,6 +224,57 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(out[3].token, "hi")
         self.assertEqual(out[4], "tool")
         build.assert_called_once_with("id1", "pkg__tool", '{"a":1}')
+
+    async def test_stream_public_iterator_yields_canonical_items(self):
+        stream = self.mod.BedrockStream(
+            AsyncIter(
+                [
+                    {
+                        "contentBlockDelta": {
+                            "contentBlockIndex": 0,
+                            "delta": {"text": {"text": "hi"}},
+                        }
+                    }
+                ]
+            )
+        )
+
+        items = [item async for item in stream]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].text_delta, "hi")
+        self.assertEqual({item.provider_family for item in items}, {"bedrock"})
+
+    async def test_stream_direct_anext_yields_canonical_items(self):
+        stream = self.mod.BedrockStream(
+            AsyncIter(
+                [
+                    {
+                        "contentBlockDelta": {
+                            "contentBlockIndex": 0,
+                            "delta": {"text": {"text": "hi"}},
+                        }
+                    }
+                ]
+            )
+        )
+
+        started = await stream.__anext__()
+        delta = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "hi")
+        self.assertEqual(delta.provider_family, "bedrock")
 
     async def test_stream_initial_input_and_stop_event(self):
         events = [
@@ -264,7 +320,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             outputs = []
             while True:
                 try:
-                    outputs.append(await stream.__anext__())
+                    outputs.append(await _legacy_stream_next(stream))
                 except StopAsyncIteration:
                     break
 
@@ -285,7 +341,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             AsyncIter([{"messageStop": {"reason": "done"}}])
         )
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
         self.assertIsNone(stream.usage)
 
     async def test_stream_records_usage_from_terminal_metadata(self):
@@ -328,12 +384,12 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.BedrockStream(AsyncIter(events))
 
-        token = await stream.__anext__()
+        token = await _legacy_stream_next(stream)
         self.assertIsInstance(token, Token)
         self.assertEqual(token.token, "hi")
         self.assertIsNone(stream.usage)
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
         observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
@@ -383,12 +439,12 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.BedrockStream(AsyncIter(events))
 
-        token = await stream.__anext__()
+        token = await _legacy_stream_next(stream)
         self.assertIsInstance(token, Token)
         self.assertEqual(token.token, "late")
         self.assertIsNone(stream.usage)
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
         totals = usage_totals_from_response(stream)
 
         self.assertIsNotNone(totals)
@@ -744,7 +800,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         stream = self.mod.BedrockStream(FailingIter())
 
         with self.assertRaises(RuntimeError):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
         self.assertIsNone(stream.usage)
         self.assertIsNone(usage_totals_from_response(stream))
 
@@ -1002,8 +1058,11 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             use_async_generator=False,
         )
 
-        text = await result.__anext__()
-        self.assertEqual(text, "hello world")
+        items = [item async for item in result]
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "hello world",
+        )
         self.assertEqual(result.provider_family, "bedrock")
         self.assertEqual(result.usage, {"inputTokens": 3})
         self.client.converse.assert_awaited_once()

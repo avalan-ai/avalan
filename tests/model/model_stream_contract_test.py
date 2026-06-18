@@ -83,6 +83,7 @@ from avalan.model.stream import (
     TextGenerationSingleStream,
     TextGenerationStream,
     _LegacyTokenStreamAdapter,
+    _normalize_local_stream,
     _token_metadata,
     accumulate_canonical_stream_items,
     assemble_tool_observations,
@@ -97,7 +98,6 @@ from avalan.model.stream import (
     legacy_stream_classifier_inventory,
     legacy_stream_runtime_boundary_inventory,
     legacy_stream_surface_inventory,
-    normalize_local_stream,
     normalize_provider_stream,
     project_canonical_stream_item,
     project_stream_consumer_item,
@@ -208,17 +208,15 @@ def _last_sequence(
 class _StreamProbe(TextGenerationStream):
     def __call__(
         self, *args: object, **kwargs: object
-    ) -> AsyncIterator[Token | TokenDetail | str]:
+    ) -> AsyncIterator[CanonicalStreamItem]:
         return TextGenerationStream.__call__(self, *args, **kwargs)
 
-    async def __anext__(self) -> Token | TokenDetail | str:
+    async def __anext__(self) -> CanonicalStreamItem:
         return await TextGenerationStream.__anext__(self)
 
 
-async def _single_token_generator() -> (
-    AsyncIterator[Token | TokenDetail | str]
-):
-    yield "token"
+async def _single_canonical_generator() -> AsyncIterator[CanonicalStreamItem]:
+    yield _item(StreamItemKind.STREAM_STARTED, 0)
 
 
 async def _provider_events(
@@ -268,7 +266,7 @@ async def _collect_local_items(
     return tuple(
         [
             item
-            async for item in normalize_local_stream(
+            async for item in _normalize_local_stream(
                 tokens,
                 stream_session_id="local-stream",
                 run_id="local-run",
@@ -324,7 +322,6 @@ _LEGACY_CLASSIFIER_STRING_SITES = {
         "avalan.model.nlp.text.vendor.openai",
         "OpenAIClient._non_stream_response_content",
     ),
-    ("avalan.model.nlp.text.mlxlm", "MlxLmModel._stream_generator"),
     ("avalan.model.nlp.text.vllm", "VllmModel._stream_generator"),
     ("avalan.model.response.text", "_text_from_non_stream_result"),
     ("avalan.model.response.text", "TextGenerationResponse.__aiter__"),
@@ -410,28 +407,6 @@ _PHASE_1_1_LEGACY_CLASSIFIER_DEBT_CEILING = {
         {
             StreamLegacySurface.TOKEN_DETAIL,
             StreamLegacySurface.TOOL_CALL_TOKEN,
-        }
-    ),
-    (
-        "avalan.model.nlp.text.mlxlm",
-        "MlxLmModel._stream_generator",
-    ): frozenset({StreamLegacySurface.STRING}),
-    (
-        "avalan.model.nlp.text.mlxlm",
-        "MlxLmStream.__anext__",
-    ): frozenset(
-        {
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        }
-    ),
-    (
-        "avalan.model.nlp.text.mlxlm",
-        "MlxLmStream.__init__._generator",
-    ): frozenset(
-        {
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
         }
     ),
     (
@@ -622,41 +597,6 @@ _PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING = {
         "return",
     ): frozenset({"Token", "TokenDetail"}),
     (
-        "avalan.model.nlp.text.mlxlm",
-        "MlxLmModel._stream_generator",
-        "return",
-    ): frozenset({"str"}),
-    (
-        "avalan.model.nlp.text.vendor.bedrock",
-        "BedrockClient.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.nlp.text.vendor.google",
-        "GoogleClient.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.nlp.text.vendor.huggingface",
-        "HuggingfaceClient.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.nlp.text.vendor.litellm",
-        "LiteLLMClient.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.nlp.text.vendor.ollama",
-        "OllamaClient.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.nlp.text.vendor.openai",
-        "OpenAIClient.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
         "avalan.model.nlp.text.vllm",
         "VllmModel._stream_generator",
         "return",
@@ -691,53 +631,6 @@ _PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING = {
         "TextGenerationResponse._string_output_generator",
         "return",
     ): frozenset({"OutputGenerator"}),
-    ("avalan.model.stream", "TextGenerationStream", "base"): frozenset(
-        {
-            "Token",
-            "TokenDetail",
-            "str",
-        }
-    ),
-    (
-        "avalan.model.stream",
-        "TextGenerationStream.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.stream",
-        "TextGenerationStream.__aiter__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.stream",
-        "TextGenerationSingleStream.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.stream",
-        "TextGenerationSingleStream.__aiter__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.vendor",
-        "TextGenerationVendor.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.vendor",
-        "TextGenerationVendorStream._generator",
-        "alias",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.vendor",
-        "TextGenerationVendorStream.__call__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.vendor",
-        "TextGenerationVendorStream.__aiter__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
     (
         "avalan.server.routers.mcp",
         "StreamResponse._response_iterator",
@@ -750,15 +643,9 @@ _PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING = {
     ): frozenset({"Event", "Token", "str"}),
 }
 
-_PHASE_1_1_INHERITED_TEXT_STREAM_CANONICALIZATION_CEILING = {
-    ("avalan.model.stream", "TextGenerationSingleStream"),
-    ("avalan.model.nlp.text.mlxlm", "MlxLmStream"),
-    ("avalan.model.nlp.text.vendor.google", "GoogleStream"),
-    ("avalan.model.nlp.text.vendor.huggingface", "HuggingfaceStream"),
-    ("avalan.model.nlp.text.vendor.ollama", "OllamaStream"),
-    ("avalan.model.nlp.text.vllm", "VllmStream"),
-    ("avalan.model.vendor", "TextGenerationVendorStream"),
-}
+_PHASE_1_1_INHERITED_TEXT_STREAM_CANONICALIZATION_CEILING: set[
+    tuple[str, str]
+] = set()
 _TEXT_STREAM_LEGACY_CANONICALIZATION_BASE_NAMES = {
     "TextGenerationStream",
     "TextGenerationVendorStream",
@@ -5098,8 +4985,21 @@ class StreamContractTestCase(TestCase):
         with self.assertRaises(NotImplementedError):
             run(probe.__anext__())
 
-        probe._generator = _single_token_generator()
+        probe._generator = _single_canonical_generator()
         self.assertIs(probe.__aiter__(), probe)
+        self.assertIs(
+            probe.canonical_stream(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                provider_family="openai",
+                capabilities=StreamProviderCapabilities(
+                    backend=StreamProducerBackend.HOSTED
+                ),
+                close_after_terminal=False,
+            ),
+            probe,
+        )
 
     def test_single_stream_iterates_content_and_resets(self) -> None:
         stream = TextGenerationSingleStream(
@@ -5112,12 +5012,33 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(stream.provider_family, "openai")
         self.assertEqual(stream.usage, {"output_tokens": 1})
         self.assertIs(stream(), stream)
-        self.assertEqual(run(stream.__anext__()), Token(token="one"))
+        self.assertIs(
+            run(stream.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        self.assertEqual(
+            run(stream.__anext__()).text_delta,
+            "one",
+        )
+        self.assertIs(
+            run(stream.__anext__()).kind,
+            StreamItemKind.ANSWER_DONE,
+        )
+        terminal = run(stream.__anext__())
+        self.assertIs(terminal.kind, StreamItemKind.STREAM_COMPLETED)
+        self.assertEqual(terminal.usage, {"output_tokens": 1})
+        self.assertIs(
+            run(stream.__anext__()).kind,
+            StreamItemKind.STREAM_CLOSED,
+        )
         with self.assertRaises(StopAsyncIteration):
             run(stream.__anext__())
 
         self.assertIs(stream.__aiter__(), stream)
-        self.assertEqual(run(stream.__anext__()), Token(token="one"))
+        self.assertIs(
+            run(stream.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
         canonical_items = run(
             _collect_stream_items(
                 stream.canonical_stream(
@@ -5137,6 +5058,12 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
+        self.assertEqual(
+            {item.stream_session_id for item in canonical_items},
+            {"stream"},
+        )
+        self.assertEqual({item.run_id for item in canonical_items}, {"run"})
+        self.assertEqual({item.turn_id for item in canonical_items}, {"turn"})
 
     def test_single_stream_final_text_uses_canonical_accumulator(
         self,
@@ -7515,7 +7442,7 @@ class StreamContractTestCase(TestCase):
 
         async def consume_slowly() -> tuple[PullTrackedTokens, list[int]]:
             tokens = PullTrackedTokens()
-            stream = normalize_local_stream(
+            stream = _normalize_local_stream(
                 tokens,
                 stream_session_id="local-stream",
                 run_id="local-run",
@@ -7650,7 +7577,7 @@ class StreamContractTestCase(TestCase):
 
         async def assert_local_backpressure() -> None:
             tokens = GatedLocalTokens()
-            stream = normalize_local_stream(
+            stream = _normalize_local_stream(
                 tokens,
                 stream_session_id="local-stream",
                 run_id="local-run",
@@ -7710,7 +7637,7 @@ class StreamContractTestCase(TestCase):
 
         async def close_after_start() -> PendingTokens:
             tokens = PendingTokens()
-            stream = normalize_local_stream(
+            stream = _normalize_local_stream(
                 tokens,
                 stream_session_id="local-stream",
                 run_id="local-run",
@@ -8231,34 +8158,15 @@ class StreamContractTestCase(TestCase):
                     )
 
         expected_boundaries = {
-            ("avalan.model.stream", "TextGenerationStream.__aiter__"),
-            ("avalan.model.stream", "TextGenerationSingleStream.__call__"),
-            ("avalan.model.stream", "TextGenerationSingleStream.__aiter__"),
-            ("avalan.model.stream", "TextGenerationSingleStream.__anext__"),
             ("avalan.model.vendor", "TextGenerationVendor.__call__"),
-            ("avalan.model.vendor", "TextGenerationVendorStream.__anext__"),
             ("avalan.model.vendor", "TextGenerationVendorStream.__init__"),
-            ("avalan.model.vendor", "TextGenerationVendorStream.__call__"),
-            ("avalan.model.vendor", "TextGenerationVendorStream.__aiter__"),
-            (
-                "avalan.model.nlp.text.vendor.openai",
-                "OpenAIStream.__anext__",
-            ),
             (
                 "avalan.model.nlp.text.vendor.openai",
                 "OpenAIClient.__call__",
             ),
             (
                 "avalan.model.nlp.text.vendor.anthropic",
-                "AnthropicStream.__anext__",
-            ),
-            (
-                "avalan.model.nlp.text.vendor.anthropic",
                 "AnthropicClient.__call__",
-            ),
-            (
-                "avalan.model.nlp.text.vendor.bedrock",
-                "BedrockStream.__anext__",
             ),
             (
                 "avalan.model.nlp.text.vendor.bedrock",
@@ -8274,18 +8182,12 @@ class StreamContractTestCase(TestCase):
             ),
             (
                 "avalan.model.nlp.text.vendor.ollama",
-                "OllamaStream.__anext__",
-            ),
-            (
-                "avalan.model.nlp.text.vendor.ollama",
                 "OllamaClient.__call__",
             ),
             (
                 "avalan.model.nlp.text.vendor.huggingface",
                 "HuggingfaceClient.__call__",
             ),
-            ("avalan.model.nlp.text.mlxlm", "MlxLmStream.__anext__"),
-            ("avalan.model.nlp.text.vllm", "VllmStream.__anext__"),
             (
                 "avalan.model.nlp.text.ds4",
                 "Ds4Worker.stream",
@@ -8298,7 +8200,7 @@ class StreamContractTestCase(TestCase):
                 "avalan.model.nlp.text.generation",
                 "TextGenerationModel._stream_generator",
             ),
-            ("avalan.model.stream", "normalize_local_stream"),
+            ("avalan.model.stream", "_normalize_local_stream"),
             ("avalan.model.stream", "stream_consumer_projection_from_token"),
             ("avalan.model.stream", "project_stream_consumer_item"),
             ("avalan.model.stream", "StreamProjectionState.project"),
@@ -8397,70 +8299,21 @@ class StreamContractTestCase(TestCase):
             vendor_init_boundary.directions,
             (StreamLegacyBoundaryDirection.ACCEPTS,),
         )
-        for qualname in (
-            "TextGenerationVendorStream.__call__",
-            "TextGenerationVendorStream.__aiter__",
-        ):
-            with self.subTest(qualname=qualname):
-                vendor_public_boundary = (
-                    classify_legacy_stream_runtime_boundary(
-                        "avalan.model.vendor",
-                        qualname,
-                    )
-                )
-                self.assertEqual(
-                    vendor_public_boundary.directions,
-                    (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
-                )
-
-        for qualname in (
-            "AnthropicStream.__anext__",
+        anthropic_boundary = classify_legacy_stream_runtime_boundary(
+            "avalan.model.nlp.text.vendor.anthropic",
             "AnthropicClient.__call__",
-        ):
-            with self.subTest(qualname=qualname):
-                anthropic_boundary = classify_legacy_stream_runtime_boundary(
-                    "avalan.model.nlp.text.vendor.anthropic",
-                    qualname,
-                )
-                self.assertEqual(
-                    anthropic_boundary.surfaces,
-                    (
-                        StreamLegacySurface.STRING,
-                        StreamLegacySurface.TOKEN,
-                        StreamLegacySurface.REASONING_TOKEN,
-                        StreamLegacySurface.TOOL_CALL_TOKEN,
-                    ),
-                )
+        )
+        self.assertEqual(
+            anthropic_boundary.surfaces,
+            (
+                StreamLegacySurface.STRING,
+                StreamLegacySurface.TOKEN,
+                StreamLegacySurface.REASONING_TOKEN,
+                StreamLegacySurface.TOOL_CALL_TOKEN,
+            ),
+        )
 
         boundary_expectations = {
-            (
-                "avalan.model.nlp.text.vendor.openai",
-                "OpenAIStream.__anext__",
-            ): (
-                (
-                    StreamLegacySurface.STRING,
-                    StreamLegacySurface.TOKEN,
-                    StreamLegacySurface.TOKEN_DETAIL,
-                    StreamLegacySurface.REASONING_TOKEN,
-                    StreamLegacySurface.TOOL_CALL_TOKEN,
-                ),
-                StreamLegacyBoundaryCategory.PRODUCER,
-                (StreamLegacyBoundaryDirection.EMITS,),
-            ),
-            (
-                "avalan.model.nlp.text.vendor.bedrock",
-                "BedrockStream.__anext__",
-            ): (
-                (
-                    StreamLegacySurface.STRING,
-                    StreamLegacySurface.TOKEN,
-                    StreamLegacySurface.TOKEN_DETAIL,
-                    StreamLegacySurface.REASONING_TOKEN,
-                    StreamLegacySurface.TOOL_CALL_TOKEN,
-                ),
-                StreamLegacyBoundaryCategory.PRODUCER,
-                (StreamLegacyBoundaryDirection.EMITS,),
-            ),
             ("avalan.model.nlp.text.ds4", "Ds4Worker.stream"): (
                 (
                     StreamLegacySurface.STRING,
@@ -8686,15 +8539,7 @@ class StreamContractTestCase(TestCase):
         current = _source_public_streaming_return_legacy_sites(repository_root)
         ceiling = _PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING
 
-        new_sites = set(current) - set(ceiling)
-        grown_symbols = {
-            key: current[key] - ceiling[key]
-            for key in set(current).intersection(ceiling)
-            if current[key] - ceiling[key]
-        }
-
-        self.assertEqual(new_sites, set())
-        self.assertEqual(grown_symbols, {})
+        self.assertEqual(current, ceiling)
 
     def test_public_streaming_return_guard_detects_aliased_containers(
         self,
@@ -8940,10 +8785,9 @@ class InheritsCanonical(CanonicalBase):
             repository_root
         )
 
-        self.assertTrue(
-            current.issubset(
-                _PHASE_1_1_INHERITED_TEXT_STREAM_CANONICALIZATION_CEILING
-            )
+        self.assertEqual(
+            current,
+            _PHASE_1_1_INHERITED_TEXT_STREAM_CANONICALIZATION_CEILING,
         )
 
     def test_legacy_runtime_boundary_inventory_rejects_malformed_entries(
@@ -9182,7 +9026,7 @@ class InheritsCanonical(CanonicalBase):
         )
         for qualname in (
             "stream_consumer_projection_from_token",
-            "normalize_local_stream.events",
+            "_normalize_local_stream.events",
             "token_text",
             "canonical_item_from_token",
             "_token_metadata",

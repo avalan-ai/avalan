@@ -42,7 +42,7 @@ from avalan.model.stream import (
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
-    normalize_local_stream,
+    _normalize_local_stream,
     normalize_provider_stream,
 )
 from avalan.server.a2a.router import _cleanup_stream_sources_safely
@@ -450,7 +450,7 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
 
     async def _local_generation_cancellation_latency(self) -> float:
         tokens = _PendingLocalTokens()
-        stream = normalize_local_stream(
+        stream = _normalize_local_stream(
             tokens,
             stream_session_id="local-cancel-stream",
             run_id="local-cancel-run",
@@ -472,7 +472,7 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
 
     async def _local_generation_close_latency(self) -> float:
         tokens = _PendingLocalTokens()
-        stream = normalize_local_stream(
+        stream = _normalize_local_stream(
             tokens,
             stream_session_id="local-close-stream",
             run_id="local-close-run",

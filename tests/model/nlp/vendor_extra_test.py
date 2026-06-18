@@ -1,9 +1,11 @@
 import importlib
 import sys
 import types
+from collections.abc import AsyncIterable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,6 +26,7 @@ from avalan.entities import (
     TransformerEngineSettings,
 )
 from avalan.model.stream import (
+    CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
     StreamTerminalOutcome,
@@ -47,6 +50,20 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
+
+
+async def _legacy_stream_next(stream: Any) -> Any:
+    return await stream._generator.__anext__()
+
+
+async def _canonical_items(
+    stream: AsyncIterable[CanonicalStreamItem],
+) -> list[CanonicalStreamItem]:
+    return [item async for item in stream]
+
+
+def _answer_text(items: list[CanonicalStreamItem]) -> str:
+    return accumulate_canonical_stream_items(items).answer_text
 
 
 class AnthropicTestCase(IsolatedAsyncioTestCase):
@@ -100,11 +117,11 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             yield Stop()
 
         stream = self.mod.AnthropicStream(agen())
-        token = await stream.__anext__()
+        token = await _legacy_stream_next(stream)
         self.assertIsInstance(token, ToolCallToken)
         self.assertEqual(token.token, "val")
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
         ctx_instance = SimpleNamespace(
             __aenter__=AsyncMock(return_value=AsyncIter([])),
@@ -186,7 +203,7 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             out = []
             while True:
                 try:
-                    out.append(await stream.__anext__())
+                    out.append(await _legacy_stream_next(stream))
                 except StopAsyncIteration:
                     break
 
@@ -329,9 +346,12 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
         self.assertIs(result, StreamMock.return_value)
 
         gen = await client("m", msgs, use_async_generator=False)
-        out = [t async for t in gen]
+        items = [item async for item in gen]
         totals = usage_totals_from_response(gen)
-        self.assertEqual(out, ["r"])
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "r",
+        )
         self.assertEqual(gen.provider_family, "google")
         self.assertIsNotNone(totals)
         assert totals is not None
@@ -341,9 +361,11 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
         client._client.aio.models.generate_content.assert_awaited_once()
 
         stream = self.mod.GoogleStream(AsyncIter([SimpleNamespace(text="x")]))
-        self.assertEqual(await stream.__anext__(), "x")
-        with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+        stream_items = [item async for item in stream]
+        self.assertEqual(
+            accumulate_canonical_stream_items(stream_items).answer_text,
+            "x",
+        )
 
         with patch.object(self.mod, "GoogleClient") as ClientMock:
             settings = TransformerEngineSettings(
@@ -355,6 +377,60 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             loaded = model._load_model()
         ClientMock.assert_called_once_with(api_key="tok")
         self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_client_stream_direct_anext_yields_canonical_items(
+        self,
+    ) -> None:
+        client = self.mod.GoogleClient("k")
+        msgs = [Message(role=MessageRole.USER, content="hi")]
+
+        stream = await client("m", msgs, use_async_generator=True)
+        first = await stream.__anext__()
+        second = await stream.__anext__()
+        tail: list[CanonicalStreamItem] = []
+        while True:
+            try:
+                tail.append(await stream.__anext__())
+            except StopAsyncIteration:
+                break
+        items = [first, second, *tail]
+
+        client._client.aio.models.generate_content_stream.assert_awaited_once()
+        self.assertTrue(
+            all(isinstance(item, CanonicalStreamItem) for item in items)
+        )
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual([item.sequence for item in items], list(range(5)))
+        self.assertEqual(_answer_text(items), "s")
+        self.assertEqual({item.provider_family for item in items}, {"google"})
+
+    async def test_stream_preserves_model_dump_provider_payload(self) -> None:
+        modes: list[str] = []
+        payload = {"text": "x", "native": True}
+
+        class ModelDumpChunk:
+            text = "x"
+
+            def model_dump(self, *, mode: str) -> dict[str, object]:
+                modes.append(mode)
+                return payload
+
+        stream = self.mod.GoogleStream(AsyncIter([ModelDumpChunk()]))
+
+        items = [item async for item in stream]
+
+        self.assertEqual(modes, ["json"])
+        self.assertEqual(items[1].provider_payload, payload)
+        self.assertEqual(_answer_text(items), "x")
 
     async def test_stream_records_usage_metadata_after_full_consumption(self):
         usage = SimpleNamespace(
@@ -373,10 +449,11 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(await stream.__anext__(), "x")
-        self.assertIsNone(stream.usage)
-        with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+        items = [item async for item in stream]
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "x",
+        )
         observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
@@ -410,10 +487,21 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(await stream.__anext__(), "late")
+        iterator = stream.__aiter__()
+        seen = []
+        while True:
+            item = await iterator.__anext__()
+            seen.append(item)
+            if item.kind is StreamItemKind.ANSWER_DELTA:
+                break
+
+        self.assertEqual(item.text_delta, "late")
         self.assertIsNone(stream.usage)
-        with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+        seen.extend([item async for item in iterator])
+        self.assertEqual(
+            accumulate_canonical_stream_items(seen).answer_text,
+            "late",
+        )
         totals = usage_totals_from_response(stream)
 
         self.assertIsNotNone(totals)
@@ -444,8 +532,16 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
 
         stream = self.mod.GoogleStream(FailingIter())
 
-        with self.assertRaises(RuntimeError):
-            await stream.__anext__()
+        items = await _canonical_items(stream)
+        self.assertEqual(items[-2].kind, StreamItemKind.STREAM_ERRORED)
+        self.assertIs(
+            items[-2].terminal_outcome,
+            StreamTerminalOutcome.ERRORED,
+        )
+        error_data = items[-2].data
+        assert isinstance(error_data, dict)
+        self.assertEqual(error_data["error_type"], "RuntimeError")
+        self.assertEqual(error_data["message"], "provider failure")
         self.assertIsNone(stream.usage)
         self.assertIsNone(usage_totals_from_response(stream))
 
@@ -465,8 +561,11 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+        items = [item async for item in stream]
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "",
+        )
         totals = usage_totals_from_response(stream)
 
         self.assertIsNotNone(totals)
@@ -478,8 +577,11 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
         no_usage = self.mod.GoogleStream(
             AsyncIter([SimpleNamespace(text=None)])
         )
-        with self.assertRaises(StopAsyncIteration):
-            await no_usage.__anext__()
+        no_usage_items = [item async for item in no_usage]
+        self.assertEqual(
+            accumulate_canonical_stream_items(no_usage_items).answer_text,
+            "",
+        )
         self.assertIsNone(no_usage.usage)
         self.assertIsNone(usage_totals_from_response(no_usage))
 
@@ -699,10 +801,10 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
         )
         self.client.chat_completion = AsyncMock(return_value=resp)
         gen = await hf_client("m", msgs, settings, use_async_generator=False)
-        out = [t async for t in gen]
+        items = await _canonical_items(gen)
         observation = usage_observation_from_response(gen)
         totals = usage_totals_from_response(gen)
-        self.assertEqual(out, ["r"])
+        self.assertEqual(_answer_text(items), "r")
         self.assertEqual(gen.provider_family, "hugging_face")
         self.assertIsNotNone(observation)
         assert observation is not None
@@ -728,9 +830,29 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
                 ]
             )
         )
-        self.assertEqual(await stream.__anext__(), "x")
-        with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+        stream_items = await _canonical_items(stream)
+        self.assertEqual(_answer_text(stream_items), "x")
+
+        modes: list[str] = []
+        payload = {"choices": [{"delta": {"content": "x"}}], "native": True}
+
+        class ModelDumpChunk:
+            choices = [
+                SimpleNamespace(delta=SimpleNamespace(content="x")),
+            ]
+
+            def model_dump(self, *, mode: str) -> dict[str, object]:
+                modes.append(mode)
+                return payload
+
+        payload_stream = self.mod.HuggingfaceStream(
+            AsyncIter([ModelDumpChunk()])
+        )
+        payload_items = await _canonical_items(payload_stream)
+
+        self.assertEqual(modes, ["json"])
+        self.assertEqual(payload_items[1].provider_payload, payload)
+        self.assertEqual(_answer_text(payload_items), "x")
 
         with patch.object(self.mod, "HuggingfaceClient") as ClientMock:
             settings = TransformerEngineSettings(
@@ -761,10 +883,8 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(await stream.__anext__(), "x")
-        self.assertIsNone(stream.usage)
-        with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+        items = await _canonical_items(stream)
+        self.assertEqual(_answer_text(items), "x")
         observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
@@ -797,9 +917,9 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
         self.client.chat_completion = AsyncMock(return_value=resp)
 
         gen = await hf_client("m", msgs, use_async_generator=False)
-        out = [t async for t in gen]
+        items = await _canonical_items(gen)
 
-        self.assertEqual(out, ["bad"])
+        self.assertEqual(_answer_text(items), "bad")
         self.assertEqual(gen.provider_family, "hugging_face")
         self.assertIsNone(usage_observation_from_response(gen))
         self.assertIsNone(usage_totals_from_response(gen))
@@ -810,9 +930,9 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
             }
         )
         empty_gen = await hf_client("m", msgs, use_async_generator=False)
-        empty_out = [t async for t in empty_gen]
+        empty_items = await _canonical_items(empty_gen)
 
-        self.assertEqual(empty_out, [""])
+        self.assertEqual(_answer_text(empty_items), "")
         self.assertEqual(empty_gen.provider_family, "hugging_face")
         self.assertIsNone(usage_observation_from_response(empty_gen))
         self.assertIsNone(usage_totals_from_response(empty_gen))
@@ -871,8 +991,8 @@ class OllamaTestCase(IsolatedAsyncioTestCase):
             }
         )
         gen = await client("m", msgs, use_async_generator=False)
-        out = [t async for t in gen]
-        self.assertEqual(out, ["x"])
+        items = await _canonical_items(gen)
+        self.assertEqual(_answer_text(items), "x")
         self.assertEqual(gen.provider_family, "ollama")
         self.assertIsNone(usage_observation_from_response(gen))
         self.assertIsNone(usage_totals_from_response(gen))
@@ -885,13 +1005,25 @@ class OllamaTestCase(IsolatedAsyncioTestCase):
                 ]
             )
         )
-        self.assertEqual(await stream.__anext__(), "a")
-        self.assertEqual(await stream.__anext__(), "")
-        with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+        stream_items = await _canonical_items(stream)
+        self.assertEqual(_answer_text(stream_items), "a")
         self.assertEqual(stream.provider_family, "ollama")
+        self.assertEqual(
+            stream.usage,
+            {"prompt_eval_count": 5, "eval_count": 3},
+        )
         self.assertIsNone(usage_observation_from_response(stream))
         self.assertIsNone(usage_totals_from_response(stream))
+
+        direct_stream = self.mod.OllamaStream(
+            AsyncIter([{"message": {"content": "hi"}}])
+        )
+        started = await direct_stream.__anext__()
+        delta = await direct_stream.__anext__()
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "hi")
+        self.assertEqual(delta.provider_family, "ollama")
 
         with patch.object(self.mod, "OllamaClient") as ClientMock:
             settings = TransformerEngineSettings(
@@ -1032,10 +1164,10 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         }
         self.stub.acompletion = AsyncMock(return_value=resp)
         gen = await client("m", msgs, use_async_generator=False)
-        out = [t async for t in gen]
+        items = await _canonical_items(gen)
         observation = usage_observation_from_response(gen)
         totals = usage_totals_from_response(gen)
-        self.assertEqual(out, ["r"])
+        self.assertEqual(_answer_text(items), "r")
         self.assertEqual(gen.provider_family, "openai_compatible")
         self.assertIsNotNone(observation)
         assert observation is not None
@@ -1054,9 +1186,23 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         stream = self.mod.LiteLLMStream(
             AsyncIter([{"choices": [{"delta": {"content": "x"}}]}])
         )
-        self.assertEqual(await stream.__anext__(), "x")
+        stream_items = await _canonical_items(stream)
+        self.assertEqual(_answer_text(stream_items), "x")
+
+        legacy_usage = {"prompt_tokens": 1, "completion_tokens": 2}
+        legacy_stream = self.mod.LiteLLMStream(
+            AsyncIter(
+                [
+                    {"choices": [{"delta": {"content": "legacy"}}]},
+                    {"usage": legacy_usage},
+                    {"choices": []},
+                ]
+            )
+        )
+        self.assertEqual(await _legacy_stream_next(legacy_stream), "legacy")
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(legacy_stream)
+        self.assertEqual(legacy_stream.usage, legacy_usage)
 
         with patch.object(self.mod, "LiteLLMClient") as ClientMock:
             settings = TransformerEngineSettings(
@@ -1087,10 +1233,8 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(await stream.__anext__(), "x")
-        self.assertIsNone(stream.usage)
-        with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+        items = await _canonical_items(stream)
+        self.assertEqual(_answer_text(items), "x")
         observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
@@ -1119,9 +1263,8 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         self.stub.acompletion = AsyncMock(return_value=stream_obj)
         result = await client("m", msgs, use_async_generator=True)
         self.stub.acompletion.assert_awaited_once()
-        self.assertEqual(await result.__anext__(), "s")
-        with self.assertRaises(StopAsyncIteration):
-            await result.__anext__()
+        result_items = await _canonical_items(result)
+        self.assertEqual(_answer_text(result_items), "s")
 
     async def test_canonical_stream_maps_chat_chunks(self):
         usage = {"prompt_tokens": 2, "completion_tokens": 3}
@@ -1628,8 +1771,8 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         )
         self.stub.acompletion = AsyncMock(return_value=resp)
         gen = await client("m", msgs, use_async_generator=False)
-        out = [t async for t in gen]
-        self.assertEqual(out, ["r"])
+        items = await _canonical_items(gen)
+        self.assertEqual(_answer_text(items), "r")
 
     async def test_malformed_usage_is_unavailable(self):
         client = self.mod.LiteLLMClient(api_key="k", base_url="b")
@@ -1646,9 +1789,9 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         self.stub.acompletion = AsyncMock(return_value=resp)
 
         gen = await client("m", msgs, use_async_generator=False)
-        out = [t async for t in gen]
+        items = await _canonical_items(gen)
 
-        self.assertEqual(out, ["bad"])
+        self.assertEqual(_answer_text(items), "bad")
         self.assertEqual(gen.provider_family, "openai_compatible")
         self.assertIsNone(usage_observation_from_response(gen))
         self.assertIsNone(usage_totals_from_response(gen))
@@ -1657,9 +1800,9 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
             return_value={"usage": {"prompt_tokens": "private prompt"}}
         )
         empty_gen = await client("m", msgs, use_async_generator=False)
-        empty_out = [t async for t in empty_gen]
+        empty_items = await _canonical_items(empty_gen)
 
-        self.assertEqual(empty_out, [""])
+        self.assertEqual(_answer_text(empty_items), "")
         self.assertEqual(empty_gen.provider_family, "openai_compatible")
         self.assertIsNone(usage_observation_from_response(empty_gen))
         self.assertIsNone(usage_totals_from_response(empty_gen))

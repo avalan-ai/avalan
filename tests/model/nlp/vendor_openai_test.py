@@ -8,6 +8,7 @@ from json import loads
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -44,7 +45,6 @@ from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
 )
-from avalan.tool.parser import ToolCallParser
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tool_parsing"
 
@@ -61,6 +61,10 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
+
+
+async def _legacy_stream_next(stream: Any) -> Any:
+    return await stream._generator.__anext__()
 
 
 class TrackedAsyncIter:
@@ -200,14 +204,14 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             SimpleNamespace(type="response.output_text.delta", delta="y"),
         ]
         stream = self.mod.OpenAIStream(AsyncIter(chunks))
-        t1 = await stream.__anext__()
+        t1 = await _legacy_stream_next(stream)
         self.assertIsInstance(t1, Token)
         self.assertEqual(t1.token, "x")
-        t2 = await stream.__anext__()
+        t2 = await _legacy_stream_next(stream)
         self.assertIsInstance(t2, Token)
         self.assertEqual(t2.token, "y")
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
         stream_instance = AsyncIter([])
         self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
@@ -236,6 +240,51 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             provider_family="openai",
         )
         self.assertIs(result, StreamMock.return_value)
+
+    async def test_stream_public_iterator_yields_canonical_items(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta="hi"
+                    )
+                ]
+            )
+        )
+
+        items = [item async for item in stream]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].text_delta, "hi")
+        self.assertEqual({item.provider_family for item in items}, {"openai"})
+
+    async def test_stream_direct_anext_yields_canonical_items(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta="hi"
+                    )
+                ]
+            )
+        )
+
+        started = await stream.__anext__()
+        delta = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "hi")
+        self.assertEqual(delta.provider_family, "openai")
 
     async def test_client_sends_top_level_instructions(self):
         response = SimpleNamespace(
@@ -384,14 +433,14 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         client._template_messages = MagicMock(return_value=[{"c": 1}])
         result = await client("m", [])
-        t1 = await result.__anext__()
+        t1 = await _legacy_stream_next(result)
         self.assertIsInstance(t1, Token)
         self.assertEqual(t1.token, "a")
-        t2 = await result.__anext__()
+        t2 = await _legacy_stream_next(result)
         self.assertIsInstance(t2, Token)
         self.assertEqual(t2.token, "b")
         with self.assertRaises(StopAsyncIteration):
-            await result.__anext__()
+            await _legacy_stream_next(result)
 
         with patch.object(self.mod, "OpenAIClient") as ClientMock:
             settings = TransformerEngineSettings(
@@ -423,11 +472,11 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.OpenAIStream(AsyncIter(chunks))
 
-        token = await stream.__anext__()
+        token = await _legacy_stream_next(stream)
         self.assertIsInstance(token, Token)
         self.assertIsNone(stream.usage)
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
         self.assertIs(stream.usage, usage)
         self.assertEqual(stream.provider_family, "openai")
@@ -468,7 +517,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
         observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
@@ -496,7 +545,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         )
         with self.assertRaises(StopAsyncIteration):
-            await null_usage.__anext__()
+            await _legacy_stream_next(null_usage)
         self.assertIsNone(null_usage.usage)
 
         class FailingIter:
@@ -508,7 +557,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
         interrupted = self.mod.OpenAIStream(FailingIter())
         with self.assertRaises(RuntimeError):
-            await interrupted.__anext__()
+            await _legacy_stream_next(interrupted)
         self.assertIsNone(interrupted.usage)
 
         class FailingAfterUsageIter:
@@ -531,7 +580,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             FailingAfterUsageIter()
         )
         with self.assertRaises(RuntimeError):
-            await interrupted_after_usage.__anext__()
+            await _legacy_stream_next(interrupted_after_usage)
         self.assertIsNone(interrupted_after_usage.usage)
 
     async def test_client_omits_auth_header_without_api_key(self):
@@ -664,19 +713,19 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             SimpleNamespace(type="response.output_item.done"),
         ]
         stream = self.mod.OpenAIStream(AsyncIter(events))
-        t1 = await stream.__anext__()
+        t1 = await _legacy_stream_next(stream)
         self.assertIsInstance(t1, ReasoningToken)
         self.assertEqual(t1.token, "r1")
-        t2 = await stream.__anext__()
+        t2 = await _legacy_stream_next(stream)
         self.assertIsInstance(t2, ReasoningToken)
         self.assertEqual(t2.token, "r2")
-        t3 = await stream.__anext__()
+        t3 = await _legacy_stream_next(stream)
         self.assertIsInstance(t3, ToolCallToken)
         self.assertEqual(t3.token, "{")
-        t4 = await stream.__anext__()
+        t4 = await _legacy_stream_next(stream)
         self.assertIsInstance(t4, ToolCallToken)
         self.assertEqual(t4.token, "}")
-        t5 = await stream.__anext__()
+        t5 = await _legacy_stream_next(stream)
         self.assertIsInstance(t5, ToolCallToken)
         self.assertEqual(t5.call.id, "c1")
         self.assertEqual(t5.call.name, "pkg__func")
@@ -686,11 +735,11 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             '<tool_call>{"name": "pkg__func", "arguments": {}, "id":'
             ' "c1"}</tool_call>',
         )
-        t6 = await stream.__anext__()
+        t6 = await _legacy_stream_next(stream)
         self.assertIsInstance(t6, Token)
         self.assertEqual(t6.token, "hi")
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
     async def test_stream_ignores_message_output_item_done_as_tool_call(self):
         stream = self.mod.OpenAIStream(
@@ -707,12 +756,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        token = await stream.__anext__()
+        token = await _legacy_stream_next(stream)
 
         self.assertIsInstance(token, Token)
         self.assertEqual(token.token, "done")
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
     async def test_stream_ignores_tool_added_without_id(self):
         stream = self.mod.OpenAIStream(
@@ -729,12 +778,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        token = await stream.__anext__()
+        token = await _legacy_stream_next(stream)
 
         self.assertIsInstance(token, Token)
         self.assertEqual(token.token, "done")
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
     async def test_canonical_stream_maps_responses_events(self):
         usage = {
@@ -1659,17 +1708,17 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             ),
         ]
         stream = self.mod.OpenAIStream(AsyncIter(events))
-        await stream.__anext__()
-        await stream.__anext__()
-        t3 = await stream.__anext__()
+        await _legacy_stream_next(stream)
+        await _legacy_stream_next(stream)
+        t3 = await _legacy_stream_next(stream)
         self.assertEqual(t3.call.id, "c2")
         self.assertEqual(t3.call.arguments, {})
-        t4 = await stream.__anext__()
+        t4 = await _legacy_stream_next(stream)
         self.assertEqual(t4.call.id, "c3")
         self.assertEqual(t4.call.name, "pkg__f")
         self.assertEqual(t4.call.arguments, {"p": 1})
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
     async def test_function_call_events_accept_item_id_deltas(self):
         events = [
@@ -1704,9 +1753,9 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.OpenAIStream(AsyncIter(events))
 
-        first = await stream.__anext__()
-        second = await stream.__anext__()
-        final = await stream.__anext__()
+        first = await _legacy_stream_next(stream)
+        second = await _legacy_stream_next(stream)
+        final = await _legacy_stream_next(stream)
 
         self.assertIsInstance(first, ToolCallToken)
         self.assertEqual(first.token, '{"q"')
@@ -1717,7 +1766,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(final.call.name, "pkg__search")
         self.assertEqual(final.call.arguments, {"q": "avalan"})
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
     async def test_function_call_added_item_preserves_legacy_call_name(self):
         provider_name = self.mod.TextGenerationVendor.encode_tool_name(
@@ -1749,9 +1798,9 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.OpenAIStream(AsyncIter(events))
 
-        first = await stream.__anext__()
-        second = await stream.__anext__()
-        final = await stream.__anext__()
+        first = await _legacy_stream_next(stream)
+        second = await _legacy_stream_next(stream)
+        final = await _legacy_stream_next(stream)
 
         self.assertIsInstance(first, ToolCallToken)
         self.assertEqual(first.token, '{"expression"')
@@ -1767,7 +1816,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(final.call.arguments, {"expression": "4 + 6"})
         self.assertNotIn('"name": ""', final.token)
         with self.assertRaises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
     async def test_function_call_events_reject_invalid_delta_id(self):
         stream = self.mod.OpenAIStream(
@@ -1783,7 +1832,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "id"):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
 
     async def test_provider_argument_deltas_match_serialized_call(self):
         fixture = loads(
@@ -1826,35 +1875,48 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         async for output in stream:
             outputs.append(output)
 
-        delta_outputs = outputs[: len(fixture["argument_deltas"])]
+        delta_outputs = [
+            output
+            for output in outputs
+            if output.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+        ]
+        self.assertEqual(len(delta_outputs), len(fixture["argument_deltas"]))
         self.assertTrue(
-            all(isinstance(output, ToolCallToken) for output in delta_outputs)
+            all(
+                output.correlation.tool_call_id == call_id
+                for output in delta_outputs
+            )
         )
         self.assertEqual(
-            [output.token for output in delta_outputs],
+            [output.text_delta for output in delta_outputs],
             fixture["argument_deltas"],
         )
 
-        final_token = outputs[len(fixture["argument_deltas"])]
-        self.assertIsInstance(final_token, ToolCallToken)
-        self.assertIsNotNone(final_token.call)
-        self.assertEqual(final_token.call.id, call_id)
-        self.assertEqual(final_token.call.name, fixture["provider_name"])
+        ready = next(
+            output
+            for output in outputs
+            if output.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.correlation.tool_call_id, call_id)
         self.assertEqual(
-            final_token.call.arguments,
-            {"city": "Paris", "unit": "c"},
+            ready.data,
+            {"name": fixture["provider_name"]},
         )
 
-        parsed = ToolCallParser().parse(final_token.token)
-        self.assertEqual(len(parsed.calls), 1)
-        self.assertEqual(parsed.diagnostics, [])
-        self.assertEqual(parsed.calls[0].id, final_token.call.id)
-        self.assertEqual(parsed.calls[0].name, final_token.call.name)
-        self.assertEqual(
-            parsed.calls[0].arguments,
-            final_token.call.arguments,
+        done = next(
+            output
+            for output in outputs
+            if output.kind is StreamItemKind.TOOL_CALL_DONE
         )
-        self.assertEqual(outputs[-1].token, fixture["assistant_after"])
+        self.assertEqual(done.correlation.tool_call_id, call_id)
+        self.assertEqual(
+            loads("".join(fixture["argument_deltas"])),
+            {"city": "Paris", "unit": "c"},
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(outputs).answer_text,
+            fixture["assistant_after"],
+        )
 
     async def test_generation_settings_and_tools(self):
         stream_instance = AsyncIter([])

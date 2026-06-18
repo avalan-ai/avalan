@@ -17,11 +17,11 @@ from ..stream import (
     StreamTerminalOutcome,
     StreamValidationError,
     TextGenerationSingleStream,
+    TextGenerationStream,
     _validate_lossless_sequence_gap,
     canonical_item_from_consumer_projection,
     canonical_item_from_token,
     iter_stream_consumer_projections,
-    normalize_local_stream,
 )
 from . import InvalidJsonResponseException
 from .parsers.reasoning import ReasoningParser, ReasoningTokenLimitExceeded
@@ -42,7 +42,6 @@ from typing import (
     cast,
 )
 
-LegacyOutputItem = Token | TokenDetail | str
 OutputItem = (
     Token | TokenDetail | str | CanonicalStreamItem | StreamConsumerProjection
 )
@@ -53,6 +52,24 @@ _LEGACY_SDK_STREAM_ERROR = "unsupported legacy SDK response stream item"
 
 def _is_semantic_output_item(item: object | None) -> bool:
     return isinstance(item, (CanonicalStreamItem, StreamConsumerProjection))
+
+
+def _explicit_canonical_stream(
+    source: object,
+) -> Callable[..., AsyncIterator[CanonicalStreamItem]] | None:
+    canonical_stream = getattr(source, "canonical_stream", None)
+    if not callable(canonical_stream):
+        return None
+    class_method = getattr(type(source), "canonical_stream", None)
+    if _is_legacy_base_canonical_stream(class_method):
+        return None
+    return cast(
+        Callable[..., AsyncIterator[CanonicalStreamItem]], canonical_stream
+    )
+
+
+def _is_legacy_base_canonical_stream(class_method: object) -> bool:
+    return class_method is TextGenerationStream.canonical_stream
 
 
 def _canonical_item_from_output_item(
@@ -313,28 +330,33 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
         capabilities: StreamProviderCapabilities | None = None,
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
-        provider_family = provider_family or self.provider_family or "local"
+        provider_family = (
+            provider_family
+            or self.provider_family
+            or (
+                capabilities.normalized_provider_family
+                if capabilities is not None
+                else None
+            )
+            or "local"
+        )
         if not self._use_async_generator:
             self._ensure_non_stream_prefetched()
             return self._record_canonical_stream_final_text(
-                normalize_local_stream(
-                    cast(
-                        AsyncIterator[LegacyOutputItem],
-                        self._string_output_generator(
-                            self._prefetched_text or ""
-                        ),
-                    ),
+                self._canonical_stream_from_final_text(
+                    self._prefetched_text or "",
                     stream_session_id=stream_session_id,
                     run_id=run_id,
                     turn_id=turn_id,
                     provider_family=provider_family,
-                    capabilities=capabilities,
+                    capabilities=capabilities
+                    or self._default_stream_capabilities(provider_family),
                     close_after_terminal=close_after_terminal,
                 )
             )
 
-        canonical_stream = getattr(self._output_fn, "canonical_stream", None)
-        if callable(canonical_stream):
+        canonical_stream = _explicit_canonical_stream(self._output_fn)
+        if canonical_stream is not None:
             self._reset_iteration_state()
             self._final_text = None
             self._output = cast(AsyncIterator[OutputItem], self._output_fn)
@@ -344,6 +366,9 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
                     stream_session_id=stream_session_id,
                     run_id=run_id,
                     turn_id=turn_id,
+                    provider_family=provider_family,
+                    capabilities=capabilities
+                    or self._default_stream_capabilities(provider_family),
                     close_after_terminal=close_after_terminal,
                 )
             )
@@ -354,15 +379,96 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
             turn_id=turn_id,
             provider_family=provider_family,
             capabilities=capabilities
-            or StreamProviderCapabilities(
-                backend=StreamProducerBackend.LOCAL,
-                provider_family=provider_family,
-                supports_reasoning=self.can_think,
-                supports_tool_calls=True,
-                supports_cancellation=True,
-            ),
+            or self._default_stream_capabilities(provider_family),
             close_after_terminal=close_after_terminal,
         )
+
+    def _default_stream_capabilities(
+        self,
+        provider_family: str,
+    ) -> StreamProviderCapabilities:
+        return StreamProviderCapabilities(
+            backend=StreamProducerBackend.LOCAL,
+            provider_family=provider_family,
+            supports_reasoning=self.can_think,
+            supports_tool_calls=True,
+            supports_cancellation=True,
+        )
+
+    async def _canonical_stream_from_final_text(
+        self,
+        text: str,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: str,
+        capabilities: StreamProviderCapabilities | None,
+        close_after_terminal: bool,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        sequence = 0
+        metadata: dict[str, Any] = {}
+        if capabilities is not None:
+            metadata["capabilities"] = cast(Any, capabilities.to_metadata())
+
+        yield CanonicalStreamItem(
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            sequence=sequence,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+            metadata=metadata,
+            provider_family=provider_family,
+        )
+        sequence += 1
+
+        if text:
+            yield CanonicalStreamItem(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=text,
+                provider_family=provider_family,
+            )
+            sequence += 1
+            yield CanonicalStreamItem(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+                provider_family=provider_family,
+            )
+            sequence += 1
+
+        yield CanonicalStreamItem(
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            sequence=sequence,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage=cast(Any, self._provider_usage() or {}),
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            provider_family=provider_family,
+        )
+        sequence += 1
+
+        if close_after_terminal:
+            yield CanonicalStreamItem(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.STREAM_CLOSED,
+                channel=StreamChannel.CONTROL,
+                provider_family=provider_family,
+            )
 
     async def _canonical_stream_from_output(
         self,
@@ -370,7 +476,7 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
         stream_session_id: str,
         run_id: str,
         turn_id: str,
-        provider_family: str | None,
+        provider_family: str,
         capabilities: StreamProviderCapabilities,
         close_after_terminal: bool,
     ) -> AsyncIterator[CanonicalStreamItem]:
@@ -412,26 +518,12 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
                     await self._trigger_consumed()
                 return
 
-            if first is not None and provider_family == "local":
-                await self.aclose()
+            if first is not None:
                 raise StreamValidationError(_LEGACY_SDK_STREAM_ERROR)
 
-            async def tokens() -> AsyncIterator[LegacyOutputItem]:
-                try:
-                    if first is not None:
-                        yield cast(LegacyOutputItem, first)
-                    while True:
-                        try:
-                            token = await iterator.__anext__()
-                        except StopAsyncIteration:
-                            break
-                        yield cast(LegacyOutputItem, token)
-                finally:
-                    await self.aclose()
-
             async for item in self._record_canonical_stream_final_text(
-                normalize_local_stream(
-                    tokens(),
+                self._canonical_stream_from_final_text(
+                    "",
                     stream_session_id=stream_session_id,
                     run_id=run_id,
                     turn_id=turn_id,
