@@ -131,18 +131,22 @@ class TextGenerationModelCoverageTestCase(TestCase):
 
 
 class VllmCoverageTestCase(IsolatedAsyncioTestCase):
-    async def test_vllm_stream_async_generator_token_branch(self) -> None:
+    async def test_vllm_stream_rejects_legacy_token_chunk(self) -> None:
         async def agen():
             yield Token(token="z")
 
         stream = VllmStream(agen())
         self.assertIsNone(stream._iterator)
         started = await stream.__anext__()
-        delta = await stream.__anext__()
+        errored = await stream.__anext__()
 
         self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
-        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
-        self.assertEqual(delta.text_delta, "z")
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(
+            errored.data["message"],
+            "unsupported legacy local stream item",
+        )
 
     async def test_stream_generator_object_chunk(self) -> None:
         model = VllmModel(

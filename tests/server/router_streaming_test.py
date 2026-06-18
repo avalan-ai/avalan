@@ -989,7 +989,6 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
 
         state.validate_complete()
         self.assertTrue(state.has_canonical_items)
-        self.assertFalse(state.legacy_stream_seen)
         self.assertEqual(state.accumulator.answer_text, "answer")
         self.assertEqual(state.accumulator.final_usage, {"total_tokens": 2})
         self.assertEqual(projections[1].text_delta, "answer")
@@ -1162,7 +1161,6 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
                 unsupported_message="unsupported stream item",
             )
 
-        self.assertTrue(state.legacy_stream_seen)
         self.assertFalse(state.has_canonical_items)
 
     def test_protocol_stream_projection_state_rejects_mixed_surfaces(
@@ -1189,7 +1187,7 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             StreamValidationError,
-            "legacy stream item after canonical stream item",
+            "unsupported stream item",
         ):
             state.project(
                 "legacy",

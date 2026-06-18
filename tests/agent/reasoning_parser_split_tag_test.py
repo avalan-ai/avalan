@@ -1,8 +1,24 @@
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 
-from avalan.entities import ReasoningSettings, ReasoningTag, ReasoningToken
+from avalan.entities import ReasoningSettings, ReasoningTag
 from avalan.model.response.parsers.reasoning import ReasoningParser
+from avalan.model.stream import StreamItemKind, StreamProviderEvent
+
+
+def _reasoning_delta_texts(items: list[object]) -> list[str]:
+    texts: list[str] = []
+    for item in items:
+        assert isinstance(item, StreamProviderEvent)
+        assert item.kind is StreamItemKind.REASONING_DELTA
+        assert item.text_delta is not None
+        texts.append(item.text_delta)
+    return texts
+
+
+def _assert_reasoning_done(item: object) -> None:
+    assert isinstance(item, StreamProviderEvent)
+    assert item.kind is StreamItemKind.REASONING_DONE
 
 
 class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
@@ -10,23 +26,21 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         outputs = []
         for text in ["<", "think", ">", "a", "b", "<", "/think", ">"]:
             outputs.extend(await parser.push(text))
-        self.assertTrue(all(isinstance(t, ReasoningToken) for t in outputs))
         self.assertEqual(
-            [t.token for t in outputs],
+            _reasoning_delta_texts(outputs[:-1]),
             ["<", "think", ">", "a", "b", "<", "/think", ">"],
         )
+        _assert_reasoning_done(outputs[-1])
         self.assertFalse(parser.is_thinking)
 
     async def test_split_tags_embedded_in_chunks(self) -> None:
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         outputs = []
         for text in [
@@ -41,13 +55,11 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(outputs[0], "lead ")
         self.assertEqual(outputs[-1], " tail")
         reasoning = outputs[1:-1]
-        self.assertTrue(
-            all(isinstance(token, ReasoningToken) for token in reasoning)
-        )
         self.assertEqual(
-            [token.token for token in reasoning],
+            _reasoning_delta_texts(reasoning[:-1]),
             ["<thi", "nk>", " private ", "</thi", "nk>"],
         )
+        _assert_reasoning_done(reasoning[-1])
         self.assertFalse(parser.is_thinking)
 
     async def test_empty_chunk_preserves_pending_embedded_marker(
@@ -56,7 +68,6 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         outputs = []
         for text in ["alpha <thi", "", "nk>hidden</think> omega"]:
@@ -65,13 +76,11 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(outputs[0], "alpha ")
         self.assertEqual(outputs[-1], " omega")
         reasoning = outputs[1:-1]
-        self.assertTrue(
-            all(isinstance(token, ReasoningToken) for token in reasoning)
-        )
         self.assertEqual(
-            [token.token for token in reasoning],
+            _reasoning_delta_texts(reasoning[:-1]),
             ["<thi", "nk>", "hidden", "</think>"],
         )
+        _assert_reasoning_done(reasoning[-1])
         self.assertFalse(parser.is_thinking)
 
     async def test_whitespace_chunk_breaks_pending_embedded_marker(
@@ -80,7 +89,6 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         outputs = []
         for text in ["alpha <thi", " ", "nk> visible"]:
@@ -89,7 +97,7 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual("".join(outputs), "alpha <thi nk> visible")
         self.assertFalse(
-            any(isinstance(token, ReasoningToken) for token in outputs)
+            any(isinstance(token, StreamProviderEvent) for token in outputs)
         )
         self.assertFalse(parser.is_thinking)
 
@@ -97,7 +105,6 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         outputs = []
         for text in ["lead <thi", "s tail"]:
@@ -105,7 +112,7 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual("".join(outputs), "lead <this tail")
         self.assertFalse(
-            any(isinstance(token, ReasoningToken) for token in outputs)
+            any(isinstance(token, StreamProviderEvent) for token in outputs)
         )
         self.assertFalse(parser.is_thinking)
 
@@ -113,7 +120,6 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         outputs = []
         for t in ["<", "unknown", ">"]:
@@ -124,7 +130,6 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         outputs = []
         sequence = ["x"] * 50 + [
@@ -141,18 +146,17 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
             outputs.extend(await parser.push(text))
         self.assertEqual(outputs[:50], ["x"] * 50)
         reasoning = outputs[50:-1]
-        self.assertTrue(all(isinstance(t, ReasoningToken) for t in reasoning))
         self.assertEqual(
-            [t.token for t in reasoning],
+            _reasoning_delta_texts(reasoning[:-1]),
             ["<", "think", ">", "a", "<", "/think", ">"],
         )
+        _assert_reasoning_done(reasoning[-1])
         self.assertEqual(outputs[-1], "y")
 
     async def test_split_channel_start_and_end_tags(self) -> None:
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(tag=ReasoningTag.CHANNEL),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         start_parts = ["<|channel|>", "analysis", "<|message|>"]
         message = ["Leo", "Messi", "dances", "past", "defenders"]
@@ -160,8 +164,9 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         outputs: list[object] = []
         for text in start_parts + message + end_parts:
             outputs.extend(await parser.push(text))
-        self.assertTrue(all(isinstance(t, ReasoningToken) for t in outputs))
         self.assertEqual(
-            [t.token for t in outputs], start_parts + message + end_parts
+            _reasoning_delta_texts(outputs[:-1]),
+            start_parts + message + end_parts,
         )
+        _assert_reasoning_done(outputs[-1])
         self.assertFalse(parser.is_thinking)

@@ -257,7 +257,7 @@ ACCEPTANCE_HARNESS_TESTS = {
         (
             "tests/model/model_stream_contract_test.py"
             "::StreamContractTestCase"
-            "::test_legacy_token_canonical_projection_separates_channels"
+            "::test_stream_projection_state_projects_canonical_and_projection_items"
         ),
         (
             "tests/server/streaming_conformance_test.py"
@@ -764,7 +764,7 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/model/model_stream_contract_test.py"
             "::StreamContractTestCase"
-            "::test_stream_projection_state_legacy_fixture_mapper_is_one_way"
+            "::test_project_stream_consumer_item_uses_shared_projection_state"
         ),
         (
             "tests/cli/model_test.py"
@@ -806,7 +806,7 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/model/model_stream_benchmark_regression_test.py"
             "::StreamBenchmarkRegressionTestCase"
-            "::test_legacy_adapter_benchmark_rejects_unsupported_item"
+            "::test_projection_benchmark_rejects_unsupported_item"
         ),
         (
             "tests/model/model_stream_benchmark_regression_test.py"
@@ -919,7 +919,7 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
         (
             "tests/model/model_stream_contract_test.py"
             "::StreamContractTestCase"
-            "::test_local_stream_normalizer_maps_legacy_tokens_losslessly"
+            "::test_provider_stream_normalizer_assigns_identity_and_metadata"
         ),
         (
             "tests/model/nlp/vendor_openai_test.py"
@@ -1007,7 +1007,7 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
         (
             "tests/model/model_stream_contract_test.py"
             "::StreamContractTestCase"
-            "::test_stream_projection_state_legacy_fixture_mapper_is_one_way"
+            "::test_project_stream_consumer_item_uses_shared_projection_state"
         ),
     ),
     "stdout/CLI/FancyTheme": (

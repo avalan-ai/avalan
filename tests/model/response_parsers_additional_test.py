@@ -490,14 +490,13 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
             any(isinstance(item, (Event, ToolCallToken)) for item in output)
         )
 
-    async def test_legacy_fixture_flag_still_emits_canonical_output(
+    async def test_parser_still_emits_canonical_output(
         self,
     ) -> None:
         manager = ToolManager(parser=ToolCallParser())
         parser = ToolCallResponseParser(
             manager,
             None,
-            legacy_fixture=True,
         )
 
         output = list(

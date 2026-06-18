@@ -1050,12 +1050,13 @@ class OpenAIClient(TextGenerationVendor):
                 function = (
                     OpenAIClient._response_field(call, "function") or call
                 )
-                token = TextGenerationVendor.build_tool_call_token(
-                    OpenAIClient._response_field(call, "id"),
-                    OpenAIClient._response_field(function, "name"),
-                    OpenAIClient._response_field(function, "arguments"),
+                parts.append(
+                    TextGenerationVendor.build_tool_call_text(
+                        OpenAIClient._response_field(call, "id"),
+                        OpenAIClient._response_field(function, "name"),
+                        OpenAIClient._response_field(function, "arguments"),
+                    )
                 )
-                parts.append(token.token)
 
         return "".join(parts)
 

@@ -1961,7 +1961,7 @@ async def _run_legacy_rejection_closes_answer_artifact() -> None:
             async for event in translator.run_stream(stream()):
                 emitted_events.append(event)
         except StreamValidationError as exc:
-            assert str(exc) == "legacy stream item after canonical stream item"
+            assert str(exc) == "unsupported legacy A2A stream item"
         else:
             raise AssertionError("expected mixed stream to be rejected")
         assert any(
@@ -1971,9 +1971,7 @@ async def _run_legacy_rejection_closes_answer_artifact() -> None:
         )
         task = await store.get_task(task_id)
         assert task["status"] == "failed"
-        assert (
-            task["error"] == "legacy stream item after canonical stream item"
-        )
+        assert task["error"] == "unsupported legacy A2A stream item"
         assert task["completed_at"] is not None
         artifacts = {
             artifact["id"]: artifact for artifact in task["artifacts"]
@@ -2089,7 +2087,7 @@ async def _run_translator_closes_response_after_legacy_rejection() -> None:
 
     with raises(
         StreamValidationError,
-        match="legacy stream item after canonical stream item",
+        match="unsupported legacy A2A stream item",
     ):
         async for _ in translator.run_stream(response):
             continue
@@ -2098,7 +2096,7 @@ async def _run_translator_closes_response_after_legacy_rejection() -> None:
     assert response.close_count == 1
     task = await store.get_task(task_id)
     assert task["status"] == "failed"
-    assert task["error"] == "legacy stream item after canonical stream item"
+    assert task["error"] == "unsupported legacy A2A stream item"
 
 
 async def _run_translator_preserves_legacy_rejection_cleanup_failure() -> None:
@@ -2142,7 +2140,7 @@ async def _run_translator_preserves_legacy_rejection_cleanup_failure() -> None:
 
     with raises(
         StreamValidationError,
-        match="legacy stream item after canonical stream item",
+        match="unsupported legacy A2A stream item",
     ) as raised:
         async for _ in translator.run_stream(response):
             continue
@@ -2153,7 +2151,7 @@ async def _run_translator_preserves_legacy_rejection_cleanup_failure() -> None:
     assert response.close_count == 1
     task = await store.get_task(task_id)
     assert task["status"] == "failed"
-    assert task["error"] == "legacy stream item after canonical stream item"
+    assert task["error"] == "unsupported legacy A2A stream item"
     artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
     assert artifacts["answer"]["state"] == "completed"
 

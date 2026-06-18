@@ -1,16 +1,10 @@
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock
 
 from avalan.entities import (
     GenerationSettings,
-    ReasoningSettings,
     Token,
-    TokenDetail,
-    ToolCallToken,
 )
-from avalan.model.response.parsers.reasoning import ReasoningParser
-from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -19,62 +13,25 @@ from avalan.model.stream import (
     StreamTerminalOutcome,
     StreamValidationError,
 )
-from avalan.tool.parser import ToolCallParser
 
 
-async def _complex_generator():
-    rp = ReasoningParser(
-        reasoning_settings=ReasoningSettings(),
-        logger=getLogger(),
-        legacy_fixture=True,
+async def _legacy_rejection_complex_generator():
+    yield CanonicalStreamItem(
+        stream_session_id="response-stream",
+        run_id="response-run",
+        turn_id="response-turn",
+        sequence=0,
+        kind=StreamItemKind.STREAM_STARTED,
+        channel=StreamChannel.CONTROL,
     )
-    tm = MagicMock()
-    tm.is_potential_tool_call.return_value = True
-    tm.get_calls.return_value = None
-    base_parser = ToolCallParser()
-    tm.tool_call_status.side_effect = base_parser.tool_call_status
-    tp = ToolCallResponseParser(tm, None, legacy_fixture=True)
-
-    sequence = [
-        "X",
-        "<think>",
-        "ra",
-        "rb",
-        "</think>",
-        "Y",
-        "<tool_call>",
-        "foo",
-        "bar",
-        "</tool_call>",
-        "Z",
-    ]
-
-    for s in sequence:
-        items = await rp.push(s)
-        for item in items:
-            parsed = await tp.push(item) if isinstance(item, str) else [item]
-            for p in parsed:
-                if isinstance(p, str):
-                    if p == "</think>":
-                        yield TokenDetail(id=3, token=p, probability=0.5)
-                    elif p in {"X", "Y"}:
-                        yield Token(id=1, token=p)
-                    else:
-                        yield p
-                elif isinstance(p, ToolCallToken):
-                    if p.token == "</tool_call>":
-                        yield TokenDetail(id=4, token=p.token, probability=0.5)
-                    else:
-                        yield p
-                else:
-                    yield p
+    yield Token(id=1, token="legacy")
 
 
 class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
     async def test_mixed_tokens(self):
         settings = GenerationSettings()
         resp = TextGenerationResponse(
-            lambda **_: _complex_generator(),
+            lambda **_: _legacy_rejection_complex_generator(),
             logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,

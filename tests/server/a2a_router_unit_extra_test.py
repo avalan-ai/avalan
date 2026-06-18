@@ -1932,7 +1932,7 @@ async def _run_translator_rejects_mixed_stream_surfaces() -> None:
         (
             "canonical-first",
             (canonical_item, "legacy"),
-            "legacy stream item after canonical stream item",
+            "unsupported legacy A2A stream item",
         ),
     )
 

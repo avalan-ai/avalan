@@ -19,7 +19,6 @@ from avalan.entities import (
     Token,
     ToolCall,
     ToolCallResult,
-    ToolCallToken,
 )
 from avalan.event import Event, EventType
 from avalan.model.stream import (
@@ -245,6 +244,21 @@ def canonical_fixture_mcp_projection(
     item: CanonicalStreamItem,
 ) -> StreamConsumerProjection:
     return project_canonical_stream_item(item)
+
+
+def canonical_fixture_mcp_completed_item(
+    sequence: int,
+) -> CanonicalStreamItem:
+    return CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=sequence,
+        kind=StreamItemKind.STREAM_COMPLETED,
+        channel=StreamChannel.CONTROL,
+        usage={},
+        terminal_outcome=StreamTerminalOutcome.COMPLETED,
+    )
 
 
 class DummyOrchestrator(mcp_router.Orchestrator):
@@ -6098,7 +6112,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                     finished=2.0,
                     elapsed=1.0,
                 ),
-                ToolCallToken(token="input", call=None),
+                canonical_fixture_mcp_completed_item(3),
             ]
         )
         response.input_token_count = 0
@@ -6131,6 +6145,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             and item.get("method") == "notifications/message"
         ]
         self.assertTrue(any("error" in e["params"]["message"] for e in errors))
+        self.assertFalse(any("error" in item for item in payloads))
 
     async def test_stream_mcp_response_handles_tool_diagnostic(self) -> None:
         response = DummyResponse(
@@ -6148,7 +6163,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                     finished=2.0,
                     elapsed=1.0,
                 ),
-                Token(token="done"),
+                canonical_fixture_mcp_completed_item(2),
             ]
         )
         response.input_token_count = 0
@@ -6186,6 +6201,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             diagnostics[0]["params"]["message"]["diagnostic"]["code"],
             "tool.unknown",
         )
+        self.assertFalse(any("error" in item for item in payloads))
 
     async def test_stream_mcp_response_cancellation_closes_resources(
         self,

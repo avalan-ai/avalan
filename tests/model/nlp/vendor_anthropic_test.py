@@ -895,8 +895,8 @@ def test_client_non_stream_tool_messages(anthropic_mod):
 
     with patch.object(
         mod.TextGenerationVendor,
-        "build_tool_call_token",
-        return_value=SimpleNamespace(token="<tool_call />"),
+        "build_tool_call_text",
+        return_value="<tool_call />",
     ) as build_token:
         stream = asyncio.run(
             client(
@@ -1388,11 +1388,10 @@ def test_non_stream_response_content_from_dict(anthropic_mod):
             },
         ]
     }
-    token = SimpleNamespace(token="<tool>")
     with patch.object(
         mod.TextGenerationVendor,
-        "build_tool_call_token",
-        return_value=token,
+        "build_tool_call_text",
+        return_value="<tool>",
     ) as build:
         text = mod.AnthropicClient._non_stream_response_content(response)
 

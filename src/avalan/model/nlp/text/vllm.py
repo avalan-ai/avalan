@@ -1,6 +1,7 @@
 from ....entities import (
     GenerationSettings,
     Input,
+    Token,
     TransformerEngineSettings,
 )
 from ....model.nlp.text.generation import TextGenerationModel
@@ -12,6 +13,7 @@ from ....model.stream import (
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    StreamValidationError,
     stream_token_metadata,
 )
 from ....model.vendor import TextGenerationVendorStream
@@ -190,6 +192,8 @@ class VllmStream(TextGenerationVendorStream):
     ) -> tuple[str | None, dict[str, LooseJsonValue]]:
         if isinstance(chunk, str):
             return chunk, {}
+        if isinstance(chunk, Token):
+            raise StreamValidationError("unsupported legacy local stream item")
         token = getattr(chunk, "token", None)
         if isinstance(token, str):
             return token, VllmStream._chunk_metadata(chunk)

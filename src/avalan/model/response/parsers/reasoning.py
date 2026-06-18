@@ -1,4 +1,4 @@
-from ....entities import ReasoningSettings, ReasoningTag, ReasoningToken
+from ....entities import ReasoningSettings, ReasoningTag
 from ...stream import StreamItemKind, StreamProviderEvent, StreamVisibility
 
 from logging import Logger
@@ -31,7 +31,6 @@ class ReasoningParser:
     _pending_tokens: list[str]
     _pending_str: str
     _logger: Logger
-    _legacy_fixture: bool
 
     def __init__(
         self,
@@ -43,11 +42,9 @@ class ReasoningParser:
         end_tag: str | None = None,
         prefixes: list[str] | None = None,
         max_thinking_turns: int = 1,
-        legacy_fixture: bool = False,
     ) -> None:
         self._settings = reasoning_settings
         self._logger = logger
-        self._legacy_fixture = legacy_fixture
         tag = reasoning_settings.tag
         if not tag:
             if bos_token == "<|startoftext|>":
@@ -162,7 +159,7 @@ class ReasoningParser:
                     result.append(t)
             self._pending_tokens.clear()
             self._pending_str = ""
-        if self._thinking and not self._legacy_fixture:
+        if self._thinking:
             self._thinking = False
             result.extend(self._reasoning_done_result())
         return result
@@ -179,7 +176,7 @@ class ReasoningParser:
         if token is not None:
             self._logger.debug('Adding reasoning token "%s"', token)
             result.extend(self._wrap(token))
-        if not is_start and not self._legacy_fixture:
+        if not is_start:
             result.extend(self._reasoning_done_result())
         return result
 
@@ -244,7 +241,7 @@ class ReasoningParser:
             if part:
                 result.extend(self._wrap(part))
         self._thinking = False
-        if not self._legacy_fixture:
+        if not is_start:
             result.extend(self._reasoning_done_result())
         for part in suffix:
             if part:
@@ -343,11 +340,7 @@ class ReasoningParser:
         self._token_count += 1
         return [self._reasoning_delta(t)]
 
-    def _reasoning_delta(
-        self, token: str
-    ) -> ReasoningToken | StreamProviderEvent:
-        if self._legacy_fixture:
-            return ReasoningToken(token)
+    def _reasoning_delta(self, token: str) -> StreamProviderEvent:
         self._reasoning_delta_emitted = True
         return StreamProviderEvent(
             kind=StreamItemKind.REASONING_DELTA,

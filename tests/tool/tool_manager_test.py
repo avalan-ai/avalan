@@ -1596,16 +1596,18 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
             available_toolsets=[ToolSet(tools=[DummyAdder()])],
             settings=ToolManagerSettings(),
         )
-        token = TextGenerationVendor.build_tool_call_token(
-            call_id="call-1",
-            tool_name="avl_notbase64",
+        call = ToolCall(
+            id="call-1",
+            name="avl_notbase64",
             arguments={"a": 2, "b": 3},
+            provider_name="avl_notbase64",
+            provider_name_encoded=True,
         )
         diagnostic_id = _uuid4()
 
         with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
             outcome = await manager.execute_call(
-                token.call,
+                call,
                 context=ToolCallContext(),
             )
 

@@ -10,7 +10,11 @@ import torch  # noqa: F401
 from transformers.tokenization_utils_base import BatchEncoding
 
 import avalan.model  # noqa: F401
-from avalan.entities import GenerationSettings, TransformerEngineSettings
+from avalan.entities import (
+    GenerationSettings,
+    Token,
+    TransformerEngineSettings,
+)
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import StreamItemKind
 
@@ -54,6 +58,38 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
             with self.assertRaises(StopAsyncIteration):
                 await stream.__anext__()
         del sys.modules["avalan.model"].TextGenerationModel
+
+    async def test_stream_rejects_legacy_token_chunk(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(iter([Token(token="z")]), use_executor=False)
+            started = await stream.__anext__()
+            errored = await stream.__anext__()
+
+        del sys.modules["avalan.model"].TextGenerationModel
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(
+            errored.data["message"],
+            "unsupported legacy local stream item",
+        )
 
     async def test_stream_factory_stays_on_worker_thread(self) -> None:
         stub = types.ModuleType("mlx_lm")

@@ -2261,11 +2261,11 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             ),
             (
                 (canonical_item, "legacy"),
-                "legacy stream item after canonical stream item",
+                "unsupported stream item for Responses SSE projection",
             ),
             (
                 (projection, "legacy"),
-                "legacy stream item after canonical stream item",
+                "unsupported stream item for Responses SSE projection",
             ),
         )
 
