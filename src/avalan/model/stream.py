@@ -455,7 +455,9 @@ class StreamRetentionPolicy:
     metrics_history_item_limit: int = 2048
     event_history_item_limit: int = 2048
     mcp_resource_item_limit: int = 512
+    mcp_resource_text_byte_limit: int = 1048576
     a2a_task_record_item_limit: int = 512
+    a2a_task_event_byte_limit: int = 1048576
     flow_history_item_limit: int = 1024
     active_session_lossless: bool = True
 
@@ -463,6 +465,17 @@ class StreamRetentionPolicy:
         _assert_positive_int(
             self.accumulator_item_limit, "accumulator_item_limit"
         )
+        _assert_positive_int(
+            self.mcp_resource_text_byte_limit,
+            "mcp_resource_text_byte_limit",
+        )
+        _assert_positive_int(
+            self.a2a_task_event_byte_limit,
+            "a2a_task_event_byte_limit",
+        )
+        assert (
+            self.a2a_task_event_byte_limit >= 2
+        ), "a2a_task_event_byte_limit must be at least 2"
         for field_name, value in (
             ("replay_history_item_limit", self.replay_history_item_limit),
             ("ui_buffer_item_limit", self.ui_buffer_item_limit),

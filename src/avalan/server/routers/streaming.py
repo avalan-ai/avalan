@@ -7,6 +7,7 @@ from ...model.stream import (
     StreamRetentionPolicy,
     StreamTerminalOutcome,
     canonical_item_from_consumer_projection,
+    project_canonical_stream_item,
 )
 from ...model.stream import (
     stream_consumer_iterator as _stream_consumer_iterator,
@@ -64,21 +65,6 @@ _FLOW_PUBLIC_METADATA_FIELDS = frozenset(
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class ProtocolStreamSnapshot:
-    answer_text: str
-    reasoning_text: str
-    usage: LooseJsonValue | None
-    terminal_outcome: StreamTerminalOutcome | None
-    terminal_succeeded: bool
-    tool_call_arguments: dict[str, str]
-    tool_execution_outputs: dict[str, str]
-    diagnostics: tuple[CanonicalStreamItem, ...]
-    flow_items: tuple[CanonicalStreamItem, ...]
-    usage_items: tuple[CanonicalStreamItem, ...]
-    control_items: tuple[CanonicalStreamItem, ...]
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
 class ProtocolStreamTerminalSnapshot:
     outcome: StreamTerminalOutcome | None
     sequence: int | None
@@ -95,20 +81,49 @@ class ProtocolStreamTerminalSnapshot:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ProtocolStreamSnapshot:
+    answer_text: str
+    reasoning_text: str
+    usage: LooseJsonValue | None
+    terminal_outcome: StreamTerminalOutcome | None
+    terminal_succeeded: bool
+    terminal_snapshot: ProtocolStreamTerminalSnapshot
+    tool_call_arguments: dict[str, str]
+    tool_execution_outputs: dict[str, str]
+    diagnostics: tuple[CanonicalStreamItem, ...]
+    flow_items: tuple[CanonicalStreamItem, ...]
+    usage_items: tuple[CanonicalStreamItem, ...]
+    control_items: tuple[CanonicalStreamItem, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ProtocolStreamRetentionSettings:
     resource_item_limit: int
+    resource_text_byte_limit: int
     task_record_item_limit: int
+    task_event_byte_limit: int
     flow_history_item_limit: int
     active_session_lossless: bool
 
     def __post_init__(self) -> None:
         for field_name, value in (
             ("resource_item_limit", self.resource_item_limit),
+            ("resource_text_byte_limit", self.resource_text_byte_limit),
             ("task_record_item_limit", self.task_record_item_limit),
+            ("task_event_byte_limit", self.task_event_byte_limit),
             ("flow_history_item_limit", self.flow_history_item_limit),
         ):
             assert isinstance(value, int), f"{field_name} must be an integer"
+            assert not isinstance(
+                value, bool
+            ), f"{field_name} must be an integer"
             assert value >= 0, f"{field_name} must not be negative"
+        assert (
+            self.resource_text_byte_limit > 0
+        ), "resource_text_byte_limit must be positive"
+        assert (
+            self.task_event_byte_limit >= 2
+        ), "task_event_byte_limit must be at least 2"
         assert isinstance(
             self.active_session_lossless, bool
         ), "active_session_lossless must be a boolean"
@@ -116,8 +131,16 @@ class ProtocolStreamRetentionSettings:
 
 
 class ProtocolStreamAccumulator:
-    def __init__(self) -> None:
-        self._accumulator = CanonicalStreamAccumulator()
+    def __init__(
+        self,
+        *,
+        retention_policy: StreamRetentionPolicy | None = None,
+    ) -> None:
+        if retention_policy is not None:
+            assert isinstance(retention_policy, StreamRetentionPolicy)
+        self._accumulator = CanonicalStreamAccumulator(
+            retention_policy=retention_policy
+        )
 
     @property
     def answer_text(self) -> str:
@@ -134,6 +157,15 @@ class ProtocolStreamAccumulator:
     @property
     def terminal_outcome(self) -> StreamTerminalOutcome | None:
         return self._accumulator.terminal_outcome
+
+    @property
+    def terminal_snapshot(self) -> ProtocolStreamTerminalSnapshot:
+        terminal_item = self._accumulator.terminal_item
+        if terminal_item is None:
+            return protocol_stream_terminal_snapshot(self.terminal_outcome)
+        return protocol_stream_terminal_snapshot(
+            project_canonical_stream_item(terminal_item)
+        )
 
     @property
     def tool_call_arguments(self) -> dict[str, str]:
@@ -181,6 +213,7 @@ class ProtocolStreamAccumulator:
             usage=self.usage,
             terminal_outcome=terminal_outcome,
             terminal_succeeded=stream_terminal_succeeded(terminal_outcome),
+            terminal_snapshot=self.terminal_snapshot,
             tool_call_arguments=self.tool_call_arguments,
             tool_execution_outputs=self.tool_execution_outputs,
             diagnostics=self.diagnostics,
@@ -304,7 +337,9 @@ def protocol_stream_retention_settings(
     policy = policy or StreamRetentionPolicy()
     return ProtocolStreamRetentionSettings(
         resource_item_limit=policy.mcp_resource_item_limit,
+        resource_text_byte_limit=policy.mcp_resource_text_byte_limit,
         task_record_item_limit=policy.a2a_task_record_item_limit,
+        task_event_byte_limit=policy.a2a_task_event_byte_limit,
         flow_history_item_limit=policy.flow_history_item_limit,
         active_session_lossless=policy.active_session_lossless,
     )

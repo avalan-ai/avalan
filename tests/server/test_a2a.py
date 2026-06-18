@@ -51,7 +51,11 @@ from avalan.server.a2a.router import (
 from avalan.server.a2a.router import (
     router as a2a_router,
 )
-from avalan.server.a2a.store import TaskStore, TaskStoreRetention
+from avalan.server.a2a.store import (
+    TaskStore,
+    TaskStoreRetention,
+    _payload_size,
+)
 from avalan.server.routers.streaming import ProtocolStreamAccumulator
 
 a2a_router_module = importlib.import_module("avalan.server.a2a.router")
@@ -2414,6 +2418,103 @@ def test_create_task_streams_jsonrpc_request(monkeypatch) -> None:
         for result in results
     )
 
+    assert orchestrator.synced is True
+
+
+def test_create_task_stream_live_event_survives_retained_truncation(
+    monkeypatch,
+) -> None:
+    class StubOrchestrator:
+        def __init__(self) -> None:
+            self.id = uuid4()
+            self.name = "Test Agent"
+            self.model_ids = {"test-model"}
+            self.synced = False
+
+        async def sync_messages(self) -> None:
+            self.synced = True
+
+    large_answer = "retained-\u00e9-" + ("\u00e9" * 200)
+
+    async def orchestrate_stub(*_args):
+        async def iterator():
+            for item in _canonical_answer_stream_items(
+                large_answer,
+                stream_session_id="retained-route-stream",
+                run_id="retained-route-run",
+                turn_id="retained-route-turn",
+            ):
+                yield item
+
+        return iterator(), uuid4(), 0
+
+    app = FastAPI()
+    app.include_router(a2a_router)
+    app.state.logger = logging.getLogger("test")
+    retention = TaskStoreRetention(max_event_payload_bytes=64)
+    store = TaskStore(retention=retention)
+    app.state.a2a_store = store
+    orchestrator = StubOrchestrator()
+    app.state.orchestrator = orchestrator
+
+    monkeypatch.setattr(a2a_router_module, "orchestrate", orchestrate_stub)
+
+    client = TestClient(app)
+    payload = {
+        "model": "model",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    }
+
+    with client.stream("POST", "/tasks", json=payload) as response:
+        assert response.status_code == 200
+        text = b"".join(response.iter_bytes()).decode("utf-8")
+
+    live_delta_texts: list[str] = []
+    for block in text.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        for line in block.splitlines():
+            if not line.startswith("data:"):
+                continue
+            _, _, data = line.partition("data:")
+            payload_text = data.strip()
+            if not payload_text:
+                continue
+            response_model = (
+                a2a_types.SendStreamingMessageSuccessResponse
+            ).model_validate_json(payload_text)
+            result = response_model.result
+            if not isinstance(result, a2a_types.TaskArtifactUpdateEvent):
+                continue
+            metadata = result.metadata or {}
+            if (
+                result.artifact.artifact_id == "answer"
+                and metadata.get("raw_event") == "artifact.delta"
+            ):
+                for part in result.artifact.parts:
+                    part_text = getattr(part.root, "text", None)
+                    if isinstance(part_text, str):
+                        live_delta_texts.append(part_text)
+
+    assert live_delta_texts == [large_answer]
+
+    task_id = next(iter(store._tasks))
+    events_response = client.get(f"/tasks/{task_id}/events")
+    assert events_response.status_code == 200
+    stored_events = events_response.json()
+    stored_delta = next(
+        event for event in stored_events if event["event"] == "artifact.delta"
+    )
+    assert stored_delta["data"] == {"retention": {"truncated": True}}
+    assert _payload_size(stored_delta["data"]) <= (
+        retention.max_event_payload_bytes
+    )
+
+    artifact_response = client.get(f"/tasks/{task_id}/artifacts/answer")
+    assert artifact_response.status_code == 200
+    artifact = artifact_response.json()
+    assert artifact["content"] == [{"type": "text", "text": large_answer}]
     assert orchestrator.synced is True
 
 
