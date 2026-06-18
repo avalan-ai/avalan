@@ -476,5 +476,21 @@ class OpenAiAdditionalCoverageTestCase(TestCase):
             yield SimpleNamespace(type="response.completed")
 
         stream = OpenAIStream(agen())
-        with self.assertRaises(StopAsyncIteration):
-            asyncio.run(stream._generator.__anext__())
+
+        async def collect_items():
+            return [item async for item in stream._generator]
+
+        items = asyncio.run(collect_items())
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        error_data = items[1].data
+        assert isinstance(error_data, dict)
+        self.assertEqual(error_data["error_type"], "ValueError")
+        self.assertIn("id", error_data["message"])

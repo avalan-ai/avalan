@@ -6,13 +6,9 @@ from .....entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
-    ReasoningToken,
-    Token,
-    TokenDetail,
     ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
-    ToolCallToken,
 )
 from .....model.provider import ProviderFamily
 from .....model.stream import (
@@ -20,6 +16,7 @@ from .....model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamProducerBackend,
+    StreamProviderAdapterError,
     StreamProviderCapabilities,
     StreamProviderEvent,
     StreamVisibility,
@@ -129,127 +126,13 @@ class BedrockStream(TextGenerationVendorStream):
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
 
-        async def generator() -> AsyncIterator[Token | TokenDetail | str]:
-            tool_blocks: dict[int, dict[str, Any]] = {}
-            message_stopped = False
-            terminal_usage: object | None = None
-
-            async for event in self._events:
-                metadata = _get(event, "metadata")
-                usage = (
-                    metadata.get("usage")
-                    if isinstance(metadata, dict)
-                    else None
-                )
-                if usage is not None:
-                    terminal_usage = usage
-                    continue
-
-                if _get(event, "messageStop"):
-                    message_stopped = True
-                    continue
-
-                if message_stopped:
-                    continue
-
-                content_start = _get(event, "contentBlockStart")
-                if content_start:
-                    block_index = content_start.get("contentBlockIndex")
-                    block = content_start.get("contentBlock") or {}
-                    tool = (
-                        block.get("toolUse")
-                        if isinstance(block, dict)
-                        else None
-                    )
-                    if tool:
-                        tool_blocks[block_index] = {
-                            "id": tool.get("toolUseId"),
-                            "name": tool.get("name"),
-                            "fragments": [],
-                        }
-                        initial = tool.get("input")
-                        if initial not in (None, ""):
-                            fragment = (
-                                initial
-                                if isinstance(initial, str)
-                                else dumps(initial)
-                            )
-                            tool_blocks[block_index]["fragments"].append(
-                                fragment
-                            )
-                            yield ToolCallToken(token=fragment)
-                    continue
-
-                content_delta = _get(event, "contentBlockDelta")
-                if content_delta:
-                    block_index = content_delta.get("contentBlockIndex")
-                    delta = content_delta.get("delta") or {}
-                    text_block = delta.get("text")
-                    text_value = _string(text_block)
-                    if text_value:
-                        yield Token(token=text_value)
-                        continue
-                    reasoning_block = delta.get("reasoning")
-                    reasoning_value = _string(reasoning_block)
-                    if reasoning_value:
-                        yield ReasoningToken(token=reasoning_value)
-                        continue
-                    tool_delta = delta.get("toolUse")
-                    if tool_delta:
-                        fragment_value = tool_delta.get("input")
-                        if fragment_value not in (None, ""):
-                            fragment = (
-                                fragment_value
-                                if isinstance(fragment_value, str)
-                                else dumps(fragment_value)
-                            )
-                            tool_block = tool_blocks.setdefault(
-                                block_index,
-                                {
-                                    "id": tool_delta.get("toolUseId"),
-                                    "name": tool_delta.get("name"),
-                                    "fragments": [],
-                                },
-                            )
-                            tool_block["fragments"].append(fragment)
-                            yield ToolCallToken(token=fragment)
-                    continue
-
-                content_stop = _get(event, "contentBlockStop")
-                if content_stop:
-                    block_index = content_stop.get("contentBlockIndex")
-                    block = content_stop.get("contentBlock") or {}
-                    tool = (
-                        block.get("toolUse")
-                        if isinstance(block, dict)
-                        else None
-                    )
-                    cached = tool_blocks.pop(block_index, None)
-                    if tool:
-                        cached = cached or {
-                            "id": tool.get("toolUseId"),
-                            "name": tool.get("name"),
-                            "fragments": [],
-                        }
-                        final_input = tool.get("input")
-                        if final_input not in (None, ""):
-                            fragment = (
-                                final_input
-                                if isinstance(final_input, str)
-                                else dumps(final_input)
-                            )
-                            cached["fragments"].append(fragment)
-                    if cached:
-                        token = TextGenerationVendor.build_tool_call_token(
-                            cached.get("id"),
-                            cached.get("name"),
-                            "".join(cached.get("fragments", [])) or None,
-                        )
-                        yield token
-                    continue
-
-            if terminal_usage is not None:
-                self._usage = terminal_usage
+        async def generator() -> AsyncIterator[CanonicalStreamItem]:
+            async for item in self.canonical_stream(
+                stream_session_id=self._DEFAULT_STREAM_SESSION_ID,
+                run_id=self._DEFAULT_RUN_ID,
+                turn_id=self._DEFAULT_TURN_ID,
+            ):
+                yield item
 
         super().__init__(
             generator(),
@@ -257,8 +140,15 @@ class BedrockStream(TextGenerationVendorStream):
             sources=(events,),
         )
 
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+        assert self._generator
+        return self._generator
+
     async def __anext__(self) -> CanonicalStreamItem:
         return await super().__anext__()
+
+    def _cleanup_sources(self) -> tuple[object, ...]:
+        return self._stream_sources
 
     def canonical_stream(
         self,
@@ -295,9 +185,13 @@ class BedrockStream(TextGenerationVendorStream):
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
         message_stopped = False
         terminal_usage: LooseJsonValue | None = None
+        terminal_usage_payload: LooseJsonValue | None = None
+        message_stop_payload: LooseJsonValue | None = None
 
         try:
             async for event in self._events:
+                provider_payload = self._provider_payload(event)
+                provider_event_type = self._provider_event_type(event)
                 metadata = _get(event, "metadata")
                 usage = (
                     metadata.get("usage")
@@ -306,16 +200,29 @@ class BedrockStream(TextGenerationVendorStream):
                 )
                 if usage is not None:
                     terminal_usage = cast(LooseJsonValue, usage)
+                    terminal_usage_payload = provider_payload
                     continue
 
-                if _get(event, "messageStop"):
+                message_stop = _get(event, "messageStop")
+                if message_stop is not None or (
+                    isinstance(event, dict) and "messageStop" in event
+                ):
                     message_stopped = True
+                    message_stop_payload = provider_payload
                     continue
 
                 if message_stopped:
                     continue
 
-                for provider_event in self._provider_events_from_event(event):
+                try:
+                    provider_events = self._provider_events_from_event(event)
+                except Exception as exc:
+                    raise StreamProviderAdapterError(
+                        exc,
+                        provider_payload=provider_payload,
+                        provider_event_type=provider_event_type,
+                    ) from exc
+                for provider_event in provider_events:
                     yield provider_event
 
             if terminal_usage is not None:
@@ -323,8 +230,16 @@ class BedrockStream(TextGenerationVendorStream):
                 yield StreamProviderEvent(
                     kind=StreamItemKind.USAGE_COMPLETED,
                     usage=terminal_usage,
+                    provider_payload=terminal_usage_payload,
+                    provider_event_type="metadata.usage",
                 )
-            yield StreamProviderEvent(kind=StreamItemKind.STREAM_COMPLETED)
+            yield StreamProviderEvent(
+                kind=StreamItemKind.STREAM_COMPLETED,
+                provider_payload=message_stop_payload,
+                provider_event_type=(
+                    "messageStop" if message_stop_payload is not None else None
+                ),
+            )
         finally:
             await self.aclose()
 
@@ -385,6 +300,7 @@ class BedrockStream(TextGenerationVendorStream):
                 block_index,
                 initial,
                 provider_payload,
+                "contentBlockStart",
             ),
         )
 
@@ -428,6 +344,7 @@ class BedrockStream(TextGenerationVendorStream):
                     block_index,
                     fragment,
                     provider_payload,
+                    "contentBlockDelta",
                 ),
             )
         return ()
@@ -468,6 +385,7 @@ class BedrockStream(TextGenerationVendorStream):
                     block_index,
                     final_input,
                     provider_payload,
+                    "contentBlockStop",
                     state=cached,
                 )
             )
@@ -495,6 +413,7 @@ class BedrockStream(TextGenerationVendorStream):
         block_index: int,
         value: object,
         provider_payload: LooseJsonValue | None,
+        provider_event_type: str,
         *,
         state: dict[str, Any] | None = None,
     ) -> StreamProviderEvent:
@@ -509,7 +428,7 @@ class BedrockStream(TextGenerationVendorStream):
             correlation=StreamItemCorrelation(tool_call_id=call_id),
             text_delta=fragment,
             provider_payload=provider_payload,
-            provider_event_type="contentBlockDelta",
+            provider_event_type=provider_event_type,
         )
 
     def _mark_tool_ready(
@@ -542,6 +461,21 @@ class BedrockStream(TextGenerationVendorStream):
     @staticmethod
     def _provider_payload(event: object) -> LooseJsonValue | None:
         return dict(event) if isinstance(event, dict) else None
+
+    @staticmethod
+    def _provider_event_type(event: object) -> str | None:
+        if not isinstance(event, dict):
+            return None
+        for key in (
+            "contentBlockStart",
+            "contentBlockDelta",
+            "contentBlockStop",
+            "messageStop",
+            "metadata",
+        ):
+            if key in event:
+                return key
+        return None
 
 
 class BedrockClient(TextGenerationVendor):

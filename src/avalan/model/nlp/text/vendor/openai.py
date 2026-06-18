@@ -5,12 +5,8 @@ from .....entities import (
     MessageRole,
     PromptCacheRetention,
     ReasoningEffort,
-    ReasoningToken,
-    Token,
-    TokenDetail,
     ToolCallDiagnostic,
     ToolCallResult,
-    ToolCallToken,
 )
 from .....model.provider import ProviderFamily, provider_string_option
 from .....model.response.text import TextGenerationResponse
@@ -19,6 +15,7 @@ from .....model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamProducerBackend,
+    StreamProviderAdapterError,
     StreamProviderCapabilities,
     StreamProviderEvent,
     StreamValidationError,
@@ -87,108 +84,13 @@ class OpenAIStream(TextGenerationVendorStream):
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
 
-        async def generator() -> AsyncIterator[Token | TokenDetail | str]:
-            tool_calls: dict[str, dict[str, str | list[str] | None]] = {}
-            terminal_usage: object | None = None
-
-            async for event in self._stream:
-                etype = OpenAIClient._response_field(event, "type")
-
-                if etype == "response.completed":
-                    response = OpenAIClient._response_field(event, "response")
-                    usage = OpenAIClient._response_field(response, "usage")
-                    if usage is not None:
-                        terminal_usage = usage
-                    continue
-
-                if etype == "response.output_item.added":
-                    item = OpenAIClient._response_field(event, "item")
-                    if not self._is_tool_call_item(item):
-                        continue
-                    try:
-                        call_id = self._tool_call_id_from_item(item)
-                    except ValueError:
-                        continue
-                    if call_id is None:
-                        continue
-                    tool_calls[call_id] = {
-                        "name": self._tool_call_name_from_item(item),
-                        "args_fragments": [],
-                    }
-                    continue
-
-                if (
-                    etype == "response.custom_tool_call_input.delta"
-                    or etype == "response.function_call_arguments.delta"
-                ):
-                    call_id = self._tool_call_id_from_event(
-                        event, required=False
-                    )
-                    delta = getattr(event, "delta", None)
-                    if isinstance(call_id, str) and isinstance(delta, str):
-                        tc = tool_calls.setdefault(
-                            call_id, {"name": None, "args_fragments": []}
-                        )
-                        args_fragments = tc["args_fragments"]
-                        assert isinstance(args_fragments, list)
-                        args_fragments.append(delta)
-                        yield ToolCallToken(token=delta)
-                    continue
-
-                if etype in self._REASONING_DELTA_EVENTS:
-                    delta = getattr(event, "delta", None)
-                    if isinstance(delta, str):
-                        yield ReasoningToken(token=delta)
-                    continue
-
-                if etype in self._TEXT_DELTA_EVENTS:
-                    delta = getattr(event, "delta", None)
-                    if isinstance(delta, str):
-                        yield Token(token=delta)
-                    continue
-
-                if etype == "response.output_item.done":
-                    item = getattr(event, "item", None)
-                    call_id = self._tool_call_id_from_item(item)
-                    if call_id is None:
-                        call_id = self._tool_call_id_from_event(
-                            event, required=False
-                        )
-                    cached = (
-                        tool_calls.pop(call_id, None)
-                        if isinstance(call_id, str)
-                        else None
-                    )
-                    if cached:
-                        name = self._tool_call_name_from_item(item)
-                        if name is not None:
-                            cached["name"] = name
-                        args_fragments = cached["args_fragments"]
-                        assert isinstance(args_fragments, list)
-                        yield TextGenerationVendor.build_tool_call_token(
-                            call_id,
-                            cached.get("name"),
-                            "".join(args_fragments) or None,
-                        )
-                    elif (
-                        item is not None
-                        and getattr(item, "type", None) == "function_call"
-                    ):
-                        tool_name = getattr(item, "name", None)
-                        tool_id = getattr(item, "id", None)
-
-                        if tool_id and tool_name:
-                            token = TextGenerationVendor.build_tool_call_token(
-                                tool_id,
-                                tool_name,
-                                getattr(item, "arguments", None),
-                            )
-                            yield token
-
-                    continue
-
-            if terminal_usage is not None:
-                self._usage = terminal_usage
+        async def generator() -> AsyncIterator[CanonicalStreamItem]:
+            async for item in self.canonical_stream(
+                stream_session_id=self._DEFAULT_STREAM_SESSION_ID,
+                run_id=self._DEFAULT_RUN_ID,
+                turn_id=self._DEFAULT_TURN_ID,
+            ):
+                yield item
 
         super().__init__(
             generator(),
@@ -196,8 +98,15 @@ class OpenAIStream(TextGenerationVendorStream):
             sources=(stream,),
         )
 
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+        assert self._generator
+        return self._generator
+
     async def __anext__(self) -> CanonicalStreamItem:
         return await super().__anext__()
+
+    def _cleanup_sources(self) -> tuple[object, ...]:
+        return self._stream_sources
 
     def canonical_stream(
         self,
@@ -234,7 +143,21 @@ class OpenAIStream(TextGenerationVendorStream):
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
         try:
             async for event in self._stream:
-                for provider_event in self._provider_events_from_event(event):
+                event_type_value = OpenAIClient._response_field(event, "type")
+                provider_event_type = (
+                    event_type_value
+                    if isinstance(event_type_value, str)
+                    else None
+                )
+                try:
+                    provider_events = self._provider_events_from_event(event)
+                except Exception as exc:
+                    raise StreamProviderAdapterError(
+                        exc,
+                        provider_payload=self._provider_payload(event),
+                        provider_event_type=provider_event_type,
+                    ) from exc
+                for provider_event in provider_events:
                     yield provider_event
         finally:
             await self.aclose()

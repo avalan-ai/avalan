@@ -1,4 +1,4 @@
-from .....entities import GenerationSettings, Message, Token, TokenDetail
+from .....entities import GenerationSettings, Message
 from .....model.provider import ProviderFamily
 from .....model.stream import (
     CanonicalStreamItem,
@@ -21,7 +21,7 @@ from . import (
 )
 
 from collections.abc import Mapping
-from typing import Any, AsyncGenerator, AsyncIterator, cast
+from typing import Any, AsyncIterator, cast
 
 import litellm
 
@@ -36,24 +36,29 @@ class LiteLLMStream(TextGenerationVendorStream):
         self._tool_call_ids_by_index = {}
         self._tool_call_names_by_id = {}
 
-        async def generator() -> (
-            AsyncGenerator[Token | TokenDetail | str, None]
-        ):
-            terminal_usage: object | None = None
-            async for chunk in self._stream:
-                usage = LiteLLMClient._field(chunk, "usage")
-                if usage is not None:
-                    terminal_usage = usage
-                text = LiteLLMClient._delta_text(chunk)
-                if text is not None:
-                    yield text
-            self._usage = terminal_usage
+        async def generator() -> AsyncIterator[CanonicalStreamItem]:
+            async for item in self.canonical_stream(
+                stream_session_id=self._DEFAULT_STREAM_SESSION_ID,
+                run_id=self._DEFAULT_RUN_ID,
+                turn_id=self._DEFAULT_TURN_ID,
+            ):
+                yield item
 
         super().__init__(
             generator(),
             provider_family=ProviderFamily.OPENAI_COMPATIBLE,
             sources=(stream,),
         )
+
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+        assert self._generator
+        return self._generator
+
+    async def __anext__(self) -> CanonicalStreamItem:
+        return await super().__anext__()
+
+    def _cleanup_sources(self) -> tuple[object, ...]:
+        return self._stream_sources
 
     def canonical_stream(
         self,

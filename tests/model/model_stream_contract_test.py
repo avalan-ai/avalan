@@ -8159,35 +8159,6 @@ class StreamContractTestCase(TestCase):
 
         expected_boundaries = {
             ("avalan.model.vendor", "TextGenerationVendor.__call__"),
-            ("avalan.model.vendor", "TextGenerationVendorStream.__init__"),
-            (
-                "avalan.model.nlp.text.vendor.openai",
-                "OpenAIClient.__call__",
-            ),
-            (
-                "avalan.model.nlp.text.vendor.anthropic",
-                "AnthropicClient.__call__",
-            ),
-            (
-                "avalan.model.nlp.text.vendor.bedrock",
-                "BedrockClient.__call__",
-            ),
-            (
-                "avalan.model.nlp.text.vendor.litellm",
-                "LiteLLMClient.__call__",
-            ),
-            (
-                "avalan.model.nlp.text.vendor.google",
-                "GoogleClient.__call__",
-            ),
-            (
-                "avalan.model.nlp.text.vendor.ollama",
-                "OllamaClient.__call__",
-            ),
-            (
-                "avalan.model.nlp.text.vendor.huggingface",
-                "HuggingfaceClient.__call__",
-            ),
             (
                 "avalan.model.nlp.text.ds4",
                 "Ds4Worker.stream",
@@ -8282,36 +8253,6 @@ class StreamContractTestCase(TestCase):
             (entry.module, entry.qualname) for entry in inventory
         }
         self.assertEqual(expected_boundaries, inventory_keys)
-
-        vendor_init_boundary = classify_legacy_stream_runtime_boundary(
-            "avalan.model.vendor",
-            "TextGenerationVendorStream.__init__",
-        )
-        self.assertEqual(
-            vendor_init_boundary.surfaces,
-            (
-                StreamLegacySurface.STRING,
-                StreamLegacySurface.TOKEN,
-                StreamLegacySurface.TOKEN_DETAIL,
-            ),
-        )
-        self.assertEqual(
-            vendor_init_boundary.directions,
-            (StreamLegacyBoundaryDirection.ACCEPTS,),
-        )
-        anthropic_boundary = classify_legacy_stream_runtime_boundary(
-            "avalan.model.nlp.text.vendor.anthropic",
-            "AnthropicClient.__call__",
-        )
-        self.assertEqual(
-            anthropic_boundary.surfaces,
-            (
-                StreamLegacySurface.STRING,
-                StreamLegacySurface.TOKEN,
-                StreamLegacySurface.REASONING_TOKEN,
-                StreamLegacySurface.TOOL_CALL_TOKEN,
-            ),
-        )
 
         boundary_expectations = {
             ("avalan.model.nlp.text.ds4", "Ds4Worker.stream"): (

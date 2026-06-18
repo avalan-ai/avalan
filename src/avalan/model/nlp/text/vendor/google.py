@@ -37,11 +37,29 @@ class GoogleStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator[GenerateContentResponse]):
         self._stream = stream
 
+        async def generator() -> AsyncIterator[CanonicalStreamItem]:
+            async for item in self.canonical_stream(
+                stream_session_id=self._DEFAULT_STREAM_SESSION_ID,
+                run_id=self._DEFAULT_RUN_ID,
+                turn_id=self._DEFAULT_TURN_ID,
+            ):
+                yield item
+
         super().__init__(
-            cast(AsyncIterator[Any], stream),
+            generator(),
             provider_family=ProviderFamily.GOOGLE,
             sources=(stream,),
         )
+
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+        assert self._generator
+        return self._generator
+
+    async def __anext__(self) -> CanonicalStreamItem:
+        return await super().__anext__()
+
+    def _cleanup_sources(self) -> tuple[object, ...]:
+        return self._stream_sources
 
     def canonical_stream(
         self,
@@ -71,14 +89,16 @@ class GoogleStream(TextGenerationVendorStream):
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
         terminal_usage: object | None = None
+        terminal_usage_payload: LooseJsonValue | None = None
         async for chunk in self._stream:
+            provider_payload = self._provider_payload(chunk)
             usage = GoogleClient._field(chunk, "usage_metadata")
             if usage is None:
                 usage = GoogleClient._field(chunk, "usageMetadata")
             if usage is not None:
                 terminal_usage = usage
+                terminal_usage_payload = provider_payload
             text = GoogleClient._field(chunk, "text")
-            provider_payload = self._provider_payload(chunk)
             if isinstance(text, str):
                 yield StreamProviderEvent(
                     kind=StreamItemKind.ANSWER_DELTA,
@@ -91,6 +111,7 @@ class GoogleStream(TextGenerationVendorStream):
             yield StreamProviderEvent(
                 kind=StreamItemKind.USAGE_COMPLETED,
                 usage=cast(LooseJsonValue, terminal_usage),
+                provider_payload=terminal_usage_payload,
                 provider_event_type="generate_content.usage",
             )
 

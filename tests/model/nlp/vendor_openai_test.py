@@ -2,13 +2,13 @@ import importlib
 import sys
 import types
 from asyncio import CancelledError, Event, create_task, wait_for
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from json import loads
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -23,8 +23,6 @@ from avalan.entities import (
     PromptCacheRetention,
     ReasoningEffort,
     ReasoningSettings,
-    ReasoningToken,
-    Token,
     ToolCall,
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
@@ -36,6 +34,7 @@ from avalan.entities import (
 )
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
+    CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
     StreamTerminalOutcome,
@@ -63,8 +62,10 @@ class AsyncIter:
             raise StopAsyncIteration from exc
 
 
-async def _legacy_stream_next(stream: Any) -> Any:
-    return await stream._generator.__anext__()
+async def _stream_items(
+    stream: AsyncIterable[CanonicalStreamItem],
+) -> list[CanonicalStreamItem]:
+    return [item async for item in stream]
 
 
 class TrackedAsyncIter:
@@ -204,14 +205,30 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             SimpleNamespace(type="response.output_text.delta", delta="y"),
         ]
         stream = self.mod.OpenAIStream(AsyncIter(chunks))
-        t1 = await _legacy_stream_next(stream)
-        self.assertIsInstance(t1, Token)
-        self.assertEqual(t1.token, "x")
-        t2 = await _legacy_stream_next(stream)
-        self.assertIsInstance(t2, Token)
-        self.assertEqual(t2.token, "y")
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        items = await _stream_items(stream)
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["x", "y"],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "xy",
+        )
 
         stream_instance = AsyncIter([])
         self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
@@ -433,14 +450,22 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         client._template_messages = MagicMock(return_value=[{"c": 1}])
         result = await client("m", [])
-        t1 = await _legacy_stream_next(result)
-        self.assertIsInstance(t1, Token)
-        self.assertEqual(t1.token, "a")
-        t2 = await _legacy_stream_next(result)
-        self.assertIsInstance(t2, Token)
-        self.assertEqual(t2.token, "b")
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(result)
+        items = await _stream_items(result)
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ab",
+        )
 
         with patch.object(self.mod, "OpenAIClient") as ClientMock:
             settings = TransformerEngineSettings(
@@ -472,13 +497,27 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.OpenAIStream(AsyncIter(chunks))
 
-        token = await _legacy_stream_next(stream)
-        self.assertIsInstance(token, Token)
+        iterator = stream.__aiter__()
+        started = await anext(iterator)
+        delta = await anext(iterator)
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "a")
         self.assertIsNone(stream.usage)
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        items = [started, delta, *[item async for item in iterator]]
 
         self.assertIs(stream.usage, usage)
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
         self.assertEqual(stream.provider_family, "openai")
         observation = usage_observation_from_response(stream)
         self.assertIsNotNone(observation)
@@ -516,8 +555,16 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        items = await _stream_items(stream)
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
         observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
@@ -544,8 +591,15 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 ]
             )
         )
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(null_usage)
+        null_usage_items = await _stream_items(null_usage)
+        self.assertEqual(
+            [item.kind for item in null_usage_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
         self.assertIsNone(null_usage.usage)
 
         class FailingIter:
@@ -556,8 +610,18 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 raise RuntimeError("provider failure")
 
         interrupted = self.mod.OpenAIStream(FailingIter())
-        with self.assertRaises(RuntimeError):
-            await _legacy_stream_next(interrupted)
+        interrupted_items = await _stream_items(interrupted)
+        self.assertEqual(
+            [item.kind for item in interrupted_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        error_data = interrupted_items[1].data
+        assert isinstance(error_data, dict)
+        self.assertEqual(error_data["error_type"], "RuntimeError")
         self.assertIsNone(interrupted.usage)
 
         class FailingAfterUsageIter:
@@ -579,9 +643,19 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         interrupted_after_usage = self.mod.OpenAIStream(
             FailingAfterUsageIter()
         )
-        with self.assertRaises(RuntimeError):
-            await _legacy_stream_next(interrupted_after_usage)
-        self.assertIsNone(interrupted_after_usage.usage)
+        interrupted_after_usage_items = await _stream_items(
+            interrupted_after_usage
+        )
+        self.assertEqual(
+            [item.kind for item in interrupted_after_usage_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(interrupted_after_usage.usage, {"input_tokens": 1})
 
     async def test_client_omits_auth_header_without_api_key(self):
         client = self.mod.OpenAIClient(
@@ -678,13 +752,8 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             SimpleNamespace(type="response.content_part.added"),
             SimpleNamespace(type="response.reasoning_text.delta", delta="r1"),
             SimpleNamespace(type="response.reasoning_text.delta", delta="r2"),
+            SimpleNamespace(type="response.reasoning_text.done"),
             SimpleNamespace(type="response.output_item.done"),
-            SimpleNamespace(
-                type="response.output_item.added",
-                item=SimpleNamespace(
-                    custom_tool_call=SimpleNamespace(id=object())
-                ),
-            ),
             SimpleNamespace(
                 type="response.output_item.added",
                 item=SimpleNamespace(
@@ -713,33 +782,38 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             SimpleNamespace(type="response.output_item.done"),
         ]
         stream = self.mod.OpenAIStream(AsyncIter(events))
-        t1 = await _legacy_stream_next(stream)
-        self.assertIsInstance(t1, ReasoningToken)
-        self.assertEqual(t1.token, "r1")
-        t2 = await _legacy_stream_next(stream)
-        self.assertIsInstance(t2, ReasoningToken)
-        self.assertEqual(t2.token, "r2")
-        t3 = await _legacy_stream_next(stream)
-        self.assertIsInstance(t3, ToolCallToken)
-        self.assertEqual(t3.token, "{")
-        t4 = await _legacy_stream_next(stream)
-        self.assertIsInstance(t4, ToolCallToken)
-        self.assertEqual(t4.token, "}")
-        t5 = await _legacy_stream_next(stream)
-        self.assertIsInstance(t5, ToolCallToken)
-        self.assertEqual(t5.call.id, "c1")
-        self.assertEqual(t5.call.name, "pkg__func")
-        self.assertEqual(t5.call.arguments, {})
+        items = await _stream_items(stream)
+
         self.assertEqual(
-            t5.token,
-            '<tool_call>{"name": "pkg__func", "arguments": {}, "id":'
-            ' "c1"}</tool_call>',
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
         )
-        t6 = await _legacy_stream_next(stream)
-        self.assertIsInstance(t6, Token)
-        self.assertEqual(t6.token, "hi")
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.reasoning_text, "r1r2")
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {"c1": "{}"},
+        )
+        self.assertEqual(accumulator.answer_text, "hi")
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.data, {"name": "pkg__func"})
 
     async def test_stream_ignores_message_output_item_done_as_tool_call(self):
         stream = self.mod.OpenAIStream(
@@ -756,12 +830,25 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        token = await _legacy_stream_next(stream)
+        items = await _stream_items(stream)
 
-        self.assertIsInstance(token, Token)
-        self.assertEqual(token.token, "done")
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertFalse(
+            any(item.channel is StreamChannel.TOOL_CALL for item in items)
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "done",
+        )
 
     async def test_stream_ignores_tool_added_without_id(self):
         stream = self.mod.OpenAIStream(
@@ -778,12 +865,25 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        token = await _legacy_stream_next(stream)
+        items = await _stream_items(stream)
 
-        self.assertIsInstance(token, Token)
-        self.assertEqual(token.token, "done")
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertFalse(
+            any(item.channel is StreamChannel.TOOL_CALL for item in items)
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "done",
+        )
 
     async def test_canonical_stream_maps_responses_events(self):
         usage = {
@@ -1645,6 +1745,55 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 self.assertEqual(error_data["error_type"], "ValueError")
                 self.assertIn(message, error_data["message"])
 
+    async def test_canonical_stream_preserves_malformed_response_payload(
+        self,
+    ):
+        event = {
+            "type": "response.output_text.delta",
+            "delta": {"not": "text"},
+            "response": {"id": "resp_1"},
+        }
+        stream = self.mod.OpenAIStream(AsyncIter([event]))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertTrue(
+            all(isinstance(item, CanonicalStreamItem) for item in items)
+        )
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        error_item = items[1]
+        error_data = error_item.data
+        assert isinstance(error_data, dict)
+        self.assertEqual(error_data["error_type"], "ValueError")
+        self.assertIn("delta must be a string", error_data["message"])
+        self.assertEqual(error_item.provider_payload, event)
+        self.assertEqual(
+            error_item.provider_event_type,
+            "response.output_text.delta",
+        )
+        self.assertIs(
+            error_item.terminal_outcome,
+            StreamTerminalOutcome.ERRORED,
+        )
+        self.assertNotIn(
+            StreamItemKind.ANSWER_DELTA,
+            [item.kind for item in items],
+        )
+
     async def test_canonical_stream_maps_duplicate_tool_done_to_error(self):
         events = [
             SimpleNamespace(
@@ -1708,17 +1857,43 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             ),
         ]
         stream = self.mod.OpenAIStream(AsyncIter(events))
-        await _legacy_stream_next(stream)
-        await _legacy_stream_next(stream)
-        t3 = await _legacy_stream_next(stream)
-        self.assertEqual(t3.call.id, "c2")
-        self.assertEqual(t3.call.arguments, {})
-        t4 = await _legacy_stream_next(stream)
-        self.assertEqual(t4.call.id, "c3")
-        self.assertEqual(t4.call.name, "pkg__f")
-        self.assertEqual(t4.call.arguments, {"p": 1})
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {"c2": "{}", "c3": '{"p": 1}'},
+        )
+        ready_items = [
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        ]
+        self.assertEqual(
+            [
+                (
+                    item.correlation.tool_call_id,
+                    item.data,
+                )
+                for item in ready_items
+            ],
+            [("c2", {"name": None}), ("c3", {"name": "pkg__f"})],
+        )
 
     async def test_function_call_events_accept_item_id_deltas(self):
         events = [
@@ -1753,22 +1928,36 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.OpenAIStream(AsyncIter(events))
 
-        first = await _legacy_stream_next(stream)
-        second = await _legacy_stream_next(stream)
-        final = await _legacy_stream_next(stream)
+        items = await _stream_items(stream)
 
-        self.assertIsInstance(first, ToolCallToken)
-        self.assertEqual(first.token, '{"q"')
-        self.assertIsInstance(second, ToolCallToken)
-        self.assertEqual(second.token, ':"avalan"}')
-        self.assertIsInstance(final, ToolCallToken)
-        self.assertEqual(final.call.id, "item-4")
-        self.assertEqual(final.call.name, "pkg__search")
-        self.assertEqual(final.call.arguments, {"q": "avalan"})
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+            ],
+            ['{"q"', ':"avalan"}'],
+        )
+        self.assertEqual(
+            {
+                item.correlation.tool_call_id
+                for item in items
+                if item.channel is StreamChannel.TOOL_CALL
+            },
+            {"item-4"},
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).tool_call_arguments,
+            {"item-4": '{"q":"avalan"}'},
+        )
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.data, {"name": "pkg__search"})
 
-    async def test_function_call_added_item_preserves_legacy_call_name(self):
+    async def test_function_call_added_item_preserves_provider_call_name(self):
         provider_name = self.mod.TextGenerationVendor.encode_tool_name(
             "math.calculator"
         )
@@ -1798,25 +1987,27 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.OpenAIStream(AsyncIter(events))
 
-        first = await _legacy_stream_next(stream)
-        second = await _legacy_stream_next(stream)
-        final = await _legacy_stream_next(stream)
+        items = await _stream_items(stream)
 
-        self.assertIsInstance(first, ToolCallToken)
-        self.assertEqual(first.token, '{"expression"')
-        self.assertIsInstance(second, ToolCallToken)
-        self.assertEqual(second.token, ':"4 + 6"}')
-        self.assertIsInstance(final, ToolCallToken)
-        self.assertIsNotNone(final.call)
-        assert final.call is not None
-        self.assertEqual(final.call.id, "fc_1")
-        self.assertEqual(final.call.name, "math.calculator")
-        self.assertEqual(final.call.provider_name, provider_name)
-        self.assertTrue(final.call.provider_name_encoded)
-        self.assertEqual(final.call.arguments, {"expression": "4 + 6"})
-        self.assertNotIn('"name": ""', final.token)
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+            ],
+            ['{"expression"', ':"4 + 6"}'],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).tool_call_arguments,
+            {"fc_1": '{"expression":"4 + 6"}'},
+        )
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.correlation.tool_call_id, "fc_1")
+        self.assertEqual(ready.data, {"name": provider_name})
 
     async def test_function_call_events_reject_invalid_delta_id(self):
         stream = self.mod.OpenAIStream(
@@ -1831,8 +2022,19 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        with self.assertRaisesRegex(ValueError, "id"):
-            await _legacy_stream_next(stream)
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        error_data = items[1].data
+        assert isinstance(error_data, dict)
+        self.assertIn("id", error_data["message"])
 
     async def test_provider_argument_deltas_match_serialized_call(self):
         fixture = loads(

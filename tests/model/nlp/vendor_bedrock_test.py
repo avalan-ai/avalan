@@ -6,7 +6,6 @@ from importlib.machinery import ModuleSpec
 from json import loads
 from sys import modules
 from types import ModuleType, SimpleNamespace
-from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,19 +16,18 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
-    ReasoningToken,
-    Token,
     ToolCall,
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
-    ToolCallToken,
     TransformerEngineSettings,
 )
 from avalan.model.stream import (
+    CanonicalStreamItem,
     StreamItemKind,
+    StreamTerminalOutcome,
     accumulate_canonical_stream_items,
 )
 from avalan.task.usage import (
@@ -50,10 +48,6 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
-
-
-async def _legacy_stream_next(stream: Any) -> Any:
-    return await stream._generator.__anext__()
 
 
 class FakeBedrockError(Exception):
@@ -200,30 +194,39 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             {"contentBlockStop": {"contentBlockIndex": 1}},
             {"messageStop": {"reason": "finished"}},
         ]
-        with patch.object(
-            self.mod.TextGenerationVendor,
-            "build_tool_call_token",
-            return_value="tool",
-        ) as build:
-            stream = self.mod.BedrockStream(AsyncIter(events))
-            out = []
-            while True:
-                try:
-                    out.append(await _legacy_stream_next(stream))
-                except StopAsyncIteration:
-                    break
+        stream = self.mod.BedrockStream(AsyncIter(events))
 
-        self.assertEqual(len(out), 5)
-        self.assertIsInstance(out[0], ReasoningToken)
-        self.assertEqual(out[0].token, "think")
-        self.assertIsInstance(out[1], ToolCallToken)
-        self.assertEqual(out[1].token, "{")
-        self.assertIsInstance(out[2], ToolCallToken)
-        self.assertEqual(out[2].token, '"a":1}')
-        self.assertIsInstance(out[3], Token)
-        self.assertEqual(out[3].token, "hi")
-        self.assertEqual(out[4], "tool")
-        build.assert_called_once_with("id1", "pkg__tool", '{"a":1}')
+        items = [item async for item in stream]
+        accumulator = accumulate_canonical_stream_items(items)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(accumulator.reasoning_text, "think")
+        self.assertEqual(accumulator.answer_text, "hi")
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {"id1": '{"a":1}'},
+        )
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.data, {"name": "pkg__tool"})
 
     async def test_stream_public_iterator_yields_canonical_items(self):
         stream = self.mod.BedrockStream(
@@ -310,38 +313,63 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             },
             {"messageStop": {}},
         ]
-        token = ToolCallToken(token="<complete>")
-        with patch.object(
-            self.mod.TextGenerationVendor,
-            "build_tool_call_token",
-            return_value=token,
-        ) as build:
-            stream = self.mod.BedrockStream(AsyncIter(events))
-            outputs = []
-            while True:
-                try:
-                    outputs.append(await _legacy_stream_next(stream))
-                except StopAsyncIteration:
-                    break
+        stream = self.mod.BedrockStream(AsyncIter(events))
 
-        self.assertEqual(len(outputs), 3)
-        self.assertIsInstance(outputs[0], ToolCallToken)
-        self.assertEqual(outputs[0].token, '{"foo": 1}')
-        self.assertIsInstance(outputs[1], ToolCallToken)
-        self.assertEqual(outputs[1].token, '{"bar": 2}')
-        self.assertIs(outputs[2], token)
-        build.assert_called_once_with(
-            "id2",
-            "pkg.tool",
-            '{"foo": 1}{"bar": 2}done',
+        items = [item async for item in stream]
+        accumulator = accumulate_canonical_stream_items(items)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
         )
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {"id2": '{"foo": 1}{"bar": 2}done'},
+        )
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.data, {"name": "pkg.tool"})
 
     async def test_stream_stops_on_message_event(self):
+        stop_event = {"messageStop": {}}
         stream = self.mod.BedrockStream(
-            AsyncIter([{"messageStop": {"reason": "done"}}])
+            AsyncIter(
+                [
+                    stop_event,
+                    {
+                        "contentBlockDelta": {
+                            "contentBlockIndex": 0,
+                            "delta": {"text": {"text": "late"}},
+                        }
+                    },
+                ]
+            )
         )
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+
+        items = [item async for item in stream]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].provider_payload, stop_event)
+        self.assertEqual(items[1].provider_event_type, "messageStop")
         self.assertIsNone(stream.usage)
 
     async def test_stream_records_usage_from_terminal_metadata(self):
@@ -384,15 +412,33 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.BedrockStream(AsyncIter(events))
 
-        token = await _legacy_stream_next(stream)
-        self.assertIsInstance(token, Token)
-        self.assertEqual(token.token, "hi")
-        self.assertIsNone(stream.usage)
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        items = [item async for item in stream]
+        accumulator = accumulate_canonical_stream_items(items)
         observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
+        self.assertEqual(accumulator.answer_text, "hi")
+        self.assertEqual(
+            accumulator.final_usage,
+            {
+                "inputTokens": 5,
+                "cacheReadInputTokens": 1,
+                "cacheWriteInputTokens": 2,
+                "outputTokens": 7,
+                "totalTokens": 12,
+                "reasoning": {"text": "private thinking text"},
+                "cacheDetails": {
+                    "cacheRead": {
+                        "ephemeral5mInputTokens": 3,
+                        "ephemeral1hInputTokens": 4,
+                    },
+                    "cacheWrite": {
+                        "ephemeral5mInputTokens": 5,
+                        "ephemeral1hInputTokens": 6,
+                    },
+                },
+            },
+        )
         self.assertEqual(stream.provider_family, "bedrock")
         self.assertIsNotNone(observation)
         assert observation is not None
@@ -439,14 +485,21 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.BedrockStream(AsyncIter(events))
 
-        token = await _legacy_stream_next(stream)
-        self.assertIsInstance(token, Token)
-        self.assertEqual(token.token, "late")
-        self.assertIsNone(stream.usage)
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        items = [item async for item in stream]
+        accumulator = accumulate_canonical_stream_items(items)
         totals = usage_totals_from_response(stream)
 
+        self.assertEqual(accumulator.answer_text, "late")
+        self.assertEqual(
+            accumulator.final_usage,
+            {
+                "inputTokens": 0,
+                "cacheReadInputTokens": 0,
+                "cacheWriteInputTokens": 0,
+                "outputTokens": 0,
+                "totalTokens": 0,
+            },
+        )
         self.assertIsNotNone(totals)
         assert totals is not None
         self.assertEqual(totals.input_tokens, 0)
@@ -550,12 +603,74 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             accumulator.final_usage,
             {"inputTokens": 2, "outputTokens": 3},
         )
+        argument_items = [
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+        ]
+        self.assertEqual(
+            [item.provider_event_type for item in argument_items],
+            [
+                "contentBlockStart",
+                "contentBlockDelta",
+                "contentBlockStop",
+            ],
+        )
+        self.assertEqual(argument_items[0].provider_payload, events[1])
+        self.assertEqual(argument_items[1].provider_payload, events[2])
+        self.assertEqual(argument_items[2].provider_payload, events[4])
+        self.assertEqual(items[10].provider_payload, events[-1])
+        self.assertEqual(items[10].provider_event_type, "metadata.usage")
+        self.assertEqual(items[11].provider_payload, events[-2])
+        self.assertEqual(items[11].provider_event_type, "messageStop")
         ready = next(
             item
             for item in items
             if item.kind is StreamItemKind.TOOL_CALL_READY
         )
         self.assertEqual(ready.data, {"name": "lookup"})
+
+    async def test_canonical_stream_maps_bedrock_text_delta_without_legacy(
+        self,
+    ):
+        event = {
+            "contentBlockDelta": {
+                "contentBlockIndex": 0,
+                "delta": {"text": {"text": "hello"}},
+            }
+        }
+        stream = self.mod.BedrockStream(
+            AsyncIter([event, {"messageStop": {"reason": "finished"}}])
+        )
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+        self.assertTrue(
+            all(isinstance(item, CanonicalStreamItem) for item in items)
+        )
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "hello",
+        )
+        self.assertEqual(items[1].provider_payload, event)
+        self.assertEqual(items[1].provider_event_type, "contentBlockDelta")
 
     async def test_canonical_stream_maps_malformed_bedrock_tool_delta_to_error(
         self,
@@ -588,6 +703,53 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             ],
         )
         self.assertIn("missing start event", str(items[1].data))
+
+    async def test_canonical_stream_preserves_malformed_bedrock_payload(
+        self,
+    ):
+        event = {
+            "contentBlockDelta": {
+                "contentBlockIndex": "bad",
+                "delta": {"text": {"text": "legacy-token"}},
+            }
+        }
+        stream = self.mod.BedrockStream(AsyncIter([event]))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+        self.assertTrue(
+            all(isinstance(item, CanonicalStreamItem) for item in items)
+        )
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        error_item = items[1]
+        error_data = error_item.data
+        assert isinstance(error_data, dict)
+        self.assertEqual(error_data["error_type"], "ValueError")
+        self.assertIn("index must be an integer", error_data["message"])
+        self.assertEqual(error_item.provider_payload, event)
+        self.assertEqual(error_item.provider_event_type, "contentBlockDelta")
+        self.assertIs(
+            error_item.terminal_outcome,
+            StreamTerminalOutcome.ERRORED,
+        )
+        self.assertNotIn(
+            StreamItemKind.ANSWER_DELTA,
+            [item.kind for item in items],
+        )
 
     async def test_canonical_stream_maps_duplicate_bedrock_tool_stop_to_error(
         self,
@@ -680,6 +842,8 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         stream = self.mod.BedrockStream(AsyncIter([]))
 
         self.assertEqual(stream._provider_events_from_event({}), ())
+        self.assertIsNone(stream._provider_event_type(SimpleNamespace()))
+        self.assertIsNone(stream._provider_event_type({"unknown": {}}))
         self.assertEqual(
             stream._provider_events_from_event(
                 {
@@ -799,8 +963,17 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
 
         stream = self.mod.BedrockStream(FailingIter())
 
-        with self.assertRaises(RuntimeError):
-            await _legacy_stream_next(stream)
+        items = [item async for item in stream]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertIn("provider failure", str(items[1].data))
         self.assertIsNone(stream.usage)
         self.assertIsNone(usage_totals_from_response(stream))
 
@@ -903,6 +1076,37 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         )
         await exit_stack.aclose()
 
+    async def test_client_stream_invalid_model_identifier_hint_without_prefix(
+        self,
+    ):
+        self.client.converse_stream.side_effect = FakeBedrockError(
+            "ValidationException",
+            "The provided model identifier is invalid.",
+        )
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(
+            exit_stack=exit_stack, region_name="ap-southeast-1"
+        )
+        client._system_prompt = MagicMock(return_value=None)
+        client._template_messages = MagicMock(
+            return_value=[{"role": "user", "content": []}]
+        )
+        client._inference_config = MagicMock(return_value=None)
+        client._tool_config = MagicMock(return_value=None)
+
+        with self.assertRaises(ValueError) as exc_info:
+            await client(
+                "anthropic.claude-sonnet-4-6",
+                [],
+                GenerationSettings(),
+            )
+
+        self.assertIn(
+            "inference profile such as 'us.anthropic...'",
+            str(exc_info.exception),
+        )
+        await exit_stack.aclose()
+
     async def test_client_stream_other_validation_error_is_not_rewritten(self):
         error = FakeBedrockError(
             "ValidationException", "Malformed request payload."
@@ -954,6 +1158,37 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         )
         self.assertIn(
             "aws bedrock list-inference-profiles --region us-east-1",
+            str(exc_info.exception),
+        )
+        await exit_stack.aclose()
+
+    async def test_client_stream_end_of_life_model_hint_with_geo_prefix(
+        self,
+    ):
+        self.client.converse_stream.side_effect = FakeBedrockError(
+            "ResourceNotFoundException",
+            "This model version has reached the end of its life.",
+        )
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(
+            exit_stack=exit_stack, region_name="eu-west-1"
+        )
+        client._system_prompt = MagicMock(return_value=None)
+        client._template_messages = MagicMock(
+            return_value=[{"role": "user", "content": []}]
+        )
+        client._inference_config = MagicMock(return_value=None)
+        client._tool_config = MagicMock(return_value=None)
+
+        with self.assertRaises(ValueError) as exc_info:
+            await client(
+                "anthropic.claude-3-5-sonnet-20241022-v2:0",
+                [],
+                GenerationSettings(),
+            )
+
+        self.assertIn(
+            "Try an active 'eu.'-prefixed profile.",
             str(exc_info.exception),
         )
         await exit_stack.aclose()
@@ -1388,6 +1623,33 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
 
 
 class BedrockStreamHelpersTest(TestCase):
+    def test_error_and_region_helpers_false_paths(self):
+        _, _, patcher = patch_bedrock_imports()
+        self.addCleanup(patcher.stop)
+        module = import_module("avalan.model.nlp.text.vendor.bedrock")
+
+        plain_error = Exception("plain")
+        self.assertIsNone(module._bedrock_error_code(plain_error))
+        self.assertEqual(module._bedrock_error_message(plain_error), "plain")
+
+        missing_details_error = Exception("missing details")
+        missing_details_error.response = {"Error": "invalid"}
+        self.assertIsNone(module._bedrock_error_code(missing_details_error))
+
+        numeric_code_error = Exception("numeric code")
+        numeric_code_error.response = {"Error": {"Code": 123}}
+        self.assertIsNone(module._bedrock_error_code(numeric_code_error))
+
+        numeric_message_error = Exception("numeric message")
+        numeric_message_error.response = {"Error": {"Message": 123}}
+        self.assertEqual(
+            module._bedrock_error_message(numeric_message_error),
+            "numeric message",
+        )
+        self.assertIsNone(module._geo_inference_prefix(None))
+        self.assertEqual(module._geo_inference_prefix("eu-west-1"), "eu.")
+        self.assertIsNone(module._geo_inference_prefix("ap-southeast-1"))
+
     def test_string_helper(self):
         _, _, patcher = patch_bedrock_imports()
         self.addCleanup(patcher.stop)

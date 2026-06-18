@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any
+from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,11 +18,8 @@ from avalan.entities import (
     MessageRole,
     ReasoningEffort,
     ReasoningSettings,
-    ReasoningToken,
-    Token,
     ToolCall,
     ToolCallResult,
-    ToolCallToken,
     TransformerEngineSettings,
 )
 from avalan.model.stream import (
@@ -50,10 +47,6 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
-
-
-async def _legacy_stream_next(stream: Any) -> Any:
-    return await stream._generator.__anext__()
 
 
 async def _canonical_items(
@@ -112,16 +105,42 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
         Stop = self.stub.types.RawMessageStopEvent
 
         async def agen():
-            yield Delta(types.SimpleNamespace())
+            yield SimpleNamespace(
+                type="content_block_start",
+                content_block=SimpleNamespace(
+                    type="tool_use", id="tid", name="tool"
+                ),
+                index=0,
+            )
             yield Delta(types.SimpleNamespace(partial_json="val"))
+            yield SimpleNamespace(
+                type="content_block_stop",
+                content_block=SimpleNamespace(
+                    type="tool_use", id="tid", name="tool"
+                ),
+                index=0,
+            )
             yield Stop()
 
         stream = self.mod.AnthropicStream(agen())
-        token = await _legacy_stream_next(stream)
-        self.assertIsInstance(token, ToolCallToken)
-        self.assertEqual(token.token, "val")
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
+        items = await _canonical_items(stream)
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.tool_call_arguments, {"tid": "val"})
+        self.assertIs(
+            accumulator.terminal_outcome,
+            StreamTerminalOutcome.COMPLETED,
+        )
 
         ctx_instance = SimpleNamespace(
             __aenter__=AsyncMock(return_value=AsyncIter([])),
@@ -180,7 +199,6 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             )
             yield Delta(SimpleNamespace(thinking="think"))
             yield Delta(SimpleNamespace(partial_json='{"a":1}'))
-            yield Delta(SimpleNamespace(partial_json="frag"), index=1)
             yield Delta(SimpleNamespace(text="txt"))
             yield SimpleNamespace(
                 type="content_block_stop",
@@ -194,30 +212,32 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             )
             yield SimpleNamespace(type="message_stop")
 
-        with patch.object(
-            self.mod.TextGenerationVendor,
-            "build_tool_call_token",
-            return_value="call",
-        ) as btt:
-            stream = self.mod.AnthropicStream(agen())
-            out = []
-            while True:
-                try:
-                    out.append(await _legacy_stream_next(stream))
-                except StopAsyncIteration:
-                    break
+        stream = self.mod.AnthropicStream(agen())
+        items = await _canonical_items(stream)
 
-        self.assertEqual(len(out), 5)
-        self.assertIsInstance(out[0], ReasoningToken)
-        self.assertEqual(out[0].token, "think")
-        self.assertIsInstance(out[1], ToolCallToken)
-        self.assertEqual(out[1].token, '{"a":1}')
-        self.assertIsInstance(out[2], ToolCallToken)
-        self.assertEqual(out[2].token, "frag")
-        self.assertIsInstance(out[3], Token)
-        self.assertEqual(out[3].token, "txt")
-        self.assertEqual(out[4], "call")
-        btt.assert_called_once_with("tid", "tname", {"x": 1})
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].text_delta, "think")
+        self.assertEqual(items[2].text_delta, '{"a":1}')
+        self.assertEqual(items[3].text_delta, "txt")
+        self.assertEqual(items[4].data, {"name": "tname"})
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.reasoning_text, "think")
+        self.assertEqual(accumulator.tool_call_arguments, {"tid": '{"a":1}'})
+        self.assertEqual(accumulator.answer_text, "txt")
 
     def test_template_messages_and_tool_schemas(self):
         exit_stack = AsyncExitStack()
@@ -367,6 +387,30 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             "x",
         )
 
+        generator_stream = self.mod.GoogleStream(
+            AsyncIter([SimpleNamespace(text="g")])
+        )
+        generator_items = await _canonical_items(
+            cast(
+                AsyncIterable[CanonicalStreamItem],
+                generator_stream._generator,
+            )
+        )
+        self.assertEqual(
+            [item.kind for item in generator_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(_answer_text(generator_items), "g")
+        self.assertEqual(
+            {item.provider_family for item in generator_items}, {"google"}
+        )
+
         with patch.object(self.mod, "GoogleClient") as ClientMock:
             settings = TransformerEngineSettings(
                 auto_load_model=False,
@@ -433,6 +477,7 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_answer_text(items), "x")
 
     async def test_stream_records_usage_metadata_after_full_consumption(self):
+        modes: list[str] = []
         usage = SimpleNamespace(
             promptTokenCount=4,
             cachedContentTokenCount=1,
@@ -440,11 +485,21 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             thoughtsTokenCount=2,
             totalTokenCount=9,
         )
+        payload = {"usageMetadata": {"promptTokenCount": 4}}
+
+        class UsageChunk:
+            text = None
+            usage_metadata = usage
+
+            def model_dump(self, *, mode: str) -> dict[str, object]:
+                modes.append(mode)
+                return payload
+
         stream = self.mod.GoogleStream(
             AsyncIter(
                 [
                     SimpleNamespace(text="x"),
-                    SimpleNamespace(text=None, usage_metadata=usage),
+                    UsageChunk(),
                 ]
             )
         )
@@ -454,9 +509,16 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             accumulate_canonical_stream_items(items).answer_text,
             "x",
         )
+        usage_item = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.USAGE_COMPLETED
+        )
         observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
+        self.assertEqual(modes, ["json"])
+        self.assertEqual(usage_item.provider_payload, payload)
         self.assertEqual(stream.provider_family, "google")
         self.assertIsNotNone(observation)
         assert observation is not None
@@ -833,6 +895,59 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
         stream_items = await _canonical_items(stream)
         self.assertEqual(_answer_text(stream_items), "x")
 
+        direct_stream = self.mod.HuggingfaceStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(
+                                delta=SimpleNamespace(content="hi")
+                            )
+                        ]
+                    )
+                ]
+            )
+        )
+        started = await direct_stream.__anext__()
+        delta = await direct_stream.__anext__()
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "hi")
+        self.assertEqual(delta.provider_family, "hugging_face")
+
+        generator_stream = self.mod.HuggingfaceStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(delta=SimpleNamespace(content="g"))
+                        ]
+                    )
+                ]
+            )
+        )
+        generator_items = await _canonical_items(
+            cast(
+                AsyncIterable[CanonicalStreamItem],
+                generator_stream._generator,
+            )
+        )
+        self.assertEqual(
+            [item.kind for item in generator_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(_answer_text(generator_items), "g")
+        self.assertEqual(
+            {item.provider_family for item in generator_items},
+            {"hugging_face"},
+        )
+
         modes: list[str] = []
         payload = {"choices": [{"delta": {"content": "x"}}], "native": True}
 
@@ -885,9 +1000,15 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
 
         items = await _canonical_items(stream)
         self.assertEqual(_answer_text(items), "x")
+        usage_item = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.USAGE_COMPLETED
+        )
         observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
+        self.assertEqual(usage_item.provider_payload, {"usage": usage})
         self.assertEqual(stream.provider_family, "hugging_face")
         self.assertIsNotNone(observation)
         assert observation is not None
@@ -1007,9 +1128,18 @@ class OllamaTestCase(IsolatedAsyncioTestCase):
         )
         stream_items = await _canonical_items(stream)
         self.assertEqual(_answer_text(stream_items), "a")
+        usage_item = next(
+            item
+            for item in stream_items
+            if item.kind is StreamItemKind.USAGE_COMPLETED
+        )
         self.assertEqual(stream.provider_family, "ollama")
         self.assertEqual(
             stream.usage,
+            {"prompt_eval_count": 5, "eval_count": 3},
+        )
+        self.assertEqual(
+            usage_item.provider_payload,
             {"prompt_eval_count": 5, "eval_count": 3},
         )
         self.assertIsNone(usage_observation_from_response(stream))
@@ -1024,6 +1154,30 @@ class OllamaTestCase(IsolatedAsyncioTestCase):
         self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
         self.assertEqual(delta.text_delta, "hi")
         self.assertEqual(delta.provider_family, "ollama")
+
+        generator_stream = self.mod.OllamaStream(
+            AsyncIter([{"message": {"content": "g"}}])
+        )
+        generator_items = await _canonical_items(
+            cast(
+                AsyncIterable[CanonicalStreamItem],
+                generator_stream._generator,
+            )
+        )
+        self.assertEqual(
+            [item.kind for item in generator_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(_answer_text(generator_items), "g")
+        self.assertEqual(
+            {item.provider_family for item in generator_items}, {"ollama"}
+        )
 
         with patch.object(self.mod, "OllamaClient") as ClientMock:
             settings = TransformerEngineSettings(
@@ -1189,20 +1343,60 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         stream_items = await _canonical_items(stream)
         self.assertEqual(_answer_text(stream_items), "x")
 
-        legacy_usage = {"prompt_tokens": 1, "completion_tokens": 2}
-        legacy_stream = self.mod.LiteLLMStream(
+        direct_stream = self.mod.LiteLLMStream(
+            AsyncIter([{"choices": [{"delta": {"content": "hi"}}]}])
+        )
+        started = await direct_stream.__anext__()
+        delta = await direct_stream.__anext__()
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "hi")
+        self.assertEqual(delta.provider_family, "openai_compatible")
+
+        self.assertEqual(
+            self.mod.LiteLLMClient._delta_text(
+                {"choices": [{"delta": {"content": "helper"}}]}
+            ),
+            "helper",
+        )
+        self.assertIsNone(self.mod.LiteLLMClient._delta_text({"choices": []}))
+        self.assertIsNone(
+            self.mod.LiteLLMClient._delta_text(
+                {"choices": [{"delta": {"content": 3}}]}
+            )
+        )
+
+        generator_usage = {"prompt_tokens": 1, "completion_tokens": 2}
+        generator_stream = self.mod.LiteLLMStream(
             AsyncIter(
                 [
-                    {"choices": [{"delta": {"content": "legacy"}}]},
-                    {"usage": legacy_usage},
+                    {"choices": [{"delta": {"content": "canonical"}}]},
+                    {"usage": generator_usage},
                     {"choices": []},
                 ]
             )
         )
-        self.assertEqual(await _legacy_stream_next(legacy_stream), "legacy")
-        with self.assertRaises(StopAsyncIteration):
-            await _legacy_stream_next(legacy_stream)
-        self.assertEqual(legacy_stream.usage, legacy_usage)
+        generator_items = await _canonical_items(
+            cast(
+                AsyncIterable[CanonicalStreamItem],
+                generator_stream._generator,
+            )
+        )
+        self.assertEqual(
+            [item.kind for item in generator_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(generator_items)
+        self.assertEqual(accumulator.answer_text, "canonical")
+        self.assertEqual(accumulator.final_usage, generator_usage)
+        self.assertEqual(generator_stream.usage, generator_usage)
 
         with patch.object(self.mod, "LiteLLMClient") as ClientMock:
             settings = TransformerEngineSettings(

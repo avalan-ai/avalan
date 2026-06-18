@@ -7,7 +7,6 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from json import loads
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,15 +20,12 @@ from avalan.entities import (
     MessageToolCall,
     ReasoningEffort,
     ReasoningSettings,
-    ReasoningToken,
-    Token,
     ToolCall,
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
-    ToolCallToken,
     TransformerEngineSettings,
 )
 from avalan.model.stream import (
@@ -54,10 +50,6 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:  # pragma: no cover - helper
             raise StopAsyncIteration from exc
-
-
-async def _legacy_stream_next(stream: Any) -> Any:
-    return await stream._generator.__anext__()
 
 
 @pytest.fixture(scope="module")
@@ -113,7 +105,7 @@ def test_stream_variants(anthropic_mod):
             SimpleNamespace(partial_json='{"a":1}')
         )
         yield mod.RawContentBlockDeltaEvent(
-            SimpleNamespace(partial_json="frag"), index=1
+            SimpleNamespace(partial_json="frag")
         )
         yield mod.RawContentBlockDeltaEvent(SimpleNamespace(text="txt"))
         yield SimpleNamespace(
@@ -126,34 +118,88 @@ def test_stream_variants(anthropic_mod):
         yield SimpleNamespace(type="message_stop")
 
     async def collect():
-        with patch.object(
-            mod.TextGenerationVendor,
-            "build_tool_call_token",
-            return_value="call",
-        ) as btt:
-            stream = mod.AnthropicStream(agen())
-            out = []
-            async for token in stream._generator:
-                out.append(token)
-        return out, btt
+        stream = mod.AnthropicStream(agen())
+        return [item async for item in stream]
 
-    out, btt = asyncio.run(collect())
+    items = asyncio.run(collect())
+    accumulator = accumulate_canonical_stream_items(items)
 
-    assert len(out) == 5
-    assert isinstance(out[0], ReasoningToken)
-    assert out[0].token == "think"
-    assert isinstance(out[1], ToolCallToken)
-    assert out[1].token == '{"a":1}'
-    assert isinstance(out[2], ToolCallToken)
-    assert out[2].token == "frag"
-    assert isinstance(out[3], Token)
-    assert out[3].token == "txt"
-    assert out[4] == "call"
-    btt.assert_called_once_with("tid", "tname", {"x": 1})
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.REASONING_DELTA,
+        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        StreamItemKind.ANSWER_DELTA,
+        StreamItemKind.TOOL_CALL_READY,
+        StreamItemKind.TOOL_CALL_DONE,
+        StreamItemKind.ANSWER_DONE,
+        StreamItemKind.REASONING_DONE,
+        StreamItemKind.STREAM_COMPLETED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
+    assert accumulator.reasoning_text == "think"
+    assert accumulator.answer_text == "txt"
+    assert accumulator.tool_call_arguments == {"tid": '{"a":1}frag'}
+    ready = next(
+        item for item in items if item.kind is StreamItemKind.TOOL_CALL_READY
+    )
+    assert ready.data == {"name": "tname"}
+
+
+def test_stream_emits_stop_block_tool_input_when_no_deltas(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield SimpleNamespace(
+            type="content_block_start",
+            content_block=SimpleNamespace(
+                type="tool_use", id="tid", name="tname"
+            ),
+            index=0,
+        )
+        yield SimpleNamespace(
+            type="content_block_stop",
+            content_block=SimpleNamespace(
+                type="tool_use", id="tid", name="tname", input={"x": 1}
+            ),
+            index=0,
+        )
+        yield SimpleNamespace(type="message_stop")
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        return [item async for item in stream]
+
+    items = asyncio.run(collect())
+    argument_items = [
+        item
+        for item in items
+        if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+    ]
+
+    assert len(argument_items) == 1
+    assert argument_items[0].text_delta == '{"x": 1}'
+    accumulator = accumulate_canonical_stream_items(items)
+    assert accumulator.tool_call_arguments == {"tid": '{"x": 1}'}
 
 
 def test_stream_records_usage_on_message_stop(anthropic_mod):
     mod, _ = anthropic_mod
+    usage_payload = {
+        "type": "message_delta",
+        "usage": {
+            "output_tokens": 5,
+            "output_tokens_details": {"thinking_tokens": 4},
+        },
+    }
+
+    class ModelDumpUsageDelta:
+        type = "message_delta"
+        usage = usage_payload["usage"]
+
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return usage_payload
 
     async def agen():
         yield SimpleNamespace(
@@ -172,28 +218,36 @@ def test_stream_records_usage_on_message_stop(anthropic_mod):
         )
         yield mod.RawContentBlockDeltaEvent(SimpleNamespace(thinking="think"))
         yield SimpleNamespace(type="message_delta", usage=SimpleNamespace())
-        yield SimpleNamespace(
-            type="message_delta",
-            usage={
-                "output_tokens": 5,
-                "output_tokens_details": {"thinking_tokens": 4},
-            },
-        )
+        yield ModelDumpUsageDelta()
+        yield SimpleNamespace(type="message_delta", usage=SimpleNamespace())
         yield SimpleNamespace(type="message_stop")
 
     async def collect():
         stream = mod.AnthropicStream(agen())
-        token = await _legacy_stream_next(stream)
-        assert stream.usage is None
-        with pytest.raises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
-        return stream, token
+        return stream, [item async for item in stream]
 
-    stream, token = asyncio.run(collect())
+    stream, items = asyncio.run(collect())
+    accumulator = accumulate_canonical_stream_items(items)
+    usage_item = next(
+        item for item in items if item.kind is StreamItemKind.USAGE_COMPLETED
+    )
     observation = usage_observation_from_response(stream)
     totals = usage_totals_from_response(stream)
 
-    assert isinstance(token, ReasoningToken)
+    assert usage_item.provider_payload == usage_payload
+    assert usage_item.provider_event_type == "message_delta"
+    assert accumulator.reasoning_text == "think"
+    assert accumulator.final_usage == {
+        "input_tokens": 7,
+        "cache_read_input_tokens": 2,
+        "cache_creation_input_tokens": 3,
+        "cache_creation": SimpleNamespace(
+            ephemeral_5m_input_tokens=11,
+            ephemeral_1h_input_tokens=13,
+        ),
+        "output_tokens": 5,
+        "output_tokens_details": {"thinking_tokens": 4},
+    }
     assert stream.provider_family == "anthropic"
     assert observation is not None
     assert observation.metadata == {
@@ -211,28 +265,39 @@ def test_stream_records_usage_on_message_stop(anthropic_mod):
 
 def test_stream_records_mapping_usage_on_message_stop(anthropic_mod):
     mod, _ = anthropic_mod
+    usage_payload = {
+        "type": "message_delta",
+        "usage": {
+            "input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 0,
+        },
+    }
 
     async def agen():
-        yield {
-            "type": "message_delta",
-            "usage": {
-                "input_tokens": 0,
-                "cache_read_input_tokens": 0,
-                "cache_creation_input_tokens": 0,
-                "output_tokens": 0,
-            },
-        }
+        yield usage_payload
         yield {"type": "message_stop"}
 
     async def collect():
         stream = mod.AnthropicStream(agen())
-        with pytest.raises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
-        return stream
+        return stream, [item async for item in stream]
 
-    stream = asyncio.run(collect())
+    stream, items = asyncio.run(collect())
+    accumulator = accumulate_canonical_stream_items(items)
+    usage_item = next(
+        item for item in items if item.kind is StreamItemKind.USAGE_COMPLETED
+    )
     totals = usage_totals_from_response(stream)
 
+    assert usage_item.provider_payload == usage_payload
+    assert usage_item.provider_event_type == "message_delta"
+    assert accumulator.final_usage == {
+        "input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "output_tokens": 0,
+    }
     assert totals is not None
     assert totals.input_tokens == 0
     assert totals.cached_input_tokens == 0
@@ -648,12 +713,15 @@ def test_stream_without_message_stop_drops_cumulative_usage(anthropic_mod):
 
     async def collect():
         stream = mod.AnthropicStream(agen())
-        with pytest.raises(StopAsyncIteration):
-            await _legacy_stream_next(stream)
-        return stream
+        return stream, [item async for item in stream]
 
-    stream = asyncio.run(collect())
+    stream, items = asyncio.run(collect())
 
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.STREAM_COMPLETED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
     assert stream.usage is None
     assert usage_totals_from_response(stream) is None
 
@@ -681,12 +749,16 @@ def test_stream_failure_before_message_stop_drops_cumulative_usage(
 
     async def collect():
         stream = mod.AnthropicStream(FailingIter())
-        with pytest.raises(RuntimeError):
-            await _legacy_stream_next(stream)
-        return stream
+        return stream, [item async for item in stream]
 
-    stream = asyncio.run(collect())
+    stream, items = asyncio.run(collect())
 
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.STREAM_ERRORED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
+    assert "provider failure" in str(items[1].data)
     assert stream.usage is None
     assert usage_totals_from_response(stream) is None
 
@@ -824,7 +896,7 @@ def test_client_non_stream_tool_messages(anthropic_mod):
     with patch.object(
         mod.TextGenerationVendor,
         "build_tool_call_token",
-        return_value=ToolCallToken(token="<tool_call />"),
+        return_value=SimpleNamespace(token="<tool_call />"),
     ) as build_token:
         stream = asyncio.run(
             client(
@@ -1378,7 +1450,9 @@ def test_translate_api_error_for_unknown_model(anthropic_mod):
         )
 
 
-def test_stream_skips_tool_events_with_missing_indexes(anthropic_mod):
+def test_stream_maps_tool_events_with_missing_indexes_to_error(
+    anthropic_mod,
+):
     mod, _ = anthropic_mod
 
     async def agen():
@@ -1395,12 +1469,16 @@ def test_stream_skips_tool_events_with_missing_indexes(anthropic_mod):
 
     async def collect():
         stream = mod.AnthropicStream(agen())
-        out = []
-        async for token in stream._generator:
-            out.append(token)
-        return out
+        return [item async for item in stream]
 
-    assert asyncio.run(collect()) == []
+    items = asyncio.run(collect())
+
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.STREAM_ERRORED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
+    assert "index must be an integer" in str(items[1].data)
 
 
 def test_call_reraises_when_translator_does_not_raise(anthropic_mod):
