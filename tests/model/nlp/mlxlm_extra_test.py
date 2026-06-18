@@ -1139,6 +1139,35 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
                 False,
             )
 
+    def test_close_without_worker_is_noop(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+
+        model.close()
+
+        self.assertIsNone(model._worker)
+
+    def test_exit_closes_worker_and_delegates(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        worker = model._worker_executor()
+
+        result = model.__exit__(None, None, None)
+
+        self.assertFalse(result)
+        self.assertIsNone(model._worker)
+        self.assertTrue(worker._shutdown)
+
 
 class MlxImportGuardTestCase(IsolatedAsyncioTestCase):
     async def test_import_guard_behaviors(self) -> None:
