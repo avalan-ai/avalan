@@ -218,11 +218,11 @@ class StreamingDocsTest(TestCase):
 
         self.assertNotIn(playground_example, active_paths)
         self.assertNotIn(generated_dependency, active_paths)
-        self.assertIn(
-            "token loop",
-            _streaming_pattern_violations(
-                playground_example.read_text(encoding="utf-8")
-            ),
+        self.assertFalse(
+            _is_active_streaming_example_candidate(playground_example)
+        )
+        self.assertFalse(
+            _is_active_streaming_example_candidate(generated_dependency)
         )
 
     def test_protocol_examples_remain_openai_chunk_consumers(self) -> None:
@@ -274,9 +274,12 @@ def _active_streaming_doc_paths() -> tuple[Path, ...]:
 
 
 def _is_active_streaming_example_path(path: Path) -> bool:
+    return path.is_file() and _is_active_streaming_example_candidate(path)
+
+
+def _is_active_streaming_example_candidate(path: Path) -> bool:
     return (
-        path.is_file()
-        and path.suffix in {".md", ".py"}
+        path.suffix in {".md", ".py"}
         and path.name not in SKIPPED_ACTIVE_EXAMPLE_NAMES
         and not path.is_relative_to(PLAYGROUND_EXAMPLE_ROOT)
         and SKIPPED_ACTIVE_EXAMPLE_DIRS.isdisjoint(path.parts)
