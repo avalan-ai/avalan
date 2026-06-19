@@ -14,10 +14,14 @@ from dataclasses import dataclass
 from io import StringIO
 from json import dumps, loads
 from logging import getLogger
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+from sqlalchemy import create_engine, text
 
 from avalan.agent import AgentOperation, EngineEnvironment, Specification
 from avalan.agent.engine import EngineAgent
@@ -54,6 +58,7 @@ from avalan.event import Event, EventPayloadKind, EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
+from avalan.model.nlp.text.vendor.openai import OpenAIStream
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -70,6 +75,7 @@ from avalan.model.stream import (
     validate_tool_lifecycle_items,
 )
 from avalan.tool import Tool, ToolSet
+from avalan.tool.database import DatabaseToolSet, DatabaseToolSettings
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
 
@@ -78,6 +84,74 @@ class _DummyEngine:
     def __init__(self):
         self.model_id = "m"
         self.tokenizer = MagicMock()
+
+
+class _AsyncIter:
+    def __init__(self, items: list[object]) -> None:
+        self._iter = iter(items)
+
+    def __aiter__(self) -> "_AsyncIter":
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            return next(self._iter)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
+def _dummy_create_async_engine(dsn: str, **_: Any) -> object:
+    engine = create_engine(dsn)
+
+    class DummyAsyncConn:
+        def __init__(self, conn: Any) -> None:
+            self.conn = conn
+
+        async def exec_driver_sql(
+            self, sql: str, *args: Any, **kwargs: Any
+        ) -> Any:
+            result = self.conn.exec_driver_sql(sql, *args, **kwargs)
+            if not result.returns_rows:
+                self.conn.commit()
+            return result
+
+        async def run_sync(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+            return fn(self.conn, *args, **kwargs)
+
+    class DummyConnCtx:
+        def __init__(self, sync_engine: Any) -> None:
+            self.engine = sync_engine
+            self.conn: Any | None = None
+
+        async def __aenter__(self) -> DummyAsyncConn:
+            self.conn = self.engine.connect()
+            return DummyAsyncConn(self.conn)
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: object | None,
+        ) -> bool:
+            assert self.conn is not None
+            self.conn.close()
+            return False
+
+    class DummyAsyncEngine:
+        def __init__(self, sync_engine: Any) -> None:
+            self.engine = sync_engine
+
+        def begin(self) -> DummyConnCtx:
+            return DummyConnCtx(self.engine)
+
+        @property
+        def sync_engine(self) -> Any:
+            return self.engine
+
+        async def dispose(self) -> None:
+            self.engine.dispose()
+
+    return DummyAsyncEngine(engine)
 
 
 class _ConfirmationAwaitable:
@@ -435,6 +509,41 @@ def _response_from_items(
         use_async_generator=True,
         generation_settings=resolved_settings,
         settings=resolved_settings,
+    )
+
+
+def _openai_completed_response(text: str) -> TextGenerationResponse:
+    def output_fn(**_: object) -> OpenAIStream:
+        return OpenAIStream(
+            _AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(
+                            output=[
+                                SimpleNamespace(
+                                    type="message",
+                                    content=[
+                                        SimpleNamespace(
+                                            type="output_text",
+                                            text=text,
+                                        )
+                                    ],
+                                )
+                            ]
+                        ),
+                    )
+                ]
+            )
+        )
+
+    settings = GenerationSettings()
+    return TextGenerationResponse(
+        output_fn,
+        logger=getLogger(),
+        use_async_generator=True,
+        generation_settings=settings,
+        settings=settings,
     )
 
 
@@ -1311,6 +1420,79 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         validate_canonical_stream_items(resp.canonical_items)
         validate_tool_lifecycle_items(resp.canonical_items)
 
+    async def test_to_str_with_database_tool_and_json_schema_completion(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            dsn = f"sqlite:///{tmp}/db.sqlite"
+            engine = create_engine(dsn)
+            with engine.begin() as conn:
+                conn.execute(
+                    text("CREATE TABLE authors(id INTEGER, name TEXT)")
+                )
+                conn.execute(text("INSERT INTO authors VALUES (1, 'Author')"))
+            engine.dispose()
+
+            with patch(
+                "avalan.tool.database.create_async_engine",
+                _dummy_create_async_engine,
+            ):
+                async with DatabaseToolSet(
+                    DatabaseToolSettings(dsn=dsn),
+                    namespace="database",
+                ) as toolset:
+                    tool = ToolManager.create_instance(
+                        available_toolsets=[toolset],
+                        enable_tools=["database.run"],
+                    )
+                    agent = AsyncMock(spec=EngineAgent)
+                    agent.engine = _DummyEngine()
+                    agent.return_value = _openai_completed_response(
+                        '{"answer":"Author"}'
+                    )
+                    operation = _dummy_operation()
+                    response = _tool_call_response(
+                        ToolCall(
+                            id="call1",
+                            name="database.run",
+                            arguments={"sql": "SELECT name FROM authors"},
+                        )
+                    )
+                    engine_args = {
+                        "response_format": {
+                            "type": "json_schema",
+                            "name": "answer",
+                            "schema": {"type": "object"},
+                            "strict": True,
+                        }
+                    }
+                    orchestrated = _make_response(
+                        Message(role=MessageRole.USER, content="hi"),
+                        response,
+                        agent,
+                        operation,
+                        engine_args,
+                        tool=tool,
+                        enable_tool_parsing=False,
+                    )
+
+                    output = await orchestrated.to_str()
+
+        self.assertEqual(output, '{"answer":"Author"}')
+        agent.assert_awaited_once()
+        continuation_context = agent.await_args.args[0]
+        self.assertEqual(
+            continuation_context.engine_args["response_format"]["type"],
+            "json_schema",
+        )
+        continuation_input = continuation_context.input
+        assert isinstance(continuation_input, list)
+        last_message = continuation_input[-1]
+        assert isinstance(last_message, Message)
+        self.assertIn("Author", str(last_message.content))
+        validate_canonical_stream_items(orchestrated.canonical_items)
+        validate_tool_lifecycle_items(orchestrated.canonical_items)
+
 
 class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
     async def test_iteration_skips_parser_empty_chunks_without_recursion(
@@ -1446,6 +1628,60 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         self.assertIn(
             StreamItemKind.MODEL_CONTINUATION_COMPLETED,
             [item.kind for item in canonical_items],
+        )
+
+    async def test_iteration_preserves_json_schema_for_tool_continuation(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id="call1", name="database.run", arguments={})
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "answer",
+                "schema": {"type": "object"},
+                "strict": True,
+            },
+        }
+
+        async def continue_agent(
+            context: ModelCallContext,
+        ) -> TextGenerationResponse:
+            if context.engine_args.get("response_format") == response_format:
+                return _openai_completed_message_response('{"answer":"4"}')
+            return _empty_text_response()
+
+        agent.side_effect = continue_agent
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.return_value = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result={"rows": [{"answer": 4}]},
+        )
+        orchestrated = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(call),
+            agent,
+            operation,
+            {"response_format": response_format},
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+
+        items = await _collect_stream_items(orchestrated)
+
+        self.assertEqual(_answer_text(items), '{"answer":"4"}')
+        agent.assert_awaited_once()
+        context = agent.await_args.args[0]
+        self.assertEqual(
+            context.engine_args["response_format"],
+            response_format,
         )
 
     async def test_non_tool_usage_completed_is_terminal_usage_only(
@@ -7494,6 +7730,35 @@ def _string_response(text: str, *, async_gen: bool = False, inputs=None):
     return response
 
 
+def _openai_completed_message_response(text: str) -> TextGenerationResponse:
+    async def events() -> AsyncIterator[object]:
+        yield SimpleNamespace(
+            type="response.completed",
+            response=SimpleNamespace(
+                output=[
+                    SimpleNamespace(
+                        type="message",
+                        content=[
+                            SimpleNamespace(
+                                type="output_text",
+                                text=text,
+                            )
+                        ],
+                    )
+                ],
+            ),
+        )
+
+    settings = GenerationSettings()
+    return TextGenerationResponse(
+        lambda **_: OpenAIStream(events()),
+        logger=getLogger(),
+        use_async_generator=True,
+        generation_settings=settings,
+        settings=settings,
+    )
+
+
 class OrchestratorResponseMethodsTestCase(IsolatedAsyncioTestCase):
     async def test_counts_and_conversions(self):
         engine = _DummyEngine()
@@ -7729,6 +7994,68 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         ]
         self.assertFalse(
             any(event.type is EventType.TOOL_DIAGNOSTIC for event in events)
+        )
+
+    async def test_to_str_preserves_json_schema_for_tool_continuation(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id=uuid4(), name="database.run", arguments=None)
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "answer",
+                "schema": {"type": "object"},
+                "strict": True,
+            },
+        }
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = lambda text: (
+            [call] if text == "call" else None
+        )
+
+        async def tool_exec(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> ToolCallResult:
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result={"rows": [{"answer": 4}]},
+            )
+
+        async def continue_agent(
+            context: ModelCallContext,
+        ) -> TextGenerationResponse:
+            if context.engine_args.get("response_format") == response_format:
+                return _openai_completed_message_response('{"answer":"4"}')
+            return _empty_text_response()
+
+        tool.side_effect = tool_exec
+        agent.side_effect = continue_agent
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("call", async_gen=True),
+            agent,
+            operation,
+            {"response_format": response_format},
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+
+        result = await resp.to_str()
+
+        self.assertEqual(result, '{"answer":"4"}')
+        agent.assert_awaited_once()
+        context = agent.await_args.args[0]
+        self.assertEqual(
+            context.engine_args["response_format"],
+            response_format,
         )
 
     async def test_to_str_preserves_continuation_text_matching_tool_request(

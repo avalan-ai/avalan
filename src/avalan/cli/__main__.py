@@ -3718,11 +3718,15 @@ class CLI:
             ftype = field.type
             origin = get_origin(ftype)
             args = get_type_args(ftype)
+            is_sequence = False
+            if origin is not None and type(None) in args:
+                ftype = next((a for a in args if a is not type(None)), str)
+                origin = get_origin(ftype)
+                args = get_type_args(ftype)
             if origin is not None:
                 if origin is list or origin is tuple:
+                    is_sequence = True
                     ftype = args[0]
-                elif type(None) in args:
-                    ftype = next((a for a in args if a is not type(None)), str)
                 elif origin.__name__ == "Literal":
                     ftype = type(args[0])
 
@@ -3731,11 +3735,29 @@ class CLI:
                     option, dest=dest, action="store_true", default=None
                 )
             elif ftype is int or isinstance(field.default, int):
-                group.add_argument(option, dest=dest, type=int, default=None)
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    action="append" if is_sequence else "store",
+                    type=int,
+                    default=None,
+                )
             elif ftype is float or isinstance(field.default, float):
-                group.add_argument(option, dest=dest, type=float, default=None)
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    action="append" if is_sequence else "store",
+                    type=float,
+                    default=None,
+                )
             else:
-                group.add_argument(option, dest=dest, type=str, default=None)
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    action="append" if is_sequence else "store",
+                    type=str,
+                    default=None,
+                )
 
         if settings_cls is ShellToolSettings and prefix == "shell":
             group.add_argument(

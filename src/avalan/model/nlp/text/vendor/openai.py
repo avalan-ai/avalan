@@ -73,6 +73,8 @@ class OpenAIStream(TextGenerationVendorStream):
     _tool_call_ids_by_item_id: dict[str, str]
     _canonical_ready_tool_call_ids: set[str]
     _canonical_done_tool_call_ids: set[str]
+    _answer_text_seen: bool
+    _answer_done_seen: bool
 
     def __init__(
         self,
@@ -85,6 +87,8 @@ class OpenAIStream(TextGenerationVendorStream):
         self._tool_call_ids_by_item_id = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
+        self._answer_text_seen = False
+        self._answer_done_seen = False
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -124,6 +128,8 @@ class OpenAIStream(TextGenerationVendorStream):
         self._tool_call_ids_by_item_id = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
+        self._answer_text_seen = False
+        self._answer_done_seen = False
         return self._provider_canonical_stream(
             self._provider_events(),
             stream_session_id=stream_session_id,
@@ -202,6 +208,7 @@ class OpenAIStream(TextGenerationVendorStream):
         if event_type == "response.completed":
             return self._completion_events(event, provider_payload, event_type)
         if event_type in self._TEXT_DELTA_EVENTS:
+            self._answer_text_seen = True
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.ANSWER_DELTA,
@@ -213,6 +220,7 @@ class OpenAIStream(TextGenerationVendorStream):
                 ),
             )
         if event_type in self._TEXT_DONE_EVENTS:
+            self._answer_done_seen = True
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.ANSWER_DONE,
@@ -263,6 +271,26 @@ class OpenAIStream(TextGenerationVendorStream):
         response = OpenAIClient._response_field(event, "response")
         usage = OpenAIClient._response_field(response, "usage")
         result: list[StreamProviderEvent] = []
+        if not self._answer_text_seen and not self._answer_done_seen:
+            text = self._completed_response_text(response)
+            if text:
+                self._answer_text_seen = True
+                self._answer_done_seen = True
+                result.extend(
+                    (
+                        StreamProviderEvent(
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            text_delta=text,
+                            provider_payload=provider_payload,
+                            provider_event_type=event_type,
+                        ),
+                        StreamProviderEvent(
+                            kind=StreamItemKind.ANSWER_DONE,
+                            provider_payload=provider_payload,
+                            provider_event_type=event_type,
+                        ),
+                    )
+                )
         if usage is not None:
             self._usage = usage
             result.append(
@@ -343,7 +371,9 @@ class OpenAIStream(TextGenerationVendorStream):
     ) -> tuple[StreamProviderEvent, ...]:
         item = OpenAIClient._response_field(event, "item")
         if item is not None and not self._is_tool_call_item(item):
-            return ()
+            return self._message_done_events(
+                item, provider_payload, event_type
+            )
         call_id = self._tool_call_id_from_item(item)
         item_id = self._tool_item_id_from_item(item)
         item_call_id = OpenAIClient._response_field(item, "call_id")
@@ -412,6 +442,74 @@ class OpenAIStream(TextGenerationVendorStream):
         )
         self._canonical_done_tool_call_ids.add(call_id)
         return tuple(result)
+
+    def _message_done_events(
+        self,
+        item: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str,
+    ) -> tuple[StreamProviderEvent, ...]:
+        if self._answer_text_seen or self._answer_done_seen:
+            return ()
+        text = self._message_done_text(item)
+        if not text:
+            return ()
+
+        self._answer_text_seen = True
+        result = [
+            StreamProviderEvent(
+                kind=StreamItemKind.ANSWER_DELTA,
+                text_delta=text,
+                provider_payload=provider_payload,
+                provider_event_type=event_type,
+            )
+        ]
+        if not self._answer_done_seen:
+            self._answer_done_seen = True
+            result.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DONE,
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                )
+            )
+        return tuple(result)
+
+    @staticmethod
+    def _completed_response_text(response: object) -> str:
+        output_text = OpenAIClient._response_field(response, "output_text")
+        if isinstance(output_text, str) and output_text:
+            return output_text
+
+        parts: list[str] = []
+        output = OpenAIClient._response_field(response, "output")
+        if isinstance(output, list):
+            for item in output:
+                item_type = OpenAIClient._response_field(item, "type")
+                content = OpenAIClient._response_field(item, "content")
+                has_text_content = isinstance(content, list) or isinstance(
+                    OpenAIClient._response_field(item, "text"), str
+                )
+                if item_type in {"message", "output_text"} or (
+                    item_type is None and has_text_content
+                ):
+                    parts.append(OpenAIStream._message_done_text(item))
+        return "".join(parts)
+
+    @staticmethod
+    def _message_done_text(item: object) -> str:
+        direct_text = OpenAIClient._response_field(item, "text")
+        if isinstance(direct_text, str) and direct_text:
+            return direct_text
+
+        parts: list[str] = []
+        contents = OpenAIClient._response_field(item, "content")
+        if isinstance(contents, list):
+            for content in contents:
+                text = OpenAIClient._response_field(content, "text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
 
     def _is_tool_call_item(self, item: object) -> bool:
         if item is None:

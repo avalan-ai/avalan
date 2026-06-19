@@ -23,9 +23,11 @@ from avalan.cli.__main__ import (
     _consume_task_input_field_args,
     _task_run_json_stdout,
 )
+from avalan.cli.commands import agent as agent_cmds
 from avalan.cli.display import cli_stream_display_config
 from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from avalan.entities import Model
+from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.shell import ShellToolSettings
 
 README_CALCULATOR_ROLE = (
@@ -335,6 +337,50 @@ class CliParallelOptionTestCase(TestCase):
                 )
 
 
+class CliDatabaseToolOptionTestCase(TestCase):
+    def _cli(self) -> CLI:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            return CLI(logger)
+
+    def test_database_allowed_commands_single_value_is_list(self) -> None:
+        cli = self._cli()
+        args = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--tool-database-dsn",
+                "sqlite:///db.sqlite",
+                "--tool-database-allowed-commands",
+                "select",
+            ]
+        )
+
+        self.assertEqual(args.tool_database_allowed_commands, ["select"])
+
+    def test_database_allowed_commands_repeated_values_are_list(
+        self,
+    ) -> None:
+        cli = self._cli()
+        args = cli._parser.parse_args(
+            [
+                "flow",
+                "run",
+                "flow.toml",
+                "--tool-database-dsn",
+                "sqlite:///db.sqlite",
+                "--tool-database-allowed-commands",
+                "select",
+                "--tool-database-allowed-commands",
+                "explain",
+            ]
+        )
+
+        self.assertEqual(
+            args.tool_database_allowed_commands, ["select", "explain"]
+        )
+
+
 class CliShellToolOptionTestCase(TestCase):
     def _cli(self) -> CLI:
         logger = MagicMock()
@@ -440,6 +486,30 @@ class CliShellToolOptionTestCase(TestCase):
             with self.subTest(parser=suffix):
                 self.assertEqual(actual, expected)
                 self.assertFalse(actual & absent_options)
+
+    def test_database_allowed_commands_cli_value_is_not_character_split(
+        self,
+    ) -> None:
+        cli = self._cli()
+
+        args = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--tool-database-dsn",
+                "sqlite:///db.sqlite",
+                "--tool-database-allowed-commands",
+                "select",
+            ]
+        )
+        settings = agent_cmds.get_tool_settings(
+            args,
+            prefix="database",
+            settings_cls=DatabaseToolSettings,
+        )
+
+        self.assertIsInstance(settings, DatabaseToolSettings)
+        self.assertEqual(settings.allowed_commands, ["select"])
 
     def test_shell_tool_settings_invalid_scalar_values_are_rejected(
         self,
@@ -3116,8 +3186,15 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         CLI._add_tool_settings_arguments(
             parser, prefix="y", settings_cls=Settings
         )
-        args = parser.parse_args(["--tool-y-names", "Alice"])
-        self.assertEqual(args.tool_y_names, "Alice")
+        args = parser.parse_args(
+            [
+                "--tool-y-names",
+                "Alice",
+                "--tool-y-names",
+                "Bob",
+            ]
+        )
+        self.assertEqual(args.tool_y_names, ["Alice", "Bob"])
 
     def test_add_shell_tool_settings_arguments_uses_scalar_allowlist(self):
         parser = ArgumentParser()

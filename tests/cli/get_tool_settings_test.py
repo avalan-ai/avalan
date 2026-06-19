@@ -74,6 +74,89 @@ class GetToolSettingsTestCase(unittest.TestCase):
         self.assertIsInstance(settings, DatabaseToolSettings)
         self.assertEqual(settings.dsn, "sqlite:///db.sqlite")
 
+    def test_database_allowed_commands_single_cli_value(self):
+        args = Namespace(
+            tool_database_dsn="sqlite:///db.sqlite",
+            tool_database_allowed_commands="select",
+        )
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="database", settings_cls=DatabaseToolSettings
+        )
+
+        self.assertIsInstance(settings, DatabaseToolSettings)
+        self.assertEqual(settings.allowed_commands, ["select"])
+
+    def test_database_allowed_commands_preserves_list(self):
+        args = Namespace(
+            tool_database_dsn="sqlite:///db.sqlite",
+            tool_database_allowed_commands=["select"],
+        )
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="database", settings_cls=DatabaseToolSettings
+        )
+
+        self.assertIsInstance(settings, DatabaseToolSettings)
+        self.assertEqual(settings.allowed_commands, ["select"])
+
+    def test_database_allowed_commands_repeated_values(self):
+        args = Namespace(
+            tool_database_dsn="sqlite:///db.sqlite",
+            tool_database_allowed_commands=["select", "insert"],
+        )
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="database", settings_cls=DatabaseToolSettings
+        )
+
+        self.assertIsInstance(settings, DatabaseToolSettings)
+        self.assertEqual(settings.allowed_commands, ["select", "insert"])
+
+    def test_database_allowed_commands_mapping_list_value(self):
+        settings = agent_cmds._tool_settings_from_mapping(
+            {
+                "dsn": "sqlite:///db.sqlite",
+                "allowed_commands": ["select", "update"],
+            },
+            prefix="database",
+            settings_cls=DatabaseToolSettings,
+            open_files=False,
+        )
+
+        self.assertIsInstance(settings, DatabaseToolSettings)
+        self.assertEqual(settings.allowed_commands, ["select", "update"])
+
+    def test_database_allowed_commands_mapping_scalar_value(self):
+        settings = agent_cmds._tool_settings_from_mapping(
+            {
+                "dsn": "sqlite:///db.sqlite",
+                "allowed_commands": "select",
+            },
+            prefix="database",
+            settings_cls=DatabaseToolSettings,
+            open_files=False,
+        )
+
+        self.assertIsInstance(settings, DatabaseToolSettings)
+        self.assertEqual(settings.allowed_commands, ["select"])
+
+    def test_database_allowed_commands_rejects_invalid_values(self):
+        cases = (
+            {"command": "select"},
+            b"select",
+            [""],
+        )
+
+        for allowed_commands in cases:
+            with self.subTest(allowed_commands=allowed_commands):
+                with self.assertRaises(AssertionError):
+                    agent_cmds.get_tool_settings(
+                        Namespace(
+                            tool_database_dsn="sqlite:///db.sqlite",
+                            tool_database_allowed_commands=allowed_commands,
+                        ),
+                        prefix="database",
+                        settings_cls=DatabaseToolSettings,
+                    )
+
     def test_shell_settings(self):
         args = Namespace(tool_shell_allow_media_tools=True)
         settings = agent_cmds.get_tool_settings(
