@@ -177,6 +177,8 @@ class CliStreamSnapshotReducer:
         event_type = event_type_value(event.type)
         if event_type == EventType.TOKEN_GENERATED.value:
             return False
+        if event_type == EventType.TOOL_PROGRESS.value:
+            return False
         if event_type.startswith("tool_"):
             return self._reduce_tool_event(event)
         self._builder.add_event(event)
@@ -279,6 +281,14 @@ class CliStreamSnapshotReducer:
             StreamItemKind.STREAM_DIAGNOSTIC,
         ):
             self._add_projection_event(projection)
+        elif kind in (StreamItemKind.MODEL_CONTINUATION_STARTED,):
+            self._start_model_continuation(projection, now)
+        elif kind in (
+            StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+            StreamItemKind.MODEL_CONTINUATION_ERROR,
+            StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+        ):
+            self._finish_model_continuation(projection, now)
         elif kind in (
             StreamItemKind.STREAM_COMPLETED,
             StreamItemKind.STREAM_ERRORED,
@@ -315,6 +325,10 @@ class CliStreamSnapshotReducer:
             StreamItemKind.TOOL_EXECUTION_COMPLETED,
             StreamItemKind.TOOL_EXECUTION_ERROR,
             StreamItemKind.TOOL_EXECUTION_CANCELLED,
+            StreamItemKind.MODEL_CONTINUATION_STARTED,
+            StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+            StreamItemKind.MODEL_CONTINUATION_ERROR,
+            StreamItemKind.MODEL_CONTINUATION_CANCELLED,
         ):
             return self._builder.display.show_tools
         if projection.kind in (
@@ -461,6 +475,27 @@ class CliStreamSnapshotReducer:
             sequence=projection.sequence,
         )
 
+    def _start_model_continuation(
+        self,
+        projection: StreamConsumerProjection,
+        now: float | None,
+    ) -> None:
+        self._builder.add_active_model_continuation(
+            model_continuation_id=_model_continuation_id(projection),
+            sequence=projection.sequence,
+            started_at=now,
+        )
+
+    def _finish_model_continuation(
+        self,
+        projection: StreamConsumerProjection,
+        now: float | None,
+    ) -> None:
+        self._builder.finish_model_continuation(
+            model_continuation_id=_model_continuation_id(projection),
+            updated_at=now,
+        )
+
     def _finish_stream(
         self,
         projection: StreamConsumerProjection,
@@ -494,11 +529,25 @@ class CliStreamSnapshotReducer:
             return
         self._builder.update_token_counts(
             input_tokens=_usage_int(usage, "input_tokens"),
-            cached_input_tokens=_usage_int(usage, "cached_input_tokens"),
+            cached_input_tokens=(
+                _usage_int(usage, "cached_input_tokens")
+                or _nested_usage_int(
+                    usage, "input_tokens_details", "cached_tokens"
+                )
+                or _nested_usage_int(
+                    usage, "prompt_tokens_details", "cached_tokens"
+                )
+            ),
             output_tokens=_usage_int(usage, "output_tokens"),
             reasoning_usage_tokens=(
                 _usage_int(usage, "reasoning_usage_tokens")
                 or _usage_int(usage, "reasoning_tokens")
+                or _nested_usage_int(
+                    usage, "output_tokens_details", "reasoning_tokens"
+                )
+                or _nested_usage_int(
+                    usage, "completion_tokens_details", "reasoning_tokens"
+                )
             ),
             total_tokens=_usage_int(usage, "total_tokens"),
         )
@@ -652,6 +701,13 @@ def _tool_call_id(projection: StreamConsumerProjection) -> str:
     return tool_id
 
 
+def _model_continuation_id(projection: StreamConsumerProjection) -> str:
+    continuation_id = projection.correlation.model_continuation_id
+    if continuation_id is not None:
+        return continuation_id
+    return f"model-continuation:{projection.sequence}"
+
+
 def _tool_name_from_projection(
     projection: StreamConsumerProjection,
 ) -> str | None:
@@ -694,6 +750,20 @@ def _projection_observability(
 
 def _usage_int(usage: Mapping[str, object], key: str) -> int | None:
     value = usage.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _nested_usage_int(
+    usage: Mapping[str, object],
+    parent_key: str,
+    key: str,
+) -> int | None:
+    parent = usage.get(parent_key)
+    if not isinstance(parent, Mapping):
+        return None
+    value = parent.get(key)
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return None

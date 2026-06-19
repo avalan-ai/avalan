@@ -156,7 +156,7 @@ def cli_stream_display_config(
             display_reasoning_time=False,
         )
 
-    display_tools_events = getattr(args, "display_tools_events", 2)
+    display_tools_events = getattr(args, "display_tools_events", None)
     if display_tools_events is not None:
         display_tools_events = int(display_tools_events)
 

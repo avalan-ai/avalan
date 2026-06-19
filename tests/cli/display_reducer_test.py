@@ -59,6 +59,7 @@ def _projection(
     usage: object | None = None,
     metadata: dict[str, object] | None = None,
     tool_call_id: str | None = None,
+    model_continuation_id: str | None = None,
     terminal_outcome: StreamTerminalOutcome | None = None,
     provider_family: str | None = None,
     provider_event_type: str | None = None,
@@ -70,7 +71,10 @@ def _projection(
         sequence=sequence,
         kind=kind,
         channel=_channel(kind),
-        correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
+        correlation=StreamItemCorrelation(
+            model_continuation_id=model_continuation_id,
+            tool_call_id=tool_call_id,
+        ),
         text_delta=text_delta,
         data=data,  # type: ignore[arg-type]
         usage=usage,  # type: ignore[arg-type]
@@ -1239,6 +1243,20 @@ class DisplayReducerTestCase(TestCase):
         self.assertEqual(snapshot.events, ())
         self.assertEqual(snapshot.tool_events, ())
 
+    def test_apply_event_tool_progress_is_noop(self) -> None:
+        reducer = CliStreamSnapshotReducer(_config(display_tools=True))
+
+        changed = reducer.apply_event(
+            Event(
+                type=EventType.TOOL_PROGRESS,
+                payload={"kind": "tool_execution.output"},
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertFalse(changed)
+        self.assertEqual(snapshot.tool_events, ())
+
     def test_apply_projection_ignores_invisible_tool_arguments(self) -> None:
         reducer = CliStreamSnapshotReducer(
             _config(stats=False, display_tools=True),
@@ -1264,6 +1282,108 @@ class DisplayReducerTestCase(TestCase):
         self.assertFalse(argument_changed)
         self.assertTrue(start_changed)
 
+    def test_model_continuation_tracks_active_tool_panel_status(self) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(stats=False, display_tools=True),
+        )
+
+        changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.MODEL_CONTINUATION_STARTED,
+                0,
+                model_continuation_id="continuation-1",
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertTrue(changed)
+        self.assertEqual(len(snapshot.active_model_continuations), 1)
+        self.assertEqual(
+            snapshot.active_model_continuations[0].model_continuation_id,
+            "continuation-1",
+        )
+        self.assertEqual(snapshot.tool_events, ())
+
+        changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+                1,
+                model_continuation_id="continuation-1",
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertTrue(changed)
+        self.assertEqual(snapshot.active_model_continuations, ())
+
+    def test_usage_reads_nested_cached_and_reasoning_token_details(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(_config(stats=True))
+
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.USAGE_COMPLETED,
+                0,
+                usage={
+                    "input_tokens": 10,
+                    "input_tokens_details": {"cached_tokens": 6},
+                    "output_tokens": 20,
+                    "output_tokens_details": {"reasoning_tokens": 7},
+                    "total_tokens": 30,
+                },
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertEqual(snapshot.token_counts.input_tokens, 10)
+        self.assertEqual(snapshot.token_counts.cached_input_tokens, 6)
+        self.assertEqual(snapshot.token_counts.output_tokens, 20)
+        self.assertEqual(snapshot.token_counts.reasoning_usage_tokens, 7)
+        self.assertEqual(snapshot.token_counts.total_tokens, 30)
+
+    def test_usage_reads_chat_compatible_nested_token_details(self) -> None:
+        reducer = CliStreamSnapshotReducer(_config(stats=True))
+
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.USAGE_COMPLETED,
+                0,
+                usage={
+                    "prompt_tokens_details": {"cached_tokens": 2},
+                    "completion_tokens_details": {"reasoning_tokens": 3},
+                },
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertEqual(snapshot.token_counts.cached_input_tokens, 2)
+        self.assertEqual(snapshot.token_counts.reasoning_usage_tokens, 3)
+
+    def test_usage_ignores_non_integer_nested_token_details(self) -> None:
+        reducer = CliStreamSnapshotReducer(_config(stats=True))
+
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.USAGE_COMPLETED,
+                0,
+                usage={
+                    "input_tokens": 10,
+                    "input_tokens_details": {"cached_tokens": True},
+                    "output_tokens": 20,
+                    "output_tokens_details": {"reasoning_tokens": "7"},
+                    "total_tokens": 30,
+                },
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertEqual(snapshot.token_counts.input_tokens, 10)
+        self.assertIsNone(snapshot.token_counts.cached_input_tokens)
+        self.assertEqual(snapshot.token_counts.output_tokens, 20)
+        self.assertIsNone(snapshot.token_counts.reasoning_usage_tokens)
+        self.assertEqual(snapshot.token_counts.total_tokens, 30)
+
     def test_apply_projection_change_matrix_for_hidden_surfaces(self) -> None:
         projections = {
             "answer": _projection(
@@ -1286,6 +1406,10 @@ class DisplayReducerTestCase(TestCase):
                 StreamItemKind.TOOL_EXECUTION_STARTED,
                 0,
                 tool_call_id="tool-1",
+            ),
+            "model_continuation": _projection(
+                StreamItemKind.MODEL_CONTINUATION_STARTED,
+                0,
             ),
             "event": _projection(StreamItemKind.FLOW_EVENT, 0),
             "usage": _projection(
@@ -1313,6 +1437,7 @@ class DisplayReducerTestCase(TestCase):
                     "reasoning": False,
                     "tool_argument": False,
                     "tool_execution": False,
+                    "model_continuation": False,
                     "event": False,
                     "usage": False,
                     "terminal": True,
@@ -1330,6 +1455,7 @@ class DisplayReducerTestCase(TestCase):
                     "reasoning": False,
                     "tool_argument": False,
                     "tool_execution": False,
+                    "model_continuation": False,
                     "event": False,
                     "usage": False,
                     "terminal": True,
@@ -1347,6 +1473,7 @@ class DisplayReducerTestCase(TestCase):
                     "reasoning": True,
                     "tool_argument": True,
                     "tool_execution": False,
+                    "model_continuation": False,
                     "event": False,
                     "usage": True,
                     "terminal": True,
@@ -1364,6 +1491,7 @@ class DisplayReducerTestCase(TestCase):
                     "reasoning": False,
                     "tool_argument": False,
                     "tool_execution": True,
+                    "model_continuation": True,
                     "event": False,
                     "usage": False,
                     "terminal": True,
@@ -1381,6 +1509,7 @@ class DisplayReducerTestCase(TestCase):
                     "reasoning": False,
                     "tool_argument": False,
                     "tool_execution": False,
+                    "model_continuation": False,
                     "event": True,
                     "usage": False,
                     "terminal": True,
@@ -1399,6 +1528,7 @@ class DisplayReducerTestCase(TestCase):
                     "reasoning": True,
                     "tool_argument": True,
                     "tool_execution": True,
+                    "model_continuation": True,
                     "event": True,
                     "usage": True,
                     "terminal": True,

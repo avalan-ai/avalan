@@ -16,7 +16,7 @@ def _args(**overrides: object) -> Namespace:
         "stats": False,
         "display_tools": False,
         "display_events": False,
-        "display_tools_events": 2,
+        "display_tools_events": None,
         "record": False,
         "display_answer_height": 12,
         "display_answer_height_expand": False,
@@ -44,6 +44,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     "show_stats": False,
                     "show_tools": False,
                     "show_events": False,
+                    "display_tools_events": None,
                     "display_reasoning": False,
                     "diagnostic_channel": "none",
                     "answer_stdout_only": False,
@@ -327,6 +328,22 @@ class CliStreamDisplayConfigTestCase(TestCase):
             self.assertTrue(parsed.display_tools)
             self.assertTrue(parsed.display_events)
             self.assertEqual(parsed.display_tools_events, 0)
+
+    def test_model_and_agent_run_default_to_unbounded_tool_history(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+        model_args = cli._parser.parse_args(["model", "run", "model-id"])
+        agent_args = cli._parser.parse_args(["agent", "run", "agent.toml"])
+
+        for parsed in (model_args, agent_args):
+            self.assertIsNone(parsed.display_tools_events)
+            config = cli_stream_display_config(
+                parsed,
+                refresh_per_second=1,
+                interactive=True,
+            )
+            self.assertIsNone(config.display_tools_events)
 
     def test_model_and_agent_run_parse_quiet_record_display_surface(
         self,

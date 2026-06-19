@@ -42,6 +42,7 @@ HistoryItem = TypeVar("HistoryItem")
 CoalescedValue = TypeVar("CoalescedValue")
 ToolStatus = Literal["active", "completed", "error", "cancelled"]
 ToolResultStatus = Literal["result", "error"]
+ModelContinuationStatus = Literal["active"]
 
 
 class CliAppendOnlyTextBuffer:
@@ -358,6 +359,16 @@ class CliToolEventSummarySnapshot:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class CliModelContinuationSnapshot:
+    model_continuation_id: str
+    status: ModelContinuationStatus = "active"
+    sequence: int | None = None
+    started_at: float | None = None
+    updated_at: float | None = None
+    elapsed_seconds: float | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class CliEventSummarySnapshot:
     event_type: str
     payload_summary: str | None = None
@@ -432,6 +443,7 @@ class CliStreamSnapshot:
     tool_results: tuple[CliToolResultSummarySnapshot, ...]
     tool_diagnostics: tuple[CliToolDiagnosticSummarySnapshot, ...]
     tool_events: tuple[CliToolEventSummarySnapshot, ...]
+    active_model_continuations: tuple[CliModelContinuationSnapshot, ...]
     events: tuple[CliEventSummarySnapshot, ...]
     display_tokens: tuple[CliDisplayTokenSnapshot, ...]
     usage_summaries: tuple[CliUsageSummarySnapshot, ...]
@@ -649,6 +661,9 @@ class CliStreamSnapshotBuilder:
         self._tool_events = CliBoundedHistoryBuffer[
             CliToolEventSummarySnapshot
         ](tool_limit)
+        self._active_model_continuations: dict[
+            str, CliModelContinuationSnapshot
+        ] = {}
         self._events = CliBoundedHistoryBuffer[CliEventSummarySnapshot](
             self.retention.event_history_limit
         )
@@ -1056,6 +1071,76 @@ class CliStreamSnapshotBuilder:
             )
         )
 
+    def add_tool_event_summary(
+        self,
+        *,
+        event_type: object,
+        tool_call_id: object | None = None,
+        name: object | None = None,
+        payload: object | None = None,
+        observability: object | None = None,
+        sequence: int | None = None,
+        started: float | None = None,
+        finished: float | None = None,
+        elapsed: float | None = None,
+    ) -> None:
+        """Add a safe CLI-only tool event summary."""
+        if not self.display.show_tools:
+            return
+        self._tool_events.append(
+            CliToolEventSummarySnapshot(
+                event_type=event_type_value(event_type),
+                tool_call_id=(
+                    None
+                    if tool_call_id is None
+                    else _safe_string_id(tool_call_id)
+                ),
+                name=None if name is None else safe_text(name),
+                payload_summary=(
+                    None if payload is None else safe_summary(payload)
+                ),
+                observability_summary=(
+                    None
+                    if observability is None
+                    else safe_summary(observability)
+                ),
+                sequence=sequence,
+                started=started,
+                finished=finished,
+                elapsed=elapsed,
+            )
+        )
+
+    def add_active_model_continuation(
+        self,
+        *,
+        model_continuation_id: object,
+        sequence: int | None = None,
+        started_at: float | None = None,
+    ) -> None:
+        """Add or replace an active model continuation summary."""
+        if not self.display.show_tools:
+            return
+        continuation_id = _safe_string_id(model_continuation_id)
+        self._active_model_continuations[continuation_id] = (
+            CliModelContinuationSnapshot(
+                model_continuation_id=continuation_id,
+                sequence=sequence,
+                started_at=started_at,
+            )
+        )
+
+    def finish_model_continuation(
+        self,
+        *,
+        model_continuation_id: object,
+        updated_at: float | None = None,
+    ) -> None:
+        """Remove an active model continuation summary."""
+        _ = updated_at
+        continuation_id = _safe_string_id(model_continuation_id)
+        self._active_model_continuations.pop(continuation_id, None)
+
     def remove_tool_events_for_tool_call(
         self,
         tool_call_id: object,
@@ -1196,6 +1281,9 @@ class CliStreamSnapshotBuilder:
         tool_results = self._tool_results.snapshot()
         tool_diagnostics = self._tool_diagnostics.snapshot()
         tool_events = self._tool_events.snapshot()
+        active_model_continuations = tuple(
+            self._active_model_continuations.values()
+        )
         events = self._events.snapshot()
         display_tokens = self._display_tokens.snapshot()
         usage_summaries = self._usage_summaries.snapshot()
@@ -1226,6 +1314,7 @@ class CliStreamSnapshotBuilder:
             tool_results=tool_results,
             tool_diagnostics=tool_diagnostics,
             tool_events=tool_events,
+            active_model_continuations=active_model_continuations,
             events=events,
             display_tokens=display_tokens,
             usage_summaries=usage_summaries,

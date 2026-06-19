@@ -27,13 +27,16 @@ from avalan.cli.theme import Theme
 from avalan.cli.theme.basic import (
     BasicStreamPresenter,
     BasicTheme,
+    _basic_active_model_renderable,
     _basic_active_tool_line,
+    _basic_active_tool_renderable,
     _basic_has_executed_tool_frame,
     _basic_json_tool_answer,
     _basic_open_harmony_pattern,
     _basic_tool_elapsed_text,
     _basic_tool_result_summary,
     _basic_visible_answer_text,
+    _BasicActiveModelSpinner,
     _BasicAnswerPresenter,
 )
 from avalan.cli.theme.fancy import FancyTheme
@@ -403,8 +406,43 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, tool_text)
+        self.assertLess(
+            tool_text.index("Executed tool calc: 25"),
+            tool_text.index("Starting tool search"),
+        )
         self.assertIn("event start", event_text)
         self.assertNotIn("tool_process", event_text)
+
+    async def test_model_continuation_progress_renders_in_tool_frame(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-1",
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        tool_text = _render_text(_frames(items)[0].renderable)
+        self.assertIn("Thinking...", tool_text)
+        self.assertNotIn("tool event model_continuation", tool_text)
+
+        builder.finish_model_continuation(
+            model_continuation_id="continuation-1",
+        )
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        self.assertEqual(frames[0].renderable, "")
 
     async def test_basic_keeps_event_only_tool_execution_side_events(
         self,
@@ -898,6 +936,97 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([frame.role for frame in frames], ["tools"])
         self.assertIsInstance(frames[0].renderable, str)
         self.assertIn("Starting tool calc", str(frames[0].renderable))
+
+    def test_active_model_and_tool_non_spinner_renderables(self) -> None:
+        model_renderable = _basic_active_model_renderable(
+            started_at=1.0,
+            updated_at=2.0,
+            spinner=False,
+        )
+        tool_renderable = _basic_active_tool_renderable(
+            "calc",
+            started_at=1.0,
+            updated_at=2.0,
+            spinner=False,
+        )
+        spinner = _BasicActiveModelSpinner(
+            started_at=1.0,
+            updated_at=2.0,
+        )
+
+        self.assertIn("Thinking for 1s...", str(model_renderable))
+        self.assertIn("Running tool calc for 1s.", str(tool_renderable))
+        self.assertEqual(spinner._current_updated_at(), 2.0)
+
+    async def test_stderr_tool_history_emits_only_new_lines(self) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_tools_events=None,
+            interactive=False,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(tool_call_id="call-1", name="calc")
+        builder.complete_tool(tool_call_id="call-1", name="calc")
+        builder.add_tool_result_summary(
+            tool_call_id="call-1",
+            name="calc",
+            status="result",
+            result=25,
+            arguments_count=1,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        first_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        first_text = _render_text(_frames(first_items)[0].renderable)
+        self.assertIn("Executed tool calc: 25", first_text)
+
+        builder.add_active_tool(tool_call_id="call-2", name="database.run")
+        builder.complete_tool(tool_call_id="call-2", name="database.run")
+        builder.add_tool_result_summary(
+            tool_call_id="call-2",
+            name="database.run",
+            status="result",
+            result=[],
+            arguments_count=1,
+        )
+        second_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        second_text = _render_text(_frames(second_items)[0].renderable)
+        self.assertIn("Executed tool database.run: []", second_text)
+        self.assertNotIn("Executed tool calc", second_text)
+
+    async def test_completed_empty_response_reports_no_final_answer(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=True,
+            interactive=False,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(items), [])
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        self.assertTrue(str(frames[0].renderable).startswith("\n"))
+        rendered = _render_text(frames[0].renderable)
+        self.assertIn("⚠️ No final answer emitted.", rendered)
 
     async def test_compact_formatting_handles_empty_and_truncated_summaries(
         self,

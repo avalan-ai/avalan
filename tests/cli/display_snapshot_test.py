@@ -604,6 +604,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
             )
         )
         builder.add_tool_diagnostic(diagnostic)
+        builder.add_tool_event_summary(event_type="tool_progress")
         builder.add_event_summary(event_type="custom", payload={"value": "ok"})
         builder.add_usage_summary({"input_tokens": 1})
         builder.add_projection_summary(
@@ -617,10 +618,31 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.completed_tools, ())
         self.assertEqual(snapshot.tool_results, ())
         self.assertEqual(snapshot.tool_diagnostics, ())
+        self.assertEqual(snapshot.tool_events, ())
         self.assertEqual(snapshot.events, ())
         self.assertEqual(snapshot.usage_summaries, ())
         self.assertEqual(snapshot.projection_metadata_summaries, ())
         self.assertEqual(snapshot.display_tokens, ())
+
+    def test_add_tool_event_summary_records_enabled_summary(self) -> None:
+        builder = CliStreamSnapshotBuilder(_config(display_tools=True))
+
+        builder.add_tool_event_summary(
+            event_type="tool_custom",
+            tool_call_id="call-1",
+            name="search",
+            payload={"value": "ok"},
+            sequence=3,
+        )
+        snapshot = builder.snapshot()
+
+        self.assertEqual(len(snapshot.tool_events), 1)
+        event = snapshot.tool_events[0]
+        self.assertEqual(event.event_type, "tool_custom")
+        self.assertEqual(event.tool_call_id, "call-1")
+        self.assertEqual(event.name, "search")
+        self.assertIn("ok", event.payload_summary or "")
+        self.assertEqual(event.sequence, 3)
 
     def test_custom_zero_history_limits_drop_enabled_histories(self) -> None:
         builder = CliStreamSnapshotBuilder(

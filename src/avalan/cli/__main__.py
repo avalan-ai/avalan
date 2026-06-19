@@ -1231,8 +1231,12 @@ class CLI:
         model_inference_display_parser.add_argument(
             "--display-tools-events",
             type=int,
-            default=2,
-            help="How many tool events to show on tool call panel",
+            default=None,
+            help=(
+                "How many tool events to show on tool call panel. "
+                "Defaults to all retained tool events; use 0 to hide "
+                "completed tool history."
+            ),
         )
 
         display_answer_height_group = (

@@ -751,7 +751,9 @@ options:
   --display-tools       Show tool lifecycle details for agent or orchestrator
                         runs.
   --display-tools-events DISPLAY_TOOLS_EVENTS
-                        How many tool events to show on tool call panel
+                        How many tool events to show on tool call panel.
+                        Defaults to all retained tool events; use 0 to hide
+                        completed tool history.
   --display-answer-height-expand
                         Expand answer section to full height
   --display-answer-height DISPLAY_ANSWER_HEIGHT
@@ -3255,7 +3257,9 @@ plicate}
                         How many tokens with full information to display at a time
   --display-tools       Show tool lifecycle details for agent or orchestrator runs.
   --display-tools-events DISPLAY_TOOLS_EVENTS
-                        How many tool events to show on tool call panel
+                        How many tool events to show on tool call panel.
+                        Defaults to all retained tool events; use 0 to hide
+                        completed tool history.
   --display-answer-height-expand
                         Expand answer section to full height
   --display-answer-height DISPLAY_ANSWER_HEIGHT

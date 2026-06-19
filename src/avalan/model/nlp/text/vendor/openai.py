@@ -220,6 +220,25 @@ class OpenAIStream(TextGenerationVendorStream):
                 ),
             )
         if event_type in self._TEXT_DONE_EVENTS:
+            text = self._response_optional_string_field(
+                event, event_type, "text", "delta"
+            )
+            if text and not self._answer_text_seen:
+                self._answer_text_seen = True
+                self._answer_done_seen = True
+                return (
+                    StreamProviderEvent(
+                        kind=StreamItemKind.ANSWER_DELTA,
+                        text_delta=text,
+                        provider_payload=provider_payload,
+                        provider_event_type=event_type,
+                    ),
+                    StreamProviderEvent(
+                        kind=StreamItemKind.ANSWER_DONE,
+                        provider_payload=provider_payload,
+                        provider_event_type=event_type,
+                    ),
+                )
             self._answer_done_seen = True
             return (
                 StreamProviderEvent(
@@ -705,6 +724,21 @@ class OpenAIStream(TextGenerationVendorStream):
         if isinstance(value, str):
             return value
         raise ValueError(f"{event_type} {field_name} must be a string")
+
+    @staticmethod
+    def _response_optional_string_field(
+        event: object,
+        event_type: str,
+        *field_names: str,
+    ) -> str | None:
+        for field_name in field_names:
+            value = OpenAIClient._response_field(event, field_name)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                return value
+            raise ValueError(f"{event_type} {field_name} must be a string")
+        return None
 
     @staticmethod
     def _response_event_data(event: object) -> LooseJsonValue:

@@ -15,6 +15,7 @@ from .stream_presenter import (
 )
 
 from collections.abc import AsyncGenerator, Mapping, Sequence
+from dataclasses import dataclass
 from json import JSONDecodeError, loads
 from logging import Logger
 from re import IGNORECASE, MULTILINE, Pattern, compile
@@ -108,6 +109,7 @@ _BASIC_ALWAYS_HIDDEN_TOOL_EVENT_TYPES = frozenset(
     {
         "tool_model_run",
         "tool_model_response",
+        "tool_progress",
     }
 )
 _BASIC_CANONICAL_DUPLICATE_TOOL_EVENT_TYPES = frozenset(
@@ -116,6 +118,13 @@ _BASIC_CANONICAL_DUPLICATE_TOOL_EVENT_TYPES = frozenset(
         "tool_result",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _BasicToolLineEntry:
+    key: str
+    line: str
+    executed: bool = False
 
 
 class BasicTheme(Theme):
@@ -268,6 +277,7 @@ class BasicStreamPresenter:
         self._final_newline_emitted = False
         self._last_visible_answer_text = ""
         self._visible_roles: set[StreamFrameRole] = set()
+        self._stderr_tool_line_keys: set[str] = set()
 
     def reset(self) -> None:
         """Forget emitted answer text, newline, and visible frames."""
@@ -278,6 +288,7 @@ class BasicStreamPresenter:
         self._final_newline_emitted = False
         self._last_visible_answer_text = ""
         self._visible_roles.clear()
+        self._stderr_tool_line_keys.clear()
 
     async def present(
         self,
@@ -324,6 +335,12 @@ class BasicStreamPresenter:
                 tuple[StreamFrameRole, RenderableType | None],
                 ...,
             ] = (("stats", _basic_stats_frame(request)),)
+        elif request.display_config.diagnostic_channel == "stderr":
+            role_renderables = (
+                ("tools", self._stderr_tool_frame(request)),
+                ("events", _basic_event_frame(request)),
+                ("stats", _basic_stats_frame(request)),
+            )
         else:
             role_renderables = (
                 ("tools", _basic_tool_frame(request)),
@@ -340,6 +357,19 @@ class BasicStreamPresenter:
             frame = self._role_frame(role, renderable)
             if frame is not None:
                 yield frame
+
+    def _stderr_tool_frame(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> RenderableType | None:
+        entries = _basic_tool_entries(request, include_active=True)
+        new_lines: list[str] = []
+        for entry in entries:
+            if entry.key in self._stderr_tool_line_keys:
+                continue
+            self._stderr_tool_line_keys.add(entry.key)
+            new_lines.append(entry.line)
+        return _basic_frame_text(new_lines)
 
     def _needs_answer_separator(
         self,
@@ -403,76 +433,147 @@ def _basic_tool_frame(
     if not request.display_config.show_tools:
         return None
 
-    snapshot = request.snapshot
-    result_tool_call_ids = {
-        result.tool_call_id for result in snapshot.tool_results
-    }
-    canonical_tool_call_ids = _basic_canonical_tool_call_ids(request)
     history_lines = [
-        *(
-            _basic_completed_tool_line(
-                tool.name,
-                tool.status,
-                tool.elapsed_seconds,
-            )
-            for tool in snapshot.completed_tools
-            if tool.tool_call_id not in result_tool_call_ids
-        ),
-        *(
-            _basic_tool_result_line(
-                result.name,
-                result.status,
-                result.result_summary,
-                result.elapsed_seconds,
-            )
-            for result in snapshot.tool_results
-        ),
-        *(
-            _basic_tool_diagnostic_line(
-                diagnostic.requested_name or diagnostic.canonical_name,
-                diagnostic.code,
-                diagnostic.message,
-            )
-            for diagnostic in snapshot.tool_diagnostics
-        ),
-        *(
-            _basic_tool_event_line(
-                event.event_type,
-                event.name or event.tool_call_id,
-                event.payload_summary,
-            )
-            for event in snapshot.tool_events
-            if _basic_should_show_tool_event(event, canonical_tool_call_ids)
-        ),
+        entry.line
+        for entry in _basic_tool_entries(request, include_active=False)
     ]
-    limit = request.display_config.display_tools_events
-    if limit is not None:
-        history_lines = history_lines[-limit:] if limit else []
-
-    active_renderables = [
+    active_model_renderables = [
+        _basic_active_model_renderable(
+            started_at=continuation.started_at,
+            updated_at=continuation.updated_at,
+            spinner=request.display_config.diagnostic_channel == "live",
+        )
+        for continuation in request.snapshot.active_model_continuations
+    ]
+    active_tool_renderables = [
         _basic_active_tool_renderable(
             tool.name,
             started_at=tool.started_at,
             updated_at=tool.updated_at,
             spinner=request.display_config.diagnostic_channel == "live",
         )
-        for tool in snapshot.active_tools
+        for tool in request.snapshot.active_tools
     ]
     history_text = _basic_frame_text(history_lines)
-    renderables: list[RenderableType] = [
-        *(
-            active_renderable
-            for active_renderable in active_renderables
-            if active_renderable
-        ),
-    ]
+    renderables: list[RenderableType] = []
     if history_text:
         renderables.append(history_text)
+    renderables.extend(
+        active_renderable
+        for active_renderable in active_model_renderables
+        if active_renderable
+    )
+    renderables.extend(
+        active_renderable
+        for active_renderable in active_tool_renderables
+        if active_renderable
+    )
     if not renderables:
         return None
     if len(renderables) == 1:
         return renderables[0]
     return Group(*renderables)
+
+
+def _basic_tool_entries(
+    request: CliStreamPresenterRequest,
+    *,
+    include_active: bool,
+) -> tuple[_BasicToolLineEntry, ...]:
+    if not request.display_config.show_tools:
+        return ()
+
+    snapshot = request.snapshot
+    result_tool_call_ids = {
+        result.tool_call_id for result in snapshot.tool_results
+    }
+    canonical_tool_call_ids = _basic_canonical_tool_call_ids(request)
+    history_entries = [
+        *(
+            _BasicToolLineEntry(
+                key=_basic_completed_tool_key(tool),
+                line=_basic_completed_tool_line(
+                    tool.name,
+                    tool.status,
+                    tool.elapsed_seconds,
+                ),
+                executed=True,
+            )
+            for tool in snapshot.completed_tools
+            if tool.tool_call_id not in result_tool_call_ids
+        ),
+        *(
+            _BasicToolLineEntry(
+                key=_basic_tool_result_key(result),
+                line=_basic_tool_result_line(
+                    result.name,
+                    result.status,
+                    result.result_summary,
+                    result.elapsed_seconds,
+                ),
+                executed=True,
+            )
+            for result in snapshot.tool_results
+        ),
+        *(
+            _BasicToolLineEntry(
+                key=_basic_tool_diagnostic_key(diagnostic),
+                line=_basic_tool_diagnostic_line(
+                    diagnostic.requested_name or diagnostic.canonical_name,
+                    diagnostic.code,
+                    diagnostic.message,
+                ),
+            )
+            for diagnostic in snapshot.tool_diagnostics
+        ),
+        *(
+            _BasicToolLineEntry(
+                key=_basic_tool_event_key(event),
+                line=_basic_tool_event_line(
+                    event.event_type,
+                    event.name or event.tool_call_id,
+                    event.payload_summary,
+                ),
+            )
+            for event in snapshot.tool_events
+            if _basic_should_show_tool_event(event, canonical_tool_call_ids)
+        ),
+        *(
+            [_basic_empty_answer_entry()]
+            if _basic_terminal_empty_answer(request)
+            else []
+        ),
+    ]
+    limit = request.display_config.display_tools_events
+    if limit is not None:
+        history_entries = history_entries[-limit:] if limit else []
+    if not include_active:
+        return tuple(history_entries)
+
+    active_entries = [
+        *(
+            _BasicToolLineEntry(
+                key=f"model:{continuation.model_continuation_id}",
+                line=_basic_active_model_line(
+                    started_at=continuation.started_at,
+                    updated_at=continuation.updated_at,
+                ),
+            )
+            for continuation in snapshot.active_model_continuations
+        ),
+        *(
+            _BasicToolLineEntry(
+                key=f"tool:{tool.tool_call_id}",
+                line=_basic_active_tool_line(
+                    tool.name,
+                    started_at=tool.started_at,
+                    updated_at=tool.updated_at,
+                ),
+            )
+            for tool in snapshot.active_tools
+        ),
+    ]
+    return (*history_entries, *active_entries)
 
 
 def _basic_event_frame(
@@ -517,6 +618,131 @@ def _basic_stats_frame(
         ),
     ]
     return _basic_frame_text(lines)
+
+
+def _basic_completed_tool_key(tool: object) -> str:
+    return (
+        "completed:"
+        f"{getattr(tool, 'tool_call_id', '')}:"
+        f"{getattr(tool, 'sequence', '')}:"
+        f"{getattr(tool, 'status', '')}"
+    )
+
+
+def _basic_tool_result_key(result: object) -> str:
+    return (
+        "result:"
+        f"{getattr(result, 'tool_call_id', '')}:"
+        f"{getattr(result, 'sequence', '')}:"
+        f"{getattr(result, 'status', '')}"
+    )
+
+
+def _basic_tool_diagnostic_key(diagnostic: object) -> str:
+    return (
+        "diagnostic:"
+        f"{getattr(diagnostic, 'diagnostic_id', '')}:"
+        f"{getattr(diagnostic, 'sequence', '')}"
+    )
+
+
+def _basic_tool_event_key(event: object) -> str:
+    return (
+        "event:"
+        f"{getattr(event, 'event_type', '')}:"
+        f"{getattr(event, 'tool_call_id', '')}:"
+        f"{getattr(event, 'sequence', '')}:"
+        f"{getattr(event, 'name', '')}:"
+        f"{getattr(event, 'payload_summary', '')}"
+    )
+
+
+def _basic_empty_answer_entry() -> _BasicToolLineEntry:
+    return _BasicToolLineEntry(
+        key="terminal:no_answer",
+        line="\n[yellow]⚠️ No final answer emitted.[/yellow]",
+    )
+
+
+def _basic_terminal_empty_answer(
+    request: CliStreamPresenterRequest,
+) -> bool:
+    return (
+        _basic_terminal_completed(request)
+        and not _basic_visible_answer_text(
+            request.snapshot.answer_text,
+            terminal_completed=True,
+        ).strip()
+    )
+
+
+def _basic_active_model_line(
+    *,
+    started_at: float | None,
+    updated_at: float | None,
+) -> str:
+    elapsed = None
+    if started_at is not None and updated_at is not None:
+        elapsed = _basic_tool_elapsed_text(max(updated_at - started_at, 0.0))
+    suffix = f" for {escape(elapsed)}" if elapsed else ""
+    return (
+        f"[{_BASIC_TOOL_RUNNING_STYLE}]Thinking{suffix}..."
+        f"[/{_BASIC_TOOL_RUNNING_STYLE}]"
+    )
+
+
+class _BasicActiveModelSpinner(Spinner):
+    """Render active model continuation text while Rich refreshes."""
+
+    def __init__(
+        self,
+        *,
+        started_at: float | None,
+        updated_at: float | None,
+    ) -> None:
+        self._started_at = started_at
+        self._updated_at = updated_at
+        super().__init__(
+            "point",
+            text=Text.from_markup(self._line()),
+            style=_BASIC_TOOL_RUNNING_STYLE,
+        )
+
+    def render(self, time: float) -> RenderableType:
+        """Render the spinner with current elapsed model text."""
+        self.text = Text.from_markup(self._line())
+        self.style = _BASIC_TOOL_RUNNING_STYLE
+        return super().render(time)
+
+    def _line(self) -> str:
+        return _basic_active_model_line(
+            started_at=self._started_at,
+            updated_at=self._current_updated_at(),
+        )
+
+    def _current_updated_at(self) -> float | None:
+        if self._updated_at is not None:
+            return self._updated_at
+        if self._started_at is None:
+            return None
+        return perf_counter()
+
+
+def _basic_active_model_renderable(
+    *,
+    started_at: float | None,
+    updated_at: float | None,
+    spinner: bool,
+) -> RenderableType:
+    if not spinner:
+        return _basic_active_model_line(
+            started_at=started_at,
+            updated_at=updated_at,
+        )
+    return _BasicActiveModelSpinner(
+        started_at=started_at,
+        updated_at=updated_at,
+    )
 
 
 def _basic_active_tool_line(
@@ -700,30 +926,10 @@ def _basic_has_executed_tool_frame(
 ) -> bool:
     if not request.display_config.show_tools:
         return False
-
-    snapshot = request.snapshot
-    result_tool_call_ids = {
-        result.tool_call_id for result in snapshot.tool_results
-    }
-    canonical_tool_call_ids = _basic_canonical_tool_call_ids(request)
-    history_entries = [
-        *(
-            True
-            for tool in snapshot.completed_tools
-            if tool.tool_call_id not in result_tool_call_ids
-        ),
-        *(True for _ in snapshot.tool_results),
-        *(False for _ in snapshot.tool_diagnostics),
-        *(
-            False
-            for event in snapshot.tool_events
-            if _basic_should_show_tool_event(event, canonical_tool_call_ids)
-        ),
-    ]
-    limit = request.display_config.display_tools_events
-    if limit is not None:
-        history_entries = history_entries[-limit:] if limit else []
-    return any(history_entries)
+    return any(
+        entry.executed
+        for entry in _basic_tool_entries(request, include_active=False)
+    )
 
 
 def _basic_canonical_tool_call_ids(
