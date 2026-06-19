@@ -5,6 +5,7 @@ from ...entities import (
 from ...entities import (
     Input,
     Message,
+    MessageContent,
     MessageContentText,
     MessageRole,
     TransformerEngineSettings,
@@ -33,7 +34,7 @@ from .response.orchestrator_response import OrchestratorResponse
 
 import asyncio
 from contextlib import ExitStack
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from inspect import isawaitable
 from json import dumps
 from logging import Logger
@@ -462,6 +463,10 @@ class Orchestrator:
             return message.content.text
         if isinstance(message.content, str):
             return message.content
+        if isinstance(message.content, list):
+            for content in message.content:
+                if isinstance(content, MessageContentText):
+                    return content.text
         return None
 
     @staticmethod
@@ -486,12 +491,36 @@ class Orchestrator:
         if message is None:
             return input
 
-        replacement = Message(role=message.role, content=content)
+        replacement = replace(
+            message,
+            content=Orchestrator._replace_message_text_content(
+                message, content
+            ),
+        )
         if isinstance(input, list):
             assert input and isinstance(input[-1], Message)
             input[-1] = replacement
             return input
         return replacement
+
+    @staticmethod
+    def _replace_message_text_content(
+        message: Message, content: str
+    ) -> str | MessageContent | list[MessageContent]:
+        if isinstance(message.content, list):
+            replacement: list[MessageContent] = []
+            replaced = False
+            for item in message.content:
+                if not replaced and isinstance(item, MessageContentText):
+                    replacement.append(
+                        MessageContentText(type="text", text=content)
+                    )
+                    replaced = True
+                else:
+                    replacement.append(item)
+            if replaced:
+                return replacement
+        return content
 
     @staticmethod
     def _input_render_vars(

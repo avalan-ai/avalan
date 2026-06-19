@@ -20,6 +20,7 @@ from avalan.entities import (
     EngineUri,
     GenerationSettings,
     Message,
+    MessageContentFile,
     MessageContentText,
     MessageRole,
     TransformerEngineSettings,
@@ -450,9 +451,32 @@ class OrchestratorUserPrefixOptionsTestCase(unittest.TestCase):
             "Answer in a brief way.\n\nsecond",
         )
 
-    def test_user_prefix_ignores_non_text_message_content(self) -> None:
+    def test_user_prefix_preserves_file_content_blocks(self) -> None:
         orchestrator, specification = self._create_orchestrator()
-        content = [MessageContentText(type="text", text="nested")]
+        file_content = MessageContentFile(
+            type="file", file={"filename": "doc.pdf"}
+        )
+        content = [
+            MessageContentText(type="text", text="nested"),
+            file_content,
+        ]
+        message = Message(role=MessageRole.USER, content=content)
+        result = orchestrator._input_messages(specification, message)
+        assert isinstance(result, Message)
+        self.assertEqual(
+            result.content,
+            [
+                MessageContentText(
+                    type="text",
+                    text="Answer in a brief way.\n\nnested",
+                ),
+                file_content,
+            ],
+        )
+
+    def test_user_prefix_ignores_file_only_message_content(self) -> None:
+        orchestrator, specification = self._create_orchestrator()
+        content = [MessageContentFile(type="file", file={"filename": "d.pdf"})]
         message = Message(role=MessageRole.USER, content=content)
         result = orchestrator._input_messages(specification, message)
         self.assertIs(result, message)
@@ -520,9 +544,29 @@ class OrchestratorUserTemplateTransformationOptionsTestCase(unittest.TestCase):
         messages = orchestrator._input_messages(specification, [msg])
         self.assertEqual(messages[0].content, "hi earth Ann")
 
-    def test_user_template_ignores_non_text_message_content(self) -> None:
+    def test_user_template_preserves_file_content_blocks(self) -> None:
         orchestrator, specification = self._create_orchestrator()
-        content = [MessageContentText(type="text", text="nested")]
+        file_content = MessageContentFile(
+            type="file", file={"filename": "doc.pdf"}
+        )
+        content = [
+            MessageContentText(type="text", text="earth"),
+            file_content,
+        ]
+        message = Message(role=MessageRole.USER, content=content)
+        result = orchestrator._input_messages(specification, message)
+        assert isinstance(result, Message)
+        self.assertEqual(
+            result.content,
+            [
+                MessageContentText(type="text", text="hi earth Ann"),
+                file_content,
+            ],
+        )
+
+    def test_user_template_ignores_file_only_message_content(self) -> None:
+        orchestrator, specification = self._create_orchestrator()
+        content = [MessageContentFile(type="file", file={"filename": "d.pdf"})]
         message = Message(role=MessageRole.USER, content=content)
         result = orchestrator._input_messages(specification, message)
         self.assertIs(result, message)
