@@ -27,6 +27,7 @@ def _args(**overrides: object) -> Namespace:
         "display_probabilities_sample_minimum": 0.1,
         "display_time_to_n_token": None,
         "skip_display_reasoning_time": False,
+        "display_reasoning": False,
     }
     values.update(overrides)
     return Namespace(**values)
@@ -43,6 +44,17 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     "show_stats": False,
                     "show_tools": False,
                     "show_events": False,
+                    "display_reasoning": False,
+                    "diagnostic_channel": "none",
+                    "answer_stdout_only": False,
+                },
+            ),
+            (
+                "display-reasoning",
+                _args(display_reasoning=True),
+                True,
+                {
+                    "display_reasoning": True,
                     "diagnostic_channel": "none",
                     "answer_stdout_only": False,
                 },
@@ -157,6 +169,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     display_pause=100,
                     display_probabilities=True,
                     display_time_to_n_token=256,
+                    display_reasoning=True,
                 ),
                 True,
                 {
@@ -170,6 +183,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     "display_probabilities": False,
                     "display_time_to_n_token": None,
                     "display_reasoning_time": False,
+                    "display_reasoning": False,
                     "show_stats": False,
                     "show_tools": False,
                     "show_events": False,

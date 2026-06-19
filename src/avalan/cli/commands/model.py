@@ -1405,6 +1405,7 @@ def _legacy_stream_display_config(
         display_reasoning_time=not bool(
             getattr(args, "skip_display_reasoning_time", False)
         ),
+        display_reasoning=bool(getattr(args, "display_reasoning", False)),
     )
 
 
