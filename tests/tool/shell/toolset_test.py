@@ -156,6 +156,40 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
             [(ToolExecutionStreamKind.STDOUT, "live")],
         )
 
+    async def test_new_shell_commands_execute_through_toolset(self) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            workspace_root=str(fixture_root),
+            allow_media_tools=True,
+        )
+        executor = _StreamingExecutor()
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(
+                settings=settings,
+                resolver=_AllResolved(),
+            ),
+            executor=executor,
+        )
+
+        for command_id in ("file", "find", "pdfinfo"):
+            with self.subTest(command_id=command_id):
+                output = await _invoke_for_command(
+                    command_id,
+                    _tool_by_name(toolset, command_id),
+                )
+
+                self.assertIn(f"tool: shell.{command_id}", output)
+                self.assertIn(
+                    f"status: {ShellExecutionStatus.COMPLETED}",
+                    output,
+                )
+
+        self.assertEqual(
+            executor.seen_tool_names,
+            ["shell.file", "shell.find", "shell.pdfinfo"],
+        )
+
 
 def _schema_names(toolset: ShellToolSet) -> tuple[str, ...]:
     schemas = toolset.json_schemas()
@@ -199,6 +233,14 @@ async def _call_cat(tool: Tool) -> str:
     return await _call_tool(tool, "filesystem/visible.txt")
 
 
+async def _call_file(tool: Tool) -> str:
+    return await _call_tool(tool, ("filesystem/visible.txt",))
+
+
+async def _call_find(tool: Tool) -> str:
+    return await _call_tool(tool, ("filesystem",), name="visible.txt")
+
+
 async def _call_wc(tool: Tool) -> str:
     return await _call_tool(tool, ("filesystem/visible.txt",))
 
@@ -225,6 +267,10 @@ async def _call_jq(tool: Tool) -> str:
     return await _call_tool(tool, ".", ("json/valid.json",))
 
 
+async def _call_pdfinfo(tool: Tool) -> str:
+    return await _call_tool(tool, "media/small.pdf")
+
+
 async def _call_pdftotext(tool: Tool) -> str:
     return await _call_tool(tool, "media/small.pdf")
 
@@ -247,10 +293,13 @@ _TOOL_CALLS: dict[str, Callable[[Tool], Awaitable[str]]] = {
     "tail": _call_tail,
     "ls": _call_ls,
     "cat": _call_cat,
+    "file": _call_file,
+    "find": _call_find,
     "wc": _call_wc,
     "awk": _call_awk,
     "sed": _call_sed,
     "jq": _call_jq,
+    "pdfinfo": _call_pdfinfo,
     "pdftotext": _call_pdftotext,
     "pdftoppm": _call_pdftoppm,
     "tesseract": _call_tesseract,
@@ -273,6 +322,14 @@ class _AllMissing:
         command: ShellCommandDefinition,
     ) -> str | None:
         return None
+
+
+class _AllResolved:
+    async def resolve(
+        self,
+        command: ShellCommandDefinition,
+    ) -> str | None:
+        return f"/trusted/bin/{command.executable_name}"
 
 
 class _UnexpectedResolve:

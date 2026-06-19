@@ -7,9 +7,12 @@ from .settings import ShellToolSettings
 from .tools import (
     AwkTool,
     CatTool,
+    FileTool,
+    FindTool,
     HeadTool,
     JqTool,
     LsTool,
+    PdfInfoTool,
     PdfToPpmTool,
     PdfToTextTool,
     RgTool,
@@ -74,6 +77,18 @@ class ShellToolSet(ToolSet):
                 executor=executor,
                 formatter=formatter,
             ),
+            FileTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            FindTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
             WcTool(
                 settings=self._settings,
                 policy=policy,
@@ -93,6 +108,12 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
             JqTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            PdfInfoTool(
                 settings=self._settings,
                 policy=policy,
                 executor=executor,

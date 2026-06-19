@@ -107,6 +107,48 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         self.assertIn("alpha", output)
         self.assertIn("needle", output)
 
+    async def test_file_smoke(self) -> None:
+        await self._require_command("file")
+        output = await _call(
+            _tool_by_name(self._toolset, "file"),
+            ("filesystem/visible.txt",),
+            brief=True,
+        )
+
+        _assert_completed(self, output, "file")
+        self.assertIn("text", output.lower())
+
+    async def test_find_smoke(self) -> None:
+        await self._require_command("find")
+        output = await _call(
+            _tool_by_name(self._toolset, "find"),
+            ("filesystem",),
+            entry_type="file",
+            name="visible.txt",
+            max_depth=1,
+        )
+
+        _assert_completed(self, output, "find")
+        self.assertIn("filesystem/visible.txt", output)
+        self.assertNotIn(".hidden.txt", output)
+
+    async def test_find_expression_token_root_smoke(self) -> None:
+        await self._require_command("find")
+        for root, expected_bytes in (("!", 16), ("(", 16)):
+            with self.subTest(root=root):
+                output = await _call(
+                    _tool_by_name(self._toolset, "find"),
+                    (root,),
+                    cwd="find_roots",
+                    entry_type="file",
+                    name="visible.txt",
+                    max_depth=1,
+                )
+
+                _assert_completed(self, output, "find")
+                self.assertIn(f"./{root}", output)
+                self.assertIn("stdout_bytes: " + str(expected_bytes), output)
+
     async def test_wc_smoke(self) -> None:
         await self._require_command("wc")
         output = await _call(
@@ -160,6 +202,16 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
 
         _assert_completed(self, output, "jq")
         self.assertIn("alpha", output)
+
+    async def test_pdfinfo_smoke(self) -> None:
+        await self._require_command("pdfinfo")
+        output = await _call(
+            _tool_by_name(self._toolset, "pdfinfo"),
+            "media/small.pdf",
+        )
+
+        _assert_completed(self, output, "pdfinfo")
+        self.assertIn("stdout_bytes:", output)
 
     async def test_pdftotext_smoke(self) -> None:
         await self._require_command("pdftotext")

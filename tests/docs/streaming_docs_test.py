@@ -5,6 +5,7 @@ from unittest import TestCase, main
 ROOT = Path(__file__).parents[2]
 DOC_ROOT = ROOT / "docs"
 EXAMPLE_ROOT = DOC_ROOT / "examples"
+PLAYGROUND_EXAMPLE_ROOT = EXAMPLE_ROOT / "playground"
 README = ROOT / "README.md"
 
 SDK_STREAMING_EXAMPLES = (
@@ -27,6 +28,14 @@ SKIPPED_ACTIVE_EXAMPLE_NAMES = {
     "openai_client_agent_tool.py",
     "pypi_avalan_source.md",
     "token_classification.py",
+}
+SKIPPED_ACTIVE_EXAMPLE_DIRS = {
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "node_modules",
 }
 FORBIDDEN_STREAMING_PATTERNS: dict[str, Pattern[str]] = {
     "hosted TextGenerationModel URI": compile(
@@ -192,6 +201,30 @@ class StreamingDocsTest(TestCase):
         )
         self.assertIn("token loop", _streaming_pattern_violations(text))
 
+    def test_playground_examples_are_exempt_from_active_guard(self) -> None:
+        playground_example = PLAYGROUND_EXAMPLE_ROOT / "agent_team.py"
+        generated_dependency = (
+            PLAYGROUND_EXAMPLE_ROOT
+            / "real_estate"
+            / "client"
+            / ".venv"
+            / "lib"
+            / "python3.11"
+            / "site-packages"
+            / "httpx"
+            / "_client.py"
+        )
+        active_paths = set(_active_streaming_doc_paths())
+
+        self.assertNotIn(playground_example, active_paths)
+        self.assertNotIn(generated_dependency, active_paths)
+        self.assertFalse(
+            _is_active_streaming_example_candidate(playground_example)
+        )
+        self.assertFalse(
+            _is_active_streaming_example_candidate(generated_dependency)
+        )
+
     def test_protocol_examples_remain_openai_chunk_consumers(self) -> None:
         for path in PROTOCOL_CHUNK_EXAMPLES:
             text = path.read_text(encoding="utf-8")
@@ -234,12 +267,23 @@ def _active_streaming_doc_paths() -> tuple[Path, ...]:
         sorted(
             path
             for path in EXAMPLE_ROOT.rglob("*")
-            if path.is_file()
-            and path.suffix in {".md", ".py"}
-            and path.name not in SKIPPED_ACTIVE_EXAMPLE_NAMES
+            if _is_active_streaming_example_path(path)
         )
     )
     return docs + examples
+
+
+def _is_active_streaming_example_path(path: Path) -> bool:
+    return path.is_file() and _is_active_streaming_example_candidate(path)
+
+
+def _is_active_streaming_example_candidate(path: Path) -> bool:
+    return (
+        path.suffix in {".md", ".py"}
+        and path.name not in SKIPPED_ACTIVE_EXAMPLE_NAMES
+        and not path.is_relative_to(PLAYGROUND_EXAMPLE_ROOT)
+        and SKIPPED_ACTIVE_EXAMPLE_DIRS.isdisjoint(path.parts)
+    )
 
 
 def _streaming_pattern_violations(text: str) -> set[str]:

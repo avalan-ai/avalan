@@ -23,10 +23,13 @@ SHELL_COMMANDS = (
     "tail",
     "ls",
     "cat",
+    "file",
+    "find",
     "wc",
     "awk",
     "sed",
     "jq",
+    "pdfinfo",
     "pdftotext",
     "pdftoppm",
     "tesseract",
@@ -68,6 +71,7 @@ DIRECT_SPAWN_ALLOWED_MODULES = {
     SHELL_SOURCE_ROOT / "executor.py",
 }
 OUTPUT_FILTER_ALLOWED_MODULES = {
+    COMMAND_SOURCE_ROOT / "find.py",
     COMMAND_SOURCE_ROOT / "ls.py",
     COMMAND_SOURCE_ROOT / "rg.py",
 }

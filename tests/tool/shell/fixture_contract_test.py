@@ -10,6 +10,7 @@ FIXTURE_DIRECTORIES = (
     "executor",
     "cli_toml_e2e",
     "real_subprocess_smoke",
+    "find_roots",
     "filters",
     "json",
     "media",
@@ -54,6 +55,8 @@ REQUIRED_FIXTURE_FILES = (
     "executor/stream-output.txt",
     "cli_toml_e2e/agent-shell.toml",
     "real_subprocess_smoke/README.md",
+    "find_roots/!/visible.txt",
+    "find_roots/(/visible.txt",
 )
 
 PERFORMANCE_PASS_CRITERIA = {
