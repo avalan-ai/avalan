@@ -73,6 +73,22 @@ class AgentParserOptionsTestCase(TestCase):
         )
         self.assertEqual(args.run_temperature, 0.5)
 
+    def test_run_parser_accepts_engine_base_url(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--engine-uri",
+                "ai://env:KEY@openai/deployment",
+                "--engine-base-url",
+                "https://tenant.openai.azure.com/openai/v1/",
+            ]
+        )
+        self.assertEqual(
+            args.engine_base_url,
+            "https://tenant.openai.azure.com/openai/v1/",
+        )
+
     def test_run_parser_accepts_graph_file(self) -> None:
         args = self.parser.parse_args(
             [

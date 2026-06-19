@@ -137,6 +137,12 @@ def get_orchestrator_settings(
         call_options["use_cache"] = use_cache
     if cache_strategy is not None:
         call_options["cache_strategy"] = cache_strategy
+    engine_config: dict[str, Any] = {
+        "backend": getattr(args, "backend", Backend.TRANSFORMERS.value)
+    }
+    engine_base_url = getattr(args, "engine_base_url", None)
+    if engine_base_url is not None:
+        engine_config["base_url"] = engine_base_url
 
     return OrchestratorSettings(
         agent_id=agent_id,
@@ -179,9 +185,7 @@ def get_orchestrator_settings(
             if v is not None
         },
         uri=engine_uri,
-        engine_config={
-            "backend": getattr(args, "backend", Backend.TRANSFORMERS.value)
-        },
+        engine_config=engine_config,
         call_options=call_options,
         template_vars=None,
         memory_permanent_message=(

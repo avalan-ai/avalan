@@ -3565,6 +3565,11 @@ class CLI:
     ) -> _ArgumentGroup:
         group = parser.add_argument_group("inline agent settings")
         group.add_argument("--engine-uri", type=str, help="Agent engine URI")
+        group.add_argument(
+            "--engine-base-url",
+            type=str,
+            help="Agent engine provider base URL",
+        )
         group.add_argument("--name", type=str, help="Agent name")
         group.add_argument("--role", type=str, help="Agent role")
         group.add_argument("--task", type=str, help="Agent task")

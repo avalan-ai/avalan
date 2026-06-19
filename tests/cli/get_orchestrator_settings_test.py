@@ -41,6 +41,37 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
         )
 
+    def test_engine_base_url(self):
+        args = Namespace(
+            name="a",
+            role="r",
+            task=None,
+            instructions=None,
+            engine_uri="ai://env:KEY@openai/deployment",
+            engine_base_url="https://tenant.openai.azure.com/openai/v1/",
+            backend="transformers",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=False,
+            memory_recent=None,
+            no_session=False,
+            memory_permanent_message="dsn",
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=200,
+            memory_engine_overlap=20,
+            memory_engine_window=40,
+            tool=None,
+        )
+        uid = UUID("00000000-0000-0000-0000-000000000011")
+        result = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+        self.assertEqual(
+            result.engine_config,
+            {
+                "backend": "transformers",
+                "base_url": "https://tenant.openai.azure.com/openai/v1/",
+            },
+        )
+
     def test_system_and_developer(self):
         args = Namespace(
             name="a",
