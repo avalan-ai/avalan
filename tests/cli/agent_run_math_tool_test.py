@@ -813,10 +813,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 start_frame_seen.set()
             if "Running tool math.calculator" in text:
                 progress_frame_seen.set()
-            if (
-                "Executed tool math.calculator" in text
-                and ": 25" in text
-            ):
+            if "Executed tool math.calculator" in text and ": 25" in text:
                 completion_frame_seen.set()
 
         live.update.side_effect = capture_live_update

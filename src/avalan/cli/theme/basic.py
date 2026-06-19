@@ -104,11 +104,15 @@ _BASIC_REACT_LINE_MARKERS = (
     "action input:",
     "observation:",
 )
-_BASIC_HIDDEN_TOOL_EVENT_TYPES = frozenset(
+_BASIC_ALWAYS_HIDDEN_TOOL_EVENT_TYPES = frozenset(
     {
-        "tool_execute",
         "tool_model_run",
         "tool_model_response",
+    }
+)
+_BASIC_CANONICAL_DUPLICATE_TOOL_EVENT_TYPES = frozenset(
+    {
+        "tool_execute",
         "tool_result",
     }
 )
@@ -403,6 +407,7 @@ def _basic_tool_frame(
     result_tool_call_ids = {
         result.tool_call_id for result in snapshot.tool_results
     }
+    canonical_tool_call_ids = _basic_canonical_tool_call_ids(request)
     history_lines = [
         *(
             _basic_completed_tool_line(
@@ -437,7 +442,7 @@ def _basic_tool_frame(
                 event.payload_summary,
             )
             for event in snapshot.tool_events
-            if event.event_type not in _BASIC_HIDDEN_TOOL_EVENT_TYPES
+            if _basic_should_show_tool_event(event, canonical_tool_call_ids)
         ),
     ]
     limit = request.display_config.display_tools_events
@@ -700,6 +705,7 @@ def _basic_has_executed_tool_frame(
     result_tool_call_ids = {
         result.tool_call_id for result in snapshot.tool_results
     }
+    canonical_tool_call_ids = _basic_canonical_tool_call_ids(request)
     history_entries = [
         *(
             True
@@ -711,13 +717,46 @@ def _basic_has_executed_tool_frame(
         *(
             False
             for event in snapshot.tool_events
-            if event.event_type not in _BASIC_HIDDEN_TOOL_EVENT_TYPES
+            if _basic_should_show_tool_event(event, canonical_tool_call_ids)
         ),
     ]
     limit = request.display_config.display_tools_events
     if limit is not None:
         history_entries = history_entries[-limit:] if limit else []
     return any(history_entries)
+
+
+def _basic_canonical_tool_call_ids(
+    request: CliStreamPresenterRequest,
+) -> set[str]:
+    snapshot = request.snapshot
+    return {
+        *(
+            tool.tool_call_id
+            for tool in snapshot.completed_tools
+            if tool.tool_call_id
+        ),
+        *(
+            result.tool_call_id
+            for result in snapshot.tool_results
+            if result.tool_call_id
+        ),
+    }
+
+
+def _basic_should_show_tool_event(
+    event: object,
+    canonical_tool_call_ids: set[str],
+) -> bool:
+    event_type = getattr(event, "event_type")
+    tool_call_id = getattr(event, "tool_call_id")
+    if event_type in _BASIC_ALWAYS_HIDDEN_TOOL_EVENT_TYPES:
+        return False
+    if event_type not in _BASIC_CANONICAL_DUPLICATE_TOOL_EVENT_TYPES:
+        return True
+    return not canonical_tool_call_ids or tool_call_id not in (
+        canonical_tool_call_ids | {None}
+    )
 
 
 def _basic_event_line(

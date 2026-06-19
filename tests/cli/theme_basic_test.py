@@ -406,7 +406,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("event start", event_text)
         self.assertNotIn("tool_process", event_text)
 
-    async def test_basic_suppresses_noisy_tool_model_side_events(
+    async def test_basic_keeps_event_only_tool_execution_side_events(
         self,
     ) -> None:
         config = _stream_config(display_tools=True, display_tools_events=8)
@@ -427,6 +427,14 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             name="calc",
         )
         builder.add_tool_event(
+            Event(
+                type=EventType.TOOL_MODEL_RESPONSE,
+                payload={"channel": "x"},
+            ),
+            tool_call_id="call",
+            name="calc",
+        )
+        builder.add_tool_event(
             Event(type=EventType.TOOL_PROCESS, payload={"name": "calc"}),
             tool_call_id="call",
             name="calc",
@@ -440,10 +448,44 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
 
         output = _visible_text(items)
         self.assertNotIn("tool_model_run", output)
+        self.assertNotIn("tool_model_response", output)
+        self.assertIn("tool event tool_execute: calc", output)
+        self.assertIn("tool event tool_result: calc", output)
+        self.assertIn("tool event tool_process: calc", output)
+
+    async def test_basic_suppresses_canonical_duplicate_tool_side_events(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_result_summary(
+            tool_call_id="call",
+            name="calc",
+            status="result",
+            result=25,
+            arguments_count=1,
+        )
+        builder.add_tool_event(
+            Event(type=EventType.TOOL_EXECUTE, payload={"channel": "x"}),
+            tool_call_id="call",
+            name="calc",
+        )
+        builder.add_tool_event(
+            Event(type=EventType.TOOL_RESULT, payload={"channel": "x"}),
+            tool_call_id="call",
+            name="calc",
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        output = _visible_text(items)
+        self.assertIn("Executed tool calc: 25", output)
         self.assertNotIn("tool_execute", output)
         self.assertNotIn("tool_result", output)
-        self.assertNotIn("channel", output)
-        self.assertIn("tool event tool_process: calc", output)
 
     async def test_delayed_calculator_progress_renders_lifecycle(
         self,
@@ -760,12 +802,15 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             first_text = _render_text(frames[0].renderable)
             now = 101.25
             second_text = _render_text(frames[0].renderable)
+            now = 3700.25
+            stale_text = _render_text(frames[0].renderable)
 
         self.assertIn("Starting tool calc", first_text)
         self.assertIn(
             "Running tool calc for",
             second_text,
         )
+        self.assertIn("Starting tool calc", stale_text)
 
     async def test_live_diagnostics_pause_after_visible_answer_starts(
         self,

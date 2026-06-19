@@ -340,8 +340,11 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         events: list[tuple[str, object]] = []
         fake_live = _FakeLive(events)
         console = MagicMock()
-        console.print.side_effect = (
-            lambda text, end="": events.append(("print", (text, end)))
+        console.print.side_effect = lambda text, end="": events.append(
+            (
+                "print",
+                (text, end),
+            )
         )
         coordinator = CliStreamCoordinator(
             console,

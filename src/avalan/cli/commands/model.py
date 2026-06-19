@@ -886,14 +886,19 @@ async def token_generation(
     stream_presenter_factory = getattr(type(theme), "stream_presenter", None)
     if not callable(stream_presenter_factory):
         stream_presenter_factory = Theme.stream_presenter
-    presenter_kwargs: dict[str, object] = {"event_stats": event_stats}
-    if answer_prefix is not None:
-        presenter_kwargs["answer_prefix"] = answer_prefix
-    presenter = stream_presenter_factory(
-        theme,
-        stream_logger,
-        **presenter_kwargs,
-    )
+    if answer_prefix is None:
+        presenter = stream_presenter_factory(
+            theme,
+            stream_logger,
+            event_stats=event_stats,
+        )
+    else:
+        presenter = stream_presenter_factory(
+            theme,
+            stream_logger,
+            event_stats=event_stats,
+            answer_prefix=answer_prefix,
+        )
     presenter_context = _stream_presenter_context(
         args,
         console,
