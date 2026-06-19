@@ -1068,6 +1068,22 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             model_cmds._stream_projection_forces_presentation(answer)
         )
 
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+        self.assertFalse(
+            model_cmds._should_flush_basic_diagnostics_before_answer(
+                theme,
+                self._display_config(),
+                answer,
+            )
+        )
+        self.assertTrue(
+            model_cmds._should_flush_basic_diagnostics_before_answer(
+                theme,
+                self._display_config(display_events=True),
+                answer,
+            )
+        )
+
     async def test_token_generation_uses_theme_stream_presenter(self) -> None:
         class RecordingPresenter:
             def __init__(self) -> None:
@@ -3291,8 +3307,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         final_text = final_console.export_text()
 
         self.assertNotIn("token_generated", all_live_text)
-        self.assertEqual(final_text.count("tool calc completed"), 1)
-        self.assertEqual(final_text.count("tool calc result:"), 1)
+        self.assertEqual(all_live_text.count("Executed tool calc"), 1)
+        self.assertEqual(all_live_text.count(": 25"), 1)
         self.assertNotIn("tool event tool_process", final_text)
         self.assertNotIn("event tool_process", final_text)
 
@@ -6065,7 +6081,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         def slow_update(renderable: object) -> None:
             rendered.append(renderable)
             render_started.set()
-            render_release.wait(2.0)
+            render_release.wait(0.05)
 
         def renderable_contains(renderable: object, text: str) -> bool:
             if text in str(renderable):

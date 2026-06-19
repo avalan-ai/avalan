@@ -211,6 +211,11 @@ class CliStreamCoordinator:
     ) -> None:
         assert isinstance(chunk, CliStreamAnswerTextChunk)
         assert not self._closed
+        if self._pending_flush and not self._is_paused():
+            await self._flush_pending(force=True)
+        self._close_live()
+        self._role_renderables.clear()
+        self._pending_flush = False
         self._console.print(chunk.text, end="")
 
     async def pause(self) -> None:

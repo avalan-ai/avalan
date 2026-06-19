@@ -1159,6 +1159,29 @@ class ThemeMiscMethodsTestCase(unittest.TestCase):
         self.assertEqual(theme.get_spinner("thinking"), None)
         self.assertIn("Model: model-id", theme(model))
         self.assertEqual(theme("x"), "x")
+        self.assertFalse(theme.default_display_tools)
+        self.assertFalse(theme.prefix_stream_answers)
+        self.assertEqual(
+            theme.tool_status_icon("result"),
+            ":white_check_mark:",
+        )
+        self.assertEqual(theme.tool_status_icon("cancelled"), ":warning:")
+        self.assertEqual(
+            theme.tool_status_icon("unknown"),
+            ":information_source:",
+        )
+        self.assertEqual(theme.tool_status_style("error"), "red")
+        self.assertEqual(theme.tool_status_style("cancelled"), "yellow")
+        self.assertEqual(theme.tool_status_style("unknown"), "cyan")
+        self.assertEqual(
+            theme.tool_status_style(
+                "result",
+                success_style="spring_green3",
+            ),
+            "spring_green3",
+        )
+        self.assertEqual(theme.precise_elapsed_text(None), None)
+        self.assertEqual(theme.precise_elapsed_text(0.0), "0 microseconds")
 
 
 class ThemeFormatTestCase(unittest.TestCase):

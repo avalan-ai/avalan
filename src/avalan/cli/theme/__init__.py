@@ -34,7 +34,7 @@ from .stream_presenter import (
 
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
-from datetime import datetime
+from datetime import datetime, timedelta
 from logging import Logger
 from typing import (
     TYPE_CHECKING,
@@ -47,7 +47,7 @@ from typing import (
 )
 from uuid import UUID
 
-from humanize import intcomma, intword, naturalsize, naturaltime
+from humanize import intcomma, intword, naturalsize, naturaltime, precisedelta
 from rich.console import RenderableType
 from rich.progress import BarColumn, SpinnerColumn, TimeElapsedColumn
 from rich.spinner import Spinner as RichSpinner
@@ -75,6 +75,50 @@ Data = str
 DataValue = datetime | float | int | str | UUID | None
 Styler: TypeAlias = Callable[[Data, DataValue, str | None, bool | str], str]
 Stylers = dict[Data, Styler]
+
+
+def precise_elapsed_text(
+    elapsed_seconds: float | None,
+    *,
+    minimum_unit: str | None = "microseconds",
+) -> str | None:
+    if elapsed_seconds is None:
+        return None
+    delta = timedelta(seconds=max(0.0, elapsed_seconds))
+    if minimum_unit is None:
+        return precisedelta(delta)
+    return precisedelta(delta, minimum_unit=minimum_unit)
+
+
+def tool_status_icon(status: str) -> str:
+    match status:
+        case "completed" | "result":
+            return ":white_check_mark:"
+        case "error":
+            return ":cross_mark:"
+        case "cancelled":
+            return ":warning:"
+        case _:
+            return ":information_source:"
+
+
+def tool_status_style(
+    status: str,
+    *,
+    success_style: str = "green",
+    error_style: str = "red",
+    cancelled_style: str = "yellow",
+    unknown_style: str = "cyan",
+) -> str:
+    match status:
+        case "completed" | "result":
+            return success_style
+        case "error":
+            return error_style
+        case "cancelled":
+            return cancelled_style
+        case _:
+            return unknown_style
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -161,6 +205,45 @@ class Theme:
     @property
     def spinners(self) -> dict[Spinner, str]:
         return {}
+
+    @property
+    def default_display_tools(self) -> bool:
+        return False
+
+    @property
+    def prefix_stream_answers(self) -> bool:
+        return False
+
+    def precise_elapsed_text(
+        self,
+        elapsed_seconds: float | None,
+        *,
+        minimum_unit: str | None = "microseconds",
+    ) -> str | None:
+        return precise_elapsed_text(
+            elapsed_seconds,
+            minimum_unit=minimum_unit,
+        )
+
+    def tool_status_icon(self, status: str) -> str:
+        return tool_status_icon(status)
+
+    def tool_status_style(
+        self,
+        status: str,
+        *,
+        success_style: str = "green",
+        error_style: str = "red",
+        cancelled_style: str = "yellow",
+        unknown_style: str = "cyan",
+    ) -> str:
+        return tool_status_style(
+            status,
+            success_style=success_style,
+            error_style=error_style,
+            cancelled_style=cancelled_style,
+            unknown_style=unknown_style,
+        )
 
     @property
     def stylers(self) -> Stylers:
@@ -1090,7 +1173,9 @@ class Theme:
         logger: Logger,
         *,
         event_stats: EventStats | None = None,
+        answer_prefix: str | None = None,
     ) -> CliStreamPresenter:
+        _ = answer_prefix
         return CliStreamSnapshotPresenter(logger, event_stats=event_stats)
 
     def token_frames(

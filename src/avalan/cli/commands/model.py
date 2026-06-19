@@ -862,13 +862,20 @@ async def token_generation(
         dict[str, CliStreamCoordinator | None] | None
     ) = None,
     display_config: CliStreamDisplayConfig | None = None,
+    answer_prefix: str | None = None,
 ) -> None:
+    assert answer_prefix is None or isinstance(answer_prefix, str)
     display_config = display_config or _legacy_stream_display_config(
         args,
         display_tokens=display_tokens,
         refresh_per_second=refresh_per_second,
         tool_events_limit=tool_events_limit,
         with_stats=with_stats,
+    )
+    display_config = _theme_default_stream_display_config(
+        theme,
+        display_config,
+        orchestrator,
     )
     stop_signal = EventSignal()
     render_lock = Lock()
@@ -879,10 +886,13 @@ async def token_generation(
     stream_presenter_factory = getattr(type(theme), "stream_presenter", None)
     if not callable(stream_presenter_factory):
         stream_presenter_factory = Theme.stream_presenter
+    presenter_kwargs: dict[str, object] = {"event_stats": event_stats}
+    if answer_prefix is not None:
+        presenter_kwargs["answer_prefix"] = answer_prefix
     presenter = stream_presenter_factory(
         theme,
         stream_logger,
-        event_stats=event_stats,
+        **presenter_kwargs,
     )
     presenter_context = _stream_presenter_context(
         args,
@@ -930,6 +940,7 @@ async def token_generation(
     presentation_retry_task: Task[None] | None = None
     presentation_retry_failure: BaseException | None = None
     supervisor_task = current_task()
+    basic_pre_answer_diagnostics_flushed = False
 
     def record_presentation_retry_failure(exc: BaseException) -> None:
         nonlocal presentation_retry_failure
@@ -1025,10 +1036,22 @@ async def token_generation(
     async def reduce_projection(
         projection: StreamConsumerProjection,
     ) -> None:
+        nonlocal basic_pre_answer_diagnostics_flushed
         nonlocal side_channel_events_enabled, snapshot_revision
         nonlocal last_projection_sequence
         async with render_lock:
             last_projection_sequence = projection.sequence
+            if (
+                not basic_pre_answer_diagnostics_flushed
+                and _should_flush_basic_diagnostics_before_answer(
+                    theme,
+                    display_config,
+                    projection,
+                )
+            ):
+                basic_pre_answer_diagnostics_flushed = True
+                if not reducer.snapshot().answer_text:
+                    await render_snapshot(force=True, flush=True)
             changed = reducer.apply_projection(projection)
             if projection.terminal_outcome is not None:
                 side_channel_events_enabled = False
@@ -1228,6 +1251,20 @@ def _stream_projection_forces_presentation(
     )
 
 
+def _should_flush_basic_diagnostics_before_answer(
+    theme: Theme,
+    display_config: CliStreamDisplayConfig,
+    projection: StreamConsumerProjection,
+) -> bool:
+    if not isinstance(theme, Theme) or not theme.default_display_tools:
+        return False
+    if display_config.diagnostic_channel == "none":
+        return False
+    if projection.channel != StreamChannel.ANSWER:
+        return False
+    return bool(stream_projection_text_delta(projection))
+
+
 def _stream_presenter_requires_completion_snapshot(
     presenter: object,
 ) -> bool:
@@ -1407,6 +1444,30 @@ def _legacy_stream_display_config(
         ),
         display_reasoning=bool(getattr(args, "display_reasoning", False)),
     )
+
+
+def _theme_default_stream_display_config(
+    theme: Theme,
+    display_config: CliStreamDisplayConfig,
+    orchestrator: Orchestrator | None,
+) -> CliStreamDisplayConfig:
+    if display_config.quiet or display_config.display_tools:
+        return display_config
+    if not isinstance(theme, Theme) or not theme.default_display_tools:
+        return display_config
+    if not _orchestrator_has_tools(orchestrator):
+        return display_config
+    return replace(display_config, display_tools=True)
+
+
+def _orchestrator_has_tools(orchestrator: Orchestrator | None) -> bool:
+    if orchestrator is None:
+        return False
+    tool = getattr(orchestrator, "tool", None)
+    if tool is None:
+        return False
+    is_empty = getattr(tool, "is_empty", True)
+    return isinstance(is_empty, bool) and not is_empty
 
 
 async def _print_plain_stdout_response(

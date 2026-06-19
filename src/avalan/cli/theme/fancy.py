@@ -8,6 +8,8 @@ from ...cli.theme import (
     TokenRenderDisplayTokenCandidate,
     TokenRenderFrame,
     TokenRenderState,
+    precise_elapsed_text,
+    tool_status_style,
 )
 from ...cli.theme.stream_presenter import (
     CliStreamAnswerPresenter,
@@ -58,7 +60,7 @@ from ..display_snapshot import (
 )
 
 from collections.abc import Iterator, Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 from importlib import import_module
 from locale import format_string
 from logging import Logger
@@ -81,7 +83,6 @@ from humanize import (
     intword,
     naturalday,
     naturalsize,
-    precisedelta,
 )
 from rich import box
 from rich.align import Align
@@ -148,7 +149,9 @@ class FancyTheme(Theme):
         logger: Logger,
         *,
         event_stats: EventStats | None = None,
+        answer_prefix: str | None = None,
     ) -> CliStreamPresenter:
+        _ = answer_prefix
         return FancyStreamPresenter(self, logger, event_stats=event_stats)
 
     @property
@@ -2634,9 +2637,9 @@ class FancyTheme(Theme):
                         ).format(
                             tool="[gray78]" + result.call.name + "[/gray78]",
                             elapsed_with_unit="[gray78]"
-                            + precisedelta(
-                                timedelta(seconds=event.elapsed or 0.0),
-                                minimum_unit="microseconds",
+                            + (
+                                precise_elapsed_text(event.elapsed or 0.0)
+                                or ""
                             )
                             + "[/gray78]",
                             call_id="[gray78]"
@@ -2660,8 +2663,12 @@ class FancyTheme(Theme):
                     event_log.append(
                         (
                             "["
-                            + precisedelta(
-                                timedelta(seconds=event.elapsed or 0.0)
+                            + (
+                                precise_elapsed_text(
+                                    event.elapsed or 0.0,
+                                    minimum_unit=None,
+                                )
+                                or ""
                             )
                             + f"] <{event.type}>: {event.payload}"
                             if event.payload and event.elapsed
@@ -3846,15 +3853,15 @@ def _fancy_tool_result_line(
 ) -> str:
     elapsed = (
         " in [gray78]"
-        + precisedelta(
-            timedelta(seconds=result.elapsed_seconds),
-            minimum_unit="microseconds",
-        )
+        + (precise_elapsed_text(result.elapsed_seconds) or "")
         + "[/gray78]"
         if result.elapsed_seconds is not None
         else ""
     )
-    result_style = "red" if result.status == "error" else "spring_green3"
+    result_style = tool_status_style(
+        result.status,
+        success_style="spring_green3",
+    )
     return (
         "Executed tool [gray78]"
         + result.name
@@ -3961,11 +3968,8 @@ def _fancy_summary_text(*values: str | None) -> str:
 
 
 def _fancy_elapsed_text(elapsed: float | None) -> str:
-    return (
-        "[" + precisedelta(timedelta(seconds=elapsed)) + "] "
-        if elapsed is not None
-        else ""
-    )
+    text = precise_elapsed_text(elapsed, minimum_unit=None)
+    return "[" + text + "] " if text else ""
 
 
 def _fancy_token_id(token_id: int | str | None) -> str:
