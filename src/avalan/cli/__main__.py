@@ -1407,6 +1407,14 @@ class CLI:
             help="Confirm tool calls before execution",
         )
         agent_run_parser.add_argument(
+            "--input-file",
+            action="append",
+            help=(
+                "Attach a local file as native input for text generation. "
+                "May be specified multiple times."
+            ),
+        )
+        agent_run_parser.add_argument(
             "--tool-format",
             type=str,
             choices=[t.value for t in ToolFormat],

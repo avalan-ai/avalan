@@ -101,6 +101,20 @@ class AgentParserOptionsTestCase(TestCase):
         )
         self.assertEqual(args.tool_graph_file, "chart.png")
 
+    def test_run_parser_accepts_input_files(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "run",
+                "spec.toml",
+                "--input-file",
+                "doc-1.pdf",
+                "--input-file",
+                "doc-2.pdf",
+            ]
+        )
+        self.assertEqual(args.input_file, ["doc-1.pdf", "doc-2.pdf"])
+
     def test_serve_parser_protocol_option(self) -> None:
         args = self.parser.parse_args(
             [

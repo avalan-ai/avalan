@@ -2,10 +2,12 @@ import tomllib
 import unittest
 from argparse import Namespace
 from asyncio import CancelledError
+from base64 import b64encode
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from io import StringIO
 from logging import getLogger
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
 from typing import Any, cast
@@ -24,6 +26,7 @@ from avalan.entities import (
     GenerationCacheStrategy,
     GenerationSettings,
     Message,
+    MessageContentFile,
     MessageRole,
     Modality,
     Operation,
@@ -1343,6 +1346,99 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.console.print.assert_any_call("agent_panel")
         self.assertEqual(len(self.console.print.call_args_list), 1)
+
+    async def test_run_accepts_native_pdf_input_without_prompt(self):
+        class DummyOrchestratorResponse:
+            pass
+
+        with NamedTemporaryFile(suffix=".pdf") as tmp:
+            tmp.write(b"%PDF-1.7")
+            tmp.flush()
+            self.args.input_file = [tmp.name]
+            self.orch.return_value = DummyOrchestratorResponse()
+
+            with (
+                patch.object(agent_cmds, "get_input", return_value=None),
+                patch.object(
+                    agent_cmds,
+                    "AsyncExitStack",
+                    return_value=self.dummy_stack,
+                ),
+                patch.object(
+                    agent_cmds.OrchestratorLoader,
+                    "from_file",
+                    new=AsyncMock(return_value=self.orch),
+                ),
+                patch.object(
+                    agent_cmds, "token_generation", new_callable=AsyncMock
+                ) as tg,
+                patch.object(
+                    agent_cmds,
+                    "OrchestratorResponse",
+                    DummyOrchestratorResponse,
+                ),
+            ):
+                await agent_cmds.agent_run(
+                    self.args,
+                    self.console,
+                    self.theme,
+                    self.hub,
+                    self.logger,
+                    1,
+                )
+
+        self.orch.assert_awaited_once()
+        request_input = self.orch.await_args.args[0]
+        self.assertIsInstance(request_input, Message)
+        self.assertEqual(request_input.role, MessageRole.USER)
+        assert isinstance(request_input.content, list)
+        self.assertEqual(
+            request_input.content,
+            [
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "file_data": b64encode(b"%PDF-1.7").decode("ascii"),
+                        "filename": Path(tmp.name).name,
+                        "mime_type": "application/pdf",
+                    },
+                )
+            ],
+        )
+        tg.assert_awaited_once()
+        self.assertEqual(tg.await_args.kwargs["input_string"], "")
+
+    async def test_run_rejects_missing_native_input_file(self):
+        self.args.input_file = ["/tmp/avalan-missing-agent-input.pdf"]
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="Summarize"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg,
+        ):
+            with self.assertRaisesRegex(
+                AssertionError, "Input file not found"
+            ):
+                await agent_cmds.agent_run(
+                    self.args,
+                    self.console,
+                    self.theme,
+                    self.hub,
+                    self.logger,
+                    1,
+                )
+
+        self.orch.assert_not_awaited()
+        tg.assert_not_awaited()
 
     async def test_run_from_file_forwards_shell_settings(self):
         self.args.tool_shell_max_stdout_bytes = 2048
