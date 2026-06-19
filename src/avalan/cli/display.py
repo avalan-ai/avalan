@@ -26,6 +26,7 @@ class CliStreamDisplayConfig:
     display_probabilities_sample_minimum: float
     display_time_to_n_token: int | None
     display_reasoning_time: bool
+    display_reasoning: bool = False
 
     def __post_init__(self) -> None:
         assert isinstance(self.quiet, bool)
@@ -55,6 +56,7 @@ class CliStreamDisplayConfig:
             and self.display_time_to_n_token > 0
         )
         assert isinstance(self.display_reasoning_time, bool)
+        assert isinstance(self.display_reasoning, bool)
 
     @property
     def diagnostic_channel(self) -> DiagnosticChannel:
@@ -192,4 +194,5 @@ def cli_stream_display_config(
         display_reasoning_time=not bool(
             getattr(args, "skip_display_reasoning_time", False)
         ),
+        display_reasoning=bool(getattr(args, "display_reasoning", False)),
     )

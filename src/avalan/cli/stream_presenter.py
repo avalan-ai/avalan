@@ -498,7 +498,7 @@ def _theme_token_render_state(
             _render_token_from_display_snapshot(display_token)
             for display_token in snapshot.display_tokens
         ),
-        display_reasoning=bool(snapshot.reasoning_text),
+        display_reasoning=display_config.display_reasoning,
         display_tools=display_config.show_tools,
         input_token_count=(
             snapshot.token_counts.input_tokens

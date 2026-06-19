@@ -182,6 +182,7 @@ def _recorded_state_call(
     call["thinking_text_tokens"] = list(
         getattr(state, "reasoning_text_tokens")
     )
+    call["display_reasoning"] = getattr(state, "display_reasoning")
     call["tool_text_tokens"] = list(getattr(state, "tool_text_tokens"))
     call["answer_text_tokens"] = list(getattr(state, "answer_text_tokens"))
     call["tokens"] = [
@@ -866,6 +867,7 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
         self.assertIs(call["display_probabilities"], True)
         self.assertEqual(call["pick"], 2)
         self.assertEqual(call["thinking_text_tokens"], ["think"])
+        self.assertIs(call["display_reasoning"], False)
         self.assertEqual(call["tool_text_tokens"], ['{"x": 1}'])
         self.assertEqual(call["answer_text_tokens"], ["Hello"])
         self.assertEqual(call["input_token_count"], 9)
@@ -921,6 +923,40 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
                 )
             )
         )
+
+    async def test_live_adapter_respects_hidden_reasoning_config(
+        self,
+    ) -> None:
+        config = _config(display_reasoning=False, stats=True)
+        theme = RecordingTheme()
+        presenter = LegacyThemeStreamPresenter(theme, getLogger(__name__))
+
+        await _collect(
+            presenter,
+            _request(
+                config, _snapshot(config, answer="Hello", reasoning="think")
+            ),
+        )
+
+        self.assertEqual(theme.calls[0]["thinking_text_tokens"], ["think"])
+        self.assertIs(theme.calls[0]["display_reasoning"], False)
+
+    async def test_live_adapter_enables_reasoning_when_configured(
+        self,
+    ) -> None:
+        config = _config(display_reasoning=True, stats=True)
+        theme = RecordingTheme()
+        presenter = LegacyThemeStreamPresenter(theme, getLogger(__name__))
+
+        await _collect(
+            presenter,
+            _request(
+                config, _snapshot(config, answer="Hello", reasoning="think")
+            ),
+        )
+
+        self.assertEqual(theme.calls[0]["thinking_text_tokens"], ["think"])
+        self.assertIs(theme.calls[0]["display_reasoning"], True)
 
     async def test_live_adapter_accepts_synchronous_frame_iterable(
         self,
