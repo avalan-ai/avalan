@@ -138,18 +138,22 @@ Public shell tools:
 | `shell.tail` | Read trailing lines from one text file. | core | `coreutils` |
 | `shell.ls` | List a directory or file path. | core | `coreutils` |
 | `shell.cat` | Read a bounded text file. | core | `coreutils` |
+| `shell.file` | Identify regular file types. | core | `file` |
+| `shell.find` | Find entries with constrained selectors. | core | `findutils` |
 | `shell.wc` | Count lines, words, or bytes. | core | `coreutils` |
 | `shell.awk` | Select constrained fields and lines. | text filters | `gawk` or `mawk` |
 | `shell.sed` | Select constrained line ranges and patterns. | text filters | `sed` |
 | `shell.jq` | Transform JSON with a constrained jq filter. | JSON | `jq` |
+| `shell.pdfinfo` | Inspect PDF metadata and page boxes. | Poppler | `poppler-utils` or `poppler` |
 | `shell.pdftotext` | Extract text from a PDF. | Poppler | `poppler-utils` or `poppler` |
 | `shell.pdftoppm` | Rasterize bounded PDF pages. | Poppler | `poppler-utils` or `poppler` |
 | `shell.tesseract` | Recognize text in an image. | OCR | `tesseract-ocr` or `tesseract` |
 
-Media tools (`shell.pdftotext`, `shell.pdftoppm`, and `shell.tesseract`) are
-disabled unless `allow_media_tools = true`. Optional binaries are resolved at
-invocation time: if a configured command is not installed, the tool returns a
-formatted `command_unavailable` result instead of failing agent loading.
+Media tools (`shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`, and
+`shell.tesseract`) are disabled unless `allow_media_tools = true`. Optional
+binaries are resolved at invocation time: if a configured command is not
+installed, the tool returns a formatted `command_unavailable` result instead
+of failing agent loading.
 
 The shell toolset does not provide generic shell execution. It never evaluates
 model-supplied shell strings, never accepts arbitrary executable paths from

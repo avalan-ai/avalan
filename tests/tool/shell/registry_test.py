@@ -35,10 +35,13 @@ class ShellRegistryTest(TestCase):
                 "tail",
                 "ls",
                 "cat",
+                "file",
+                "find",
                 "wc",
                 "awk",
                 "sed",
                 "jq",
+                "pdfinfo",
                 "pdftotext",
                 "pdftoppm",
                 "tesseract",
@@ -71,9 +74,14 @@ class ShellRegistryTest(TestCase):
     def test_command_specific_output_filters_are_owned_by_modules(
         self,
     ) -> None:
+        find_module = import_module("avalan.tool.shell.commands.find")
         rg_module = import_module("avalan.tool.shell.commands.rg")
         ls_module = import_module("avalan.tool.shell.commands.ls")
 
+        self.assertIs(
+            SHELL_COMMAND_DEFINITIONS["find"].output_filter,
+            find_module.filter_output,
+        )
         self.assertIs(
             SHELL_COMMAND_DEFINITIONS["rg"].output_filter,
             rg_module.filter_output,
@@ -94,6 +102,7 @@ class ShellRegistryTest(TestCase):
             groups_by_id["awk"], ShellDependencyGroup.TEXT_FILTERS
         )
         self.assertEqual(groups_by_id["jq"], ShellDependencyGroup.JSON)
+        self.assertEqual(groups_by_id["pdfinfo"], ShellDependencyGroup.POPPLER)
         self.assertEqual(
             groups_by_id["pdftoppm"], ShellDependencyGroup.POPPLER
         )
@@ -127,13 +136,15 @@ class ShellRegistryTest(TestCase):
 
         self.assertEqual(
             media_commands,
-            {"pdftotext", "pdftoppm", "tesseract"},
+            {"pdfinfo", "pdftotext", "pdftoppm", "tesseract"},
         )
         self.assertEqual(
             no_double_dash_commands,
             {
                 "awk",
+                "find",
                 "sed",
+                "pdfinfo",
                 "pdftotext",
                 "pdftoppm",
                 "tesseract",
@@ -195,7 +206,7 @@ class ShellRegistryTest(TestCase):
             definition.output_filter(object())  # type: ignore[arg-type]
 
     def test_command_output_filters_reject_invalid_values(self) -> None:
-        for command_id in ("rg", "ls"):
+        for command_id in ("rg", "ls", "find"):
             with self.subTest(command_id=command_id):
                 with self.assertRaises(AssertionError):
                     SHELL_COMMAND_DEFINITIONS[command_id].output_filter(

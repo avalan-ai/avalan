@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, patch
 
+from avalan.tool.shell.commands.find import filter_output as filter_find_output
 from avalan.tool.shell.commands.helpers import (
     _media_path_argument,
     path_matches_sensitive_denylist,
@@ -875,6 +876,8 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             (root / "file.txt").write_text("first\nsecond\n", encoding="utf-8")
             (root / "-dash.txt").write_text("dash\n", encoding="utf-8")
             (root / "directory").mkdir()
+            (root / "!").mkdir()
+            (root / "(").mkdir()
             settings = ShellToolSettings(
                 workspace_root=str(root),
                 max_head_lines=5,
@@ -904,11 +907,55 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     paths=(_path("file.txt"),),
                 )
             )
+            file_type = await policy.normalize(
+                _request(
+                    tool_name="shell.file",
+                    command="file",
+                    options={"brief": True, "mime_type": True},
+                    paths=(_path("file.txt", kind="file"),),
+                )
+            )
             listing = await policy.normalize(
                 _request(
                     tool_name="shell.ls",
                     command="ls",
                     paths=(_path("directory", kind="directory"),),
+                )
+            )
+            found_file = await policy.normalize(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={
+                        "max_depth": 2,
+                        "entry_type": "file",
+                        "name": "file.txt",
+                    },
+                    paths=(_path("directory", kind="directory"),),
+                )
+            )
+            found_directory = await policy.normalize(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={
+                        "max_depth": 0,
+                        "entry_type": "directory",
+                    },
+                )
+            )
+            found_bang = await policy.normalize(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    paths=(_path("!", kind="directory"),),
+                )
+            )
+            found_paren = await policy.normalize(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    paths=(_path("(", kind="directory"),),
                 )
             )
             wc = await policy.normalize(
@@ -931,7 +978,42 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(tail.argv, ("tail", "-n", "80", "--", "-dash.txt"))
         self.assertEqual(cat.argv, ("cat", "--", "file.txt"))
+        self.assertEqual(
+            file_type.argv,
+            ("file", "--brief", "--mime-type", "--", "file.txt"),
+        )
         self.assertEqual(listing.argv, ("ls", "-1p", "--", "directory"))
+        self.assertEqual(
+            found_file.display_argv,
+            (
+                "find",
+                "directory",
+                "-maxdepth",
+                "2",
+                "-type",
+                "f",
+                "-name",
+                "file.txt",
+                "-print",
+            ),
+        )
+        self.assertIn("-prune", found_file.argv)
+        self.assertIn("-name", found_file.argv)
+        self.assertIn(".*", found_file.argv)
+        self.assertIn(".ssh", found_file.argv)
+        self.assertNotIn(".ssh", found_file.display_argv)
+        self.assertEqual(
+            found_file.argv[-5:],
+            ("-type", "f", "-name", "file.txt", "-print"),
+        )
+        self.assertEqual(
+            found_directory.display_argv,
+            ("find", ".", "-maxdepth", "0", "-type", "d", "-print"),
+        )
+        self.assertEqual(found_bang.argv[1], "./!")
+        self.assertEqual(found_bang.display_argv[1], "./!")
+        self.assertEqual(found_paren.argv[1], "./(")
+        self.assertEqual(found_paren.display_argv[1], "./(")
         self.assertEqual(
             wc.argv,
             ("wc", "-l", "-w", "-c", "--", "file.txt", "-dash.txt"),
@@ -964,6 +1046,68 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             directory.argv, ("ls", "-1p", "-A", "--", "directory")
         )
+
+    async def test_find_hidden_behavior_is_trusted_configuration_only(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / ".hidden").mkdir()
+            (root / "-dash").mkdir()
+
+            default_find = await ExecutionPolicy(
+                settings=ShellToolSettings(workspace_root=str(root)),
+            ).normalize(_request(tool_name="shell.find", command="find"))
+            hidden_find = await ExecutionPolicy(
+                settings=ShellToolSettings(
+                    workspace_root=str(root),
+                    allow_hidden=True,
+                ),
+            ).normalize(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={
+                        "max_depth": 1,
+                        "entry_type": "any",
+                        "name": ".hidden",
+                    },
+                    paths=(_path(".hidden", kind="directory"),),
+                )
+            )
+            dash_find = await ExecutionPolicy(
+                settings=ShellToolSettings(workspace_root=str(root)),
+            ).normalize(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    paths=(_path("-dash", kind="directory"),),
+                )
+            )
+
+        self.assertEqual(
+            default_find.display_argv,
+            ("find", ".", "-maxdepth", "3", "-print"),
+        )
+        self.assertIn(".*", default_find.argv)
+        self.assertNotIn(".*", hidden_find.argv)
+        self.assertIn("-iname", hidden_find.argv)
+        self.assertIn(".git", hidden_find.argv)
+        self.assertIn(".env*", hidden_find.argv)
+        self.assertIn("credentials", hidden_find.argv)
+        self.assertIn("*.key", hidden_find.argv)
+        self.assertIn("*.pem", hidden_find.argv)
+        self.assertIn("id_ed25519", hidden_find.argv)
+        self.assertEqual(hidden_find.display_argv[1], ".hidden")
+        self.assertEqual(dash_find.argv[1], "./-dash")
+        self.assertEqual(dash_find.display_argv[1], "./-dash")
+
+    def test_find_output_filter_redacts_denied_paths(self) -> None:
+        filtered = filter_find_output("./visible.txt\n./.env\n./.ssh/key\n")
+
+        self.assertIn("./visible.txt", filtered)
+        self.assertEqual(filtered.count("[redacted_path]"), 2)
+        self.assertNotIn(".ssh", filtered)
 
     async def test_wc_defaults_to_line_count_when_flags_are_false(
         self,
@@ -1049,6 +1193,116 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             ),
             (
                 _request(
+                    tool_name="shell.file",
+                    command="file",
+                    options={"mime": True},
+                    paths=(_path("missing.txt", kind="file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.file",
+                    command="file",
+                    options={"brief": 1},
+                    paths=(_path("missing.txt", kind="file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(tool_name="shell.file", command="file"),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"expression": "-delete"},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"max_depth": True},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"max_depth": 11},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"entry_type": "symlink"},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"name": 1},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"name": ""},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"name": "nested/file.txt"},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"name": "file*"},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"name": "bad\nname"},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"name": "a" * 256},
+                ),
+                ShellExecutionErrorCode.ARGUMENT_TOO_LARGE,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"name": ".hidden"},
+                ),
+                ShellExecutionErrorCode.HIDDEN_PATH,
+            ),
+            (
+                _request(
                     tool_name="shell.ls",
                     command="ls",
                     options={"show_hidden": True},
@@ -1097,6 +1351,18 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     error_code,
                     policy=policy,
                 )
+        await self._assert_denied(
+            _request(
+                tool_name="shell.find",
+                command="find",
+                options={"name": ".env"},
+            ),
+            ShellExecutionErrorCode.SENSITIVE_PATH,
+            policy=ExecutionPolicy(
+                settings=ShellToolSettings(allow_hidden=True),
+                resolver=resolver,
+            ),
+        )
         self.assertEqual(resolver.calls, ())
 
     async def test_core_commands_reject_path_mismatches(self) -> None:
@@ -1137,6 +1403,24 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             )
             await self._assert_denied(
                 _request(
+                    tool_name="shell.file",
+                    command="file",
+                    paths=(_path("directory", kind="file"),),
+                ),
+                ShellExecutionErrorCode.DENIED_PATH,
+                policy=policy,
+            )
+            await self._assert_denied(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    paths=(_path("file.txt", kind="text_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+                policy=policy,
+            )
+            await self._assert_denied(
+                _request(
                     tool_name="shell.wc",
                     command="wc",
                     options={
@@ -1163,6 +1447,15 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 _request(
                     tool_name="shell.ls",
                     command="ls",
+                    paths=(_path("missing.txt", kind="file"),),
+                ),
+                ShellExecutionErrorCode.DENIED_PATH,
+                policy=policy,
+            )
+            await self._assert_denied(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
                     paths=(_path("missing.txt", kind="file"),),
                 ),
                 ShellExecutionErrorCode.DENIED_PATH,
@@ -1585,10 +1878,12 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
     async def test_denies_media_command_when_media_tools_disabled(
         self,
     ) -> None:
-        await self._assert_denied(
-            _request(tool_name="shell.pdftotext", command="pdftotext"),
-            ShellExecutionErrorCode.DENIED_COMMAND,
-        )
+        for command in ("pdfinfo", "pdftotext"):
+            with self.subTest(command=command):
+                await self._assert_denied(
+                    _request(tool_name=f"shell.{command}", command=command),
+                    ShellExecutionErrorCode.DENIED_COMMAND,
+                )
 
     async def test_media_commands_build_constrained_argv(self) -> None:
         fixture_root = Path(__file__).parent / "fixtures"
@@ -1604,6 +1899,50 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         )
         policy = ExecutionPolicy(settings=settings, resolver=resolver)
 
+        info = await policy.normalize(
+            _request(
+                tool_name="shell.pdfinfo",
+                command="pdfinfo",
+                options={
+                    "first_page": 1,
+                    "last_page": 2,
+                    "boxes": True,
+                    "iso_dates": True,
+                },
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
+        info_default = await policy.normalize(
+            _request(
+                tool_name="shell.pdfinfo",
+                command="pdfinfo",
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
+        info_boxes_default = await policy.normalize(
+            _request(
+                tool_name="shell.pdfinfo",
+                command="pdfinfo",
+                options={"boxes": True},
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
+        info_last_only = await policy.normalize(
+            _request(
+                tool_name="shell.pdfinfo",
+                command="pdfinfo",
+                options={"last_page": 1},
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
+        info_first_only = await policy.normalize(
+            _request(
+                tool_name="shell.pdfinfo",
+                command="pdfinfo",
+                options={"first_page": 2},
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
         text = await policy.normalize(
             _request(
                 tool_name="shell.pdftotext",
@@ -1644,6 +1983,36 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             )
         )
 
+        self.assertEqual(
+            info.argv,
+            (
+                "pdfinfo",
+                "-f",
+                "1",
+                "-l",
+                "2",
+                "-box",
+                "-isodates",
+                "media/small.pdf",
+            ),
+        )
+        self.assertEqual(info.resource_class, "heavy")
+        self.assertEqual(info.timeout_seconds, 7.0)
+        self.assertEqual(info.metadata["page_range"], {"first": 1, "last": 2})
+        self.assertEqual(info_default.argv, ("pdfinfo", "media/small.pdf"))
+        self.assertNotIn("page_range", info_default.metadata)
+        self.assertEqual(
+            info_boxes_default.argv,
+            ("pdfinfo", "-f", "1", "-l", "1", "-box", "media/small.pdf"),
+        )
+        self.assertEqual(
+            info_last_only.argv,
+            ("pdfinfo", "-f", "1", "-l", "1", "media/small.pdf"),
+        )
+        self.assertEqual(
+            info_first_only.argv,
+            ("pdfinfo", "-f", "2", "-l", "2", "media/small.pdf"),
+        )
         self.assertEqual(
             text.argv,
             (
@@ -1712,7 +2081,16 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         self.assertEqual(ocr.metadata["ocr_thread_limit"], 1)
         self.assertEqual(
             resolver.calls,
-            ("pdftotext", "pdftoppm", "tesseract"),
+            (
+                "pdfinfo",
+                "pdfinfo",
+                "pdfinfo",
+                "pdfinfo",
+                "pdfinfo",
+                "pdftotext",
+                "pdftoppm",
+                "tesseract",
+            ),
         )
 
     async def test_media_paths_without_double_dash_are_disambiguated(
@@ -1735,6 +2113,14 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     paths=(_path("-dash.pdf", kind="pdf_file"),),
                 )
             )
+            info = await policy.normalize(
+                _request(
+                    tool_name="shell.pdfinfo",
+                    command="pdfinfo",
+                    options={"boxes": True},
+                    paths=(_path("-dash.pdf", kind="pdf_file"),),
+                )
+            )
             ocr = await policy.normalize(
                 _request(
                     tool_name="shell.tesseract",
@@ -1745,6 +2131,8 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(pdf.argv[-2], "./-dash.pdf")
         self.assertEqual(pdf.display_argv[-2], "./-dash.pdf")
+        self.assertEqual(info.argv[-1], "./-dash.pdf")
+        self.assertEqual(info.metadata["page_range"], {"first": 1, "last": 1})
         self.assertEqual(ocr.argv[1], "./-dash.pgm")
 
     async def test_denies_binary_text_inputs_before_resolver(self) -> None:
@@ -1857,6 +2245,25 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(spec.command, "wc")
         self.assertEqual(resolver.calls, ("wc",))
+
+    async def test_file_allows_binary_regular_files(self) -> None:
+        fixture_root = Path(__file__).parent / "fixtures" / "filesystem"
+        resolver = _CountingResolver("/usr/bin/file")
+
+        spec = await ExecutionPolicy(
+            settings=ShellToolSettings(workspace_root=str(fixture_root)),
+            resolver=resolver,
+        ).normalize(
+            _request(
+                tool_name="shell.file",
+                command="file",
+                paths=(_path("binary.bin", kind="file"),),
+            )
+        )
+
+        self.assertEqual(spec.command, "file")
+        self.assertEqual(spec.argv, ("file", "--", "binary.bin"))
+        self.assertEqual(resolver.calls, ("file",))
 
     async def test_content_inputs_must_be_available_regular_files(
         self,
@@ -2548,6 +2955,16 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 paths=(_path("media/small.pdf", kind="pdf_file"),),
             )
         )
+        pdf_info_spec = await ExecutionPolicy(
+            settings=settings,
+            resolver=resolver,
+        ).normalize(
+            _request(
+                tool_name="shell.pdfinfo",
+                command="pdfinfo",
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
         image_spec = await ExecutionPolicy(
             settings=settings,
             resolver=resolver,
@@ -2560,6 +2977,7 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(pdf_spec.command, "pdftotext")
+        self.assertEqual(pdf_info_spec.command, "pdfinfo")
         self.assertEqual(image_spec.command, "tesseract")
         await self._assert_denied(
             _request(
@@ -2647,6 +3065,42 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             max_tesseract_dpi=300,
         )
         cases = (
+            (
+                _request(
+                    tool_name="shell.pdfinfo",
+                    command="pdfinfo",
+                    options={"js": True},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.pdfinfo",
+                    command="pdfinfo",
+                    options={"boxes": 1},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.pdfinfo",
+                    command="pdfinfo",
+                    options={"first_page": 3, "last_page": 2},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_PAGE_RANGE,
+            ),
+            (
+                _request(
+                    tool_name="shell.pdfinfo",
+                    command="pdfinfo",
+                    options={"last_page": 3},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.PDF_PAGE_CAP_EXCEEDED,
+            ),
             (
                 _request(
                     tool_name="shell.pdftotext",

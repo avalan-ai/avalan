@@ -496,7 +496,11 @@ async def _enforce_content_policy(
                 )
             else:
                 await _enforce_regular_file_inputs(paths)
+        case "file":
+            await _enforce_regular_file_inputs(paths)
         case "ls":
+            await _enforce_listing_inputs(paths)
+        case "find":
             await _enforce_listing_inputs(paths)
         case "awk" | "sed":
             await _enforce_text_inputs(
@@ -505,7 +509,7 @@ async def _enforce_content_policy(
             )
         case "jq":
             await _enforce_json_inputs(paths, settings=settings)
-        case "pdftotext" | "pdftoppm":
+        case "pdfinfo" | "pdftotext" | "pdftoppm":
             await _enforce_pdf_inputs(paths, settings=settings)
         case "tesseract":
             await _enforce_image_inputs(paths, settings=settings)
@@ -730,7 +734,7 @@ def _timeout_limits(
     command: str,
     settings: ShellToolSettings,
 ) -> tuple[float, float]:
-    if command in ("pdftotext", "pdftoppm"):
+    if command in ("pdfinfo", "pdftotext", "pdftoppm"):
         return (
             settings.default_pdf_timeout_seconds,
             settings.max_pdf_timeout_seconds,

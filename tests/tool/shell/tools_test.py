@@ -17,9 +17,12 @@ from avalan.tool.shell.settings import ShellToolSettings
 from avalan.tool.shell.tools import (
     AwkTool,
     CatTool,
+    FileTool,
+    FindTool,
     HeadTool,
     JqTool,
     LsTool,
+    PdfInfoTool,
     PdfToPpmTool,
     PdfToTextTool,
     RgTool,
@@ -258,6 +261,114 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self.assertEqual(request.max_stdout_bytes, 400)
         self.assertEqual(request.max_stderr_bytes, 120)
 
+    async def test_file_builds_regular_file_request(self) -> None:
+        spec = _spec("file")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("file", stdout="text/plain\n"))
+        formatter = _RecordingFormatter()
+        tool = FileTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=formatter,
+        )
+
+        output = await tool(
+            ("README.md", "data.bin"),
+            cwd="docs",
+            brief=True,
+            mime_type=True,
+            timeout_seconds=2.5,
+            max_stdout_bytes=450,
+            max_stderr_bytes=125,
+            context=ToolCallContext(),
+        )
+
+        self.assertEqual(output, "formatted:shell.file:completed")
+        self.assertEqual(executor.specs, [spec])
+        self.assertEqual(len(policy.requests), 1)
+        request = policy.requests[0]
+        self.assertEqual(request.tool_name, "shell.file")
+        self.assertEqual(request.command, "file")
+        self.assertEqual(request.options, {"brief": True, "mime_type": True})
+        self.assertEqual(
+            request.paths,
+            (
+                PathOperand(
+                    name="path_0",
+                    path="README.md",
+                    kind="file",
+                    access="read",
+                ),
+                PathOperand(
+                    name="path_1",
+                    path="data.bin",
+                    kind="file",
+                    access="read",
+                ),
+            ),
+        )
+        self.assertEqual(request.cwd, "docs")
+        self.assertEqual(request.timeout_seconds, 2.5)
+        self.assertEqual(request.max_stdout_bytes, 450)
+        self.assertEqual(request.max_stderr_bytes, 125)
+
+    async def test_find_builds_structured_search_request(self) -> None:
+        spec = _spec("find")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("find", stdout="./README.md\n"))
+        formatter = _RecordingFormatter()
+        tool = FindTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=formatter,
+        )
+
+        output = await tool(
+            ("src", "tests"),
+            cwd=".",
+            max_depth=2,
+            entry_type="file",
+            name="README.md",
+            timeout_seconds=2.75,
+            max_stdout_bytes=475,
+            max_stderr_bytes=127,
+            context=ToolCallContext(),
+        )
+
+        self.assertEqual(output, "formatted:shell.find:completed")
+        self.assertEqual(executor.specs, [spec])
+        self.assertEqual(len(policy.requests), 1)
+        request = policy.requests[0]
+        self.assertEqual(request.tool_name, "shell.find")
+        self.assertEqual(request.command, "find")
+        self.assertEqual(
+            request.options,
+            {"max_depth": 2, "entry_type": "file", "name": "README.md"},
+        )
+        self.assertEqual(
+            request.paths,
+            (
+                PathOperand(
+                    name="path_0",
+                    path="src",
+                    kind="any",
+                    access="read",
+                ),
+                PathOperand(
+                    name="path_1",
+                    path="tests",
+                    kind="any",
+                    access="read",
+                ),
+            ),
+        )
+        self.assertEqual(request.cwd, ".")
+        self.assertEqual(request.timeout_seconds, 2.75)
+        self.assertEqual(request.max_stdout_bytes, 475)
+        self.assertEqual(request.max_stderr_bytes, 127)
+
     async def test_wc_builds_multi_path_request(self) -> None:
         spec = _spec("wc")
         policy = _FakePolicy(spec)
@@ -339,6 +450,35 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
             {"lines": False, "words": False, "count_bytes": False},
         )
         self.assertEqual(len(executor.specs), 1)
+
+    async def test_file_and_find_preserve_default_options(self) -> None:
+        cases = (
+            (
+                "file",
+                _file_tool,
+                {"paths": ("README.md",)},
+                {"brief": False, "mime_type": False},
+            ),
+            (
+                "find",
+                _find_tool,
+                {},
+                {"max_depth": 3, "entry_type": "any", "name": None},
+            ),
+        )
+        for command, tool, arguments, options in cases:
+            with self.subTest(command=command):
+                policy = _FakePolicy(_spec(command))
+                executor = _FakeExecutor(_result(command))
+
+                await tool(
+                    policy,
+                    executor,
+                    _RecordingFormatter(),
+                )(**arguments, context=ToolCallContext())
+
+                self.assertEqual(policy.requests[0].options, options)
+                self.assertEqual(len(executor.specs), 1)
 
     async def test_awk_builds_structured_filter_request(self) -> None:
         spec = _spec("awk")
@@ -541,6 +681,62 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self.assertEqual(request.max_stdout_bytes, 800)
         self.assertEqual(request.max_stderr_bytes, 180)
 
+    async def test_pdfinfo_builds_structured_pdf_request(self) -> None:
+        spec = _spec("pdfinfo")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("pdfinfo", stdout="Pages: 1\n"))
+        formatter = _RecordingFormatter()
+        tool = PdfInfoTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=formatter,
+        )
+
+        output = await tool(
+            "docs/report.pdf",
+            first_page=2,
+            last_page=4,
+            boxes=True,
+            iso_dates=True,
+            cwd="docs",
+            timeout_seconds=5.5,
+            max_stdout_bytes=850,
+            max_stderr_bytes=185,
+            context=ToolCallContext(),
+        )
+
+        self.assertEqual(output, "formatted:shell.pdfinfo:completed")
+        self.assertEqual(executor.specs, [spec])
+        self.assertEqual(len(policy.requests), 1)
+        request = policy.requests[0]
+        self.assertEqual(request.tool_name, "shell.pdfinfo")
+        self.assertEqual(request.command, "pdfinfo")
+        self.assertEqual(
+            request.options,
+            {
+                "first_page": 2,
+                "last_page": 4,
+                "boxes": True,
+                "iso_dates": True,
+            },
+        )
+        self.assertEqual(
+            request.paths,
+            (
+                PathOperand(
+                    name="path_0",
+                    path="docs/report.pdf",
+                    kind="pdf_file",
+                    access="read",
+                ),
+            ),
+        )
+        self.assertEqual(request.cwd, "docs")
+        self.assertEqual(request.timeout_seconds, 5.5)
+        self.assertEqual(request.max_stdout_bytes, 850)
+        self.assertEqual(request.max_stderr_bytes, 185)
+
     async def test_pdftotext_builds_structured_pdf_request(self) -> None:
         spec = _spec("pdftotext")
         policy = _FakePolicy(spec)
@@ -716,6 +912,17 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
     async def test_media_wrappers_preserve_default_options(self) -> None:
         cases = (
             (
+                "pdfinfo",
+                _pdfinfo_tool,
+                {"path": "report.pdf"},
+                {
+                    "first_page": None,
+                    "last_page": None,
+                    "boxes": False,
+                    "iso_dates": False,
+                },
+            ),
+            (
                 "pdftotext",
                 _pdftotext_tool,
                 {"path": "report.pdf"},
@@ -833,6 +1040,8 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         for command, tool, arguments in (
             ("ls", _ls_tool, {}),
             ("cat", _cat_tool, {"path": "README.md"}),
+            ("file", _file_tool, {"paths": ("README.md",)}),
+            ("find", _find_tool, {"paths": ("src",)}),
             ("wc", _wc_tool, {"paths": ("README.md",)}),
         ):
             with self.subTest(command=command):
@@ -899,6 +1108,7 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
 
     async def test_media_policy_denials_do_not_call_executor(self) -> None:
         for command, tool, arguments in (
+            ("pdfinfo", _pdfinfo_tool, {"path": "report.pdf"}),
             ("pdftotext", _pdftotext_tool, {"path": "report.pdf"}),
             ("pdftoppm", _pdftoppm_tool, {"path": "report.pdf"}),
             ("tesseract", _tesseract_tool, {"path": "page.png"}),
@@ -999,6 +1209,8 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         for command, tool, arguments in (
             ("ls", _ls_tool, {"path": ""}),
             ("cat", _cat_tool, {"path": ""}),
+            ("file", _file_tool, {"paths": "README.md"}),
+            ("find", _find_tool, {"paths": "src"}),
             ("wc", _wc_tool, {"paths": "README.md"}),
         ):
             with self.subTest(command=command):
@@ -1096,6 +1308,11 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
 
     async def test_invalid_media_arguments_fail_before_policy(self) -> None:
         invalid_cases = (
+            (
+                "pdfinfo",
+                _pdfinfo_tool,
+                {"path": ""},
+            ),
             (
                 "pdftotext",
                 _pdftotext_tool,
@@ -1377,6 +1594,22 @@ class ShellToolSchemaTest(TestCase):
                     executor=_FakeExecutor(_result("cat")),
                     formatter=_RecordingFormatter(),
                 ),
+                FileTool(
+                    settings=ShellToolSettings(),
+                    policy=_FakePolicy(  # type: ignore[arg-type]
+                        _spec("file")
+                    ),
+                    executor=_FakeExecutor(_result("file")),
+                    formatter=_RecordingFormatter(),
+                ),
+                FindTool(
+                    settings=ShellToolSettings(),
+                    policy=_FakePolicy(  # type: ignore[arg-type]
+                        _spec("find")
+                    ),
+                    executor=_FakeExecutor(_result("find")),
+                    formatter=_RecordingFormatter(),
+                ),
                 WcTool(
                     settings=ShellToolSettings(),
                     policy=_FakePolicy(_spec("wc")),  # type: ignore[arg-type]
@@ -1399,6 +1632,14 @@ class ShellToolSchemaTest(TestCase):
                     settings=ShellToolSettings(),
                     policy=_FakePolicy(_spec("jq")),  # type: ignore[arg-type]
                     executor=_FakeExecutor(_result("jq")),
+                    formatter=_RecordingFormatter(),
+                ),
+                PdfInfoTool(
+                    settings=ShellToolSettings(),
+                    policy=_FakePolicy(  # type: ignore[arg-type]
+                        _spec("pdfinfo")
+                    ),
+                    executor=_FakeExecutor(_result("pdfinfo")),
                     formatter=_RecordingFormatter(),
                 ),
                 PdfToTextTool(
@@ -1446,10 +1687,13 @@ class ShellToolSchemaTest(TestCase):
                 "shell.tail",
                 "shell.ls",
                 "shell.cat",
+                "shell.file",
+                "shell.find",
                 "shell.wc",
                 "shell.awk",
                 "shell.sed",
                 "shell.jq",
+                "shell.pdfinfo",
                 "shell.pdftotext",
                 "shell.pdftoppm",
                 "shell.tesseract",
@@ -1458,10 +1702,16 @@ class ShellToolSchemaTest(TestCase):
         self.assertNotIn("context", parameters["shell.rg"]["properties"])
         self.assertNotIn("context", parameters["shell.ls"]["properties"])
         self.assertNotIn("context", parameters["shell.cat"]["properties"])
+        self.assertNotIn("context", parameters["shell.file"]["properties"])
+        self.assertNotIn("context", parameters["shell.find"]["properties"])
         self.assertNotIn("context", parameters["shell.wc"]["properties"])
         self.assertNotIn("context", parameters["shell.awk"]["properties"])
         self.assertNotIn("context", parameters["shell.sed"]["properties"])
         self.assertNotIn("context", parameters["shell.jq"]["properties"])
+        self.assertNotIn(
+            "context",
+            parameters["shell.pdfinfo"]["properties"],
+        )
         self.assertNotIn(
             "context",
             parameters["shell.pdftotext"]["properties"],
@@ -1495,6 +1745,8 @@ class ShellToolSchemaTest(TestCase):
         self.assertEqual(parameters["shell.tail"]["required"], ["path"])
         self.assertEqual(parameters["shell.ls"]["required"], [])
         self.assertEqual(parameters["shell.cat"]["required"], ["path"])
+        self.assertEqual(parameters["shell.file"]["required"], ["paths"])
+        self.assertEqual(parameters["shell.find"]["required"], [])
         self.assertEqual(parameters["shell.wc"]["required"], ["paths"])
         self.assertEqual(parameters["shell.awk"]["required"], ["paths"])
         self.assertEqual(parameters["shell.sed"]["required"], ["paths"])
@@ -1502,9 +1754,39 @@ class ShellToolSchemaTest(TestCase):
             parameters["shell.jq"]["required"],
             ["filter", "paths"],
         )
+        self.assertEqual(parameters["shell.pdfinfo"]["required"], ["path"])
         self.assertEqual(parameters["shell.pdftotext"]["required"], ["path"])
         self.assertEqual(parameters["shell.pdftoppm"]["required"], ["path"])
         self.assertEqual(parameters["shell.tesseract"]["required"], ["path"])
+        self.assertEqual(
+            set(parameters["shell.file"]["properties"]),
+            {
+                "paths",
+                "cwd",
+                "brief",
+                "mime_type",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            },
+        )
+        self.assertEqual(
+            set(parameters["shell.find"]["properties"]),
+            {
+                "paths",
+                "cwd",
+                "max_depth",
+                "entry_type",
+                "name",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            },
+        )
+        self.assertEqual(
+            parameters["shell.find"]["properties"]["entry_type"]["enum"],
+            ["any", "file", "directory"],
+        )
         self.assertEqual(
             set(parameters["shell.wc"]["properties"]),
             {
@@ -1568,6 +1850,21 @@ class ShellToolSchemaTest(TestCase):
         self.assertNotIn("script", parameters["shell.awk"]["properties"])
         self.assertNotIn("script", parameters["shell.sed"]["properties"])
         self.assertNotIn("command", parameters["shell.jq"]["properties"])
+        self.assertNotIn("expression", parameters["shell.find"]["properties"])
+        self.assertEqual(
+            set(parameters["shell.pdfinfo"]["properties"]),
+            {
+                "path",
+                "first_page",
+                "last_page",
+                "boxes",
+                "iso_dates",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            },
+        )
         self.assertEqual(
             set(parameters["shell.pdftotext"]["properties"]),
             {
@@ -1623,6 +1920,7 @@ class ShellToolSchemaTest(TestCase):
             ["txt"],
         )
         for name in (
+            "shell.pdfinfo",
             "shell.pdftotext",
             "shell.pdftoppm",
             "shell.tesseract",
@@ -1652,6 +1950,32 @@ def _cat_tool(
     formatter: "_RecordingFormatter",
 ) -> CatTool:
     return CatTool(
+        settings=ShellToolSettings(),
+        policy=policy,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        formatter=formatter,
+    )
+
+
+def _file_tool(
+    policy: object,
+    executor: object,
+    formatter: "_RecordingFormatter",
+) -> FileTool:
+    return FileTool(
+        settings=ShellToolSettings(),
+        policy=policy,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        formatter=formatter,
+    )
+
+
+def _find_tool(
+    policy: object,
+    executor: object,
+    formatter: "_RecordingFormatter",
+) -> FindTool:
+    return FindTool(
         settings=ShellToolSettings(),
         policy=policy,  # type: ignore[arg-type]
         executor=executor,  # type: ignore[arg-type]
@@ -1704,6 +2028,19 @@ def _jq_tool(
     formatter: "_RecordingFormatter",
 ) -> JqTool:
     return JqTool(
+        settings=ShellToolSettings(),
+        policy=policy,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        formatter=formatter,
+    )
+
+
+def _pdfinfo_tool(
+    policy: object,
+    executor: object,
+    formatter: "_RecordingFormatter",
+) -> PdfInfoTool:
+    return PdfInfoTool(
         settings=ShellToolSettings(),
         policy=policy,  # type: ignore[arg-type]
         executor=executor,  # type: ignore[arg-type]

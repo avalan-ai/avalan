@@ -369,6 +369,130 @@ class CatTool(_ShellCommandTool):
         )
 
 
+class FileTool(_ShellCommandTool):
+    """Identify workspace file types.
+
+    Args:
+        paths: Workspace-relative regular file paths to inspect.
+        cwd: Workspace-relative working directory for the command.
+        brief: Omit file names from command output.
+        mime_type: Emit MIME type output.
+        timeout_seconds: Optional execution timeout in seconds.
+        max_stdout_bytes: Optional stdout byte cap.
+        max_stderr_bytes: Optional stderr byte cap.
+
+    Returns:
+        Formatted shell execution result.
+    """
+
+    def __init__(
+        self,
+        *,
+        settings: ShellToolSettings,
+        policy: ExecutionPolicy,
+        executor: CommandExecutor,
+        formatter: ShellResultFormatter | None = None,
+    ) -> None:
+        super().__init__(
+            command="file",
+            settings=settings,
+            policy=policy,
+            executor=executor,
+            formatter=formatter,
+        )
+
+    async def __call__(
+        self,
+        paths: Sequence[str],
+        cwd: str | None = None,
+        brief: bool = False,
+        mime_type: bool = False,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+        *,
+        context: ToolCallContext,
+    ) -> str:
+        return await self._execute_request(
+            ShellCommandRequest(
+                tool_name="shell.file",
+                command="file",
+                options={"brief": brief, "mime_type": mime_type},
+                paths=_path_operands(paths, kind="file"),
+                cwd=cwd,
+                timeout_seconds=timeout_seconds,
+                max_stdout_bytes=max_stdout_bytes,
+                max_stderr_bytes=max_stderr_bytes,
+            ),
+            context=context,
+        )
+
+
+class FindTool(_ShellCommandTool):
+    """Find workspace entries with constrained selectors.
+
+    Args:
+        paths: Workspace-relative file or directory roots to search.
+        cwd: Workspace-relative working directory for the command.
+        max_depth: Maximum traversal depth below each root.
+        entry_type: Entry type to include.
+        name: Optional exact basename to match.
+        timeout_seconds: Optional execution timeout in seconds.
+        max_stdout_bytes: Optional stdout byte cap.
+        max_stderr_bytes: Optional stderr byte cap.
+
+    Returns:
+        Formatted shell execution result.
+    """
+
+    def __init__(
+        self,
+        *,
+        settings: ShellToolSettings,
+        policy: ExecutionPolicy,
+        executor: CommandExecutor,
+        formatter: ShellResultFormatter | None = None,
+    ) -> None:
+        super().__init__(
+            command="find",
+            settings=settings,
+            policy=policy,
+            executor=executor,
+            formatter=formatter,
+        )
+
+    async def __call__(
+        self,
+        paths: Sequence[str] = (),
+        cwd: str | None = None,
+        max_depth: int = 3,
+        entry_type: Literal["any", "file", "directory"] = "any",
+        name: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+        *,
+        context: ToolCallContext,
+    ) -> str:
+        return await self._execute_request(
+            ShellCommandRequest(
+                tool_name="shell.find",
+                command="find",
+                options={
+                    "max_depth": max_depth,
+                    "entry_type": entry_type,
+                    "name": name,
+                },
+                paths=_path_operands(paths, kind="any"),
+                cwd=cwd,
+                timeout_seconds=timeout_seconds,
+                max_stdout_bytes=max_stdout_bytes,
+                max_stderr_bytes=max_stderr_bytes,
+            ),
+            context=context,
+        )
+
+
 class WcTool(_ShellCommandTool):
     """Count lines, words, or bytes in workspace text files.
 
@@ -649,6 +773,74 @@ class JqTool(_ShellCommandTool):
         )
 
 
+class PdfInfoTool(_ShellCommandTool):
+    """Inspect metadata for a workspace PDF file.
+
+    Args:
+        path: Workspace-relative PDF file path to inspect.
+        first_page: Optional first one-based page number for page details.
+        last_page: Optional last one-based page number for page details.
+        boxes: Include page bounding boxes.
+        iso_dates: Emit dates in ISO-8601 format.
+        cwd: Workspace-relative working directory for the command.
+        timeout_seconds: Optional execution timeout in seconds.
+        max_stdout_bytes: Optional stdout byte cap.
+        max_stderr_bytes: Optional stderr byte cap.
+
+    Returns:
+        Formatted shell execution result.
+    """
+
+    def __init__(
+        self,
+        *,
+        settings: ShellToolSettings,
+        policy: ExecutionPolicy,
+        executor: CommandExecutor,
+        formatter: ShellResultFormatter | None = None,
+    ) -> None:
+        super().__init__(
+            command="pdfinfo",
+            settings=settings,
+            policy=policy,
+            executor=executor,
+            formatter=formatter,
+        )
+
+    async def __call__(
+        self,
+        path: str,
+        first_page: int | None = None,
+        last_page: int | None = None,
+        boxes: bool = False,
+        iso_dates: bool = False,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+        *,
+        context: ToolCallContext,
+    ) -> str:
+        return await self._execute_request(
+            ShellCommandRequest(
+                tool_name="shell.pdfinfo",
+                command="pdfinfo",
+                options={
+                    "first_page": first_page,
+                    "last_page": last_page,
+                    "boxes": boxes,
+                    "iso_dates": iso_dates,
+                },
+                paths=_path_operands((path,), kind="pdf_file"),
+                cwd=cwd,
+                timeout_seconds=timeout_seconds,
+                max_stdout_bytes=max_stdout_bytes,
+                max_stderr_bytes=max_stderr_bytes,
+            ),
+            context=context,
+        )
+
+
 class PdfToTextTool(_ShellCommandTool):
     """Extract text from a workspace PDF file.
 
@@ -887,7 +1079,14 @@ def _line_reader_request(
 def _path_operands(
     paths: Sequence[str],
     *,
-    kind: Literal["any", "text_file", "json_file", "pdf_file", "image_file"],
+    kind: Literal[
+        "any",
+        "file",
+        "text_file",
+        "json_file",
+        "pdf_file",
+        "image_file",
+    ],
 ) -> tuple[PathOperand, ...]:
     normalized_paths = _string_tuple(paths, "paths")
     return tuple(
