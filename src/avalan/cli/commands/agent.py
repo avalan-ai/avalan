@@ -906,6 +906,9 @@ async def agent_run(
             if (
                 not display_config.answer_stdout_only
                 and not display_config.show_stats
+                and not (
+                    isinstance(theme, Theme) and theme.prefix_stream_answers
+                )
             ):
                 console.print(_i["agent_output"] + " ", end="")
 
@@ -931,6 +934,13 @@ async def agent_run(
                 with_stats=with_stats,
                 coordinator_container=coordinator_container,
                 display_config=display_config,
+                answer_prefix=(
+                    _i["agent_output"] + " "
+                    if isinstance(theme, Theme)
+                    and theme.prefix_stream_answers
+                    and not display_config.answer_stdout_only
+                    else None
+                ),
             )
 
             if args.conversation:

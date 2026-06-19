@@ -6,7 +6,9 @@ from dataclasses import replace
 from datetime import datetime
 from io import StringIO
 from logging import getLogger
+from time import perf_counter
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 from rich.console import Console
@@ -26,8 +28,12 @@ from avalan.cli.theme import Theme
 from avalan.cli.theme.basic import (
     BasicStreamPresenter,
     BasicTheme,
+    _basic_active_tool_line,
+    _basic_has_executed_tool_frame,
     _basic_json_tool_answer,
     _basic_open_harmony_pattern,
+    _basic_tool_elapsed_text,
+    _basic_tool_result_summary,
     _basic_visible_answer_text,
     _BasicAnswerPresenter,
 )
@@ -264,6 +270,75 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_answer_chunks(second), ["Answer.", "\n"])
         self.assertEqual(_frames(second), [])
 
+    async def test_theme_stream_presenter_prefixes_visible_answer_only(
+        self,
+    ) -> None:
+        theme = BasicTheme(_gettext, _ngettext)
+        config = _stream_config(display_tools=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(tool_call_id="call", name="calc")
+        presenter = theme.stream_presenter(
+            getLogger(__name__),
+            answer_prefix=":robot: ",
+        )
+
+        tool_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.append_answer_text("Answer.")
+        answer_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(tool_items), [])
+        self.assertEqual(
+            _answer_chunks(answer_items),
+            [":robot: ", "Answer."],
+        )
+
+    async def test_theme_stream_presenter_separates_answer_after_executed_tool(
+        self,
+    ) -> None:
+        theme = BasicTheme(_gettext, _ngettext)
+        config = _stream_config(display_tools=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(tool_call_id="call", name="calc")
+        builder.complete_tool(
+            tool_call_id="call",
+            name="calc",
+            elapsed_seconds=5.004,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="call",
+            name="calc",
+            status="result",
+            result=25,
+            arguments_count=1,
+            elapsed_seconds=5.004,
+        )
+        presenter = theme.stream_presenter(
+            getLogger(__name__),
+            answer_prefix=":robot: ",
+        )
+
+        tool_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.append_answer_text("Answer.")
+        answer_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertIn("Executed tool calc (5s): 25", _visible_text(tool_items))
+        self.assertEqual(
+            _answer_chunks(answer_items),
+            ["\n", ":robot: ", "Answer."],
+        )
+
     async def test_requested_tools_and_events_render_compact_frames(
         self,
     ) -> None:
@@ -271,6 +346,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             display_tools=True,
             display_events=True,
             display_tools_events=8,
+            interactive=False,
         )
         builder = CliStreamSnapshotBuilder(config)
         builder.append_answer_text("working")
@@ -320,10 +396,9 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         tool_text = _render_text(frames[0].renderable)
         event_text = str(frames[1].renderable)
         for fragment in (
-            "tool search running",
-            "weather",
-            "tool calc completed",
-            "tool calc result: 25",
+            "Starting tool search",
+            "Executed tool calc: 25",
+            "✅",
             "tool calc diagnostic tool.unknown",
             "tool event tool_process: calc",
         ):
@@ -331,6 +406,45 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(fragment, tool_text)
         self.assertIn("event start", event_text)
         self.assertNotIn("tool_process", event_text)
+
+    async def test_basic_suppresses_noisy_tool_model_side_events(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_event(
+            Event(type=EventType.TOOL_MODEL_RUN, payload={"channel": "x"}),
+            tool_call_id="call",
+            name="calc",
+        )
+        builder.add_tool_event(
+            Event(type=EventType.TOOL_EXECUTE, payload={"channel": "x"}),
+            tool_call_id="call",
+            name="calc",
+        )
+        builder.add_tool_event(
+            Event(type=EventType.TOOL_RESULT, payload={"channel": "x"}),
+            tool_call_id="call",
+            name="calc",
+        )
+        builder.add_tool_event(
+            Event(type=EventType.TOOL_PROCESS, payload={"name": "calc"}),
+            tool_call_id="call",
+            name="calc",
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        output = _visible_text(items)
+        self.assertNotIn("tool_model_run", output)
+        self.assertNotIn("tool_execute", output)
+        self.assertNotIn("tool_result", output)
+        self.assertNotIn("channel", output)
+        self.assertIn("tool event tool_process: calc", output)
 
     async def test_delayed_calculator_progress_renders_lifecycle(
         self,
@@ -367,7 +481,11 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             tool_call_id="calculator-call",
             name="math.calculator",
             status="result",
-            result=25,
+            result={
+                "arguments": {"expression": "(4 + 6) * 5 / 2"},
+                "name": "math.calculator",
+                "result": "25",
+            },
             arguments_count=1,
             elapsed_seconds=2.5,
         )
@@ -383,22 +501,40 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([frame.role for frame in running_frames], ["tools"])
         self.assertEqual([frame.role for frame in completed_frames], ["tools"])
         self.assertIsInstance(start_frames[0].renderable, Spinner)
+        self.assertEqual(
+            cast(Spinner, start_frames[0].renderable).name,
+            "point",
+        )
+        self.assertEqual(
+            cast(Spinner, start_frames[0].renderable).style,
+            "cyan",
+        )
+        self.assertEqual(
+            cast(Spinner, running_frames[0].renderable).name,
+            "point",
+        )
+        self.assertEqual(
+            cast(Spinner, running_frames[0].renderable).style,
+            "cyan",
+        )
 
         start_text = _render_text(start_frames[0].renderable)
         running_text = _render_text(running_frames[0].renderable)
         completed_text = _render_text(completed_frames[0].renderable)
 
-        self.assertIn("tool math.calculator starting", start_text)
-        self.assertIn("expression", start_text)
-        self.assertIn("tool math.calculator running for", running_text)
+        self.assertIn("Starting tool math.calculator", start_text)
+        self.assertNotIn("expression", start_text)
+        self.assertIn("Running tool math.calculator for 2.5s", running_text)
         self.assertNotEqual(start_text, running_text)
-        self.assertIn("tool math.calculator completed in", completed_text)
-        self.assertRegex(
+        self.assertIn(
+            "Executed tool math.calculator (2.5s): 25",
             completed_text,
-            r"completed in"
-            r" \d+(?:\.\d+)?\s+(?:microseconds|milliseconds|seconds)",
         )
-        self.assertIn("tool math.calculator result: 25", completed_text)
+        self.assertIn(": 25", completed_text)
+        self.assertNotIn("milliseconds", completed_text)
+        self.assertNotIn("microseconds", completed_text)
+        self.assertNotIn("arguments", completed_text)
+        self.assertIn("✅", completed_text)
 
     async def test_completed_tool_without_elapsed_keeps_compact_text(
         self,
@@ -415,8 +551,8 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         tool_text = _render_text(_frames(items)[0].renderable)
-        self.assertIn("tool math.calculator completed", tool_text)
-        self.assertNotIn("completed in", tool_text)
+        self.assertIn("Executed tool math.calculator: completed", tool_text)
+        self.assertNotIn("(", tool_text)
         self.assertNotIn("unknown", tool_text)
 
     async def test_failed_calculator_error_is_hidden_until_tools_display(
@@ -463,7 +599,8 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         tools_frames = _frames(tools_items)
         self.assertEqual([frame.role for frame in tools_frames], ["tools"])
         tool_text = _render_text(tools_frames[0].renderable)
-        self.assertIn("tool math.calculator error", tool_text)
+        self.assertIn("Executed tool math.calculator", tool_text)
+        self.assertIn("❌", tool_text)
         self.assertIn("ZeroDivisionError: division by zero", tool_text)
         for fragment in (
             "Traceback",
@@ -513,21 +650,25 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         cases = [
             (
                 "tools",
-                _stream_config(display_tools=True, display_tools_events=8),
+                _stream_config(
+                    display_tools=True,
+                    display_tools_events=8,
+                    interactive=False,
+                ),
                 ["tools"],
-                "tool calc result: 25",
+                "Executed tool calc: 25",
                 ("event start", "tokens "),
             ),
             (
                 "events",
-                _stream_config(display_events=True),
+                _stream_config(display_events=True, interactive=False),
                 ["events"],
                 "event start",
                 ("tool calc", "tokens "),
             ),
             (
                 "stats",
-                _stream_config(stats=True),
+                _stream_config(stats=True, interactive=False),
                 ["stats"],
                 "tokens in=2, cached=1, out=3, reasoning=4, total=10",
                 ("tool calc", "event start"),
@@ -592,12 +733,64 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("elapsed 1.25s", stats_text)
         self.assertIn("usage stream.completed", stats_text)
 
+    async def test_live_active_tool_spinner_ages_to_running(self) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(
+            tool_call_id="active-call",
+            name="calc",
+            started_at=perf_counter() - 2.0,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        self.assertIsInstance(frames[0].renderable, Spinner)
+        self.assertIn(
+            "Running tool calc for",
+            _render_text(frames[0].renderable),
+        )
+
+    async def test_live_diagnostics_pause_after_visible_answer_starts(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_events=True,
+            display_tools_events=8,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(tool_call_id="active-call", name="calc")
+        builder.add_event_summary(event_type=EventType.START)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        diagnostics = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.append_answer_text("Answer.")
+        answer = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(
+            [frame.role for frame in _frames(diagnostics)],
+            ["tools", "events"],
+        )
+        self.assertEqual(_answer_chunks(answer), ["Answer."])
+        self.assertEqual(_frames(answer), [])
+
     async def test_display_tools_events_zero_keeps_active_and_clears_stale(
         self,
     ) -> None:
         config = _stream_config(display_tools=True, display_tools_events=0)
         builder = CliStreamSnapshotBuilder(config)
-        builder.append_answer_text("working")
         builder.add_active_tool(
             tool_call_id="active-call",
             name="calc",
@@ -617,11 +810,11 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
 
         first_frames = _frames(first)
         second_frames = _frames(second)
-        self.assertEqual(_answer_chunks(first), ["working"])
+        self.assertEqual(_answer_chunks(first), [])
         self.assertEqual([frame.role for frame in first_frames], ["tools"])
         self.assertIsInstance(first_frames[0].renderable, Spinner)
         first_text = _render_text(first_frames[0].renderable)
-        self.assertIn("tool calc running", first_text)
+        self.assertIn("Starting tool calc", first_text)
         self.assertNotIn("completed", first_text)
         self.assertEqual(_answer_chunks(second), [])
         self.assertEqual([frame.role for frame in second_frames], ["tools"])
@@ -648,7 +841,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         frames = _frames(items)
         self.assertEqual([frame.role for frame in frames], ["tools"])
         self.assertIsInstance(frames[0].renderable, str)
-        self.assertIn("tool calc running", str(frames[0].renderable))
+        self.assertIn("Starting tool calc", str(frames[0].renderable))
 
     async def test_compact_formatting_handles_empty_and_truncated_summaries(
         self,
@@ -678,6 +871,49 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("x" * 157 + "...", tool_text.replace("\n", ""))
         self.assertIn("tool event tool_process", tool_text)
         self.assertNotIn("tool event tool_process:", tool_text)
+
+    def test_compact_tool_elapsed_ranges_and_result_fallbacks(self) -> None:
+        self.assertEqual(_basic_tool_elapsed_text(None), None)
+        self.assertEqual(_basic_tool_elapsed_text(-1.0), "1ms")
+        self.assertEqual(_basic_tool_elapsed_text(0.25), "250ms")
+        self.assertEqual(_basic_tool_elapsed_text(12.4), "12s")
+        self.assertEqual(_basic_tool_elapsed_text(75.0), "1m 15s")
+        self.assertEqual(_basic_tool_elapsed_text(3720.0), "1h 02m")
+        self.assertEqual(_basic_tool_result_summary("not json"), "not json")
+        self.assertEqual(
+            _basic_tool_result_summary('{"value": 25}'),
+            '{"value": 25}',
+        )
+
+    def test_active_tool_edge_lines_keep_progress_style(self) -> None:
+        self.assertIn(
+            "[cyan]Starting tool calc.",
+            _basic_active_tool_line(
+                "calc",
+                started_at=1.0,
+                updated_at=1.5,
+            ),
+        )
+        self.assertIn(
+            "[cyan]Running tool calc.",
+            _basic_active_tool_line(
+                "calc",
+                started_at=None,
+                updated_at=2.0,
+            ),
+        )
+
+    def test_executed_tool_frame_detection_respects_display_config(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=False)
+        builder = CliStreamSnapshotBuilder(config)
+
+        self.assertFalse(
+            _basic_has_executed_tool_frame(
+                _stream_request(config, builder.snapshot())
+            )
+        )
 
     async def test_protocol_text_is_not_rendered_as_answer_or_diagnostics(
         self,
@@ -1147,8 +1383,10 @@ class BasicThemeTestCase(unittest.TestCase):
     def test_basic_theme_inherits_common_defaults(self) -> None:
         theme = BasicTheme(_gettext, _ngettext)
 
-        self.assertEqual(theme.icons["user_input"], "")
-        self.assertEqual(theme.icons["agent_output"], "")
+        self.assertEqual(theme.icons["user_input"], ":speaking_head:")
+        self.assertEqual(theme.icons["agent_output"], ":robot:")
+        self.assertTrue(theme.default_display_tools)
+        self.assertTrue(theme.prefix_stream_answers)
         self.assertEqual(
             theme.ask_access_token(),
             "translated:Enter your Huggingface access token",
@@ -1165,6 +1403,50 @@ class BasicThemeTestCase(unittest.TestCase):
             "Flow run started.\n\nflowchart LR\n",
         )
         self.assertIsInstance(theme.download_progress(), tuple)
+
+    def test_basic_agent_header_embeds_model_information(self) -> None:
+        theme = BasicTheme(_gettext, _ngettext)
+        agent = SimpleNamespace(
+            id="agent-id",
+            name="Tool",
+            memory=SimpleNamespace(
+                has_recent_message=True,
+                has_permanent_message=False,
+            ),
+        )
+
+        welcome = _render_text(
+            theme.welcome(
+                "https://avalan.ai",
+                "avalan",
+                "1.5.0",
+                "MIT",
+                None,
+            )
+        )
+        output = _render_text(
+            theme.agent(cast(Any, agent), models=[_model(), "gpt-5-mini"])
+        )
+
+        self.assertEqual(welcome, "")
+        self.assertFalse(output.endswith("\n\n"))
+        self.assertIn("⭕ avalan 1.5.0 - MIT License", output)
+        self.assertIn("✨", output)
+        self.assertIn("Tool", output)
+        self.assertIn("model-id", output)
+        self.assertIn("gpt-5-mini", output)
+        self.assertIn("translated:short-term message", output)
+        self.assertNotIn("translated:Models", output)
+        self.assertNotIn("translated:Memory", output)
+
+        stateless_output = _render_text(
+            theme.agent(
+                cast(Any, SimpleNamespace(id="agent-id")),
+                models=[],
+            )
+        )
+        self.assertIn("translated:stateless", stateless_output)
+        self.assertIn("translated:none", stateless_output)
 
     def test_basic_theme_inherits_low_clutter_domain_outputs(self) -> None:
         theme = BasicTheme(_gettext, _ngettext)

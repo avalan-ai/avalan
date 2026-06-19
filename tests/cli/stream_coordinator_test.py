@@ -334,6 +334,36 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         live_factory.assert_not_called()
         console.save_svg.assert_not_called()
 
+    async def test_answer_chunk_closes_active_live_before_printing(
+        self,
+    ) -> None:
+        events: list[tuple[str, object]] = []
+        fake_live = _FakeLive(events)
+        console = MagicMock()
+        console.print.side_effect = (
+            lambda text, end="": events.append(("print", (text, end)))
+        )
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(display_tools=True),
+            live_factory=MagicMock(return_value=fake_live),
+        )
+
+        async with coordinator:
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(renderable="tool", role="tools")
+            )
+            await coordinator.handle_item(CliStreamAnswerTextChunk(text="a"))
+
+        self.assertEqual(
+            events,
+            [
+                ("update", "tool"),
+                ("exit", None),
+                ("print", ("a", "")),
+            ],
+        )
+
     async def test_stderr_diagnostics_use_separate_console_without_live(
         self,
     ) -> None:

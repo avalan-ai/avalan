@@ -705,7 +705,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         args.stats = False
         args.display_events = False
         args.display_tools = False
-        args.display_tools_events = 0
+        args.display_tools_events = 2
         args.display_tokens = 0
         console = MagicMock()
         console.width = 120
@@ -723,6 +723,10 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         dummy_stack.__aenter__.return_value = dummy_stack
         dummy_stack.__aexit__.return_value = False
         dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+        live = MagicMock()
+        live_cm = MagicMock()
+        live_cm.__enter__.return_value = live
+        live_cm.__exit__.return_value = False
 
         with (
             patch.object(
@@ -743,15 +747,22 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 "get_input",
                 return_value=README_CALCULATOR_PROMPT,
             ),
-            patch("avalan.cli.stream_coordinator.Live") as live_patch,
+            patch(
+                "avalan.cli.stream_coordinator.Live",
+                return_value=live_cm,
+            ) as live_patch,
         ):
             await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
 
-        live_patch.assert_not_called()
+        live_patch.assert_called_once()
         answer_stdout = _console_print_text(console)
+        self.assertIn(":robot:", answer_stdout)
         self.assertRegex(answer_stdout, r'The result is "?25"?\.')
         _assert_answer_clean(self, answer_stdout)
         _assert_answer_clean(self, _console_print_text(console, end=None))
+        live_text = _live_text(live)
+        self.assertIn("Executed tool math.calculator", live_text)
+        self.assertIn(": 25", live_text)
 
     async def test_cli_run_math_tool_basic_display_tools_shows_progress(
         self,
@@ -798,14 +809,13 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         def capture_live_update(renderable: object) -> None:
             text = _render_text(renderable)
             live_frames.append(text)
-            if "tool math.calculator starting" in text:
+            if "Starting tool math.calculator" in text:
                 start_frame_seen.set()
-            if "tool math.calculator running" in text:
+            if "Running tool math.calculator" in text:
                 progress_frame_seen.set()
             if (
-                "tool math.calculator completed" in text
-                and "tool math.calculator result:" in text
-                and '"25"' in text
+                "Executed tool math.calculator" in text
+                and ": 25" in text
             ):
                 completion_frame_seen.set()
 
@@ -853,11 +863,10 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(answer_stdout, r'The result is "?25"?\.')
         _assert_answer_clean(self, answer_stdout)
         live_text = "".join(live_frames) or _live_text(live)
-        self.assertIn("tool math.calculator starting", live_text)
-        self.assertIn("tool math.calculator running", live_text)
-        self.assertIn("tool math.calculator completed", live_text)
-        self.assertIn("tool math.calculator result:", live_text)
-        self.assertIn('"25"', live_text)
+        self.assertIn("Starting tool math.calculator", live_text)
+        self.assertIn("Running tool math.calculator", live_text)
+        self.assertIn("Executed tool math.calculator", live_text)
+        self.assertIn(": 25", live_text)
 
     async def test_cli_run_math_tool_basic_noninteractive_uses_stderr(
         self,
@@ -929,9 +938,8 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         _assert_answer_clean(self, answer_stdout)
         _assert_answer_clean(self, _console_print_text(console, end=None))
         diagnostics = diagnostic_output.getvalue()
-        self.assertIn("tool math.calculator", diagnostics)
-        self.assertIn("tool math.calculator result:", diagnostics)
-        self.assertIn('"25"', diagnostics)
+        self.assertIn("Executed tool math.calculator", diagnostics)
+        self.assertIn(": 25", diagnostics)
 
     async def test_cli_run_math_tool_basic_quiet_ignores_display_flags(
         self,
@@ -1208,7 +1216,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         display_models_patch.assert_called_once()
         hub.can_access.assert_not_called()
         hub.model.assert_not_called()
-        live_patch.assert_not_called()
+        live_patch.assert_called_once()
         self.assertIs(DummyEngine.last_tool, orch.tool)
         self.assertTrue(
             any(
