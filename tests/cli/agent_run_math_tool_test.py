@@ -2,9 +2,12 @@ import unittest
 from argparse import Namespace
 from asyncio import Event as AsyncioEvent
 from asyncio import create_task, wait_for
+from base64 import b64encode
 from collections.abc import Callable
 from io import StringIO
 from logging import getLogger
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from rich.console import Console
@@ -22,6 +25,7 @@ from avalan.entities import (
     EngineUri,
     GenerationSettings,
     Message,
+    MessageContentFile,
     MessageRole,
     Modality,
     OperationParameters,
@@ -335,6 +339,15 @@ class DummyDs4Engine(DummyEngine):
         return await super().__call__(input, tool=tool)
 
 
+class FileEchoEngine(DummyEngine):
+    def __init__(self) -> None:
+        self.seen_input = None
+
+    async def __call__(self, input, *, tool=None):
+        self.seen_input = input
+        return _canonical_answer_response("file received")
+
+
 class DummyModelManager:
     def __init__(self) -> None:
         self.passed_tool = None
@@ -429,7 +442,11 @@ class DummyOrchestrator:
         return False
 
     async def __call__(self, input_str, **_kwargs):
-        message = Message(role=MessageRole.USER, content=input_str)
+        message = (
+            input_str
+            if isinstance(input_str, Message)
+            else Message(role=MessageRole.USER, content=input_str)
+        )
         context = ModelCallContext(
             specification=self._operation.specification,
             input=message,
@@ -608,6 +625,82 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 for t in tokens
             )
         )
+
+    async def test_cli_run_native_pdf_input_reaches_engine(self) -> None:
+        args = make_args()
+        args.tool = []
+        args.display_tools = False
+        console = MagicMock()
+        console.width = 120
+        console.is_terminal = True
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+        theme = _basic_theme()
+        hub = MagicMock()
+        logger = MagicMock()
+        engine = FileEchoEngine()
+        orch = DummyOrchestrator(engine=engine)
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+        live = MagicMock()
+        live_cm = MagicMock()
+        live_cm.__enter__.return_value = live
+        live_cm.__exit__.return_value = False
+
+        with NamedTemporaryFile(suffix=".pdf") as tmp:
+            tmp.write(b"%PDF-1.7")
+            tmp.flush()
+            args.input_file = [tmp.name]
+
+            with (
+                patch.object(
+                    agent_cmds, "AsyncExitStack", return_value=dummy_stack
+                ),
+                patch.object(
+                    agent_cmds.OrchestratorLoader,
+                    "from_settings",
+                    new=AsyncMock(return_value=orch),
+                ),
+                patch.object(
+                    agent_cmds.OrchestratorLoader,
+                    "from_file",
+                    new=AsyncMock(),
+                ),
+                patch.object(agent_cmds, "get_input", return_value=None),
+                patch(
+                    "avalan.cli.stream_coordinator.Live",
+                    return_value=live_cm,
+                ),
+            ):
+                await agent_cmds.agent_run(
+                    args, console, theme, hub, logger, 1
+                )
+
+            self.assertIsInstance(engine.seen_input, Message)
+            message = engine.seen_input
+            assert isinstance(message, Message)
+            self.assertEqual(message.role, MessageRole.USER)
+            self.assertEqual(
+                message.content,
+                [
+                    MessageContentFile(
+                        type="file",
+                        file={
+                            "file_data": (
+                                b64encode(b"%PDF-1.7").decode("ascii")
+                            ),
+                            "filename": Path(tmp.name).name,
+                            "mime_type": "application/pdf",
+                        },
+                    )
+                ],
+            )
+
+        self.assertIn("file received", _console_print_text(console))
 
     async def test_cli_run_math_tool_with_default_and_explicit_fancy_theme(
         self,

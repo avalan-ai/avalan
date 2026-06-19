@@ -560,6 +560,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--skip-load-recent-messages]
                         [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT]
                         [--sync] [--tools-confirm]
+                        [--input-file INPUT_FILE]
                         [--tool-format {json,react,bracket,openai,harmony,dsml}]
                         [--tool-recovery-format {tool_call_block,minimax_xml,tool_code,broad_xml,dsml_leakage,fenced}]
                         [--reasoning-tag {think,channel}] [--ds4-ctx DS4_CTX]
@@ -771,6 +772,9 @@ options:
                         If specified, load up to these many recent messages
   --sync                Don't use an async generator (streaming output)
   --tools-confirm       Confirm tool calls before execution
+  --input-file INPUT_FILE
+                        Attach a local file as native input for text
+                        generation. May be specified multiple times.
   --tool-format {json,react,bracket,openai,harmony,dsml}
                         Tool format
   --tool-recovery-format {tool_call_block,minimax_xml,tool_code,broad_xml,dsml_leakage,fenced}

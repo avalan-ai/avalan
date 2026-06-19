@@ -12,6 +12,7 @@ from ...entities import (
     Backend,
     EngineMessageScored,
     GenerationCacheStrategy,
+    Message,
     Model,
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
@@ -22,6 +23,7 @@ from ...entities import (
 from ...event import EventStats, EventType
 from ...event.manager import EventManagerMode
 from ...model.hubs.huggingface import HuggingfaceHub
+from ...model.input import input_files
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.nlp.text.vendor import TextGenerationVendorModel
 from ...model.response.text import TextGenerationResponse
@@ -478,6 +480,13 @@ def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
     )
 
 
+async def _agent_run_input(
+    input_string: str | None, file_paths: list[str] | None
+) -> Message | str | None:
+    """Build agent run input from text and local file paths."""
+    return await input_files(input_string, file_paths)
+
+
 def _uses_ds4_backend(orchestrator: Orchestrator) -> bool:
     """Return whether the active orchestrator engine uses DS4."""
     engine_agent = orchestrator.engine_agent
@@ -884,8 +893,14 @@ async def agent_run(
             specs_mtime = getmtime(specs_path)
 
         input_string: str | None = None
+        input_file_paths = cast(
+            list[str] | None, getattr(args, "input_file", None)
+        )
         in_conversation = False
         while not input_string or in_conversation:
+            current_input_file_paths = (
+                None if in_conversation else input_file_paths
+            )
             if watch_spec and not has_input(console):
                 new_mtime = getmtime(specs_path)
                 if new_mtime != specs_mtime:
@@ -910,13 +925,17 @@ async def agent_run(
                 is_quiet=display_config.answer_stdout_only,
                 tty_path=tty_path,
             )
-            if not input_string:
+            if not input_string and not current_input_file_paths:
                 logger.debug("Finishing session with orchestrator")
                 return
 
             logger.debug('Agent about to process input "%s"', input_string)
+            agent_input = await _agent_run_input(
+                input_string, current_input_file_paths
+            )
+            assert agent_input is not None
             output = await orchestrator(
-                input_string,
+                agent_input,
                 use_async_generator=use_async_generator,
                 tool_confirm=_confirm_call if args.tools_confirm else None,
             )
@@ -943,7 +962,7 @@ async def agent_run(
                 orchestrator=orchestrator,
                 event_stats=event_stats,
                 lm=text_engine,
-                input_string=input_string,
+                input_string=input_string or "",
                 refresh_per_second=display_config.refresh_per_second,
                 response=text_output,
                 dtokens_pick=dtokens_pick,
