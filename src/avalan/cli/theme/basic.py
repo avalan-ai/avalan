@@ -186,8 +186,7 @@ def _basic_session_header(
     app_name = getattr(theme, "_welcome_name", "avalan")
     version_text = f" {_safe_text(version)}" if version else ""
     app = (
-        f"{_safe_text(app_name)}{version_text} - "
-        f"{_safe_text(license)} License"
+        f"{_safe_text(app_name)}{version_text} - {_safe_text(license)} License"
     )
     model_ids = ", ".join(
         _safe_text(model.id if isinstance(model, Model) else model)
@@ -559,6 +558,7 @@ class _BasicActiveToolSpinner(Spinner):
         self._tool_name = name
         self._started_at = started_at
         self._updated_at = updated_at
+        self._created_at = perf_counter()
         line = self._line()
         super().__init__(
             "point",
@@ -595,6 +595,11 @@ class _BasicActiveToolSpinner(Spinner):
             return None
 
         updated_at = perf_counter()
+        if (
+            updated_at - self._created_at
+            < _BASIC_TOOL_RUNNING_THRESHOLD_SECONDS
+        ):
+            return None
         elapsed_seconds = updated_at - self._started_at
         if (
             elapsed_seconds < _BASIC_TOOL_RUNNING_THRESHOLD_SECONDS

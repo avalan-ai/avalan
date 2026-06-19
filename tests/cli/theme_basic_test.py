@@ -6,7 +6,6 @@ from dataclasses import replace
 from datetime import datetime
 from io import StringIO
 from logging import getLogger
-from time import perf_counter
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -733,27 +732,39 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("elapsed 1.25s", stats_text)
         self.assertIn("usage stream.completed", stats_text)
 
-    async def test_live_active_tool_spinner_ages_to_running(self) -> None:
+    async def test_live_active_tool_spinner_starts_then_ages_to_running(
+        self,
+    ) -> None:
         config = _stream_config(display_tools=True, display_tools_events=8)
         builder = CliStreamSnapshotBuilder(config)
+        now = 100.0
+
+        def clock() -> float:
+            return now
+
         builder.add_active_tool(
             tool_call_id="active-call",
             name="calc",
-            started_at=perf_counter() - 2.0,
+            started_at=99.0,
         )
         presenter = BasicStreamPresenter(getLogger(__name__))
 
-        items = await _collect_stream_items(
-            presenter,
-            _stream_request(config, builder.snapshot()),
-        )
+        with patch("avalan.cli.theme.basic.perf_counter", clock):
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+            frames = _frames(items)
+            self.assertEqual([frame.role for frame in frames], ["tools"])
+            self.assertIsInstance(frames[0].renderable, Spinner)
+            first_text = _render_text(frames[0].renderable)
+            now = 101.25
+            second_text = _render_text(frames[0].renderable)
 
-        frames = _frames(items)
-        self.assertEqual([frame.role for frame in frames], ["tools"])
-        self.assertIsInstance(frames[0].renderable, Spinner)
+        self.assertIn("Starting tool calc", first_text)
         self.assertIn(
             "Running tool calc for",
-            _render_text(frames[0].renderable),
+            second_text,
         )
 
     async def test_live_diagnostics_pause_after_visible_answer_starts(
