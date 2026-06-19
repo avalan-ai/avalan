@@ -712,6 +712,72 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
         assert isinstance(errored.data, dict)
         self.assertEqual(errored.data["message"], "bad generation")
 
+    async def test_stream_generator_emits_preexisting_worker_error_terminal(
+        self,
+    ):
+        model = self._model()
+
+        class DummyStreamer:
+            def __init__(self, *args, **kwargs):
+                self.stop_signal = object()
+                self.queue = asyncio.Queue()
+
+            def on_finalized_text(self, text, stream_end=False):
+                self.queue.put_nowait(text)
+                if stream_end:
+                    self.queue.put_nowait(self.stop_signal)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                val = await self.queue.get()
+                if val is self.stop_signal:
+                    raise StopAsyncIteration
+                return val
+
+        class DummyThread:
+            def __init__(self, target, name=None, daemon=None):
+                self.target = target
+                self.name = name
+                self.daemon = daemon
+                self.ident = 1
+                self._alive = False
+
+            def start(self):
+                self._alive = True
+                self.target()
+                self._alive = False
+
+            def is_alive(self):
+                return self._alive
+
+        with (
+            patch(
+                "avalan.model.nlp.text.generation.AsyncTextIteratorStreamer",
+                DummyStreamer,
+            ),
+            patch("avalan.model.nlp.text.generation.Thread", DummyThread),
+            patch.object(
+                TextGenerationModel,
+                "_generate_output",
+                side_effect=ValueError("early bad generation"),
+            ),
+        ):
+            stream = model._stream_generator(
+                {"input_ids": torch.tensor([[1, 2]])},
+                GenerationSettings(max_new_tokens=2),
+                None,
+                False,
+            )
+            started = await stream.__anext__()
+            errored = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(errored.data["message"], "early bad generation")
+
     async def test_stream_generator_ignores_closed_loop_after_stop(self):
         model = self._model()
 
