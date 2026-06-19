@@ -6012,7 +6012,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
     async def test_token_generation_renders_final_frame_after_slow_live_update(
         self,
     ) -> None:
-        render_started = asyncio.Event()
+        render_started = ThreadEvent()
         render_release = ThreadEvent()
         answer_consumed = asyncio.Event()
         consumed: list[str] = []
@@ -6061,11 +6061,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         live_cm.__exit__.return_value = False
         theme = self._legacy_theme(fake_token_frames)
         rendered: list[object] = []
-        loop = asyncio.get_running_loop()
 
         def slow_update(renderable: object) -> None:
             rendered.append(renderable)
-            loop.call_soon_threadsafe(render_started.set)
+            render_started.set()
             render_release.wait(2.0)
 
         def renderable_contains(renderable: object, text: str) -> bool:
@@ -6107,7 +6106,11 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                     with_stats=True,
                 )
             )
-            await asyncio.wait_for(render_started.wait(), timeout=1.0)
+            render_observed = await asyncio.wait_for(
+                asyncio.to_thread(render_started.wait, 2.0),
+                timeout=3.0,
+            )
+            self.assertTrue(render_observed)
             self.assertFalse(task.done())
 
             render_release.set()
