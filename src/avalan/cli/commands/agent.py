@@ -263,6 +263,12 @@ def _tool_settings_from_mapping(
                 and isinstance(value, str)
             ):
                 value = open(value)
+            if settings_cls is DatabaseToolSettings:
+                value = _coerce_database_tool_setting_value(
+                    field.name,
+                    value,
+                    from_cli=isinstance(mapping, Namespace),
+                )
             if settings_cls is ShellToolSettings:
                 value = _coerce_shell_tool_setting_value(field.name, value)
             values[field.name] = value
@@ -278,6 +284,18 @@ def _tool_settings_from_mapping(
         cast(Any, settings_cls)(**values),
     )
     return settings
+
+
+def _coerce_database_tool_setting_value(
+    field_name: str, value: object, *, from_cli: bool
+) -> object:
+    if field_name != "allowed_commands":
+        return value
+    if from_cli and isinstance(value, str):
+        return [value]
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
+        return list(value)
+    return value
 
 
 def _coerce_shell_tool_setting_value(field_name: str, value: object) -> object:

@@ -1164,6 +1164,174 @@ dsn = \"sqlite:///db.sqlite\"
                 self.assertEqual(dbs.dsn, "sqlite:///db.sqlite")
             await stack.aclose()
 
+    async def test_load_database_tool_settings_resolves_env_dsn(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool.database]
+dsn = \"env:AVALAN_TEST_DATABASE_DSN\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with (
+                patch.dict(
+                    "os.environ",
+                    {"AVALAN_TEST_DATABASE_DSN": "sqlite:///env.sqlite"},
+                    clear=True,
+                ),
+                patch.object(
+                    OrchestratorLoader,
+                    "from_settings",
+                    new=AsyncMock(return_value="orch"),
+                ) as lfs_patch,
+            ):
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                )
+
+                tool_settings = lfs_patch.call_args.kwargs["tool_settings"]
+                dbs = tool_settings.database
+                self.assertIsInstance(dbs, DatabaseToolSettings)
+                self.assertEqual(dbs.dsn, "sqlite:///env.sqlite")
+            await stack.aclose()
+
+    async def test_load_database_tool_settings_rejects_invalid_env_name(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool.database]
+dsn = \"env:INVALID-NAME\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            with self.assertRaises(AssertionError):
+                await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                )
+            await stack.aclose()
+
+    async def test_load_database_tool_settings_rejects_missing_env_dsn(self):
+        for env_name, env_value in (
+            ("AVALAN_MISSING_DATABASE_DSN", None),
+            ("AVALAN_EMPTY_DATABASE_DSN", ""),
+        ):
+            with self.subTest(env_name=env_name):
+                config = f"""
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool.database]
+dsn = \"env:{env_name}\"
+"""
+                with TemporaryDirectory() as tmp:
+                    path = f"{tmp}/agent.toml"
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(config)
+
+                    hub = MagicMock(spec=HuggingfaceHub)
+                    logger = MagicMock(spec=Logger)
+                    stack = AsyncExitStack()
+                    env = {} if env_value is None else {env_name: env_value}
+
+                    with patch.dict("os.environ", env, clear=True):
+                        try:
+                            loader = OrchestratorLoader(
+                                hub=hub,
+                                logger=logger,
+                                participant_id=uuid4(),
+                                stack=stack,
+                            )
+                            with self.assertRaises(AssertionError):
+                                await loader.from_file(
+                                    path,
+                                    agent_id=uuid4(),
+                                )
+                        finally:
+                            await stack.aclose()
+
+    async def test_load_database_tool_settings_normalizes_scalar_commands(
+        self,
+    ):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool.database]
+dsn = \"sqlite:///db.sqlite\"
+allowed_commands = \"select\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            try:
+                with patch.object(
+                    OrchestratorLoader,
+                    "from_settings",
+                    new=AsyncMock(return_value="orch"),
+                ) as lfs_patch:
+                    loader = OrchestratorLoader(
+                        hub=hub,
+                        logger=logger,
+                        participant_id=uuid4(),
+                        stack=stack,
+                    )
+                    await loader.from_file(path, agent_id=uuid4())
+                    tool_settings = lfs_patch.call_args.kwargs["tool_settings"]
+                    self.assertEqual(
+                        tool_settings.database.allowed_commands,
+                        ["select"],
+                    )
+            finally:
+                await stack.aclose()
+
     async def test_load_graph_tool_settings(self):
         config = """
 [agent]

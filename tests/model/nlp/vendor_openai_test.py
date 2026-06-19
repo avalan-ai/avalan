@@ -850,6 +850,231 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             "done",
         )
 
+    async def test_stream_completion_output_emits_structured_answer(self):
+        events = [
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(
+                    output=[
+                        SimpleNamespace(
+                            type="message",
+                            content=[
+                                SimpleNamespace(
+                                    type="output_text",
+                                    text='{"answer":"ok"}',
+                                )
+                            ],
+                        )
+                    ],
+                    usage={
+                        "input_tokens": 3,
+                        "output_tokens": 5,
+                        "total_tokens": 8,
+                    },
+                ),
+            )
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.answer_text, '{"answer":"ok"}')
+        self.assertEqual(
+            accumulator.usage_items[0].usage,
+            {
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "total_tokens": 8,
+            },
+        )
+
+    async def test_stream_completion_output_does_not_duplicate_deltas(self):
+        events = [
+            SimpleNamespace(type="response.output_text.delta", delta="ok"),
+            SimpleNamespace(type="response.output_text.done"),
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(
+                    output=[
+                        SimpleNamespace(
+                            type="message",
+                            content=[SimpleNamespace(text="ignored")],
+                        )
+                    ]
+                ),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ok",
+        )
+
+    async def test_stream_completion_output_prefers_output_text(self):
+        events = [
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(
+                    output_text='{"answer":"ok"}',
+                    output=[
+                        SimpleNamespace(
+                            type="message",
+                            content=[SimpleNamespace(text='{"answer":"ok"}')],
+                        )
+                    ],
+                ),
+            )
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            '{"answer":"ok"}',
+        )
+
+    async def test_stream_completion_output_ignores_tool_calls(self):
+        events = [
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(
+                    output=[
+                        SimpleNamespace(
+                            type="function_call",
+                            id="call-1",
+                            name="database.run",
+                            arguments='{"sql":"SELECT 1"}',
+                        )
+                    ]
+                ),
+            )
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "",
+        )
+
+    async def test_stream_message_output_item_done_emits_structured_answer(
+        self,
+    ):
+        events = [
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="message",
+                    id="msg_1",
+                    content=[
+                        SimpleNamespace(
+                            type="output_text",
+                            text='{"answer":"done"}',
+                        )
+                    ],
+                ),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            '{"answer":"done"}',
+        )
+
+    async def test_stream_message_output_item_done_emits_direct_text(self):
+        events = [
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="message",
+                    id="msg_1",
+                    text='{"answer":"direct"}',
+                ),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            '{"answer":"direct"}',
+        )
+
+    async def test_stream_message_output_item_done_without_text_is_ignored(
+        self,
+    ):
+        events = [
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="message",
+                    id="msg_1",
+                    content=[],
+                ),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+
     async def test_stream_ignores_tool_added_without_id(self):
         stream = self.mod.OpenAIStream(
             AsyncIter(

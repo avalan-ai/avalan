@@ -1,6 +1,7 @@
 from ...compat import override
 from .. import Tool
 from .settings import DatabaseToolSettings as DatabaseToolSettings
+from .settings import resolve_database_dsn as resolve_database_dsn
 
 from abc import ABC
 from asyncio import sleep
@@ -226,7 +227,7 @@ class DatabaseTool(Tool, ABC):
 
     @staticmethod
     def _create_engine(dsn: str, **kwargs: Any) -> AsyncEngine:
-        return create_async_engine(dsn, **kwargs)
+        return create_async_engine(resolve_database_dsn(dsn), **kwargs)
 
     def _register_table_names(
         self, schema: str | None, table_names: list[str]
