@@ -1,12 +1,14 @@
-from ...entities import ToolCallContext
+from ...entities import ToolCall, ToolCallContext, ToolCallOutcome
 from ...types import assert_int_sequence as _assert_int_sequence
 from ...types import assert_string_sequence as _assert_string_sequence
 from .. import Tool
+from .display import project_shell_tool_display
 from .entities import (
     ExecutionResult,
     PathOperand,
     ShellCommandRequest,
     ShellExecutionStatus,
+    ShellFormattedResult,
     ShellOutputKind,
     ShellPolicyDenied,
 )
@@ -17,6 +19,7 @@ from .settings import ShellToolSettings
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
+from inspect import signature
 from typing import Literal
 
 ShellResultFormatter = Callable[[ExecutionResult], str]
@@ -54,7 +57,8 @@ class _ShellCommandTool(Tool, ABC):
         try:
             spec = await self._policy.normalize(request)
         except ShellPolicyDenied as error:
-            return self._formatter(_policy_denied_result(request, error))
+            result = _policy_denied_result(request, error)
+            return ShellFormattedResult(self._formatter(result), result)
         if context.stream_event is not None:
             result = await self._executor.execute(
                 spec,
@@ -62,10 +66,43 @@ class _ShellCommandTool(Tool, ABC):
             )
         else:
             result = await self._executor.execute(spec)
-        return self._formatter(result)
+        return ShellFormattedResult(self._formatter(result), result)
 
     def _format_result(self, result: ExecutionResult) -> str:
         return format_shell_result(result, settings=self._settings)
+
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        request = None if outcome is not None else self._display_request(call)
+        return project_shell_tool_display(
+            call=call,
+            outcome=outcome,
+            request=request,
+        )
+
+    def _display_request(self, call: ToolCall) -> ShellCommandRequest | None:
+        if call.arguments is None:
+            arguments = {}
+        elif isinstance(call.arguments, dict):
+            arguments = dict(call.arguments)
+        else:
+            return None
+        builder = getattr(self, "_build_request")
+        assert callable(builder), "shell tool must define _build_request"
+        try:
+            bound = signature(builder).bind(**arguments)
+            bound.apply_defaults()
+            request = builder(**bound.arguments)
+        except (AssertionError, TypeError, ValueError):
+            return None
+        assert isinstance(
+            request,
+            ShellCommandRequest,
+        ), "_build_request must return a shell command request"
+        return request
 
     @abstractmethod
     async def __call__(self, *args: object, **kwargs: object) -> str:
@@ -112,6 +149,46 @@ class RgTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        pattern: str,
+        paths: Sequence[str] = (),
+        cwd: str | None = None,
+        case: Literal["sensitive", "insensitive", "smart"] = "sensitive",
+        fixed_strings: bool = False,
+        context_lines: int = 0,
+        before_context: int | None = None,
+        after_context: int | None = None,
+        max_matches_per_file: int | None = None,
+        max_depth: int | None = None,
+        max_filesize_bytes: int | None = None,
+        globs: Sequence[str] = (),
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.rg",
+            command="rg",
+            options={
+                "pattern": pattern,
+                "case": case,
+                "fixed_strings": fixed_strings,
+                "context_lines": context_lines,
+                "before_context": before_context,
+                "after_context": after_context,
+                "max_matches_per_file": max_matches_per_file,
+                "max_depth": max_depth,
+                "max_filesize_bytes": max_filesize_bytes,
+                "globs": _string_tuple(globs, "globs"),
+            },
+            paths=_path_operands(paths, kind="any"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         pattern: str,
@@ -133,23 +210,19 @@ class RgTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.rg",
-                command="rg",
-                options={
-                    "pattern": pattern,
-                    "case": case,
-                    "fixed_strings": fixed_strings,
-                    "context_lines": context_lines,
-                    "before_context": before_context,
-                    "after_context": after_context,
-                    "max_matches_per_file": max_matches_per_file,
-                    "max_depth": max_depth,
-                    "max_filesize_bytes": max_filesize_bytes,
-                    "globs": _string_tuple(globs, "globs"),
-                },
-                paths=_path_operands(paths, kind="any"),
+            self._build_request(
+                pattern=pattern,
+                paths=paths,
                 cwd=cwd,
+                case=case,
+                fixed_strings=fixed_strings,
+                context_lines=context_lines,
+                before_context=before_context,
+                after_context=after_context,
+                max_matches_per_file=max_matches_per_file,
+                max_depth=max_depth,
+                max_filesize_bytes=max_filesize_bytes,
+                globs=globs,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
@@ -190,6 +263,27 @@ class HeadTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        path: str,
+        lines: int = 80,
+        byte_count: int | None = None,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return _line_reader_request(
+            command="head",
+            path=path,
+            lines=lines,
+            byte_count=byte_count,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         path: str,
@@ -203,8 +297,7 @@ class HeadTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            _line_reader_request(
-                command="head",
+            self._build_request(
                 path=path,
                 lines=lines,
                 byte_count=byte_count,
@@ -251,6 +344,31 @@ class TailTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        path: str,
+        lines: int = 80,
+        start_line: int | None = None,
+        byte_count: int | None = None,
+        start_byte: int | None = None,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return _line_reader_request(
+            command="tail",
+            path=path,
+            lines=lines,
+            byte_count=byte_count,
+            start_line=start_line,
+            start_byte=start_byte,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         path: str,
@@ -266,12 +384,11 @@ class TailTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            _line_reader_request(
-                command="tail",
+            self._build_request(
                 path=path,
                 lines=lines,
-                byte_count=byte_count,
                 start_line=start_line,
+                byte_count=byte_count,
                 start_byte=start_byte,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
@@ -312,6 +429,26 @@ class LsTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        path: str | None = None,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        paths = () if path is None or path == "" else (path,)
+        return ShellCommandRequest(
+            tool_name="shell.ls",
+            command="ls",
+            options={},
+            paths=_path_operands(paths, kind="any"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         path: str | None = None,
@@ -322,13 +459,9 @@ class LsTool(_ShellCommandTool):
         *,
         context: ToolCallContext,
     ) -> str:
-        paths = () if path is None or path == "" else (path,)
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.ls",
-                command="ls",
-                options={},
-                paths=_path_operands(paths, kind="any"),
+            self._build_request(
+                path=path,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -368,6 +501,25 @@ class CatTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        path: str,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.cat",
+            command="cat",
+            options={},
+            paths=_path_operands((path,), kind="text_file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         path: str,
@@ -379,11 +531,8 @@ class CatTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.cat",
-                command="cat",
-                options={},
-                paths=_path_operands((path,), kind="text_file"),
+            self._build_request(
+                path=path,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -425,6 +574,27 @@ class FileTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        paths: Sequence[str],
+        cwd: str | None = None,
+        brief: bool = False,
+        mime_type: bool = False,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.file",
+            command="file",
+            options={"brief": brief, "mime_type": mime_type},
+            paths=_path_operands(paths, kind="file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         paths: Sequence[str],
@@ -438,12 +608,11 @@ class FileTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.file",
-                command="file",
-                options={"brief": brief, "mime_type": mime_type},
-                paths=_path_operands(paths, kind="file"),
+            self._build_request(
+                paths=paths,
                 cwd=cwd,
+                brief=brief,
+                mime_type=mime_type,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
@@ -486,6 +655,34 @@ class FindTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        paths: Sequence[str] = (),
+        cwd: str | None = None,
+        min_depth: int | None = None,
+        max_depth: int = 3,
+        entry_type: Literal["any", "file", "directory"] = "any",
+        name: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.find",
+            command="find",
+            options={
+                "min_depth": min_depth,
+                "max_depth": max_depth,
+                "entry_type": entry_type,
+                "name": name,
+            },
+            paths=_path_operands(paths, kind="any"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         paths: Sequence[str] = (),
@@ -501,17 +698,13 @@ class FindTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.find",
-                command="find",
-                options={
-                    "min_depth": min_depth,
-                    "max_depth": max_depth,
-                    "entry_type": entry_type,
-                    "name": name,
-                },
-                paths=_path_operands(paths, kind="any"),
+            self._build_request(
+                paths=paths,
                 cwd=cwd,
+                min_depth=min_depth,
+                max_depth=max_depth,
+                entry_type=entry_type,
+                name=name,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
@@ -553,6 +746,32 @@ class WcTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        paths: Sequence[str],
+        cwd: str | None = None,
+        lines: bool = True,
+        words: bool = False,
+        count_bytes: bool = False,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.wc",
+            command="wc",
+            options={
+                "lines": lines,
+                "words": words,
+                "count_bytes": count_bytes,
+            },
+            paths=_path_operands(paths, kind="text_file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         paths: Sequence[str],
@@ -567,16 +786,12 @@ class WcTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.wc",
-                command="wc",
-                options={
-                    "lines": lines,
-                    "words": words,
-                    "count_bytes": count_bytes,
-                },
-                paths=_path_operands(paths, kind="text_file"),
+            self._build_request(
+                paths=paths,
                 cwd=cwd,
+                lines=lines,
+                words=words,
+                count_bytes=count_bytes,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
@@ -621,6 +836,43 @@ class AwkTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        paths: Sequence[str],
+        fields: Sequence[int] | None = None,
+        field_separator: Literal[
+            "whitespace",
+            "tab",
+            "comma",
+            "pipe",
+        ] = "whitespace",
+        output_separator: str = " ",
+        pattern: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.awk",
+            command="awk",
+            options={
+                "fields": _optional_int_tuple(fields, "fields"),
+                "field_separator": field_separator,
+                "output_separator": output_separator,
+                "pattern": pattern,
+                "start_line": start_line,
+                "end_line": end_line,
+            },
+            paths=_path_operands(paths, kind="text_file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         paths: Sequence[str],
@@ -643,18 +895,14 @@ class AwkTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.awk",
-                command="awk",
-                options={
-                    "fields": _optional_int_tuple(fields, "fields"),
-                    "field_separator": field_separator,
-                    "output_separator": output_separator,
-                    "pattern": pattern,
-                    "start_line": start_line,
-                    "end_line": end_line,
-                },
-                paths=_path_operands(paths, kind="text_file"),
+            self._build_request(
+                paths=paths,
+                fields=fields,
+                field_separator=field_separator,
+                output_separator=output_separator,
+                pattern=pattern,
+                start_line=start_line,
+                end_line=end_line,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -698,6 +946,37 @@ class SedTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        paths: Sequence[str],
+        line_ranges: Sequence[str] = (),
+        patterns: Sequence[str] = (),
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.sed",
+            command="sed",
+            options={
+                "line_ranges": _string_tuple(
+                    line_ranges,
+                    "line_ranges",
+                ),
+                "patterns": _string_tuple(patterns, "patterns"),
+                "start_line": start_line,
+                "end_line": end_line,
+            },
+            paths=_path_operands(paths, kind="text_file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         paths: Sequence[str],
@@ -713,23 +992,16 @@ class SedTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.sed",
-                command="sed",
-                options={
-                    "line_ranges": _string_tuple(
-                        line_ranges,
-                        "line_ranges",
-                    ),
-                    "patterns": _string_tuple(patterns, "patterns"),
-                    "start_line": start_line,
-                    "end_line": end_line,
-                },
-                paths=_path_operands(paths, kind="text_file"),
+            self._build_request(
+                paths=paths,
+                line_ranges=line_ranges,
+                patterns=patterns,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
+                start_line=start_line,
+                end_line=end_line,
             ),
             context=context,
         )
@@ -770,6 +1042,36 @@ class JqTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        filter: str,
+        paths: Sequence[str],
+        cwd: str | None = None,
+        raw_output: bool = False,
+        compact: bool = False,
+        slurp: bool = False,
+        sort_keys: bool = False,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.jq",
+            command="jq",
+            options={
+                "filter": filter,
+                "raw_output": raw_output,
+                "compact": compact,
+                "slurp": slurp,
+                "sort_keys": sort_keys,
+            },
+            paths=_path_operands(paths, kind="json_file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         filter: str,
@@ -786,18 +1088,14 @@ class JqTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.jq",
-                command="jq",
-                options={
-                    "filter": filter,
-                    "raw_output": raw_output,
-                    "compact": compact,
-                    "slurp": slurp,
-                    "sort_keys": sort_keys,
-                },
-                paths=_path_operands(paths, kind="json_file"),
+            self._build_request(
+                filter=filter,
+                paths=paths,
                 cwd=cwd,
+                raw_output=raw_output,
+                compact=compact,
+                slurp=slurp,
+                sort_keys=sort_keys,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
@@ -840,6 +1138,34 @@ class PdfInfoTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        path: str,
+        first_page: int | None = None,
+        last_page: int | None = None,
+        boxes: bool = False,
+        iso_dates: bool = False,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.pdfinfo",
+            command="pdfinfo",
+            options={
+                "first_page": first_page,
+                "last_page": last_page,
+                "boxes": boxes,
+                "iso_dates": iso_dates,
+            },
+            paths=_path_operands((path,), kind="pdf_file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         path: str,
@@ -855,16 +1181,12 @@ class PdfInfoTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.pdfinfo",
-                command="pdfinfo",
-                options={
-                    "first_page": first_page,
-                    "last_page": last_page,
-                    "boxes": boxes,
-                    "iso_dates": iso_dates,
-                },
-                paths=_path_operands((path,), kind="pdf_file"),
+            self._build_request(
+                path=path,
+                first_page=first_page,
+                last_page=last_page,
+                boxes=boxes,
+                iso_dates=iso_dates,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -908,6 +1230,34 @@ class PdfToTextTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        path: str,
+        first_page: int = 1,
+        last_page: int | None = None,
+        layout: bool = False,
+        no_page_breaks: bool = False,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.pdftotext",
+            command="pdftotext",
+            options={
+                "first_page": first_page,
+                "last_page": last_page,
+                "layout": layout,
+                "no_page_breaks": no_page_breaks,
+            },
+            paths=_path_operands((path,), kind="pdf_file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         path: str,
@@ -923,16 +1273,12 @@ class PdfToTextTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.pdftotext",
-                command="pdftotext",
-                options={
-                    "first_page": first_page,
-                    "last_page": last_page,
-                    "layout": layout,
-                    "no_page_breaks": no_page_breaks,
-                },
-                paths=_path_operands((path,), kind="pdf_file"),
+            self._build_request(
+                path=path,
+                first_page=first_page,
+                last_page=last_page,
+                layout=layout,
+                no_page_breaks=no_page_breaks,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -977,6 +1323,36 @@ class PdfToPpmTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        path: str,
+        first_page: int = 1,
+        last_page: int | None = None,
+        dpi: int | None = None,
+        grayscale: bool = False,
+        format: Literal["png"] = "png",
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.pdftoppm",
+            command="pdftoppm",
+            options={
+                "first_page": first_page,
+                "last_page": last_page,
+                "dpi": dpi,
+                "grayscale": grayscale,
+                "format": format,
+            },
+            paths=_path_operands((path,), kind="pdf_file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         path: str,
@@ -993,17 +1369,13 @@ class PdfToPpmTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.pdftoppm",
-                command="pdftoppm",
-                options={
-                    "first_page": first_page,
-                    "last_page": last_page,
-                    "dpi": dpi,
-                    "grayscale": grayscale,
-                    "format": format,
-                },
-                paths=_path_operands((path,), kind="pdf_file"),
+            self._build_request(
+                path=path,
+                first_page=first_page,
+                last_page=last_page,
+                dpi=dpi,
+                grayscale=grayscale,
+                format=format,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -1048,6 +1420,39 @@ class TesseractTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def _build_request(
+        self,
+        path: str,
+        languages: Sequence[str] | None = None,
+        psm: int = 3,
+        oem: int | None = None,
+        dpi: int | None = None,
+        output_format: Literal["txt"] = "txt",
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.tesseract",
+            command="tesseract",
+            options={
+                "languages": _optional_string_tuple(
+                    languages,
+                    "languages",
+                ),
+                "psm": psm,
+                "oem": oem,
+                "dpi": dpi,
+                "output_format": output_format,
+            },
+            paths=_path_operands((path,), kind="image_file"),
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
     async def __call__(
         self,
         path: str,
@@ -1064,20 +1469,13 @@ class TesseractTool(_ShellCommandTool):
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
-            ShellCommandRequest(
-                tool_name="shell.tesseract",
-                command="tesseract",
-                options={
-                    "languages": _optional_string_tuple(
-                        languages,
-                        "languages",
-                    ),
-                    "psm": psm,
-                    "oem": oem,
-                    "dpi": dpi,
-                    "output_format": output_format,
-                },
-                paths=_path_operands((path,), kind="image_file"),
+            self._build_request(
+                path=path,
+                languages=languages,
+                psm=psm,
+                oem=oem,
+                dpi=dpi,
+                output_format=output_format,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
