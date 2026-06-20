@@ -5,6 +5,7 @@ from ..model.stream import (
     StreamConsumerProjection,
     stream_projection_text_delta,
 )
+from ..tool.display import ToolDisplayProjection
 from .display import CliStreamDisplayConfig, DiagnosticChannel
 from .display_safety import (
     MAX_SUMMARY_CHARS,
@@ -310,6 +311,7 @@ class CliToolExecutionSummarySnapshot:
     tool_call_id: str
     name: str
     arguments_summary: str | None = None
+    display_projection: ToolDisplayProjection | None = None
     provider_name: str | None = None
     sequence: int | None = None
     status: ToolStatus = "active"
@@ -325,6 +327,7 @@ class CliToolResultSummarySnapshot:
     status: ToolResultStatus
     result_summary: str
     arguments_count: int
+    display_projection: ToolDisplayProjection | None = None
     sequence: int | None = None
     elapsed_seconds: float | None = None
 
@@ -842,6 +845,7 @@ class CliStreamSnapshotBuilder:
         tool_call_id: object,
         name: object,
         arguments: object | None = None,
+        display_projection: ToolDisplayProjection | None = None,
         provider_name: object | None = None,
         sequence: int | None = None,
         started_at: float | None = None,
@@ -849,6 +853,8 @@ class CliStreamSnapshotBuilder:
         """Add or replace an active tool execution summary."""
         if not self.display.show_tools:
             return
+        if display_projection is not None:
+            assert isinstance(display_projection, ToolDisplayProjection)
         tool_id = _safe_string_id(tool_call_id)
         self._active_tools[tool_id] = CliToolExecutionSummarySnapshot(
             tool_call_id=tool_id,
@@ -856,6 +862,7 @@ class CliStreamSnapshotBuilder:
             arguments_summary=(
                 None if arguments is None else safe_summary(arguments)
             ),
+            display_projection=display_projection,
             provider_name=(
                 None if provider_name is None else safe_text(provider_name)
             ),
@@ -870,6 +877,7 @@ class CliStreamSnapshotBuilder:
         tool_call_id: object,
         name: object | None = None,
         arguments: object | None = None,
+        display_projection: ToolDisplayProjection | None = None,
         provider_name: object | None = None,
         sequence: int | None = None,
         updated_at: float | None = None,
@@ -877,6 +885,8 @@ class CliStreamSnapshotBuilder:
         """Update retained active tool execution details."""
         if not self.display.show_tools:
             return
+        if display_projection is not None:
+            assert isinstance(display_projection, ToolDisplayProjection)
         tool_id = _safe_string_id(tool_call_id)
         active = self._active_tools.get(tool_id)
         if active is None:
@@ -888,6 +898,11 @@ class CliStreamSnapshotBuilder:
                 active.arguments_summary
                 if arguments is None
                 else safe_summary(arguments)
+            ),
+            display_projection=(
+                active.display_projection
+                if display_projection is None
+                else display_projection
             ),
             provider_name=(
                 active.provider_name
@@ -904,12 +919,15 @@ class CliStreamSnapshotBuilder:
         tool_call_id: object,
         status: ToolStatus = "completed",
         name: object | None = None,
+        display_projection: ToolDisplayProjection | None = None,
         elapsed_seconds: float | None = None,
         sequence: int | None = None,
     ) -> None:
         """Move an active tool to completed history when retained."""
         if not self.display.show_tools:
             return
+        if display_projection is not None:
+            assert isinstance(display_projection, ToolDisplayProjection)
         tool_id = _safe_string_id(tool_call_id)
         tool_name = safe_text("tool" if name is None else name)
         active = self._active_tools.pop(tool_id, None)
@@ -918,6 +936,11 @@ class CliStreamSnapshotBuilder:
             name=active.name if active and name is None else tool_name,
             arguments_summary=(
                 None if active is None else active.arguments_summary
+            ),
+            display_projection=(
+                display_projection
+                if display_projection is not None
+                else (None if active is None else active.display_projection)
             ),
             provider_name=None if active is None else active.provider_name,
             sequence=sequence if sequence is not None else _sequence(active),
@@ -934,10 +957,13 @@ class CliStreamSnapshotBuilder:
         *,
         sequence: int | None = None,
         elapsed_seconds: float | None = None,
+        display_projection: ToolDisplayProjection | None = None,
     ) -> None:
         """Add a safe tool result or error summary."""
         if self.retention.internal_tool_history_limit == 0:
             return
+        if display_projection is not None:
+            assert isinstance(display_projection, ToolDisplayProjection)
         call = value_from(result, "call") or result
         arguments = value_from(call, "arguments")
         result_value = (
@@ -956,6 +982,7 @@ class CliStreamSnapshotBuilder:
                 ),
                 result_summary=safe_summary(result_value),
                 arguments_count=_payload_size(arguments),
+                display_projection=display_projection,
                 sequence=sequence,
                 elapsed_seconds=elapsed_seconds,
             )
@@ -969,6 +996,7 @@ class CliStreamSnapshotBuilder:
         status: ToolResultStatus,
         result: object,
         arguments_count: int,
+        display_projection: ToolDisplayProjection | None = None,
         sequence: int | None = None,
         elapsed_seconds: float | None = None,
     ) -> None:
@@ -978,6 +1006,8 @@ class CliStreamSnapshotBuilder:
         assert arguments_count >= 0
         if self.retention.internal_tool_history_limit == 0:
             return
+        if display_projection is not None:
+            assert isinstance(display_projection, ToolDisplayProjection)
         self._tool_results.append(
             CliToolResultSummarySnapshot(
                 tool_call_id=_safe_string_id(tool_call_id),
@@ -985,6 +1015,7 @@ class CliStreamSnapshotBuilder:
                 status=status,
                 result_summary=safe_summary(result),
                 arguments_count=arguments_count,
+                display_projection=display_projection,
                 sequence=sequence,
                 elapsed_seconds=elapsed_seconds,
             )

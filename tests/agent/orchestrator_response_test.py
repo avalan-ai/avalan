@@ -76,6 +76,10 @@ from avalan.model.stream import (
 )
 from avalan.tool import Tool, ToolSet
 from avalan.tool.database import DatabaseToolSet, DatabaseToolSettings
+from avalan.tool.display import (
+    TOOL_DISPLAY_PROJECTION_METADATA_KEY,
+    ToolDisplayProjection,
+)
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
 
@@ -2364,7 +2368,14 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 ToolExecutionStreamEvent(
                     kind=ToolExecutionStreamKind.STDOUT,
                     content="alpha\n",
-                    metadata={"bytes": 6},
+                    metadata={
+                        "bytes": 6,
+                        TOOL_DISPLAY_PROJECTION_METADATA_KEY: {
+                            "action": "stream",
+                            "target": "stdout",
+                            "summary": "Streaming stdout.",
+                        },
+                    },
                 )
             )
             await context.stream_event(
@@ -2379,6 +2390,14 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                     kind=ToolExecutionStreamKind.PROGRESS,
                     content="half",
                     progress=0.5,
+                    metadata={
+                        TOOL_DISPLAY_PROJECTION_METADATA_KEY: {
+                            "action": "stream",
+                            "target": "progress",
+                            "summary": "Halfway done.",
+                            "progress": 0.5,
+                        },
+                    },
                 )
             )
             await context.stream_event(
@@ -2454,16 +2473,35 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 ("log", "trace\n"),
             ],
         )
-        self.assertEqual(output_items[0].data["metadata"], {"bytes": 6})
+        stdout_projection = cast(
+            dict[str, object],
+            output_items[0].metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+        self.assertEqual(stdout_projection["action"], "stream")
+        self.assertEqual(stdout_projection["target"], "stdout")
+        self.assertEqual(output_items[0].data["metadata"]["bytes"], 6)
         self.assertEqual(output_items[2].data["metadata"], {"logger": "tool"})
         progress_item = canonical_items[7]
+        progress_projection = cast(
+            dict[str, object],
+            progress_item.metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+        self.assertEqual(progress_projection["target"], "progress")
+        self.assertEqual(progress_projection["progress"], 0.5)
         self.assertEqual(
             progress_item.data,
             {
                 "category": "progress",
                 "content": "half",
                 "progress": 0.5,
-                "metadata": {},
+                "metadata": {
+                    TOOL_DISPLAY_PROJECTION_METADATA_KEY: {
+                        "action": "stream",
+                        "target": "progress",
+                        "summary": "Halfway done.",
+                        "progress": 0.5,
+                    },
+                },
             },
         )
         terminal_item = canonical_items[9]
@@ -8050,6 +8088,445 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(
             any(event.type is EventType.TOOL_DIAGNOSTIC for event in events)
         )
+
+    async def test_canonical_tool_items_include_display_projection_metadata(
+        self,
+    ) -> None:
+        async def projected_calc(expression: str) -> str:
+            return "4" if expression == "2 + 2" else expression
+
+        def project_display(*items: object, **kwargs: object) -> object | None:
+            outcome = kwargs.get("outcome")
+            if outcome is None and len(items) > 1:
+                outcome = items[1]
+            if isinstance(outcome, ToolCallResult):
+                return ToolDisplayProjection(
+                    action="finish",
+                    target=outcome.name,
+                    summary="Calculated result.",
+                    status="completed",
+                    outcome="result",
+                )
+            call = kwargs.get("call")
+            if not isinstance(call, ToolCall) and items:
+                call = items[0]
+            if not isinstance(call, ToolCall):
+                return None
+            return ToolDisplayProjection(
+                action="calculate",
+                target=call.name,
+                summary="Calculate expression.",
+            )
+
+        setattr(projected_calc, "tool_display_projector", project_display)
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        manager = ToolManager.create_instance(
+            enable_tools=["projected_calc"],
+            available_toolsets=[ToolSet(tools=[projected_calc])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call1",
+            name="projected_calc",
+            arguments={"expression": "2 + 2"},
+        )
+        agent.return_value = _string_response("done", async_gen=True)
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(call),
+            agent,
+            operation,
+            {},
+            tool=manager,
+        )
+
+        result = await resp.to_str()
+
+        self.assertEqual(result, "done")
+        canonical_items = resp.canonical_items
+        ready = next(
+            item
+            for item in canonical_items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        started = next(
+            item
+            for item in canonical_items
+            if item.kind is StreamItemKind.TOOL_EXECUTION_STARTED
+        )
+        terminal = next(
+            item
+            for item in canonical_items
+            if item.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED
+        )
+        ready_projection = cast(
+            dict[str, object],
+            ready.metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+        start_projection = cast(
+            dict[str, object],
+            started.metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+        terminal_projection = cast(
+            dict[str, object],
+            terminal.metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+
+        self.assertEqual(ready_projection["action"], "calculate")
+        self.assertEqual(start_projection["action"], "calculate")
+        self.assertEqual(terminal_projection["action"], "finish")
+        self.assertEqual(terminal_projection["status"], "completed")
+        self.assertEqual(
+            terminal.data,
+            {
+                "name": "projected_calc",
+                "result": "4",
+                "arguments": {"expression": "2 + 2"},
+            },
+        )
+        validate_canonical_stream_items(canonical_items)
+        validate_tool_lifecycle_items(canonical_items)
+
+    async def test_ready_tool_item_keeps_existing_display_projection_metadata(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+        )
+        metadata = {
+            TOOL_DISPLAY_PROJECTION_METADATA_KEY: {
+                "action": "existing",
+                "summary": "Already projected.",
+            }
+        }
+
+        item = resp._append_canonical_tool_call_lifecycle_item(
+            StreamItemKind.TOOL_CALL_READY,
+            data={
+                "id": "ready-call",
+                "name": "plain",
+                "arguments": {"value": "ok"},
+            },
+            correlation=StreamItemCorrelation(tool_call_id="ready-call"),
+            metadata=metadata,
+        )
+
+        projection = cast(
+            dict[str, object],
+            item.metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+        self.assertEqual(projection["action"], "existing")
+        self.assertEqual(projection["summary"], "Already projected.")
+
+    async def test_call_projection_accepts_keyword_only_projector(
+        self,
+    ) -> None:
+        async def keyword_calc(expression: str) -> str:
+            return expression
+
+        invocations: list[tuple[object, ...]] = []
+
+        def project_display(
+            *items: object,
+            call: ToolCall,
+        ) -> ToolDisplayProjection:
+            invocations.append(items)
+            return ToolDisplayProjection(
+                action="keyword",
+                target=call.name,
+                summary="Keyword-only projection.",
+            )
+
+        setattr(keyword_calc, "tool_display_projector", project_display)
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        manager = ToolManager.create_instance(
+            enable_tools=["keyword_calc"],
+            available_toolsets=[ToolSet(tools=[keyword_calc])],
+            settings=ToolManagerSettings(),
+        )
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+            tool=manager,
+        )
+        call = ToolCall(
+            id="keyword-call",
+            name="keyword_calc",
+            arguments={"expression": "2 + 2"},
+        )
+
+        resp._append_canonical_tool_execution_started(call)
+
+        projection = cast(
+            dict[str, object],
+            resp.canonical_items[-1].metadata[
+                TOOL_DISPLAY_PROJECTION_METADATA_KEY
+            ],
+        )
+        self.assertEqual(projection["action"], "keyword")
+        self.assertEqual(projection["target"], "keyword_calc")
+        self.assertEqual(invocations, [()])
+
+    async def test_call_projection_does_not_retry_after_projector_declines(
+        self,
+    ) -> None:
+        async def guarded_calc(expression: str) -> str:
+            return expression
+
+        invocations: list[tuple[object, ...]] = []
+
+        def project_display(
+            *items: object,
+            call: ToolCall | None = None,
+        ) -> ToolDisplayProjection | None:
+            invocations.append(items)
+            if items:
+                return None
+            assert call is not None
+            return ToolDisplayProjection(
+                action="unexpected",
+                target=call.name,
+            )
+
+        setattr(guarded_calc, "tool_display_projector", project_display)
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        manager = ToolManager.create_instance(
+            enable_tools=["guarded_calc"],
+            available_toolsets=[ToolSet(tools=[guarded_calc])],
+            settings=ToolManagerSettings(),
+        )
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+            tool=manager,
+        )
+        call = ToolCall(
+            id="guarded-call",
+            name="guarded_calc",
+            arguments={"expression": "2 + 2"},
+        )
+
+        resp._append_canonical_tool_execution_started(call)
+
+        projection = cast(
+            dict[str, object],
+            resp.canonical_items[-1].metadata[
+                TOOL_DISPLAY_PROJECTION_METADATA_KEY
+            ],
+        )
+        self.assertEqual(len(invocations), 1)
+        self.assertEqual(projection["action"], "call")
+
+    async def test_call_projection_accepts_tool_manager_subclass(self) -> None:
+        async def subclass_calc(expression: str) -> str:
+            return expression
+
+        def project_display(call: ToolCall) -> ToolDisplayProjection:
+            return ToolDisplayProjection(
+                action="subclass",
+                target=call.name,
+                summary="Subclass manager projection.",
+            )
+
+        class SubclassToolManager(ToolManager):
+            pass
+
+        setattr(subclass_calc, "tool_display_projector", project_display)
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        manager = SubclassToolManager(
+            enable_tools=["subclass_calc"],
+            available_toolsets=[ToolSet(tools=[subclass_calc])],
+            parser=ToolCallParser(),
+            settings=ToolManagerSettings(),
+        )
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+            tool=manager,
+        )
+        call = ToolCall(
+            id="subclass-call",
+            name="subclass_calc",
+            arguments={"expression": "2 + 2"},
+        )
+
+        resp._append_canonical_tool_execution_started(call)
+
+        projection = cast(
+            dict[str, object],
+            resp.canonical_items[-1].metadata[
+                TOOL_DISPLAY_PROJECTION_METADATA_KEY
+            ],
+        )
+        self.assertEqual(projection["action"], "subclass")
+        self.assertEqual(projection["target"], "subclass_calc")
+
+    async def test_terminal_projection_does_not_retry_after_projector_declines(
+        self,
+    ) -> None:
+        async def guarded_result(expression: str) -> str:
+            return expression
+
+        invocations: list[tuple[object, ...]] = []
+
+        def project_display(
+            *items: object,
+            call: ToolCall | None = None,
+            outcome: ToolCallResult | None = None,
+        ) -> ToolDisplayProjection | None:
+            invocations.append(items)
+            if items:
+                return None
+            assert call is not None
+            assert outcome is not None
+            return ToolDisplayProjection(
+                action="unexpected",
+                target=outcome.name,
+            )
+
+        setattr(guarded_result, "tool_display_projector", project_display)
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        manager = ToolManager.create_instance(
+            enable_tools=["guarded_result"],
+            available_toolsets=[ToolSet(tools=[guarded_result])],
+            settings=ToolManagerSettings(),
+        )
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+            tool=manager,
+        )
+        call = ToolCall(
+            id="guarded-result",
+            name="guarded_result",
+            arguments={"expression": "2 + 2"},
+        )
+
+        completed = resp._append_canonical_tool_execution_terminal(
+            call,
+            ToolCallResult(
+                id="result1",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="4",
+            ),
+        )
+
+        assert completed is not None
+        projection = cast(
+            dict[str, object],
+            completed.metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+        self.assertEqual(len(invocations), 1)
+        self.assertEqual(projection["action"], "finish")
+
+    async def test_canonical_terminal_projection_metadata_uses_fallbacks(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+        )
+        complete_call = ToolCall(
+            id="complete-call",
+            name="plain",
+            arguments={"value": "ok"},
+        )
+        error_call = ToolCall(id="error-call", name="plain", arguments={})
+        cancel_call = ToolCall(id="cancel-call", name="plain", arguments={})
+
+        resp._append_canonical_item(StreamItemKind.STREAM_STARTED)
+        resp._append_canonical_tool_execution_started(complete_call)
+        completed = resp._append_canonical_tool_execution_terminal(
+            complete_call,
+            ToolCallResult(
+                id="result1",
+                call=complete_call,
+                name=complete_call.name,
+                arguments=complete_call.arguments,
+                result={"ok": True},
+            ),
+        )
+        resp._append_canonical_tool_execution_started(error_call)
+        resp._append_canonical_tool_execution_error(
+            error_call,
+            RuntimeError("boom"),
+        )
+        errored = resp.canonical_items[-1]
+        resp._append_canonical_tool_execution_started(cancel_call)
+        resp._append_canonical_tool_execution_cancelled(cancel_call)
+        cancelled = resp.canonical_items[-1]
+        resp._finish_canonical_stream(
+            StreamItemKind.STREAM_ERRORED,
+            data={"message": "done"},
+        )
+
+        assert completed is not None
+        completed_projection = cast(
+            dict[str, object],
+            completed.metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+        error_projection = cast(
+            dict[str, object],
+            errored.metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+        cancel_projection = cast(
+            dict[str, object],
+            cancelled.metadata[TOOL_DISPLAY_PROJECTION_METADATA_KEY],
+        )
+        self.assertEqual(completed_projection["action"], "finish")
+        self.assertEqual(completed_projection["status"], "completed")
+        self.assertEqual(error_projection["status"], "error")
+        self.assertEqual(error_projection["severity"], "error")
+        self.assertEqual(cancel_projection["action"], "skip")
+        self.assertEqual(
+            cancel_projection["outcome"],
+            ToolCallDiagnosticCode.CANCELLED.value,
+        )
+        validate_canonical_stream_items(resp.canonical_items)
 
     async def test_to_str_preserves_json_schema_for_tool_continuation(self):
         engine = _DummyEngine()

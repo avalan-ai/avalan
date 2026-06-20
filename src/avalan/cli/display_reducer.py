@@ -9,6 +9,10 @@ from ..model.stream import (
     iter_stream_consumer_projections,
     stream_projection_text_delta,
 )
+from ..tool.display import (
+    ToolDisplayProjection,
+    tool_display_projection_from_metadata,
+)
 from .display import CliStreamDisplayConfig
 from .display_safety import (
     MAX_SUMMARY_CHARS,
@@ -396,6 +400,7 @@ class CliStreamSnapshotReducer:
             tool_call_id=tool_id,
             name=self._tool_name(tool_id, projection),
             arguments=self._tool_arguments(tool_id),
+            display_projection=_tool_display_projection(projection),
             provider_name=projection.provider_family,
             sequence=projection.sequence,
             started_at=now,
@@ -411,6 +416,7 @@ class CliStreamSnapshotReducer:
         self._builder.update_active_tool(
             tool_call_id=tool_id,
             name=self._tool_name(tool_id, projection),
+            display_projection=_tool_display_projection(projection),
             sequence=projection.sequence,
             updated_at=now,
         )
@@ -433,10 +439,12 @@ class CliStreamSnapshotReducer:
             result_status = "error"
 
         name = self._tool_name(tool_id, projection)
+        display_projection = _tool_display_projection(projection)
         self._builder.complete_tool(
             tool_call_id=tool_id,
             status=tool_status,
             name=name,
+            display_projection=display_projection,
             elapsed_seconds=elapsed,
             sequence=projection.sequence,
         )
@@ -448,6 +456,7 @@ class CliStreamSnapshotReducer:
             arguments_count=_tool_arguments_count(
                 self._tool_argument_state.get(tool_id)
             ),
+            display_projection=display_projection,
             sequence=projection.sequence,
             elapsed_seconds=elapsed,
         )
@@ -722,6 +731,12 @@ def _tool_terminal_result(projection: StreamConsumerProjection) -> object:
     if projection.data is not None:
         return projection.data
     return {"kind": projection.kind.value}
+
+
+def _tool_display_projection(
+    projection: StreamConsumerProjection,
+) -> ToolDisplayProjection | None:
+    return tool_display_projection_from_metadata(projection.metadata)
 
 
 def _tool_arguments_count(state: _ToolArgumentDisplayState | None) -> int:
