@@ -513,3 +513,35 @@ class ExecutionResult:
             tuple(self.generated_files),
         )
         object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+class ShellFormattedResult(str):
+    execution_result: ExecutionResult
+
+    def __new__(
+        cls,
+        value: str,
+        execution_result: ExecutionResult,
+    ) -> "ShellFormattedResult":
+        assert isinstance(value, str), "value must be a string"
+        assert isinstance(
+            execution_result,
+            ExecutionResult,
+        ), "execution_result must be a shell execution result"
+        formatted = str.__new__(cls, value)
+        formatted.execution_result = execution_result
+        return formatted
+
+    def __copy__(self) -> "ShellFormattedResult":
+        return self
+
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "ShellFormattedResult":
+        return self
+
+    def __reduce__(
+        self,
+    ) -> tuple[type["ShellFormattedResult"], tuple[str, ExecutionResult]]:
+        return (self.__class__, (str(self), self.execution_result))
