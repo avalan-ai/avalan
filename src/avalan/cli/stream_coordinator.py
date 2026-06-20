@@ -1,6 +1,7 @@
 from ..entities import ToolCall
 from . import confirm_tool_call
 from .display import CliStreamDisplayConfig
+from .display_safety import strip_terminal_controls
 from .stream_presenter import (
     CliStreamAnswerTextChunk,
     CliStreamPresenterItem,
@@ -8,18 +9,21 @@ from .stream_presenter import (
     StreamFrameRole,
 )
 
-from asyncio import Lock, to_thread
-from collections.abc import AsyncIterator, Callable
+from asyncio import Lock, sleep, to_thread
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
 from types import TracebackType
-from typing import Protocol, TypeAlias
+from typing import Protocol, TextIO, TypeAlias, cast
 
+from rich.color import Color
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.spinner import Spinner
+from rich.style import Style
+from rich.text import Text
 
 _FRAME_ROLE_ORDER: tuple[StreamFrameRole, ...] = (
     "events",
@@ -28,6 +32,13 @@ _FRAME_ROLE_ORDER: tuple[StreamFrameRole, ...] = (
     "stream",
     "answer",
 )
+_ANSWER_FADE_FRAME_SECONDS = 0.025
+_ANSWER_FADE_MIN_CHARS = 8
+_ANSWER_FADE_RGB_STEPS: tuple[int, ...] = (36, 56, 78, 106, 138, 172, 207)
+_ANSWER_FADE_SAVE_CURSOR = "\x1b[s"
+_ANSWER_FADE_RESTORE_CURSOR = "\x1b[u"
+_ANSWER_FADE_HIDE_CURSOR = "\x1b[?25l"
+_ANSWER_FADE_SHOW_CURSOR = "\x1b[?25h"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +105,7 @@ class CliStreamLiveFactory(Protocol):
 
 RecordFilenameFactory = Callable[[], str]
 CliStreamClock = Callable[[], float]
+CliStreamSleep = Callable[[float], Awaitable[None]]
 
 
 class ToolConfirmationPrompt(Protocol):
@@ -120,12 +132,14 @@ class CliStreamCoordinator:
         live_factory: CliStreamLiveFactory | None = None,
         record_filename_factory: RecordFilenameFactory | None = None,
         clock: CliStreamClock | None = None,
+        answer_fade_sleep: CliStreamSleep | None = None,
     ) -> None:
         assert isinstance(display_config, CliStreamDisplayConfig)
         assert diagnostic_console is None or callable(
             getattr(diagnostic_console, "print", None)
         )
         assert clock is None or callable(clock)
+        assert answer_fade_sleep is None or callable(answer_fade_sleep)
         self._console = console
         self._diagnostic_console = diagnostic_console
         self._display_config = display_config
@@ -134,6 +148,7 @@ class CliStreamCoordinator:
             record_filename_factory or stream_recording_filename
         )
         self._clock = clock or perf_counter
+        self._answer_fade_sleep = answer_fade_sleep or sleep
         self._flush_interval = 1 / display_config.refresh_per_second
         self._last_flush_at: float | None = None
         self._live: CliStreamLive | None = None
@@ -216,7 +231,72 @@ class CliStreamCoordinator:
         self._close_live()
         self._role_renderables.clear()
         self._pending_flush = False
+        if self._should_fade_answer_chunk(chunk):
+            await self._print_faded_answer_chunk(chunk.text)
+            return
         self._console.print(chunk.text, end="")
+
+    def _should_fade_answer_chunk(
+        self,
+        chunk: CliStreamAnswerTextChunk,
+    ) -> bool:
+        assert isinstance(chunk, CliStreamAnswerTextChunk)
+        if chunk.animation != "fade":
+            return False
+        if len(strip_terminal_controls(chunk.text).strip()) < (
+            _ANSWER_FADE_MIN_CHARS
+        ):
+            return False
+        if self._display_config.answer_stdout_only:
+            return False
+        if getattr(self._console, "is_terminal", False) is not True:
+            return False
+        if getattr(self._console, "no_color", False) is True:
+            return False
+        if getattr(self._console, "legacy_windows", False) is True:
+            return False
+        return isinstance(getattr(self._console, "color_system", None), str)
+
+    async def _print_faded_answer_chunk(self, text: str) -> None:
+        assert isinstance(text, str)
+        assert text
+        output_file = self._answer_animation_output_file()
+        if output_file is None:
+            self._console.print(text, end="")
+            return
+
+        safe_text = strip_terminal_controls(text)
+        output_file.write(_ANSWER_FADE_HIDE_CURSOR)
+        output_file.write(_ANSWER_FADE_SAVE_CURSOR)
+        try:
+            for rgb in _ANSWER_FADE_RGB_STEPS:
+                try:
+                    self._console.print(
+                        _answer_fade_text(safe_text, rgb),
+                        end="",
+                    )
+                finally:
+                    output_file.write(_ANSWER_FADE_RESTORE_CURSOR)
+                self._flush_console()
+                await self._answer_fade_sleep(_ANSWER_FADE_FRAME_SECONDS)
+            self._console.print(text, end="")
+        finally:
+            output_file.write(_ANSWER_FADE_SHOW_CURSOR)
+            self._flush_console()
+
+    def _answer_animation_output_file(self) -> TextIO | None:
+        file = getattr(self._console, "file", None)
+        write = getattr(file, "write", None)
+        flush = getattr(file, "flush", None)
+        if not callable(write) or not callable(flush):
+            return None
+        return cast(TextIO, file)
+
+    def _flush_console(self) -> None:
+        file = getattr(self._console, "file", None)
+        flush = getattr(file, "flush", None)
+        if callable(flush):
+            flush()
 
     async def pause(self) -> None:
         """Pause live rendering manually."""
@@ -503,3 +583,15 @@ def _stderr_renderable_key(renderable: RenderableType) -> str:
     if isinstance(renderable, Spinner):
         return str(renderable.text or "")
     return str(renderable)
+
+
+def _answer_fade_text(text: str, rgb: int) -> Text:
+    assert isinstance(text, str)
+    assert text
+    assert isinstance(rgb, int)
+    assert rgb >= 0
+    assert rgb <= 255
+    return Text(
+        text,
+        style=Style(color=Color.from_rgb(rgb, rgb, rgb)),
+    )

@@ -1,17 +1,20 @@
 from asyncio import CancelledError, create_task, sleep
 from asyncio import Event as AsyncEvent
 from datetime import datetime, timezone
+from io import StringIO
 from threading import Event
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import MagicMock, call, patch
 from uuid import uuid4
 
-from rich.console import Group
+from rich.console import Console, Group
 from rich.spinner import Spinner
 
 from avalan.cli.display import CliStreamDisplayConfig
 from avalan.cli.stream_coordinator import (
+    _ANSWER_FADE_FRAME_SECONDS,
+    _ANSWER_FADE_RGB_STEPS,
     CliStreamCoordinator,
     _default_live_factory,
     stream_recording_filename,
@@ -334,6 +337,229 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         live_factory.assert_not_called()
         console.save_svg.assert_not_called()
 
+    async def test_fade_answer_chunk_uses_ansi_on_interactive_color_terminal(
+        self,
+    ) -> None:
+        output = StringIO()
+        console = Console(
+            file=output,
+            force_terminal=True,
+            no_color=False,
+            color_system="truecolor",
+            highlight=False,
+            width=80,
+        )
+        live_factory = MagicMock()
+        sleeps: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(stats=False),
+            live_factory=live_factory,
+            answer_fade_sleep=fake_sleep,
+        )
+
+        await coordinator.handle_item(
+            CliStreamAnswerTextChunk(text="Hello fade", animation="fade")
+        )
+
+        rendered = output.getvalue()
+        self.assertTrue(rendered.startswith("\x1b[?25l\x1b[s"))
+        self.assertEqual(rendered.count("\x1b[u"), len(_ANSWER_FADE_RGB_STEPS))
+        for rgb in (
+            _ANSWER_FADE_RGB_STEPS[0],
+            _ANSWER_FADE_RGB_STEPS[-1],
+        ):
+            with self.subTest(rgb=rgb):
+                self.assertIn(
+                    f"\x1b[38;2;{rgb};{rgb};{rgb}mHello fade\x1b[0m",
+                    rendered,
+                )
+        self.assertTrue(rendered.endswith("Hello fade\x1b[?25h"))
+        self.assertEqual(
+            sleeps,
+            [_ANSWER_FADE_FRAME_SECONDS for _ in _ANSWER_FADE_RGB_STEPS],
+        )
+        live_factory.assert_not_called()
+
+    async def test_answer_chunk_fade_falls_back_to_plain_print(self) -> None:
+        cases = (
+            (
+                "no-color",
+                _display_config(stats=False),
+                CliStreamAnswerTextChunk(
+                    text="Hello fade",
+                    animation="fade",
+                ),
+                {
+                    "force_terminal": True,
+                    "color_system": "truecolor",
+                    "no_color": True,
+                },
+            ),
+            (
+                "noninteractive",
+                _display_config(stats=False, interactive=False),
+                CliStreamAnswerTextChunk(
+                    text="Hello fade",
+                    animation="fade",
+                ),
+                {
+                    "force_terminal": True,
+                    "color_system": "truecolor",
+                    "no_color": False,
+                },
+            ),
+            (
+                "non-terminal",
+                _display_config(stats=False),
+                CliStreamAnswerTextChunk(
+                    text="Hello fade",
+                    animation="fade",
+                ),
+                {
+                    "force_terminal": False,
+                    "color_system": "truecolor",
+                    "no_color": False,
+                },
+            ),
+            (
+                "unmarked",
+                _display_config(stats=False),
+                CliStreamAnswerTextChunk(text="Hello fade"),
+                {
+                    "force_terminal": True,
+                    "color_system": "truecolor",
+                    "no_color": False,
+                },
+            ),
+            (
+                "tiny",
+                _display_config(stats=False),
+                CliStreamAnswerTextChunk(text="Hi", animation="fade"),
+                {
+                    "force_terminal": True,
+                    "color_system": "truecolor",
+                    "no_color": False,
+                },
+            ),
+        )
+
+        for label, config, chunk, console_options in cases:
+            with self.subTest(label=label):
+                output = StringIO()
+                sleeps: list[float] = []
+
+                async def fake_sleep(seconds: float) -> None:
+                    sleeps.append(seconds)
+
+                console = Console(
+                    file=output,
+                    highlight=False,
+                    width=80,
+                    **console_options,
+                )
+                coordinator = CliStreamCoordinator(
+                    console,
+                    config,
+                    answer_fade_sleep=fake_sleep,
+                )
+
+                await coordinator.handle_item(chunk)
+
+                self.assertEqual(output.getvalue(), chunk.text)
+                self.assertEqual(sleeps, [])
+
+    async def test_fade_answer_chunk_without_output_file_prints_plainly(
+        self,
+    ) -> None:
+        console = MagicMock()
+        console.is_terminal = True
+        console.no_color = False
+        console.legacy_windows = False
+        console.color_system = "truecolor"
+        console.file = None
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(stats=False),
+        )
+
+        await coordinator.handle_item(
+            CliStreamAnswerTextChunk(
+                text="Hello fade",
+                animation="fade",
+            )
+        )
+
+        console.print.assert_called_once_with("Hello fade", end="")
+
+    async def test_fade_answer_chunk_legacy_windows_prints_plainly(
+        self,
+    ) -> None:
+        console = MagicMock()
+        console.is_terminal = True
+        console.no_color = False
+        console.legacy_windows = True
+        console.color_system = "truecolor"
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(stats=False),
+        )
+
+        await coordinator.handle_item(
+            CliStreamAnswerTextChunk(
+                text="Hello fade",
+                animation="fade",
+            )
+        )
+
+        console.print.assert_called_once_with("Hello fade", end="")
+
+    async def test_answer_chunk_force_flushes_pending_frame_before_printing(
+        self,
+    ) -> None:
+        events: list[tuple[str, object]] = []
+        fake_live = _FakeLive(events)
+        console = MagicMock()
+        now = 0.0
+
+        def clock() -> float:
+            return now
+
+        console.print.side_effect = lambda text, end="": events.append(
+            (
+                "print",
+                (text, end),
+            )
+        )
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(display_tools=True),
+            live_factory=MagicMock(return_value=fake_live),
+            clock=clock,
+        )
+
+        await coordinator.handle_item(
+            CliStreamRenderableFrame(renderable="first", role="tools")
+        )
+        await coordinator.handle_item(
+            CliStreamRenderableFrame(renderable="pending", role="tools")
+        )
+        await coordinator.handle_item(CliStreamAnswerTextChunk(text="answer"))
+
+        self.assertEqual(
+            events,
+            [
+                ("update", "first"),
+                ("update", "pending"),
+                ("exit", None),
+                ("print", ("answer", "")),
+            ],
+        )
+
     async def test_answer_chunk_closes_active_live_before_printing(
         self,
     ) -> None:
@@ -417,6 +643,35 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(diagnostic_console.print.call_count, 2)
         live_factory.assert_not_called()
         console.save_svg.assert_not_called()
+
+    async def test_stderr_diagnostics_create_default_console(self) -> None:
+        console = MagicMock()
+        diagnostic_console = MagicMock()
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(
+                display_events=True,
+                interactive=False,
+                stats=False,
+            ),
+        )
+
+        with patch(
+            "avalan.cli.stream_coordinator.Console",
+            return_value=diagnostic_console,
+        ) as console_type:
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable="event start",
+                    role="events",
+                )
+            )
+
+        console_type.assert_called_once_with(
+            stderr=True,
+            force_terminal=False,
+        )
+        diagnostic_console.print.assert_called_once_with("event start")
 
     async def test_stderr_diagnostics_deduplicate_group_renderables(
         self,

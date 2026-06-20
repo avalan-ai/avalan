@@ -151,6 +151,14 @@ def _answer_chunks(items: list[object]) -> list[str]:
     ]
 
 
+def _answer_animations(items: list[object]) -> list[str | None]:
+    return [
+        item.animation
+        for item in items
+        if isinstance(item, CliStreamAnswerTextChunk)
+    ]
+
+
 def _frames(items: list[object]) -> list[CliStreamRenderableFrame]:
     return [
         item for item in items if isinstance(item, CliStreamRenderableFrame)
@@ -198,6 +206,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(_answer_chunks(items), ["Answer is 25.", "\n"])
+        self.assertEqual(_answer_animations(items), ["fade", None])
         self.assertEqual(_frames(items), [])
         self.assertEqual(_answer_chunks(repeated), [])
 
@@ -236,6 +245,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(_answer_chunks(items), ["Answer is 25.\n"])
+        self.assertEqual(_answer_animations(items), ["fade"])
         self.assertEqual(_frames(items), [])
 
     async def test_answer_mode_suppresses_frames_and_reset_replays(
@@ -268,8 +278,10 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(_answer_chunks(first), ["Answer.", "\n"])
+        self.assertEqual(_answer_animations(first), ["fade", None])
         self.assertEqual(_frames(first), [])
         self.assertEqual(_answer_chunks(second), ["Answer.", "\n"])
+        self.assertEqual(_answer_animations(second), ["fade", None])
         self.assertEqual(_frames(second), [])
 
     async def test_theme_stream_presenter_prefixes_visible_answer_only(
@@ -299,6 +311,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             _answer_chunks(answer_items),
             [":robot: ", "Answer."],
         )
+        self.assertEqual(_answer_animations(answer_items), [None, "fade"])
 
     async def test_theme_stream_presenter_separates_answer_after_executed_tool(
         self,
@@ -339,6 +352,10 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             _answer_chunks(answer_items),
             ["\n", ":robot: ", "Answer."],
+        )
+        self.assertEqual(
+            _answer_animations(answer_items),
+            [None, None, "fade"],
         )
 
     async def test_requested_tools_and_events_render_compact_frames(

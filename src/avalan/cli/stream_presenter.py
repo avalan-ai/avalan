@@ -20,6 +20,7 @@ from rich.console import RenderableType
 
 StreamPresenterMode = Literal["live", "answer"]
 StreamFrameRole = Literal["stream", "events", "tools", "stats", "answer"]
+AnswerTextAnimation = Literal["fade"]
 TokenFrameStream: TypeAlias = AsyncIterator[
     tuple["_ThemeTokenRenderDisplayToken | None", RenderableType]
 ]
@@ -150,11 +151,13 @@ class CliStreamAnswerTextChunk:
 
     text: str
     role: StreamFrameRole = "answer"
+    animation: AnswerTextAnimation | None = None
 
     def __post_init__(self) -> None:
         assert isinstance(self.text, str)
         assert self.text
         assert self.role == "answer"
+        assert self.animation is None or self.animation == "fade"
 
 
 CliStreamPresenterItem: TypeAlias = (

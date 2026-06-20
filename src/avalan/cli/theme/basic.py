@@ -311,7 +311,10 @@ class BasicStreamPresenter:
                 self._answer_prefix_emitted = True
                 yield CliStreamAnswerTextChunk(text=self._answer_prefix)
             self._last_visible_answer_text += chunk.text
-            yield chunk
+            yield CliStreamAnswerTextChunk(
+                text=chunk.text,
+                animation="fade",
+            )
 
         newline = self._terminal_newline(request)
         if newline is not None:

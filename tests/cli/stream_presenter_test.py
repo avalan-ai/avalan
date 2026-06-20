@@ -356,10 +356,16 @@ class StreamPresenterContractTestCase(TestCase):
             current_token=display_token,
         )
         chunk = CliStreamAnswerTextChunk(text="hi")
+        animated_chunk = CliStreamAnswerTextChunk(
+            text="animated",
+            animation="fade",
+        )
 
         self.assertEqual(request.mode, "live")
         self.assertEqual(frame.current_token, display_token)
         self.assertEqual(chunk.role, "answer")
+        self.assertEqual(chunk.animation, None)
+        self.assertEqual(animated_chunk.animation, "fade")
         with self.assertRaises(FrozenInstanceError):
             context.model_id = "other"  # type: ignore[misc]
         with self.assertRaises(AssertionError):
@@ -397,6 +403,11 @@ class StreamPresenterContractTestCase(TestCase):
             CliStreamAnswerTextChunk(text="")
         with self.assertRaises(AssertionError):
             CliStreamAnswerTextChunk(text="x", role="stream")
+        with self.assertRaises(AssertionError):
+            CliStreamAnswerTextChunk(
+                text="x",
+                animation="blink",  # type: ignore[arg-type]
+            )
 
     def test_legacy_adapter_requires_theme_token_factory(self) -> None:
         with self.assertRaises(AssertionError):
@@ -469,6 +480,14 @@ class StreamAnswerPresenterTestCase(IsolatedAsyncioTestCase):
                 if isinstance(item, CliStreamAnswerTextChunk)
             ],
             ["llo"],
+        )
+        self.assertEqual(
+            [
+                item.animation
+                for item in (*first, *second)
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            [None, None],
         )
         self.assertEqual(repeated, [])
 
