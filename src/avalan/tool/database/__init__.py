@@ -1,4 +1,5 @@
 from ...compat import override
+from ...entities import ToolCall, ToolCallOutcome
 from .. import Tool
 from .settings import DatabaseToolSettings as DatabaseToolSettings
 from .settings import resolve_database_dsn as resolve_database_dsn
@@ -228,6 +229,19 @@ class DatabaseTool(Tool, ABC):
     @staticmethod
     def _create_engine(dsn: str, **kwargs: Any) -> AsyncEngine:
         return create_async_engine(resolve_database_dsn(dsn), **kwargs)
+
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        return project_database_tool_display(
+            call=call,
+            outcome=outcome,
+            settings=self._settings,
+            dialect=self._sqlglot_dialect_name(self._engine),
+            sample_default_count=getattr(self, "_DEFAULT_COUNT", None),
+        )
 
     def _register_table_names(
         self, schema: str | None, table_names: list[str]
@@ -566,6 +580,7 @@ class DatabaseTool(Tool, ABC):
 # ruff: noqa: E402
 
 from .count import DatabaseCountTool  # noqa: F401
+from .display import project_database_tool_display  # noqa: F401
 from .inspect import DatabaseInspectTool  # noqa: F401
 from .keys import DatabaseKeysTool  # noqa: F401
 from .kill import DatabaseKillTool  # noqa: F401
