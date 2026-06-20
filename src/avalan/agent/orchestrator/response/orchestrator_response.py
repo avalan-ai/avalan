@@ -12,6 +12,7 @@ from ....entities import (
     ToolCallError,
     ToolCallOutcome,
     ToolCallResult,
+    ToolDescriptor,
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
 )
@@ -38,6 +39,13 @@ from ....task.usage import (
     UsageObservation,
     usage_observation_from_response,
 )
+from ....tool.display import (
+    ToolDisplayProjection,
+    fallback_tool_call_display_projection,
+    fallback_tool_outcome_display_projection,
+    tool_display_projection_from_metadata,
+    tool_display_projection_metadata,
+)
 from ....tool.manager import ToolManager
 from ....utils import tool_call_diagnostic_payload
 from ... import AgentOperation
@@ -58,7 +66,7 @@ from asyncio import (
 )
 from base64 import b64encode
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
-from inspect import isawaitable
+from inspect import Signature, isawaitable, signature
 from json import JSONDecodeError, dumps, loads
 from queue import Full, Queue
 from time import perf_counter
@@ -568,6 +576,34 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         ):
             self._canonical_tool_execution_terminal_ids.add(tool_call_id)
 
+    def _tool_call_ready_display_metadata(
+        self,
+        tool_call_id: str,
+        data: Any | None,
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if tool_display_projection_from_metadata(metadata) is not None:
+            return metadata
+        if not isinstance(data, dict):
+            return metadata
+        name = data.get("name")
+        if not isinstance(name, str):
+            return metadata
+        arguments = data.get("arguments")
+        call = ToolCall(
+            id=tool_call_id,
+            name=name,
+            arguments=(
+                cast(dict[str, Any], arguments)
+                if isinstance(arguments, dict)
+                else None
+            ),
+        )
+        return {
+            **({} if metadata is None else metadata),
+            **self._tool_call_display_metadata(call),
+        }
+
     def _append_canonical_tool_call_lifecycle_item(
         self,
         kind: StreamItemKind,
@@ -612,6 +648,13 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     state=state,
                 )
             return diagnostic
+
+        if kind is StreamItemKind.TOOL_CALL_READY:
+            metadata = self._tool_call_ready_display_metadata(
+                tool_call_id,
+                data,
+                metadata,
+            )
 
         item = self._append_canonical_item(
             kind,
@@ -2921,6 +2964,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 "arguments": cast(Any, call.arguments),
             },
             correlation=correlation,
+            metadata=self._tool_call_display_metadata(call),
         )
         self._append_canonical_item(
             StreamItemKind.TOOL_CALL_DONE,
@@ -2942,6 +2986,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             StreamItemKind.TOOL_EXECUTION_STARTED,
             data={"name": call.name},
             correlation=self._canonical_tool_correlation(call),
+            metadata=self._tool_call_display_metadata(call),
         )
 
     def _append_canonical_tool_execution_terminal(
@@ -2958,6 +3003,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     "message": result.message,
                     "arguments": cast(Any, result.arguments),
                 },
+                result=result,
             )
         elif self._is_cancellation_diagnostic(result):
             assert isinstance(result, ToolCallDiagnostic)
@@ -2965,12 +3011,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 StreamItemKind.TOOL_EXECUTION_CANCELLED,
                 call,
                 self._canonical_tool_diagnostic_payload(call, result),
+                result=result,
             )
         elif isinstance(result, ToolCallDiagnostic):
             return self._append_canonical_tool_execution_result(
                 StreamItemKind.TOOL_EXECUTION_ERROR,
                 call,
                 self._canonical_tool_diagnostic_payload(call, result),
+                result=result,
             )
         elif isinstance(result, ToolCallResult):
             return self._append_canonical_tool_execution_result(
@@ -2981,12 +3029,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     "result": cast(Any, result.result),
                     "arguments": cast(Any, result.arguments),
                 },
+                result=result,
             )
         else:
             return self._append_canonical_tool_execution_result(
                 StreamItemKind.TOOL_EXECUTION_COMPLETED,
                 call,
                 None,
+                result=self._empty_tool_call_result(call),
             )
 
     def _append_canonical_tool_execution_error(
@@ -3001,6 +3051,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 "error_type": exc.__class__.__name__,
                 "message": str(exc),
             },
+            result=self._exception_tool_call_error(call, exc),
         )
 
     def _append_canonical_tool_execution_cancelled(
@@ -3019,6 +3070,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         kind: StreamItemKind,
         call: ToolCall,
         data: Any | None,
+        *,
+        result: ToolCallOutcome | None = None,
     ) -> CanonicalStreamItem | None:
         if kind in {
             StreamItemKind.TOOL_EXECUTION_COMPLETED,
@@ -3033,6 +3086,174 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             kind,
             data=data,
             correlation=self._canonical_tool_correlation(call),
+            metadata=self._tool_outcome_display_metadata(call, result),
+        )
+
+    def _tool_call_display_metadata(
+        self,
+        call: ToolCall,
+    ) -> dict[str, Any]:
+        projection = self._tool_call_display_projection(call)
+        return cast(
+            dict[str, Any], tool_display_projection_metadata(projection)
+        )
+
+    def _tool_outcome_display_metadata(
+        self,
+        call: ToolCall,
+        result: ToolCallOutcome | None,
+    ) -> dict[str, Any]:
+        outcome = result or self._empty_tool_call_result(call)
+        projection = self._tool_outcome_display_projection(call, outcome)
+        return cast(
+            dict[str, Any], tool_display_projection_metadata(projection)
+        )
+
+    def _tool_call_display_projection(
+        self,
+        call: ToolCall,
+    ) -> ToolDisplayProjection:
+        descriptor = self._tool_display_descriptor(call)
+        if descriptor is not None:
+            projection = self._project_tool_display(
+                descriptor,
+                call,
+                call=call,
+            )
+            if isinstance(projection, ToolDisplayProjection):
+                return projection
+        return fallback_tool_call_display_projection(call)
+
+    def _tool_outcome_display_projection(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome,
+    ) -> ToolDisplayProjection:
+        descriptor = self._tool_display_descriptor(call)
+        if descriptor is not None:
+            projection = self._project_tool_display(
+                descriptor,
+                call,
+                outcome,
+                call=call,
+                outcome=outcome,
+            )
+            if isinstance(projection, ToolDisplayProjection):
+                return projection
+        return fallback_tool_outcome_display_projection(outcome)
+
+    @classmethod
+    def _project_tool_display(
+        cls,
+        descriptor: ToolDescriptor,
+        *args: Any,
+        **kwargs: Any,
+    ) -> ToolDisplayProjection | None:
+        signature_value = cls._tool_display_projector_signature(descriptor)
+        if signature_value is None:
+            projection = descriptor.project_display(*args)
+        elif cls._signature_accepts_positional(
+            signature_value,
+            args,
+        ):
+            projection = descriptor.project_display(*args)
+        elif cls._signature_accepts_keywords(
+            signature_value,
+            kwargs,
+        ):
+            projection = descriptor.project_display(**kwargs)
+        else:
+            return None
+        return (
+            projection
+            if isinstance(projection, ToolDisplayProjection)
+            else None
+        )
+
+    @staticmethod
+    def _tool_display_projector_signature(
+        descriptor: ToolDescriptor,
+    ) -> Signature | None:
+        try:
+            projector = descriptor.display_projector
+        except AssertionError:
+            return None
+        if projector is None:
+            return None
+        try:
+            return signature(projector)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _signature_accepts_positional(
+        signature_value: Signature,
+        args: tuple[Any, ...],
+    ) -> bool:
+        try:
+            signature_value.bind(*args)
+        except TypeError:
+            return False
+        return True
+
+    @staticmethod
+    def _signature_accepts_keywords(
+        signature_value: Signature,
+        kwargs: dict[str, Any],
+    ) -> bool:
+        try:
+            signature_value.bind(**kwargs)
+        except TypeError:
+            return False
+        return True
+
+    def _tool_display_descriptor(
+        self,
+        call: ToolCall,
+    ) -> ToolDescriptor | None:
+        if self._tool_manager is None:
+            return None
+        describe_tool_call = getattr(
+            self._tool_manager,
+            "describe_tool_call",
+            None,
+        )
+        if not callable(describe_tool_call):
+            return None
+        try:
+            descriptor = describe_tool_call(call)
+        except Exception:
+            return None
+        return descriptor if isinstance(descriptor, ToolDescriptor) else None
+
+    @staticmethod
+    def _empty_tool_call_result(call: ToolCall) -> ToolCallResult:
+        return ToolCallResult(
+            id=uuid4(),
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            provider_name=call.provider_name,
+            provider_name_encoded=call.provider_name_encoded,
+            provider_arguments_malformed=call.provider_arguments_malformed,
+            result=None,
+        )
+
+    @staticmethod
+    def _exception_tool_call_error(
+        call: ToolCall,
+        exc: Exception,
+    ) -> ToolCallError:
+        return ToolCallError(
+            id=uuid4(),
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            provider_name=call.provider_name,
+            provider_name_encoded=call.provider_name_encoded,
+            provider_arguments_malformed=call.provider_arguments_malformed,
+            error=exc,
+            message=str(exc),
         )
 
     @staticmethod
@@ -3120,6 +3341,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                         "metadata": cast(Any, metadata),
                     },
                     correlation=correlation,
+                    metadata=self._tool_stream_display_metadata(metadata),
                 )
                 await self._trigger_canonical_observability_event(
                     EventType.TOOL_PROGRESS,
@@ -3135,6 +3357,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     "metadata": cast(Any, metadata),
                 },
                 correlation=correlation,
+                metadata=self._tool_stream_display_metadata(metadata),
             )
             await self._trigger_canonical_observability_event(
                 EventType.TOOL_PROGRESS,
@@ -3142,6 +3365,18 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             )
 
         return emit
+
+    @staticmethod
+    def _tool_stream_display_metadata(
+        metadata: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        projection = tool_display_projection_from_metadata(metadata)
+        if projection is None:
+            return None
+        return cast(
+            dict[str, Any],
+            tool_display_projection_metadata(projection),
+        )
 
     def _canonical_tool_correlation(
         self,

@@ -24,6 +24,7 @@ from avalan.model.stream import (
     canonical_item_from_consumer_projection,
     validate_canonical_stream_items,
 )
+from avalan.tool.display import TOOL_DISPLAY_PROJECTION_METADATA_KEY
 
 
 def _config(**overrides: object) -> CliStreamDisplayConfig:
@@ -433,6 +434,170 @@ class DisplayReducerTestCase(TestCase):
         self.assertEqual(completed_snapshot.tool_results[0].arguments_count, 1)
         self.assertIn("25", completed_snapshot.tool_results[0].result_summary)
         self.assertEqual(clock.calls, 6)
+
+    def test_tool_start_projection_appears_in_active_snapshot(self) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(1.0),
+        )
+        projection_payload = {
+            "action": "search",
+            "target": "src/avalan",
+            "summary": "Search source files.",
+        }
+
+        snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                0,
+                data={"name": "shell.rg"},
+                metadata={
+                    TOOL_DISPLAY_PROJECTION_METADATA_KEY: projection_payload
+                },
+                tool_call_id="tool-1",
+            )
+        )
+
+        self.assertEqual(len(snapshot.active_tools), 1)
+        display_projection = snapshot.active_tools[0].display_projection
+        assert display_projection is not None
+        self.assertEqual(display_projection.action, "search")
+        self.assertEqual(display_projection.target, "src/avalan")
+        self.assertEqual(display_projection.summary, "Search source files.")
+
+    def test_terminal_projection_appears_in_completed_and_result_snapshots(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(1.0, 2.0),
+        )
+        reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                0,
+                data={"name": "math.calculator"},
+                tool_call_id="tool-1",
+            )
+        )
+        terminal_payload = {
+            "action": "finish",
+            "target": "math.calculator",
+            "summary": "Calculated result.",
+            "status": "completed",
+            "outcome": "result",
+        }
+
+        snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                1,
+                data={"name": "math.calculator", "result": 25},
+                metadata={
+                    TOOL_DISPLAY_PROJECTION_METADATA_KEY: terminal_payload
+                },
+                tool_call_id="tool-1",
+            )
+        )
+
+        self.assertEqual(snapshot.active_tools, ())
+        self.assertEqual(len(snapshot.completed_tools), 1)
+        completed_projection = snapshot.completed_tools[0].display_projection
+        result_projection = snapshot.tool_results[0].display_projection
+        assert completed_projection is not None
+        assert result_projection is not None
+        self.assertEqual(completed_projection.action, "finish")
+        self.assertEqual(result_projection.outcome, "result")
+        self.assertIn("25", snapshot.tool_results[0].result_summary)
+
+    def test_error_and_cancelled_terminal_projections_are_retained(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(1.0, 2.0),
+        )
+        error_snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_ERROR,
+                0,
+                data={"name": "lookup", "message": "bad"},
+                metadata={
+                    TOOL_DISPLAY_PROJECTION_METADATA_KEY: {
+                        "action": "finish",
+                        "target": "lookup",
+                        "status": "error",
+                        "outcome": "error",
+                        "severity": "error",
+                    }
+                },
+                tool_call_id="tool-error",
+            )
+        )
+        cancelled_snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_CANCELLED,
+                1,
+                data={"name": "lookup", "message": "cancelled"},
+                metadata={
+                    TOOL_DISPLAY_PROJECTION_METADATA_KEY: {
+                        "action": "skip",
+                        "target": "lookup",
+                        "status": "cancelled",
+                        "outcome": "tool_call.cancelled",
+                    }
+                },
+                tool_call_id="tool-cancelled",
+            )
+        )
+
+        error_projection = error_snapshot.completed_tools[0].display_projection
+        cancelled_projection = cancelled_snapshot.completed_tools[
+            1
+        ].display_projection
+        assert error_projection is not None
+        assert cancelled_projection is not None
+        self.assertEqual(error_projection.status, "error")
+        self.assertEqual(cancelled_projection.status, "cancelled")
+        self.assertEqual(
+            cancelled_snapshot.tool_results[1].display_projection,
+            cancelled_projection,
+        )
+
+    def test_corrupt_projection_metadata_does_not_break_reduction(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(1.0, 2.0),
+        )
+        start_snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                0,
+                data={"name": "lookup"},
+                metadata={
+                    TOOL_DISPLAY_PROJECTION_METADATA_KEY: {
+                        "action": 42,
+                    }
+                },
+                tool_call_id="tool-1",
+            )
+        )
+        final_snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                1,
+                data={"name": "lookup", "result": {"ok": True}},
+                metadata={TOOL_DISPLAY_PROJECTION_METADATA_KEY: "bad"},
+                tool_call_id="tool-1",
+            )
+        )
+
+        self.assertIsNone(start_snapshot.active_tools[0].display_projection)
+        self.assertIsNone(final_snapshot.completed_tools[0].display_projection)
+        self.assertIsNone(final_snapshot.tool_results[0].display_projection)
+        self.assertIn("ok", final_snapshot.tool_results[0].result_summary)
 
     def test_side_channel_events_are_summaries_and_do_not_change_terminal(
         self,
