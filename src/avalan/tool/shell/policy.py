@@ -904,7 +904,7 @@ def _option_fragments(value: object, field_name: str) -> tuple[str, ...]:
             )
         return (str(value),)
     if isinstance(value, str):
-        if not value.strip():
+        if value == "":
             raise _policy_denied(
                 ShellExecutionErrorCode.INVALID_OPTION,
                 f"{field_name} must not be empty",

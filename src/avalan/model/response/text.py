@@ -843,22 +843,37 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             return self._prefetched_text or ""
         return super().__str__()
 
-    async def to_str(self) -> str:
+    async def to_str(
+        self,
+        *,
+        raise_terminal_exception: bool = True,
+    ) -> str:
+        assert isinstance(raise_terminal_exception, bool)
         terminal_exception = self._terminal_exception_from_state()
         if terminal_exception is not None:
-            raise terminal_exception
+            if raise_terminal_exception or isinstance(
+                terminal_exception, StreamValidationError
+            ):
+                raise terminal_exception
+            accumulator = self._stream_accumulator
+            await self._trigger_consumed()
+            return accumulator.answer_text if accumulator is not None else ""
 
         if self._final_text is not None:
             await self._trigger_consumed()
             return self._final_text
 
         if self._has_active_stream_session():
-            return await self._drain_stream_to_final_text()
+            return await self._drain_stream_to_final_text(
+                raise_terminal_exception=raise_terminal_exception
+            )
 
         if self._session_state is _StreamSessionState.ACTIVE:
             if self._output is None:
                 raise RuntimeError(_SINGLE_USE_STREAM_ERROR)
-            return await self._drain_stream_to_final_text()
+            return await self._drain_stream_to_final_text(
+                raise_terminal_exception=raise_terminal_exception
+            )
 
         if not self._use_async_generator:
             self._ensure_non_stream_prefetched()
@@ -879,7 +894,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         self._claim_stream_session()
         self._start_stream_output()
         assert self._output is not None
-        return await self._drain_stream_to_final_text()
+        return await self._drain_stream_to_final_text(
+            raise_terminal_exception=raise_terminal_exception
+        )
 
     def _has_active_stream_session(self) -> bool:
         return (
@@ -888,7 +905,12 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             and self._stream_accumulator is not None
         )
 
-    async def _drain_stream_to_final_text(self) -> str:
+    async def _drain_stream_to_final_text(
+        self,
+        *,
+        raise_terminal_exception: bool = True,
+    ) -> str:
+        assert isinstance(raise_terminal_exception, bool)
         assert self._output is not None
         while True:
             try:
@@ -897,7 +919,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                 break
 
         return await self._finalize_stream_accumulation(
-            raise_terminal_exception=True
+            raise_terminal_exception=raise_terminal_exception
         )
 
     async def _finalize_stream_accumulation(

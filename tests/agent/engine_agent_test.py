@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from dataclasses import replace
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
@@ -21,6 +22,12 @@ from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
 from avalan.model.manager import ModelManager
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.tool.manager import ToolManager
 
 
@@ -375,6 +382,73 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         synced = memory.recent_messages[0].message
         self.assertEqual(synced.role, MessageRole.ASSISTANT)
         self.assertEqual(synced.content, "assistant")
+
+    async def test_sync_messages_appends_partial_output_for_errored_stream(
+        self,
+    ) -> None:
+        async def output_gen() -> AsyncIterator[CanonicalStreamItem]:
+            yield CanonicalStreamItem(
+                stream_session_id="engine-agent-stream",
+                run_id="engine-agent-run",
+                turn_id="engine-agent-turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="engine-agent-stream",
+                run_id="engine-agent-run",
+                turn_id="engine-agent-turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="partial",
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="engine-agent-stream",
+                run_id="engine-agent-run",
+                turn_id="engine-agent-turn",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="engine-agent-stream",
+                run_id="engine-agent-run",
+                turn_id="engine-agent-turn",
+                sequence=3,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data={"message": "provider failed"},
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="engine-agent-stream",
+                run_id="engine-agent-run",
+                turn_id="engine-agent-turn",
+                sequence=4,
+                kind=StreamItemKind.STREAM_CLOSED,
+                channel=StreamChannel.CONTROL,
+            )
+
+        agent, _, memory, _ = self._make_agent()
+        response = TextGenerationResponse(
+            lambda: output_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+        )
+        _ = [item async for item in response]
+        agent._last_output = response
+
+        with self.assertRaisesRegex(RuntimeError, "provider failed"):
+            await response.to_str()
+
+        await agent.sync_messages()
+
+        self.assertEqual(len(memory.recent_messages), 1)
+        synced = memory.recent_messages[0].message
+        self.assertEqual(synced.role, MessageRole.ASSISTANT)
+        self.assertEqual(synced.content, "partial")
 
 
 class EngineAgentCallTestCase(IsolatedAsyncioTestCase):

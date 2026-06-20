@@ -172,7 +172,11 @@ def build_argv(
             "case",
             "fixed_strings",
             "context_lines",
+            "before_context",
+            "after_context",
             "max_matches_per_file",
+            "max_depth",
+            "max_filesize_bytes",
             "globs",
         },
         forbidden_options=_FORBIDDEN_OPTIONS,
@@ -197,11 +201,37 @@ def build_argv(
         min_value=0,
         max_value=settings.max_rg_context_lines,
     )
+    before_context = _optional_bounded_int_option(
+        request.options,
+        "before_context",
+        min_value=1,
+        max_value=settings.max_rg_context_lines,
+    )
+    after_context = _optional_bounded_int_option(
+        request.options,
+        "after_context",
+        min_value=1,
+        max_value=settings.max_rg_context_lines,
+    )
+    if context_lines and (
+        before_context is not None or after_context is not None
+    ):
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "directional context conflicts with context_lines",
+        )
     max_matches_per_file = _optional_bounded_int_option(
         request.options,
         "max_matches_per_file",
         min_value=1,
         max_value=settings.max_rg_matches_per_file,
+    )
+    max_depth = _optional_non_negative_int_option(
+        request.options,
+        "max_depth",
+    )
+    max_filesize_bytes = _optional_positive_int_option(
+        request.options, "max_filesize_bytes"
     )
     globs = _normalized_rg_globs(request.options.get("globs"), settings)
     _validate_rg_paths(context.paths)
@@ -224,8 +254,16 @@ def build_argv(
         argv_parts.append("--fixed-strings")
     if context_lines:
         argv_parts.extend(("--context", str(context_lines)))
+    if before_context is not None:
+        argv_parts.extend(("--before-context", str(before_context)))
+    if after_context is not None:
+        argv_parts.extend(("--after-context", str(after_context)))
     if max_matches_per_file is not None:
         argv_parts.extend(("--max-count", str(max_matches_per_file)))
+    if max_depth is not None:
+        argv_parts.extend(("--max-depth", str(max_depth)))
+    if max_filesize_bytes is not None:
+        argv_parts.extend(("--max-filesize", str(max_filesize_bytes)))
     for glob in globs:
         argv_parts.extend(("--glob", glob))
     display_parts = list(argv_parts)
@@ -242,6 +280,46 @@ def build_argv(
 def filter_output(value: str) -> str:
     assert isinstance(value, str), "value must be a string"
     return "\n".join(_filtered_output_line(line) for line in value.split("\n"))
+
+
+def _optional_positive_int_option(
+    options: dict[str, object],
+    name: str,
+) -> int | None:
+    if name not in options or options[name] is None:
+        return None
+    value = options[name]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            f"{name} must be an integer",
+        )
+    if value < 1:
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            f"{name} is out of range",
+        )
+    return value
+
+
+def _optional_non_negative_int_option(
+    options: dict[str, object],
+    name: str,
+) -> int | None:
+    if name not in options or options[name] is None:
+        return None
+    value = options[name]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            f"{name} must be an integer",
+        )
+    if value < 0:
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            f"{name} is out of range",
+        )
+    return value
 
 
 def _filtered_output_line(line: str) -> str:
