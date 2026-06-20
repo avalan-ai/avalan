@@ -82,7 +82,11 @@ class RgTool(_ShellCommandTool):
         case: Case-sensitivity mode.
         fixed_strings: Treat the pattern as a fixed string.
         context_lines: Number of context lines around each match.
+        before_context: Number of leading context lines before each match.
+        after_context: Number of trailing context lines after each match.
         max_matches_per_file: Maximum matches to return per file.
+        max_depth: Maximum directory traversal depth for ripgrep.
+        max_filesize_bytes: Skip files larger than this byte count.
         globs: Include or exclude glob patterns for ripgrep.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
@@ -116,7 +120,11 @@ class RgTool(_ShellCommandTool):
         case: Literal["sensitive", "insensitive", "smart"] = "sensitive",
         fixed_strings: bool = False,
         context_lines: int = 0,
+        before_context: int | None = None,
+        after_context: int | None = None,
         max_matches_per_file: int | None = None,
+        max_depth: int | None = None,
+        max_filesize_bytes: int | None = None,
         globs: Sequence[str] = (),
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -133,7 +141,11 @@ class RgTool(_ShellCommandTool):
                     "case": case,
                     "fixed_strings": fixed_strings,
                     "context_lines": context_lines,
+                    "before_context": before_context,
+                    "after_context": after_context,
                     "max_matches_per_file": max_matches_per_file,
+                    "max_depth": max_depth,
+                    "max_filesize_bytes": max_filesize_bytes,
                     "globs": _string_tuple(globs, "globs"),
                 },
                 paths=_path_operands(paths, kind="any"),
@@ -152,6 +164,7 @@ class HeadTool(_ShellCommandTool):
     Args:
         path: Workspace-relative file path to read.
         lines: Number of leading lines to return.
+        byte_count: Native byte count to read via head -c.
         cwd: Workspace-relative working directory for the command.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
@@ -181,6 +194,7 @@ class HeadTool(_ShellCommandTool):
         self,
         path: str,
         lines: int = 80,
+        byte_count: int | None = None,
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -193,6 +207,7 @@ class HeadTool(_ShellCommandTool):
                 command="head",
                 path=path,
                 lines=lines,
+                byte_count=byte_count,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -208,6 +223,9 @@ class TailTool(_ShellCommandTool):
     Args:
         path: Workspace-relative file path to read.
         lines: Number of trailing lines to return.
+        start_line: One-based line number to start at via tail -n +N.
+        byte_count: Native byte count to read via tail -c.
+        start_byte: One-based byte number to start at via tail -c +N.
         cwd: Workspace-relative working directory for the command.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
@@ -237,6 +255,9 @@ class TailTool(_ShellCommandTool):
         self,
         path: str,
         lines: int = 80,
+        start_line: int | None = None,
+        byte_count: int | None = None,
+        start_byte: int | None = None,
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -249,6 +270,9 @@ class TailTool(_ShellCommandTool):
                 command="tail",
                 path=path,
                 lines=lines,
+                byte_count=byte_count,
+                start_line=start_line,
+                start_byte=start_byte,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -298,7 +322,7 @@ class LsTool(_ShellCommandTool):
         *,
         context: ToolCallContext,
     ) -> str:
-        paths = () if path is None else (path,)
+        paths = () if path is None or path == "" else (path,)
         return await self._execute_request(
             ShellCommandRequest(
                 tool_name="shell.ls",
@@ -434,6 +458,7 @@ class FindTool(_ShellCommandTool):
     Args:
         paths: Workspace-relative file or directory roots to search.
         cwd: Workspace-relative working directory for the command.
+        min_depth: Minimum traversal depth below each root.
         max_depth: Maximum traversal depth below each root.
         entry_type: Entry type to include.
         name: Optional exact basename to match.
@@ -465,6 +490,7 @@ class FindTool(_ShellCommandTool):
         self,
         paths: Sequence[str] = (),
         cwd: str | None = None,
+        min_depth: int | None = None,
         max_depth: int = 3,
         entry_type: Literal["any", "file", "directory"] = "any",
         name: str | None = None,
@@ -479,6 +505,7 @@ class FindTool(_ShellCommandTool):
                 tool_name="shell.find",
                 command="find",
                 options={
+                    "min_depth": min_depth,
                     "max_depth": max_depth,
                     "entry_type": entry_type,
                     "name": name,
@@ -648,6 +675,8 @@ class SedTool(_ShellCommandTool):
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
+        start_line: Optional first one-based line number to select.
+        end_line: Optional last one-based line number to select.
 
     Returns:
         Formatted shell execution result.
@@ -678,6 +707,8 @@ class SedTool(_ShellCommandTool):
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
         *,
         context: ToolCallContext,
     ) -> str:
@@ -691,6 +722,8 @@ class SedTool(_ShellCommandTool):
                         "line_ranges",
                     ),
                     "patterns": _string_tuple(patterns, "patterns"),
+                    "start_line": start_line,
+                    "end_line": end_line,
                 },
                 paths=_path_operands(paths, kind="text_file"),
                 cwd=cwd,
@@ -1063,11 +1096,21 @@ def _line_reader_request(
     timeout_seconds: float | None,
     max_stdout_bytes: int | None,
     max_stderr_bytes: int | None,
+    byte_count: int | None = None,
+    start_line: int | None = None,
+    start_byte: int | None = None,
 ) -> ShellCommandRequest:
+    options: dict[str, object] = {"lines": lines}
+    if command == "head":
+        options["byte_count"] = byte_count
+    else:
+        options["start_line"] = start_line
+        options["byte_count"] = byte_count
+        options["start_byte"] = start_byte
     return ShellCommandRequest(
         tool_name=f"shell.{command}",
         command=command,
-        options={"lines": lines},
+        options=options,
         paths=_path_operands((path,), kind="text_file"),
         cwd=cwd,
         timeout_seconds=timeout_seconds,

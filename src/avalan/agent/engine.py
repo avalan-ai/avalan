@@ -400,7 +400,9 @@ class EngineAgent(ABC):
         ):
             previous_message = Message(
                 role=MessageRole.ASSISTANT,
-                content=await self._last_output.to_str(),
+                content=await self._last_output.to_str(
+                    raise_terminal_exception=False
+                ),
             )
             await self.sync_message(previous_message)
 

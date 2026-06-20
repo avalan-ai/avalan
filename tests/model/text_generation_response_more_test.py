@@ -2868,6 +2868,12 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
                 with self.assertRaisesRegex(RuntimeError, "provider failed"):
                     await streamed_response.to_str()
+                self.assertEqual(
+                    await streamed_response.to_str(
+                        raise_terminal_exception=False
+                    ),
+                    "partial",
+                )
 
                 to_str_response = TextGenerationResponse(
                     lambda **_: gen(),
@@ -2878,6 +2884,22 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 )
                 with self.assertRaisesRegex(RuntimeError, "provider failed"):
                     await to_str_response.to_str()
+
+                partial_response = TextGenerationResponse(
+                    lambda **_: gen(),
+                    logger=getLogger(),
+                    use_async_generator=True,
+                    generation_settings=settings,
+                    settings=settings,
+                )
+                self.assertEqual(
+                    await partial_response.to_str(
+                        raise_terminal_exception=False
+                    ),
+                    "partial",
+                )
+                with self.assertRaisesRegex(RuntimeError, "provider failed"):
+                    await partial_response.to_str()
 
     async def test_async_iteration_finalizes_legacy_canonical_accumulator(
         self,

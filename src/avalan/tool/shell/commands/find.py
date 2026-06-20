@@ -12,6 +12,7 @@ from .helpers import (
     _literal_option,
     _option_safe_display_path_argument,
     _option_safe_path_argument,
+    _optional_bounded_int_option,
     _validate_known_options,
     _validate_path_kind,
     is_denied_display_path,
@@ -44,6 +45,7 @@ _SENSITIVE_PRUNE_NAMES = (
 )
 _FIND_EXPRESSION_TOKENS = frozenset(("!", "(", ")"))
 _FIND_GLOB_META_CHARACTERS = frozenset("*?[")
+_MAX_SAFE_FIND_MIN_DEPTH = 1
 
 
 def build_argv(
@@ -52,7 +54,7 @@ def build_argv(
     request = context.request
     _validate_known_options(
         request.options,
-        allowed_options={"entry_type", "max_depth", "name"},
+        allowed_options={"entry_type", "max_depth", "min_depth", "name"},
         command="find",
     )
     for path in context.paths:
@@ -68,6 +70,22 @@ def build_argv(
         min_value=0,
         max_value=_MAX_FIND_DEPTH,
     )
+    min_depth = _optional_bounded_int_option(
+        request.options,
+        "min_depth",
+        min_value=0,
+        max_value=_MAX_FIND_DEPTH,
+    )
+    if min_depth is not None and min_depth > max_depth:
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "min_depth must not exceed max_depth",
+        )
+    if min_depth is not None and min_depth > _MAX_SAFE_FIND_MIN_DEPTH:
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "min_depth is out of range",
+        )
     entry_type = _literal_option(
         request.options,
         "entry_type",
@@ -80,22 +98,33 @@ def build_argv(
     argv_parts = [
         context.executable_name,
         *root_arguments,
-        "-maxdepth",
-        str(max_depth),
-        "(",
-        *_find_prune_expression(context.settings.allow_hidden),
-        ")",
-        "-prune",
-        "-o",
-        *_find_type_predicate(entry_type),
     ]
     display_parts = [
         context.executable_name,
         *display_root_arguments,
-        "-maxdepth",
-        str(max_depth),
-        *_find_type_predicate(entry_type),
     ]
+    if min_depth is not None:
+        argv_parts.extend(("-mindepth", str(min_depth)))
+        display_parts.extend(("-mindepth", str(min_depth)))
+    argv_parts.extend(
+        (
+            "-maxdepth",
+            str(max_depth),
+            "(",
+            *_find_prune_expression(context.settings.allow_hidden),
+            ")",
+            "-prune",
+            "-o",
+            *_find_type_predicate(entry_type),
+        )
+    )
+    display_parts.extend(
+        (
+            "-maxdepth",
+            str(max_depth),
+            *_find_type_predicate(entry_type),
+        )
+    )
     if name is not None:
         argv_parts.extend(("-name", name))
         display_parts.extend(("-name", name))

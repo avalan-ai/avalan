@@ -55,7 +55,11 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
             case="smart",
             fixed_strings=True,
             context_lines=2,
+            before_context=4,
+            after_context=5,
             max_matches_per_file=3,
+            max_depth=6,
+            max_filesize_bytes=4096,
             globs=("*.py", "!*.pyc"),
             timeout_seconds=1.5,
             max_stdout_bytes=100,
@@ -77,7 +81,11 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
                 "case": "smart",
                 "fixed_strings": True,
                 "context_lines": 2,
+                "before_context": 4,
+                "after_context": 5,
                 "max_matches_per_file": 3,
+                "max_depth": 6,
+                "max_filesize_bytes": 4096,
                 "globs": ("*.py", "!*.pyc"),
             },
         )
@@ -120,10 +128,30 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
                     executor=executor,
                     formatter=formatter,
                 )
+                kwargs = (
+                    {"byte_count": 128}
+                    if command == "head"
+                    else {
+                        "start_line": 5,
+                        "byte_count": 256,
+                        "start_byte": 32,
+                    }
+                )
+                expected_options = (
+                    {"lines": 25, "byte_count": 128}
+                    if command == "head"
+                    else {
+                        "lines": 25,
+                        "start_line": 5,
+                        "byte_count": 256,
+                        "start_byte": 32,
+                    }
+                )
 
                 output = await tool(
                     "logs/app.txt",
                     lines=25,
+                    **kwargs,
                     cwd="logs",
                     timeout_seconds=2.0,
                     max_stdout_bytes=200,
@@ -139,7 +167,7 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
                 request = policy.requests[0]
                 self.assertEqual(request.tool_name, f"shell.{command}")
                 self.assertEqual(request.command, command)
-                self.assertEqual(request.options, {"lines": 25})
+                self.assertEqual(request.options, expected_options)
                 self.assertEqual(
                     request.paths,
                     (
@@ -212,6 +240,22 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         )
 
         await tool(context=ToolCallContext())
+
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(policy.requests[0].paths, ())
+        self.assertEqual(len(executor.specs), 1)
+
+    async def test_ls_builds_empty_path_request_as_no_path(self) -> None:
+        policy = _FakePolicy(_spec("ls"))
+        executor = _FakeExecutor(_result("ls"))
+        tool = LsTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=_RecordingFormatter(),
+        )
+
+        await tool("", context=ToolCallContext())
 
         self.assertEqual(len(policy.requests), 1)
         self.assertEqual(policy.requests[0].paths, ())
@@ -328,6 +372,7 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         output = await tool(
             ("src", "tests"),
             cwd=".",
+            min_depth=1,
             max_depth=2,
             entry_type="file",
             name="README.md",
@@ -345,7 +390,12 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self.assertEqual(request.command, "find")
         self.assertEqual(
             request.options,
-            {"max_depth": 2, "entry_type": "file", "name": "README.md"},
+            {
+                "min_depth": 1,
+                "max_depth": 2,
+                "entry_type": "file",
+                "name": "README.md",
+            },
         )
         self.assertEqual(
             request.paths,
@@ -463,7 +513,12 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
                 "find",
                 _find_tool,
                 {},
-                {"max_depth": 3, "entry_type": "any", "name": None},
+                {
+                    "min_depth": None,
+                    "max_depth": 3,
+                    "entry_type": "any",
+                    "name": None,
+                },
             ),
         )
         for command, tool, arguments, options in cases:
@@ -585,6 +640,8 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
             timeout_seconds=4.5,
             max_stdout_bytes=700,
             max_stderr_bytes=170,
+            start_line=2,
+            end_line=50,
             context=ToolCallContext(),
         )
 
@@ -599,6 +656,8 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
             {
                 "line_ranges": ("1,5", "8"),
                 "patterns": ("error", "warning"),
+                "start_line": 2,
+                "end_line": 50,
             },
         )
         self.assertEqual(
@@ -1207,7 +1266,6 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         for command, tool, arguments in (
-            ("ls", _ls_tool, {"path": ""}),
             ("cat", _cat_tool, {"path": ""}),
             ("file", _file_tool, {"paths": "README.md"}),
             ("find", _find_tool, {"paths": "src"}),
@@ -1378,6 +1436,10 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(policy.requests), 1)
         self.assertEqual(len(policy.requests[0].paths), len(paths))
         self.assertEqual(policy.requests[0].options["globs"], globs)
+        self.assertIsNone(policy.requests[0].options["before_context"])
+        self.assertIsNone(policy.requests[0].options["after_context"])
+        self.assertIsNone(policy.requests[0].options["max_depth"])
+        self.assertIsNone(policy.requests[0].options["max_filesize_bytes"])
         self.assertEqual(len(executor.specs), 1)
 
     async def test_large_line_reader_request_construction_is_bounded(
@@ -1407,7 +1469,16 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
                 self.assertEqual(len(policy.requests), 1)
                 self.assertEqual(
                     policy.requests[0].options,
-                    {"lines": 100_000},
+                    (
+                        {"lines": 100_000, "byte_count": None}
+                        if command == "head"
+                        else {
+                            "lines": 100_000,
+                            "start_line": None,
+                            "byte_count": None,
+                            "start_byte": None,
+                        }
+                    ),
                 )
                 self.assertEqual(len(policy.requests[0].paths), 1)
                 self.assertEqual(len(executor.specs), 1)
@@ -1734,7 +1805,11 @@ class ShellToolSchemaTest(TestCase):
                 "case",
                 "fixed_strings",
                 "context_lines",
+                "before_context",
+                "after_context",
                 "max_matches_per_file",
+                "max_depth",
+                "max_filesize_bytes",
                 "globs",
                 "timeout_seconds",
                 "max_stdout_bytes",
@@ -1743,6 +1818,32 @@ class ShellToolSchemaTest(TestCase):
         )
         self.assertEqual(parameters["shell.head"]["required"], ["path"])
         self.assertEqual(parameters["shell.tail"]["required"], ["path"])
+        self.assertEqual(
+            set(parameters["shell.head"]["properties"]),
+            {
+                "path",
+                "lines",
+                "byte_count",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            },
+        )
+        self.assertEqual(
+            set(parameters["shell.tail"]["properties"]),
+            {
+                "path",
+                "lines",
+                "start_line",
+                "byte_count",
+                "start_byte",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            },
+        )
         self.assertEqual(parameters["shell.ls"]["required"], [])
         self.assertEqual(parameters["shell.cat"]["required"], ["path"])
         self.assertEqual(parameters["shell.file"]["required"], ["paths"])
@@ -1775,6 +1876,7 @@ class ShellToolSchemaTest(TestCase):
             {
                 "paths",
                 "cwd",
+                "min_depth",
                 "max_depth",
                 "entry_type",
                 "name",
@@ -1786,6 +1888,28 @@ class ShellToolSchemaTest(TestCase):
         self.assertEqual(
             parameters["shell.find"]["properties"]["entry_type"]["enum"],
             ["any", "file", "directory"],
+        )
+        self.assertEqual(
+            parameters["shell.rg"]["properties"]["before_context"][
+                "description"
+            ],
+            "Number of leading context lines before each match.",
+        )
+        self.assertEqual(
+            parameters["shell.head"]["properties"]["byte_count"][
+                "description"
+            ],
+            "Native byte count to read via head -c.",
+        )
+        self.assertEqual(
+            parameters["shell.tail"]["properties"]["start_line"][
+                "description"
+            ],
+            "One-based line number to start at via tail -n +N.",
+        )
+        self.assertEqual(
+            parameters["shell.find"]["properties"]["min_depth"]["description"],
+            "Minimum traversal depth below each root.",
         )
         self.assertEqual(
             set(parameters["shell.wc"]["properties"]),
@@ -1830,6 +1954,8 @@ class ShellToolSchemaTest(TestCase):
                 "timeout_seconds",
                 "max_stdout_bytes",
                 "max_stderr_bytes",
+                "start_line",
+                "end_line",
             },
         )
         self.assertEqual(

@@ -649,12 +649,68 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         self.assertNotIn("--context", sensitive.argv)
         self.assertNotIn("--max-count", sensitive.argv)
 
+    async def test_rg_builds_native_context_depth_and_size_limits(
+        self,
+    ) -> None:
+        settings = ShellToolSettings(max_rg_context_lines=3)
+
+        spec = await ExecutionPolicy(
+            settings=settings,
+            resolver=_CountingResolver("/usr/bin/rg"),
+        ).normalize(
+            _request(
+                options={
+                    "pattern": "needle",
+                    "context_lines": 0,
+                    "before_context": 1,
+                    "after_context": 2,
+                    "max_depth": 0,
+                    "max_filesize_bytes": 2048,
+                }
+            )
+        )
+
+        expected_display_argv = (
+            "rg",
+            "--no-config",
+            "--color=never",
+            "--no-heading",
+            "--line-number",
+            "--column",
+            "--max-columns",
+            "1000",
+            "--max-columns-preview",
+            "--before-context",
+            "1",
+            "--after-context",
+            "2",
+            "--max-depth",
+            "0",
+            "--max-filesize",
+            "2048",
+            "-e",
+            "needle",
+            "--",
+            ".",
+        )
+
+        self.assertEqual(spec.display_argv, expected_display_argv)
+        self.assertEqual(
+            spec.argv,
+            (
+                *expected_display_argv[:-4],
+                *_glob_args(_rg_policy_deny_globs(settings)),
+                *expected_display_argv[-4:],
+            ),
+        )
+
     async def test_rg_rejects_invalid_options_before_resolver(self) -> None:
         resolver = _CountingResolver("/usr/bin/rg")
         policy = ExecutionPolicy(resolver=resolver)
         cases = (
             ({}, ShellExecutionErrorCode.INVALID_OPTION),
             ({"pattern": ""}, ShellExecutionErrorCode.INVALID_OPTION),
+            ({"pattern": " "}, ShellExecutionErrorCode.INVALID_OPTION),
             (
                 {"pattern": "needle", "case": "upper"},
                 ShellExecutionErrorCode.INVALID_OPTION,
@@ -672,11 +728,47 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 ShellExecutionErrorCode.INVALID_OPTION,
             ),
             (
+                {"pattern": "needle", "before_context": True},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"pattern": "needle", "before_context": 0},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"pattern": "needle", "after_context": -1},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {
+                    "pattern": "needle",
+                    "context_lines": 1,
+                    "before_context": 1,
+                },
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
                 {"pattern": "needle", "max_matches_per_file": 0},
                 ShellExecutionErrorCode.INVALID_OPTION,
             ),
             (
                 {"pattern": "needle", "max_matches_per_file": 1001},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"pattern": "needle", "max_depth": True},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"pattern": "needle", "max_depth": -1},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"pattern": "needle", "max_filesize_bytes": True},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"pattern": "needle", "max_filesize_bytes": 0},
                 ShellExecutionErrorCode.INVALID_OPTION,
             ),
             (
@@ -1020,6 +1112,198 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(wc.argv), 5 + 2)
 
+    async def test_head_tail_build_native_byte_and_start_argv(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "file.txt").write_text("first\nsecond\n", encoding="utf-8")
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    workspace_root=str(root),
+                    max_head_lines=5,
+                    max_tail_lines=5,
+                )
+            )
+
+            head_bytes = await policy.normalize(
+                _request(
+                    tool_name="shell.head",
+                    command="head",
+                    options={"byte_count": 6, "lines": 80},
+                    paths=(_path("file.txt"),),
+                )
+            )
+            tail_start_line = await policy.normalize(
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_line": 2, "lines": 80},
+                    paths=(_path("file.txt"),),
+                )
+            )
+            tail_bytes = await policy.normalize(
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"byte_count": 7, "lines": 80},
+                    paths=(_path("file.txt"),),
+                )
+            )
+            tail_start_byte = await policy.normalize(
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_byte": 7, "lines": 80},
+                    paths=(_path("file.txt"),),
+                )
+            )
+
+        self.assertEqual(
+            head_bytes.argv, ("head", "-c", "6", "--", "file.txt")
+        )
+        self.assertEqual(
+            head_bytes.display_argv,
+            ("head", "-c", "6", "--", "file.txt"),
+        )
+        self.assertEqual(
+            tail_start_line.argv,
+            ("tail", "-n", "+2", "--", "file.txt"),
+        )
+        self.assertEqual(
+            tail_bytes.argv, ("tail", "-c", "7", "--", "file.txt")
+        )
+        self.assertEqual(
+            tail_start_byte.argv,
+            ("tail", "-c", "+7", "--", "file.txt"),
+        )
+
+    async def test_head_tail_native_byte_modes_respect_stdout_budget(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "large.txt").write_text("1234567890", encoding="utf-8")
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    workspace_root=str(root),
+                    max_stdout_bytes=5,
+                )
+            )
+
+            safe_suffix = await policy.normalize(
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_byte": 6},
+                    paths=(_path("large.txt"),),
+                )
+            )
+            denied_cases = (
+                _request(
+                    tool_name="shell.head",
+                    command="head",
+                    options={"byte_count": 6},
+                    paths=(_path("large.txt"),),
+                ),
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"byte_count": 6},
+                    paths=(_path("large.txt"),),
+                ),
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_line": 1},
+                    paths=(_path("large.txt"),),
+                ),
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_byte": 1},
+                    paths=(_path("large.txt"),),
+                ),
+            )
+
+            for request in denied_cases:
+                with self.subTest(command=request.command):
+                    await self._assert_denied(
+                        request,
+                        ShellExecutionErrorCode.INVALID_OPTION,
+                        policy=policy,
+                    )
+
+        self.assertEqual(
+            safe_suffix.argv,
+            ("tail", "-c", "+6", "--", "large.txt"),
+        )
+
+    async def test_tail_from_start_requires_available_file_metadata(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(workspace_root=temporary_directory)
+            )
+
+            await self._assert_denied(
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_byte": 1},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.DENIED_PATH,
+                policy=policy,
+            )
+
+    async def test_find_builds_native_min_depth_argv(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "directory").mkdir()
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(workspace_root=str(root)),
+            )
+
+            found_file = await policy.normalize(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={
+                        "max_depth": 2,
+                        "min_depth": 1,
+                        "entry_type": "file",
+                    },
+                    paths=(_path("directory", kind="directory"),),
+                )
+            )
+            omitted_min_depth = await policy.normalize(
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"min_depth": None},
+                )
+            )
+
+        self.assertEqual(
+            found_file.display_argv,
+            (
+                "find",
+                "directory",
+                "-mindepth",
+                "1",
+                "-maxdepth",
+                "2",
+                "-type",
+                "f",
+                "-print",
+            ),
+        )
+        self.assertIn("-mindepth", found_file.argv)
+        self.assertEqual(
+            omitted_min_depth.display_argv,
+            ("find", ".", "-maxdepth", "3", "-print"),
+        )
+
     async def test_ls_hidden_flag_is_trusted_configuration_only(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -1175,9 +1459,108 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             ),
             (
                 _request(
+                    tool_name="shell.head",
+                    command="head",
+                    options={"byte_count": True},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.head",
+                    command="head",
+                    options={"byte_count": 0},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.head",
+                    command="head",
+                    options={"byte_count": 6, "lines": True},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
                     tool_name="shell.tail",
                     command="tail",
                     options={"lines": 3},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_line": True},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_line": 0},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"byte_count": True},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"byte_count": 0},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_byte": -1},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_line": 2, "byte_count": 10},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"byte_count": 10, "start_byte": 2},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_line": 2, "lines": True},
                     paths=(_path("missing.txt"),),
                 ),
                 ShellExecutionErrorCode.INVALID_OPTION,
@@ -1234,6 +1617,46 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     tool_name="shell.find",
                     command="find",
                     options={"max_depth": 11},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"min_depth": True},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"min_depth": -1},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"min_depth": 11},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"max_depth": 3, "min_depth": 2},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.find",
+                    command="find",
+                    options={"max_depth": 1, "min_depth": 2},
                 ),
                 ShellExecutionErrorCode.INVALID_OPTION,
             ),
@@ -2366,6 +2789,16 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     paths=(_path("table.tsv"),),
                 )
             )
+            explicit_default_program = await ExecutionPolicy(
+                settings=settings
+            ).normalize(
+                _request(
+                    tool_name="shell.awk",
+                    command="awk",
+                    options={"output_separator": " "},
+                    paths=(_path("table.tsv"),),
+                )
+            )
 
         self.assertEqual(
             projected.argv,
@@ -2388,6 +2821,10 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             default_program.argv,
+            ("awk", "-v", "OFS= ", "{ print $0 }", "table.tsv"),
+        )
+        self.assertEqual(
+            explicit_default_program.argv,
             ("awk", "-v", "OFS= ", "{ print $0 }", "table.tsv"),
         )
 
@@ -2431,6 +2868,66 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(spec.display_argv, spec.argv)
+
+    async def test_sed_builds_native_line_window_selectors(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "lines.txt").write_text(
+                "one\ntwo\nthree\nfour\n", encoding="utf-8"
+            )
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(workspace_root=str(root)),
+            )
+            cases = (
+                (
+                    "start-only",
+                    {"start_line": 2},
+                    ("sed", "-n", "-e", "2,$p", "lines.txt"),
+                ),
+                (
+                    "end-only",
+                    {"end_line": 3},
+                    ("sed", "-n", "-e", "1,3p", "lines.txt"),
+                ),
+                (
+                    "bounded",
+                    {"start_line": 2, "end_line": 3},
+                    ("sed", "-n", "-e", "2,3p", "lines.txt"),
+                ),
+                (
+                    "combined",
+                    {
+                        "line_ranges": ("1",),
+                        "patterns": ("four",),
+                        "start_line": 2,
+                        "end_line": 3,
+                    },
+                    (
+                        "sed",
+                        "-n",
+                        "-e",
+                        "1p",
+                        "-e",
+                        "2,3p",
+                        "-e",
+                        "/four/p",
+                        "lines.txt",
+                    ),
+                ),
+            )
+
+            for name, options, argv in cases:
+                with self.subTest(name=name):
+                    spec = await policy.normalize(
+                        _request(
+                            tool_name="shell.sed",
+                            command="sed",
+                            options=options,
+                            paths=(_path("lines.txt"),),
+                        )
+                    )
+                    self.assertEqual(spec.argv, argv)
+                    self.assertEqual(spec.display_argv, argv)
 
     async def test_jq_builds_flags_and_output_contract(self) -> None:
         fixture_root = Path(__file__).parent / "fixtures"
@@ -2548,7 +3045,25 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 _request(
                     tool_name="shell.awk",
                     command="awk",
+                    options={"output_separator": ""},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.awk",
+                    command="awk",
                     options={"output_separator": "\n"},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.awk",
+                    command="awk",
+                    options={"pattern": " "},
                     paths=(_path("missing.txt"),),
                 ),
                 ShellExecutionErrorCode.INVALID_OPTION,
@@ -2619,6 +3134,51 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 _request(
                     tool_name="shell.sed",
                     command="sed",
+                    options={"start_line": True},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.sed",
+                    command="sed",
+                    options={"start_line": 0},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.sed",
+                    command="sed",
+                    options={"end_line": -1},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.sed",
+                    command="sed",
+                    options={"start_line": 3, "end_line": 2},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.sed",
+                    command="sed",
+                    options={"patterns": ("a",), "start_line": 1},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.UNSAFE_FILTER,
+            ),
+            (
+                _request(
+                    tool_name="shell.sed",
+                    command="sed",
                     options={"patterns": ("a;b",)},
                     paths=(_path("missing.txt"),),
                 ),
@@ -2651,6 +3211,15 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     tool_name="shell.jq",
                     command="jq",
                     options={"filter": ".", "raw_output": 1},
+                    paths=(_path("missing.json", kind="json_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.jq",
+                    command="jq",
+                    options={"filter": " "},
                     paths=(_path("missing.json", kind="json_file"),),
                 ),
                 ShellExecutionErrorCode.INVALID_OPTION,
@@ -3632,6 +4201,21 @@ class PolicyPathMatcherTest(IsolatedAsyncioTestCase):
 
     def test_option_fragments_accept_finite_float_values(self) -> None:
         self.assertEqual(_option_fragments(1.5, "ratio"), ("1.5",))
+
+    def test_option_fragments_allow_whitespace_only_strings(self) -> None:
+        self.assertEqual(
+            _option_fragments(" ", "options.output_separator"),
+            (" ",),
+        )
+
+    def test_option_fragments_reject_empty_strings(self) -> None:
+        with self.assertRaises(ShellPolicyDenied) as context:
+            _option_fragments("", "options.output_separator")
+
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.INVALID_OPTION,
+        )
 
     def test_media_path_argument_rejects_stdin_sentinel(self) -> None:
         with self.assertRaises(ShellPolicyDenied) as context:

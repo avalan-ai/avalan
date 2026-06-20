@@ -2279,6 +2279,61 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_finish_stream_closes_active_model_continuation(
+        self,
+    ) -> None:
+        cases = (
+            (
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+            ),
+            (
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.MODEL_CONTINUATION_ERROR,
+            ),
+            (
+                StreamItemKind.STREAM_CANCELLED,
+                StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+            ),
+        )
+        for stream_terminal, continuation_terminal in cases:
+            with self.subTest(stream_terminal=stream_terminal):
+                engine = _DummyEngine()
+                agent = AsyncMock(spec=EngineAgent)
+                agent.engine = engine
+                operation = _dummy_operation()
+                response = _make_response(
+                    Message(role=MessageRole.USER, content="hi"),
+                    _empty_text_response(),
+                    agent,
+                    operation,
+                    {},
+                )
+                response.__aiter__()
+                continuation_id = str(uuid4())
+                response._append_canonical_model_continuation(
+                    StreamItemKind.MODEL_CONTINUATION_STARTED,
+                    continuation_id,
+                )
+                response._set_active_model_continuation(continuation_id)
+
+                response._finish_canonical_stream(
+                    stream_terminal,
+                    data=(
+                        {"message": "boom"}
+                        if stream_terminal is StreamItemKind.STREAM_ERRORED
+                        else None
+                    ),
+                )
+
+                kinds = [item.kind for item in response.canonical_items]
+                self.assertLess(
+                    kinds.index(continuation_terminal),
+                    kinds.index(stream_terminal),
+                )
+                self.assertIsNone(response._active_model_continuation_id)
+                validate_canonical_stream_items(response.canonical_items)
+
     async def test_iteration_records_live_tool_output_before_completion(
         self,
     ) -> None:

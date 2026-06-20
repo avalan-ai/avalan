@@ -8,6 +8,7 @@ from .helpers import (
     _contains_unsafe_control,
     _option_safe_display_path_argument,
     _option_safe_path_argument,
+    _optional_bounded_int_option,
     _validate_filter_paths,
     _validate_known_options,
     policy_denied,
@@ -32,12 +33,37 @@ def _sed_selectors(
         options.get("line_ranges"), "line_ranges"
     )
     patterns = _optional_string_sequence(options.get("patterns"), "patterns")
-    if not line_ranges and not patterns:
+    start_line = _optional_bounded_int_option(
+        options,
+        "start_line",
+        min_value=1,
+        max_value=2**31 - 1,
+    )
+    end_line = _optional_bounded_int_option(
+        options,
+        "end_line",
+        min_value=1,
+        max_value=2**31 - 1,
+    )
+    has_line_window = start_line is not None or end_line is not None
+    if (
+        start_line is not None
+        and end_line is not None
+        and start_line > end_line
+    ):
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "start_line must not exceed end_line",
+        )
+    if not line_ranges and not patterns and not has_line_window:
         raise policy_denied(
             ShellExecutionErrorCode.INVALID_OPTION,
             "sed requires at least one selector",
         )
-    if len(line_ranges) + len(patterns) > settings.max_filter_selectors:
+    if (
+        len(line_ranges) + len(patterns) + int(has_line_window)
+        > settings.max_filter_selectors
+    ):
         raise policy_denied(
             ShellExecutionErrorCode.UNSAFE_FILTER,
             "sed selector count is too large",
@@ -64,6 +90,14 @@ def _sed_selectors(
             settings,
         )
         selectors.append(selector)
+    if has_line_window:
+        selector = _sed_line_window_selector(start_line, end_line)
+        total_selector_bytes = _add_selector_bytes(
+            total_selector_bytes,
+            selector,
+            settings,
+        )
+        selectors.append(selector)
     for pattern in patterns:
         if len(
             pattern.encode("utf-8")
@@ -82,6 +116,18 @@ def _sed_selectors(
         )
         selectors.append(selector)
     return tuple(selectors)
+
+
+def _sed_line_window_selector(
+    start_line: int | None,
+    end_line: int | None,
+) -> str:
+    if start_line is None:
+        assert end_line is not None
+        return f"1,{end_line}p"
+    if end_line is None:
+        return f"{start_line},$p"
+    return f"{start_line},{end_line}p"
 
 
 def _optional_string_sequence(value: object, name: str) -> tuple[str, ...]:
@@ -142,7 +188,12 @@ def build_argv(
     request = context.request
     _validate_known_options(
         request.options,
-        allowed_options={"line_ranges", "patterns"},
+        allowed_options={
+            "line_ranges",
+            "patterns",
+            "start_line",
+            "end_line",
+        },
         command="sed",
     )
     _validate_filter_paths(

@@ -8,6 +8,8 @@ from avalan.tool.shell import (
     SHELL_COMMAND_DEFINITIONS,
     ExecutionPolicy,
     LocalCommandExecutor,
+    PathOperand,
+    ShellCommandRequest,
     ShellExecutionStatus,
     ShellToolSet,
     ShellToolSettings,
@@ -41,13 +43,15 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
             executable_search_paths=self._search_paths,
             max_inline_output_file_bytes=256,
         )
+        self._policy = ExecutionPolicy(
+            settings=settings,
+            resolver=self._resolver,
+        )
+        self._executor = LocalCommandExecutor()
         self._toolset = ShellToolSet(
             settings=settings,
-            policy=ExecutionPolicy(
-                settings=settings,
-                resolver=self._resolver,
-            ),
-            executor=LocalCommandExecutor(),
+            policy=self._policy,
+            executor=self._executor,
         )
 
     async def test_rg_smoke(self) -> None:
@@ -62,6 +66,38 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         self.assertIn("filesystem/visible.txt", output)
         self.assertIn("needle", output)
 
+    async def test_rg_native_context_depth_and_size_smoke(self) -> None:
+        await self._require_command("rg")
+        output = await _execute_request(
+            self,
+            self._policy,
+            self._executor,
+            ShellCommandRequest(
+                tool_name="shell.rg",
+                command="rg",
+                options={
+                    "pattern": "needle",
+                    "before_context": 1,
+                    "max_depth": 1,
+                    "max_filesize_bytes": 1024,
+                },
+                paths=(
+                    PathOperand(
+                        name="input",
+                        path="filesystem",
+                        kind="directory",
+                        access="read",
+                    ),
+                ),
+                cwd=None,
+            ),
+        )
+
+        self.assertIn("filesystem/visible.txt", output)
+        self.assertIn("beta", output)
+        self.assertIn("needle", output)
+        self.assertNotIn("alpha", output)
+
     async def test_head_smoke(self) -> None:
         await self._require_command("head")
         output = await _call(
@@ -74,6 +110,21 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         self.assertIn("alpha", output)
         self.assertNotIn("beta", output)
 
+    async def test_head_bytes_smoke(self) -> None:
+        await self._require_command("head")
+        output = await _execute_request(
+            self,
+            self._policy,
+            self._executor,
+            _shell_request(
+                "head",
+                {"byte_count": 5},
+                path="filesystem/visible.txt",
+            ),
+        )
+
+        self.assertEqual(output, "alpha")
+
     async def test_tail_smoke(self) -> None:
         await self._require_command("tail")
         output = await _call(
@@ -85,6 +136,43 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         _assert_completed(self, output, "tail")
         self.assertIn("needle", output)
 
+    async def test_tail_native_start_and_bytes_smoke(self) -> None:
+        await self._require_command("tail")
+        from_second_line = await _execute_request(
+            self,
+            self._policy,
+            self._executor,
+            _shell_request(
+                "tail",
+                {"start_line": 2, "lines": 80},
+                path="filesystem/visible.txt",
+            ),
+        )
+        last_bytes = await _execute_request(
+            self,
+            self._policy,
+            self._executor,
+            _shell_request(
+                "tail",
+                {"byte_count": 6, "lines": 80},
+                path="filesystem/visible.txt",
+            ),
+        )
+        from_seventh_byte = await _execute_request(
+            self,
+            self._policy,
+            self._executor,
+            _shell_request(
+                "tail",
+                {"start_byte": 7, "lines": 80},
+                path="filesystem/visible.txt",
+            ),
+        )
+
+        self.assertEqual(from_second_line, "beta\nneedle\n")
+        self.assertEqual(last_bytes, "eedle\n")
+        self.assertEqual(from_seventh_byte, "beta\nneedle\n")
+
     async def test_ls_smoke(self) -> None:
         await self._require_command("ls")
         output = await _call(
@@ -95,6 +183,14 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         _assert_completed(self, output, "ls")
         self.assertIn("visible.txt", output)
         self.assertNotIn(".hidden.txt", output)
+
+    async def test_ls_empty_path_smoke(self) -> None:
+        await self._require_command("ls")
+        output = await _call(_tool_by_name(self._toolset, "ls"), "")
+
+        _assert_completed(self, output, "ls")
+        self.assertIn("filesystem", output)
+        self.assertIn("filters", output)
 
     async def test_cat_smoke(self) -> None:
         await self._require_command("cat")
@@ -129,6 +225,36 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         )
 
         _assert_completed(self, output, "find")
+        self.assertIn("filesystem/visible.txt", output)
+        self.assertNotIn(".hidden.txt", output)
+
+    async def test_find_min_depth_smoke(self) -> None:
+        await self._require_command("find")
+        output = await _execute_request(
+            self,
+            self._policy,
+            self._executor,
+            ShellCommandRequest(
+                tool_name="shell.find",
+                command="find",
+                options={
+                    "entry_type": "file",
+                    "max_depth": 1,
+                    "min_depth": 1,
+                    "name": "visible.txt",
+                },
+                paths=(
+                    PathOperand(
+                        name="input",
+                        path="filesystem",
+                        kind="directory",
+                        access="read",
+                    ),
+                ),
+                cwd=None,
+            ),
+        )
+
         self.assertIn("filesystem/visible.txt", output)
         self.assertNotIn(".hidden.txt", output)
 
@@ -179,6 +305,21 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         self.assertIn("alpha", output)
         self.assertNotIn("beta", output)
 
+    async def test_awk_default_output_separator_smoke(self) -> None:
+        await self._require_command("awk")
+        output = await _call(
+            _tool_by_name(self._toolset, "awk"),
+            ("filters/table.tsv",),
+            fields=(1, 2),
+            field_separator="tab",
+            start_line=2,
+            end_line=2,
+        )
+
+        _assert_completed(self, output, "awk")
+        self.assertIn("alpha 1", output)
+        self.assertNotIn("beta", output)
+
     async def test_sed_smoke(self) -> None:
         await self._require_command("sed")
         output = await _call(
@@ -190,6 +331,20 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         _assert_completed(self, output, "sed")
         self.assertIn("second line", output)
         self.assertNotIn("first line", output)
+
+    async def test_sed_line_window_smoke(self) -> None:
+        await self._require_command("sed")
+        output = await _call(
+            _tool_by_name(self._toolset, "sed"),
+            ("filters/lines.txt",),
+            start_line=2,
+            end_line=2,
+        )
+
+        _assert_completed(self, output, "sed")
+        self.assertIn("second line", output)
+        self.assertNotIn("first line", output)
+        self.assertNotIn("third line", output)
 
     async def test_jq_smoke(self) -> None:
         await self._require_command("jq")
@@ -263,6 +418,41 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
 
 async def _call(tool: Tool, *args: object, **kwargs: object) -> str:
     return await tool(*args, **kwargs, context=ToolCallContext())
+
+
+async def _execute_request(
+    test_case: IsolatedAsyncioTestCase,
+    policy: ExecutionPolicy,
+    executor: LocalCommandExecutor,
+    request: ShellCommandRequest,
+) -> str:
+    spec = await policy.normalize(request)
+    result = await executor.execute(spec)
+    test_case.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
+    test_case.assertEqual(result.exit_code, 0)
+    return result.stdout
+
+
+def _shell_request(
+    command: str,
+    options: dict[str, object],
+    *,
+    path: str,
+) -> ShellCommandRequest:
+    return ShellCommandRequest(
+        tool_name=f"shell.{command}",
+        command=command,
+        options=options,
+        paths=(
+            PathOperand(
+                name="input",
+                path=path,
+                kind="text_file",
+                access="read",
+            ),
+        ),
+        cwd=None,
+    )
 
 
 def _tool_by_name(toolset: ShellToolSet, command_id: str) -> Tool:

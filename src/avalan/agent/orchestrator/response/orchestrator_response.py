@@ -2835,6 +2835,20 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         outcome = outcomes[kind]
         if self._canonical_stream_terminal is not None:
             return
+        self._finish_active_model_continuation(
+            {
+                StreamItemKind.STREAM_COMPLETED: (
+                    StreamItemKind.MODEL_CONTINUATION_COMPLETED
+                ),
+                StreamItemKind.STREAM_ERRORED: (
+                    StreamItemKind.MODEL_CONTINUATION_ERROR
+                ),
+                StreamItemKind.STREAM_CANCELLED: (
+                    StreamItemKind.MODEL_CONTINUATION_CANCELLED
+                ),
+            }[kind],
+            data=data if kind is StreamItemKind.STREAM_ERRORED else None,
+        )
         self._finalize_incomplete_canonical_tool_calls()
         self._append_open_canonical_channel_done_items()
         terminal_usage: Any | None = None
