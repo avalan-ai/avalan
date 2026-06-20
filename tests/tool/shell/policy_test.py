@@ -1176,6 +1176,86 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             ("tail", "-c", "+7", "--", "file.txt"),
         )
 
+    async def test_head_tail_native_byte_modes_respect_stdout_budget(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "large.txt").write_text("1234567890", encoding="utf-8")
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    workspace_root=str(root),
+                    max_stdout_bytes=5,
+                )
+            )
+
+            safe_suffix = await policy.normalize(
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_byte": 6},
+                    paths=(_path("large.txt"),),
+                )
+            )
+            denied_cases = (
+                _request(
+                    tool_name="shell.head",
+                    command="head",
+                    options={"byte_count": 6},
+                    paths=(_path("large.txt"),),
+                ),
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"byte_count": 6},
+                    paths=(_path("large.txt"),),
+                ),
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_line": 1},
+                    paths=(_path("large.txt"),),
+                ),
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_byte": 1},
+                    paths=(_path("large.txt"),),
+                ),
+            )
+
+            for request in denied_cases:
+                with self.subTest(command=request.command):
+                    await self._assert_denied(
+                        request,
+                        ShellExecutionErrorCode.INVALID_OPTION,
+                        policy=policy,
+                    )
+
+        self.assertEqual(
+            safe_suffix.argv,
+            ("tail", "-c", "+6", "--", "large.txt"),
+        )
+
+    async def test_tail_from_start_requires_available_file_metadata(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(workspace_root=temporary_directory)
+            )
+
+            await self._assert_denied(
+                _request(
+                    tool_name="shell.tail",
+                    command="tail",
+                    options={"start_byte": 1},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.DENIED_PATH,
+                policy=policy,
+            )
+
     async def test_find_builds_native_min_depth_argv(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

@@ -336,6 +336,7 @@ async def _normalized_paths(
                 operand=operand,
                 path=path,
                 display_path=display_path,
+                metadata=metadata,
             )
         )
     return tuple(normalized_paths)

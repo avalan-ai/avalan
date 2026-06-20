@@ -1,5 +1,6 @@
 from ..entities import ShellExecutionErrorCode
 from .base import (
+    NormalizedPath,
     ShellCommandDefinition,
     ShellCommandPolicyContext,
     ShellDependencyGroup,
@@ -50,7 +51,10 @@ def build_argv(
                 max_value=_MAX_SHADOWED_LINE_COUNT,
             )
         flag, count = _tail_start_option(
-            request.options, active_start_options[0]
+            context,
+            path,
+            request.options,
+            active_start_options[0],
         )
     else:
         lines = _bounded_int_option(
@@ -75,13 +79,25 @@ def build_argv(
 
 
 def _tail_start_option(
+    context: ShellCommandPolicyContext,
+    path: NormalizedPath,
     options: dict[str, object],
     option: str,
 ) -> tuple[str, str]:
-    value = _positive_int_option(options, option)
+    value = _positive_int_option(
+        options,
+        option,
+        max_value=(
+            context.settings.max_stdout_bytes
+            if option == "byte_count"
+            else _MAX_SHADOWED_LINE_COUNT
+        ),
+    )
     if option == "start_line":
+        _validate_from_start_file_size(_required_file_size(path), context)
         return "-n", f"+{value}"
     if option == "start_byte":
+        _validate_start_byte_suffix(_required_file_size(path), value, context)
         return "-c", f"+{value}"
     return "-c", str(value)
 
@@ -89,6 +105,8 @@ def _tail_start_option(
 def _positive_int_option(
     options: dict[str, object],
     name: str,
+    *,
+    max_value: int,
 ) -> int:
     assert name in options, "active tail option must be present"
     value = options[name]
@@ -97,12 +115,45 @@ def _positive_int_option(
             ShellExecutionErrorCode.INVALID_OPTION,
             f"{name} must be an integer",
         )
-    if value < 1:
+    if value < 1 or value > max_value:
         raise policy_denied(
             ShellExecutionErrorCode.INVALID_OPTION,
             f"{name} is out of range",
         )
     return value
+
+
+def _required_file_size(path: NormalizedPath) -> int:
+    if path.metadata is None:
+        raise policy_denied(
+            ShellExecutionErrorCode.DENIED_PATH,
+            "input file is unavailable",
+        )
+    return path.metadata.size
+
+
+def _validate_from_start_file_size(
+    file_size: int,
+    context: ShellCommandPolicyContext,
+) -> None:
+    if file_size > context.settings.max_stdout_bytes:
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "tail from-start file is too large",
+        )
+
+
+def _validate_start_byte_suffix(
+    file_size: int,
+    start_byte: int,
+    context: ShellCommandPolicyContext,
+) -> None:
+    suffix_bytes = max(0, file_size - start_byte + 1)
+    if suffix_bytes > context.settings.max_stdout_bytes:
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "tail byte suffix is too large",
+        )
 
 
 COMMAND_DEFINITION = ShellCommandDefinition(

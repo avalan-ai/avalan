@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, final
 
 if TYPE_CHECKING:
+    from ..filesystem import ShellPathMetadata
     from ..settings import ShellToolSettings
 
 
@@ -73,6 +74,7 @@ class NormalizedPath:
     operand: PathOperand
     path: Path
     display_path: str
+    metadata: "ShellPathMetadata | None"
 
 
 @final

@@ -1,4 +1,3 @@
-from ..entities import ShellExecutionErrorCode
 from .base import (
     ShellCommandDefinition,
     ShellCommandPolicyContext,
@@ -6,10 +5,10 @@ from .base import (
 )
 from .helpers import (
     _bounded_int_option,
+    _optional_bounded_int_option,
     _relative_argv_path,
     _single_path,
     _validate_known_options,
-    policy_denied,
 )
 
 _MAX_SHADOWED_LINE_COUNT = 2**31 - 1
@@ -29,9 +28,11 @@ def build_argv(
         allowed_kinds=("file", "text_file"),
         command="head",
     )
-    byte_count = _optional_positive_int_option(
+    byte_count = _optional_bounded_int_option(
         request.options,
         "byte_count",
+        min_value=1,
+        max_value=context.settings.max_stdout_bytes,
     )
     if byte_count is None:
         flag = "-n"
@@ -63,26 +64,6 @@ def build_argv(
         path.display_path,
     )
     return argv, display_argv, None
-
-
-def _optional_positive_int_option(
-    options: dict[str, object],
-    name: str,
-) -> int | None:
-    if name not in options or options[name] is None:
-        return None
-    value = options[name]
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise policy_denied(
-            ShellExecutionErrorCode.INVALID_OPTION,
-            f"{name} must be an integer",
-        )
-    if value < 1:
-        raise policy_denied(
-            ShellExecutionErrorCode.INVALID_OPTION,
-            f"{name} is out of range",
-        )
-    return value
 
 
 COMMAND_DEFINITION = ShellCommandDefinition(
