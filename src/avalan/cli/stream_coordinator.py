@@ -18,6 +18,7 @@ from time import perf_counter
 from types import TracebackType
 from typing import Protocol, TextIO, TypeAlias, cast
 
+from rich.cells import cell_len
 from rich.color import Color
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -34,6 +35,7 @@ _FRAME_ROLE_ORDER: tuple[StreamFrameRole, ...] = (
 )
 _ANSWER_FADE_FRAME_SECONDS = 0.025
 _ANSWER_FADE_MIN_CHARS = 8
+_ANSWER_FADE_VIEWPORT_LINE_MARGIN = 1
 _ANSWER_FADE_RGB_STEPS: tuple[int, ...] = (36, 56, 78, 106, 138, 172, 207)
 _ANSWER_FADE_SAVE_CURSOR = "\x1b[s"
 _ANSWER_FADE_RESTORE_CURSOR = "\x1b[u"
@@ -243,9 +245,8 @@ class CliStreamCoordinator:
         assert isinstance(chunk, CliStreamAnswerTextChunk)
         if chunk.animation != "fade":
             return False
-        if len(strip_terminal_controls(chunk.text).strip()) < (
-            _ANSWER_FADE_MIN_CHARS
-        ):
+        safe_text = strip_terminal_controls(chunk.text)
+        if len(safe_text.strip()) < _ANSWER_FADE_MIN_CHARS:
             return False
         if self._display_config.answer_stdout_only:
             return False
@@ -255,7 +256,9 @@ class CliStreamCoordinator:
             return False
         if getattr(self._console, "legacy_windows", False) is True:
             return False
-        return isinstance(getattr(self._console, "color_system", None), str)
+        return isinstance(
+            getattr(self._console, "color_system", None), str
+        ) and _answer_fade_fits_viewport(safe_text, self._console)
 
     async def _print_faded_answer_chunk(self, text: str) -> None:
         assert isinstance(text, str)
@@ -595,3 +598,33 @@ def _answer_fade_text(text: str, rgb: int) -> Text:
         text,
         style=Style(color=Color.from_rgb(rgb, rgb, rgb)),
     )
+
+
+def _answer_fade_fits_viewport(text: str, console: Console) -> bool:
+    assert isinstance(text, str)
+    assert text
+    size = getattr(console, "size", None)
+    width = getattr(size, "width", None)
+    height = getattr(size, "height", None)
+    if (
+        isinstance(width, bool)
+        or not isinstance(width, int)
+        or width <= 0
+        or isinstance(height, bool)
+        or not isinstance(height, int)
+        or height <= 0
+    ):
+        return False
+    available_height = max(1, height - _ANSWER_FADE_VIEWPORT_LINE_MARGIN)
+    return _answer_fade_line_count(text, width) <= available_height
+
+
+def _answer_fade_line_count(text: str, width: int) -> int:
+    assert isinstance(text, str)
+    assert isinstance(width, int)
+    assert width > 0
+    line_count = 0
+    for line in text.split("\n"):
+        line_width = cell_len(line)
+        line_count += max(1, (line_width + width - 1) // width)
+    return line_count

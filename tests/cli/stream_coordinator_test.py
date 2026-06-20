@@ -3,6 +3,7 @@ from asyncio import Event as AsyncEvent
 from datetime import datetime, timezone
 from io import StringIO
 from threading import Event
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import MagicMock, call, patch
@@ -446,6 +447,20 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
                     "no_color": False,
                 },
             ),
+            (
+                "too-tall",
+                _display_config(stats=False),
+                CliStreamAnswerTextChunk(
+                    text="one\ntwo\nthree",
+                    animation="fade",
+                ),
+                {
+                    "force_terminal": True,
+                    "color_system": "truecolor",
+                    "height": 3,
+                    "no_color": False,
+                },
+            ),
         )
 
         for label, config, chunk, console_options in cases:
@@ -473,6 +488,73 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
                 self.assertEqual(output.getvalue(), chunk.text)
                 self.assertEqual(sleeps, [])
 
+    async def test_fade_answer_chunk_that_wraps_past_viewport_prints_plainly(
+        self,
+    ) -> None:
+        output = StringIO()
+        sleeps: list[float] = []
+        console = Console(
+            file=output,
+            force_terminal=True,
+            no_color=False,
+            color_system="truecolor",
+            highlight=False,
+            width=10,
+            height=3,
+        )
+
+        async def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(stats=False),
+            answer_fade_sleep=fake_sleep,
+        )
+
+        await coordinator.handle_item(
+            CliStreamAnswerTextChunk(
+                text="0123456789" * 3,
+                animation="fade",
+            )
+        )
+
+        self.assertNotIn("\x1b[s", output.getvalue())
+        self.assertEqual(sleeps, [])
+
+    async def test_fade_answer_chunk_without_terminal_size_prints_plainly(
+        self,
+    ) -> None:
+        output = StringIO()
+        console = MagicMock()
+        console.is_terminal = True
+        console.no_color = False
+        console.legacy_windows = False
+        console.color_system = "truecolor"
+        console.file = output
+        console.size = SimpleNamespace(width=True, height=24)
+        sleeps: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(stats=False),
+            answer_fade_sleep=fake_sleep,
+        )
+
+        await coordinator.handle_item(
+            CliStreamAnswerTextChunk(
+                text="Hello fade",
+                animation="fade",
+            )
+        )
+
+        console.print.assert_called_once_with("Hello fade", end="")
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(sleeps, [])
+
     async def test_fade_answer_chunk_without_output_file_prints_plainly(
         self,
     ) -> None:
@@ -482,6 +564,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         console.legacy_windows = False
         console.color_system = "truecolor"
         console.file = None
+        console.size = SimpleNamespace(width=80, height=24)
         coordinator = CliStreamCoordinator(
             console,
             _display_config(stats=False),
