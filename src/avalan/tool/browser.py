@@ -1,7 +1,14 @@
 from ..compat import override
-from ..entities import Message, MessageRole, ToolCallContext
+from ..entities import (
+    Message,
+    MessageRole,
+    ToolCall,
+    ToolCallContext,
+    ToolCallOutcome,
+)
 from ..filters import Partitioner
 from . import Tool, ToolSet
+from .builtin_display import project_browser_open_tool_display
 
 from asyncio import CancelledError, wait_for
 from contextlib import AsyncExitStack
@@ -134,6 +141,17 @@ class BrowserTool(Tool):
         self._partitioner = partitioner
         self.__name__ = "open"
 
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        return project_browser_open_tool_display(
+            call=call,
+            settings=self._settings,
+            outcome=outcome,
+        )
+
     async def __call__(self, url: str, *, context: ToolCallContext) -> str:
         content = await self._read(url)
 
@@ -179,25 +197,25 @@ class BrowserTool(Tool):
                 knowledge_chunk = (
                     knowledge_partitions[kn_id].data
                     if knowledge_partitions
-                    else query if kn_id == 0 else None
+                    else query
+                    if kn_id == 0
+                    else None
                 )
                 if not knowledge_chunk:
                     continue
 
                 knowledge_match = (
-                    "\n".join(
-                        [
-                            kp.data
-                            for kp in knowledge_partitions[
-                                max(
-                                    kn_id - self._settings.search_context, 0
-                                ) : min(
-                                    kn_id + self._settings.search_context + 1,
-                                    len(knowledge_partitions),
-                                )
-                            ]
+                    "\n".join([
+                        kp.data
+                        for kp in knowledge_partitions[
+                            max(
+                                kn_id - self._settings.search_context, 0
+                            ) : min(
+                                kn_id + self._settings.search_context + 1,
+                                len(knowledge_partitions),
+                            )
                         ]
-                    )
+                    ])
                     if self._settings.search_context
                     else knowledge_chunk
                 )

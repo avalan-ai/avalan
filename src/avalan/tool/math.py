@@ -1,6 +1,7 @@
 from ..compat import override
-from ..entities import ToolCallContext
+from ..entities import ToolCall, ToolCallContext, ToolCallOutcome
 from . import Tool, ToolSet
+from .builtin_display import project_calculator_tool_display
 
 from contextlib import AsyncExitStack
 
@@ -20,6 +21,13 @@ class CalculatorTool(Tool):
     def __init__(self) -> None:
         super().__init__()
         self.__name__ = "calculator"
+
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        return project_calculator_tool_display(call=call, outcome=outcome)
 
     async def __call__(self, expression: str, context: ToolCallContext) -> str:
         result = sympify(expression, evaluate=True)
