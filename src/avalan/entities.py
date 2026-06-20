@@ -4,7 +4,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, final
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    TypeAlias,
+    TypedDict,
+    final,
+)
 from uuid import UUID
 
 if TYPE_CHECKING:
@@ -57,6 +64,14 @@ class Backend(StrEnum):
 
 
 ToolValue: TypeAlias = LooseJsonValue
+ToolDisplayProjector: TypeAlias = Callable[..., object | None]
+ToolDescriptorMetadataValue: TypeAlias = ToolValue | ToolDisplayProjector
+
+TOOL_DISPLAY_PROJECTOR_METADATA_KEY = "tool_display_projector"
+TOOL_DISPLAY_PROJECTION_CLASS = (
+    "avalan.tool.display",
+    "ToolDisplayProjection",
+)
 
 Vendor = Literal[
     "anthropic",
@@ -804,7 +819,9 @@ class ToolDescriptor:
     namespace: str | None = None
     capabilities: ToolCapabilities = field(default_factory=ToolCapabilities)
     policy: dict[str, ToolValue] = field(default_factory=dict)
-    metadata: dict[str, ToolValue] = field(default_factory=dict)
+    metadata: dict[str, ToolDescriptorMetadataValue] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         _assert_optional_tool_name(self.name, "name")
@@ -825,6 +842,32 @@ class ToolDescriptor:
         assert isinstance(self.capabilities, ToolCapabilities)
         assert isinstance(self.policy, dict)
         assert isinstance(self.metadata, dict)
+        projector = self.metadata.get(TOOL_DISPLAY_PROJECTOR_METADATA_KEY)
+        if projector is not None:
+            assert callable(projector)
+
+    @property
+    def display_projector(self) -> ToolDisplayProjector | None:
+        value = self.metadata.get(TOOL_DISPLAY_PROJECTOR_METADATA_KEY)
+        if value is None:
+            return None
+        assert callable(value)
+        return value
+
+    def project_display(self, *args: Any, **kwargs: Any) -> object | None:
+        try:
+            projector = self.display_projector
+        except AssertionError:
+            return None
+        if projector is None:
+            return None
+        try:
+            projection = projector(*args, **kwargs)
+        except Exception:
+            return None
+        if _is_tool_display_projection(projection):
+            return projection
+        return None
 
 
 @final
@@ -1313,6 +1356,14 @@ def _assert_optional_tool_name(value: str | None, field_name: str) -> None:
         return
     assert isinstance(value, str), f"{field_name} must be a string"
     assert value.strip(), f"{field_name} must not be empty"
+
+
+def _is_tool_display_projection(value: object) -> bool:
+    value_type = type(value)
+    return (
+        value_type.__module__ == TOOL_DISPLAY_PROJECTION_CLASS[0]
+        and value_type.__name__ == TOOL_DISPLAY_PROJECTION_CLASS[1]
+    )
 
 
 @final

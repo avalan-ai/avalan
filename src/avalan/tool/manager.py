@@ -1,4 +1,5 @@
 from ..entities import (
+    TOOL_DISPLAY_PROJECTOR_METADATA_KEY,
     PreparedToolCall,
     ToolCall,
     ToolCallContext,
@@ -11,6 +12,8 @@ from ..entities import (
     ToolCallResult,
     ToolCapabilities,
     ToolDescriptor,
+    ToolDescriptorMetadataValue,
+    ToolDisplayProjector,
     ToolFilter,
     ToolFilterResult,
     ToolFilterResultStatus,
@@ -433,7 +436,27 @@ class ToolManager:
             provider_safe_schema=cls._provider_safe_schema(schema),
             namespace=namespace,
             capabilities=cls._tool_capabilities(tool),
+            metadata=cls._tool_metadata(tool),
         )
+
+    @classmethod
+    def _tool_metadata(
+        cls, tool: Callable[..., Any] | Tool
+    ) -> dict[str, ToolDescriptorMetadataValue]:
+        projector = cls._tool_display_projector(tool)
+        if projector is None:
+            return {}
+        return {TOOL_DISPLAY_PROJECTOR_METADATA_KEY: projector}
+
+    @staticmethod
+    def _tool_display_projector(
+        tool: Callable[..., Any] | Tool,
+    ) -> ToolDisplayProjector | None:
+        projector = getattr(tool, TOOL_DISPLAY_PROJECTOR_METADATA_KEY, None)
+        if projector is None:
+            return None
+        assert callable(projector), "tool_display_projector must be callable"
+        return cast(ToolDisplayProjector, projector)
 
     @classmethod
     def _tool_capabilities(
