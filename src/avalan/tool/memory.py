@@ -1,5 +1,5 @@
 from ..compat import override
-from ..entities import ToolCallContext
+from ..entities import ToolCall, ToolCallContext, ToolCallOutcome
 from ..memory.manager import MemoryManager
 from ..memory.permanent import (
     Memory,
@@ -7,12 +7,32 @@ from ..memory.permanent import (
     VectorFunction,
 )
 from . import Tool, ToolSet
+from .builtin_display import project_memory_tool_display
 
 from contextlib import AsyncExitStack
 from typing import cast
 
 
-class MessageReadTool(Tool):
+class _MemoryTool(Tool):
+    """Project memory tool display metadata.
+
+    Args:
+        call: Tool call to project.
+        outcome: Optional tool outcome to project.
+
+    Returns:
+        Display projection metadata.
+    """
+
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        return project_memory_tool_display(call=call, outcome=outcome)
+
+
+class MessageReadTool(_MemoryTool):
     """Fetch user information and preferences from previous messages.
 
     Args:
@@ -53,7 +73,7 @@ class MessageReadTool(Tool):
         return MessageReadTool._NOT_FOUND
 
 
-class MemoryReadTool(Tool):
+class MemoryReadTool(_MemoryTool):
     """Search permanent memories for stored knowledge.
 
     Args:
@@ -111,7 +131,7 @@ class MemoryReadTool(Tool):
         return memories
 
 
-class MemoryListTool(Tool):
+class MemoryListTool(_MemoryTool):
     """List permanent memories available for a namespace.
 
     Args:
@@ -145,7 +165,7 @@ class MemoryListTool(Tool):
         return memories
 
 
-class MemoryStoresTool(Tool):
+class MemoryStoresTool(_MemoryTool):
     """List memory stores available.
 
     Args:

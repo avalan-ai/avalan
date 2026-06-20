@@ -1,6 +1,10 @@
 from ..compat import override
-from ..entities import ToolCallContext
+from ..entities import ToolCall, ToolCallContext, ToolCallOutcome
 from . import Tool, ToolSet
+from .builtin_display import (
+    project_ast_grep_tool_display,
+    project_code_run_tool_display,
+)
 
 from asyncio import create_subprocess_exec
 from asyncio.subprocess import PIPE
@@ -37,6 +41,13 @@ class CodeTool(Tool):
     def __init__(self) -> None:
         super().__init__()
         self.__name__ = "run"
+
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        return project_code_run_tool_display(call=call, outcome=outcome)
 
     async def __call__(
         self,
@@ -82,7 +93,9 @@ class CodeTool(Tool):
             else (
                 function(*positional_args)
                 if positional_args
-                else function(**keyword_args) if keyword_args else function()
+                else function(**keyword_args)
+                if keyword_args
+                else function()
             )
         )
 
@@ -105,6 +118,13 @@ class AstGrepTool(Tool):
     def __init__(self) -> None:
         super().__init__()
         self.__name__ = "search.ast.grep"
+
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        return project_ast_grep_tool_display(call=call, outcome=outcome)
 
     async def __call__(
         self,

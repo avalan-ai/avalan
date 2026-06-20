@@ -1,6 +1,7 @@
 from ..compat import override
-from ..entities import ToolCallContext
+from ..entities import ToolCall, ToolCallContext, ToolCallOutcome
 from . import Tool, ToolSet
+from .builtin_display import project_mcp_call_tool_display
 
 from contextlib import AsyncExitStack
 from importlib import import_module
@@ -32,6 +33,13 @@ class McpCallTool(Tool):
         self.__name__ = "call"
         self._client_params = client_params or {}
         self._call_params = call_params or {}
+
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        return project_mcp_call_tool_display(call=call, outcome=outcome)
 
     async def __call__(
         self,

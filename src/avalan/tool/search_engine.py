@@ -1,4 +1,6 @@
+from ..entities import ToolCall, ToolCallOutcome
 from . import Tool
+from .builtin_display import project_search_tool_display
 
 
 class SearchEngineTool(Tool):
@@ -14,6 +16,13 @@ class SearchEngineTool(Tool):
 
     def __init__(self) -> None:
         self.__name__ = "search"
+
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        return project_search_tool_display(call=call, outcome=outcome)
 
     async def __call__(self, query: str, engine: str) -> str:
         return (
