@@ -196,6 +196,14 @@ def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
     }
 
 
+def test_youtube_extra_and_transcript_dependency_are_removed() -> None:
+    optional_deps = _optional_dependencies()
+    locked_packages = _lock_packages_by_name()
+
+    assert "youtube" not in optional_deps
+    assert "youtube-transcript-api" not in locked_packages
+
+
 def test_task_extra_declares_jsonschema_dependency() -> None:
     requirements = _requirements_by_name("task", "jsonschema")
 

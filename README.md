@@ -25,7 +25,7 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
   [`mlx-lm`](https://github.com/ml-explore/mlx-lm), plus native support for
   [`DS4`](https://github.com/avalan-ai/pyds4)-supported DeepSeek V4 Flash GGUFs.
 - 🧰 **Built-in tools and memory** for browser automation, code execution,
-  databases, MCP, search, YouTube, and vector-backed retrieval.
+  databases, MCP, search, and vector-backed retrieval.
 - 🧠 **Composable orchestration** with flows, structured tasks, branching,
   reasoning strategies, and observability.
 - 🌐 **Open serving surfaces** for OpenAI-compatible APIs, MCP, and A2A.
@@ -1426,18 +1426,6 @@ Add the memory toolset when agents should consult past conversations or long-liv
 - `memory.stores() -> list[PermanentMemoryStore]`: List permanent memory stores available to the agent for broader exploration.
 
 See [Memories](#memories) for sample usage.
-
-### YouTube toolset (`youtube.*`)
-
-Use the YouTube toolset to ground responses in video transcripts—great for summarizing talks or extracting key quotes without manual downloads. Proxy support keeps the integration flexible for restricted networks.
-
-> [!NOTE]
-> YouTube transcript tools need the `youtube` extra in addition to `tool`, for
-> example `python3 -m pip install -U "avalan[agent,tool,youtube]"`.
-
-**Available tools**
-
-- `youtube.transcript(video_id: str, languages: Iterable[str] | None = None) -> list[str]`: Fetch ordered transcript snippets for a given video, optionally prioritizing specific languages.
 
 ### MCP toolset (`mcp.*`)
 

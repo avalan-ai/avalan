@@ -22,7 +22,7 @@ with files named `*_test.py`.
 - `tool/` — Tool system. `Tool` (ABC, async) and `ToolSet` live in
   `tool/__init__.py`; tools generate JSON schemas automatically and are
   loaded by `tool/manager.py`. Built-ins: browser, code, databases, graph,
-  MCP, memory, search, YouTube.
+  MCP, memory, search.
 - `memory/` — `MemoryStore[T]` with transient (`RecentMessageMemory`) and
   persistent (`memory/permanent/`: PostgreSQL, S3, FAISS, Elasticsearch)
   backends; chunking strategies in `memory/partitioner/`.
