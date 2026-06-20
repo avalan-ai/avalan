@@ -48,7 +48,7 @@ avalan = "avalan.cli.__main__:main"
 local = [
   "huggingface-hub>=1.0.0,<2.0.0",
   "hf-xet>=1.4.3,<2.0.0 ; platform_machine == 'x86_64' or platform_machine == 'amd64' or platform_machine == 'AMD64' or platform_machine == 'arm64' or platform_machine == 'aarch64'",
-  "torch>=2.11.0,<2.12.0",
+  "torch>=2.12.1,<2.13.0",
   "transformers>=5.5.4,<6.0.0",
   "accelerate>=1.9.0,<2.0.0",
   "sentence-transformers>=5.4.1,<6.0.0",
@@ -67,10 +67,11 @@ memory = [
   "faiss-cpu>=1.14.2,<2.0.0",
   "markitdown[pdf]>=0.1.2,<0.2.0 ; python_version < '3.14'",
   "markdownify>=1.1.0,<2.0.0",
+  "cryptography>=48.0.1,<49.0.0",
   "psycopg[pool]>=3.2.9,<4.0.0",
   "psycopg-binary>=3.2.9,<4.0.0 ; python_version < '3.14'",
   "pgvector>=0.4.1,<0.5.0",
-  "pypdf>=6.10.2,<7.0.0",
+  "pypdf>=6.13.3,<7.0.0",
   "tree-sitter>=0.25.1,<0.26.0",
   "tree-sitter-python>=0.23.6,<0.24.0",
   "elasticsearch>=9.1.0,<10.0.0",
@@ -80,8 +81,11 @@ quantization = [
 ]
 server = [
   "fastapi>=0.101.0,<1.0.0",
+  "cryptography>=48.0.1,<49.0.0",
   "mcp>=1.23.0,<2.0.0",
   "pydantic>=2.0,<3.0.0",
+  "python-multipart>=0.0.31,<0.1.0",
+  "starlette>=1.3.1,<2.0.0",
   "uvicorn>=0.27.0,<1.0.0",
 ]
 task = [
@@ -135,11 +139,13 @@ a2a = [
 ]
 
 litellm = [
+  "aiohttp>=3.14.1,<4.0.0 ; python_version < '3.14'",
   "litellm>=1.83.7,<2.0.0 ; python_version < '3.14'",
 ]
 
 vendors = [
   "aioboto3>=15.0.0,<16.0.0",
+  "aiohttp>=3.14.1,<4.0.0",
   "anthropic>=0.71.0,<0.72.0",
   "diffusers>=0.38.0,<0.39.0",
   "google-genai>=1.28.0,<2.0.0",
@@ -154,7 +160,7 @@ vision = [
   "opencv-python>=4.12.0.88,<5.0.0",
   "pillow>=12.2.0,<13.0",
   "safetensors>=0.8.0rc0,<0.9.0",
-  "torchvision>=0.26.0,<0.27.0 ; python_full_version != '3.14.1'",
+  "torchvision>=0.27.1,<0.28.0 ; python_full_version != '3.14.1'",
 ]
 vllm = []
 mlx = [
