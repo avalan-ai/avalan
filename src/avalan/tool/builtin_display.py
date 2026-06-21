@@ -256,9 +256,11 @@ def project_memory_tool_display(
     scope = (
         "permanent memory stores"
         if operation == "stores"
-        else "messages"
-        if operation == "message.read"
-        else namespace or "permanent memory"
+        else (
+            "messages"
+            if operation == "message.read"
+            else namespace or "permanent memory"
+        )
     )
     details = [
         _detail("operation", operation),
@@ -428,11 +430,13 @@ def _text_result_projection(
             _detail("text_chars", text_chars),
             _detail("text_lines", text_lines),
         ),
-        metrics=_compact_metrics({
-            "items": count,
-            "text_chars": text_chars,
-            "text_lines": text_lines,
-        }),
+        metrics=_compact_metrics(
+            {
+                "items": count,
+                "text_chars": text_chars,
+                "text_lines": text_lines,
+            }
+        ),
         redacted=target_redacted,
     )
 
@@ -515,10 +519,12 @@ def _graph_result_projection(
             _detail("dpi", _int_mapping_value(result, "dpi")),
             _detail("file", file_path, redacted=file_redacted),
         ),
-        metrics=_compact_metrics({
-            "points": _int_mapping_value(result, "points"),
-            "series": _sequence_count(result.get("series")),
-        }),
+        metrics=_compact_metrics(
+            {
+                "points": _int_mapping_value(result, "points"),
+                "series": _sequence_count(result.get("series")),
+            }
+        ),
         redacted=file_redacted,
     )
 
@@ -588,9 +594,11 @@ def _memory_result_facts(
                 _detail("matches", 1 if found else 0),
                 _detail("text_chars", text_chars),
             ),
-            "Message memory matched."
-            if found
-            else "No matching message found.",
+            (
+                "Message memory matched."
+                if found
+                else "No matching message found."
+            ),
             "result" if found else "not_found",
         )
     if operation == "stores":
@@ -639,10 +647,12 @@ def _memory_result_facts(
             if isinstance(item, str):
                 partition_text_chars += len(item)
     return (
-        _compact_metrics({
-            "matches": count,
-            "text_chars": partition_text_chars,
-        }),
+        _compact_metrics(
+            {
+                "matches": count,
+                "text_chars": partition_text_chars,
+            }
+        ),
         (
             _detail("matches", count),
             _detail("text_chars", partition_text_chars),
