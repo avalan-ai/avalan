@@ -215,6 +215,14 @@ def _shell_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
     ]
 
 
+def _mcp_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
+    return [
+        toolset.namespace
+        for toolset in kwargs["available_toolsets"]
+        if toolset.namespace == "mcp"
+    ]
+
+
 def _toolset_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
     return [toolset.namespace for toolset in kwargs["available_toolsets"]]
 
@@ -2992,6 +3000,39 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_shell_namespaces(kwargs), ["shell"])
         self.assertIsNone(kwargs["enable_tools"])
 
+    async def test_mcp_toolset_is_not_registered_without_mcp_opt_in(self):
+        cases = (
+            (None, None),
+            ([], []),
+            (["mcpx.*"], ["mcpx.*"]),
+            (["shell.rg"], ["shell.rg"]),
+        )
+
+        for tools, expected_enable in cases:
+            with self.subTest(tools=tools):
+                kwargs = await _from_settings_tool_manager_kwargs(
+                    _orchestrator_settings(tools=tools)
+                )
+
+                self.assertEqual(_mcp_namespaces(kwargs), [])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
+
+    async def test_mcp_toolset_is_registered_for_mcp_selections(self):
+        cases = (
+            (["mcp"], ["mcp"]),
+            (["mcp.*"], ["mcp.*"]),
+            (["mcp.call"], ["mcp.call"]),
+        )
+
+        for tools, expected_enable in cases:
+            with self.subTest(tools=tools):
+                kwargs = await _from_settings_tool_manager_kwargs(
+                    _orchestrator_settings(tools=tools)
+                )
+
+                self.assertEqual(_mcp_namespaces(kwargs), ["mcp"])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
+
     async def test_cli_shell_settings_preserve_default_toolsets(self):
         kwargs = await _from_settings_tool_manager_kwargs(
             _orchestrator_settings(tools=None),
@@ -3000,7 +3041,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             _toolset_namespaces(kwargs),
-            ["math", "mcp", "memory", "shell"],
+            ["math", "memory", "shell"],
         )
         self.assertIsNone(kwargs["enable_tools"])
 

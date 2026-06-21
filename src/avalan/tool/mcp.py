@@ -23,11 +23,14 @@ JSONObject = dict[str, JSONValue]
 class _MCPHTTPResponse(Protocol):
     headers: Mapping[str, str]
 
-    async def aread(self) -> bytes: ...
+    async def aread(self) -> bytes:
+        raise NotImplementedError
 
-    def aiter_lines(self) -> AsyncIterator[str]: ...
+    def aiter_lines(self) -> AsyncIterator[str]:
+        raise NotImplementedError
 
-    def raise_for_status(self) -> None: ...
+    def raise_for_status(self) -> None:
+        raise NotImplementedError
 
 
 class McpCallTool(Tool):

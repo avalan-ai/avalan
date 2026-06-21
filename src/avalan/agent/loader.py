@@ -36,6 +36,7 @@ from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.mcp import McpToolSet
 from ..tool.memory import MemoryToolSet
+from ..tool.names import matches_tool_namespace
 from ..tool.shell import (
     ShellToolSet,
     ShellToolSettings,
@@ -60,6 +61,16 @@ else:
 SentenceTransformerModel: type[Any] | None = None
 TextPartitioner: type[Any] | None = None
 PgsqlRawMemory: type[Any] | None = None
+
+
+def should_append_mcp_toolset(enabled_tools: list[str] | None) -> bool:
+    """Return whether MCP tools were explicitly enabled."""
+    if not enabled_tools:
+        return False
+    return any(
+        matches_tool_namespace("mcp.call", enabled)
+        for enabled in enabled_tools
+    )
 
 
 class OrchestratorLoader:
@@ -754,9 +765,10 @@ class OrchestratorLoader:
 
         available_toolsets = [
             MathToolSet(namespace="math"),
-            McpToolSet(namespace="mcp"),
             MemoryToolSet(memory, namespace="memory"),
         ]
+        if should_append_mcp_toolset(enabled_tools):
+            available_toolsets.insert(1, McpToolSet(namespace="mcp"))
         if HAS_GRAPH_DEPENDENCIES:
             available_toolsets.append(
                 GraphToolSet(
