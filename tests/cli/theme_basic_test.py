@@ -30,11 +30,14 @@ from avalan.cli.theme.basic import (
     _basic_active_model_renderable,
     _basic_active_tool_line,
     _basic_active_tool_renderable,
+    _basic_completed_tool_line,
     _basic_has_executed_tool_frame,
     _basic_json_tool_answer,
     _basic_open_harmony_pattern,
     _basic_tool_elapsed_text,
     _basic_tool_result_summary,
+    _basic_tool_status_outcome_markup,
+    _basic_tool_subject_markup,
     _basic_visible_answer_text,
     _BasicActiveModelSpinner,
     _BasicAnswerPresenter,
@@ -57,7 +60,11 @@ from avalan.entities import (
 )
 from avalan.event import Event, EventType
 from avalan.model.stream import StreamTerminalOutcome
-from avalan.tool.display import ToolDisplayDetail, ToolDisplayProjection
+from avalan.tool.display import (
+    ToolDisplayDetail,
+    ToolDisplayPreview,
+    ToolDisplayProjection,
+)
 
 
 def _gettext(message: str) -> str:
@@ -337,7 +344,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             _stream_request(config, builder.snapshot()),
         )
 
-        self.assertIn("Executed tool calc (5s): 25", _visible_text(tool_items))
+        self.assertIn("Executed tool calc · 5s: 25", _visible_text(tool_items))
         self.assertEqual(
             _answer_chunks(answer_items),
             ["\n", ":robot: ", "Answer."],
@@ -422,29 +429,100 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         builder = CliStreamSnapshotBuilder(config)
         builder.add_active_model_continuation(
             model_continuation_id="continuation-1",
+            started_at=1.0,
         )
         presenter = BasicStreamPresenter(getLogger(__name__))
 
-        items = await _collect_stream_items(
-            presenter,
-            _stream_request(config, builder.snapshot()),
-        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+            tool_text = _render_text(_frames(items)[0].renderable)
 
-        tool_text = _render_text(_frames(items)[0].renderable)
-        self.assertIn("Thinking...", tool_text)
+        self.assertIn("Thinking for 1s...", tool_text)
         self.assertNotIn("tool event model_continuation", tool_text)
+
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=3.0):
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+            repeated_active_text = _render_text(_frames(items)[0].renderable)
+
+        self.assertIn("Thinking for 2s...", repeated_active_text)
 
         builder.finish_model_continuation(
             model_continuation_id="continuation-1",
         )
-        items = await _collect_stream_items(
-            presenter,
-            _stream_request(config, builder.snapshot()),
-        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
 
         frames = _frames(items)
         self.assertEqual([frame.role for frame in frames], ["tools"])
-        self.assertEqual(frames[0].renderable, "")
+        self.assertIn("Thought for 1s.", _render_text(frames[0].renderable))
+
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-1",
+            started_at=3.0,
+        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=4.0):
+            await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+        builder.finish_model_continuation(
+            model_continuation_id="continuation-1",
+        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=4.0):
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+
+        self.assertEqual(_frames(items)[0].renderable, "")
+
+    async def test_model_continuation_completion_renders_before_answer(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-1",
+            started_at=1.0,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+
+        builder.finish_model_continuation(
+            model_continuation_id="continuation-1",
+        )
+        builder.append_answer_text("Done.")
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+
+        self.assertIsInstance(items[0], CliStreamRenderableFrame)
+        self.assertIn(
+            "Thought for 1s.",
+            _render_text(cast(CliStreamRenderableFrame, items[0]).renderable),
+        )
+        self.assertEqual(_answer_chunks(items), ["Done.", "\n"])
+        self.assertNotIn("Thinking for", _visible_text(items))
 
     async def test_basic_keeps_event_only_tool_execution_side_events(
         self,
@@ -475,6 +553,11 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             name="calc",
         )
         builder.add_tool_event(
+            Event(type=EventType.TOOL_DIAGNOSTIC, payload={"channel": "x"}),
+            tool_call_id="call",
+            name="calc",
+        )
+        builder.add_tool_event(
             Event(type=EventType.TOOL_PROCESS, payload={"name": "calc"}),
             tool_call_id="call",
             name="calc",
@@ -489,6 +572,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         output = _visible_text(items)
         self.assertNotIn("tool_model_run", output)
         self.assertNotIn("tool_model_response", output)
+        self.assertNotIn("tool_diagnostic", output)
         self.assertIn("tool event tool_execute: calc", output)
         self.assertIn("tool event tool_result: calc", output)
         self.assertIn("tool event tool_process: calc", output)
@@ -608,7 +692,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Running tool math.calculator for 2.5s", running_text)
         self.assertNotEqual(start_text, running_text)
         self.assertIn(
-            "Executed tool math.calculator (2.5s): 25",
+            "Executed tool math.calculator · 2.5s: 25",
             completed_text,
         )
         self.assertIn(": 25", completed_text)
@@ -632,9 +716,231 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         tool_text = _render_text(_frames(items)[0].renderable)
-        self.assertIn("Executed tool math.calculator: completed", tool_text)
-        self.assertNotIn("(", tool_text)
+        self.assertIn("Executed tool math.calculator", tool_text)
+        self.assertNotIn(":", tool_text)
         self.assertNotIn("unknown", tool_text)
+
+    def test_tool_subject_styles_name_args_and_elapsed_separately(
+        self,
+    ) -> None:
+        self.assertEqual(_basic_tool_subject_markup(""), "")
+        self.assertEqual(
+            _basic_tool_subject_markup("rg --no-heading needle"),
+            "[bold]rg[/bold] [dim]--no-heading needle[/dim]",
+        )
+        active_line = _basic_active_tool_line(
+            "rg --no-heading needle",
+            started_at=None,
+            updated_at=None,
+        )
+        completed_line = _basic_completed_tool_line(
+            "rg --no-heading needle",
+            "completed",
+            0.133,
+        )
+
+        self.assertIn(
+            "[bold]rg[/bold] [dim]--no-heading needle[/dim]",
+            active_line,
+        )
+        self.assertIn(
+            "[bold]rg[/bold] [dim]--no-heading needle[/dim]",
+            completed_line,
+        )
+        self.assertIn("[bold]· 133ms[/bold]", completed_line)
+        self.assertIn(
+            ": error",
+            _basic_completed_tool_line("calc", "error", None),
+        )
+        self.assertIsNone(_basic_tool_status_outcome_markup(None, None))
+        self.assertEqual(
+            _basic_tool_status_outcome_markup(
+                "non_executed",
+                "tool_call.repeated",
+            ),
+            "non_executed tool_call.repeated",
+        )
+
+    def test_database_projection_lines_use_human_phrases(self) -> None:
+        tables_projection = ToolDisplayProjection(
+            action="list",
+            label="database.tables",
+            target="tables",
+            scope="database",
+            details=(
+                ToolDisplayDetail(label="operation", value="tables"),
+                ToolDisplayDetail(label="database", value="analytics"),
+            ),
+        )
+        inspect_projection = ToolDisplayProjection(
+            action="inspect",
+            label="database.inspect",
+            target="users, orders",
+            scope="database",
+            details=(ToolDisplayDetail(label="operation", value="inspect"),),
+        )
+        run_projection = ToolDisplayProjection(
+            action="query",
+            label="database.run",
+            target="SQL statement",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="run"),
+                ToolDisplayDetail(label="sql", value="SELECT * FROM users"),
+            ),
+            preview=ToolDisplayPreview(
+                label="sql",
+                content="SELECT * FROM users",
+            ),
+        )
+
+        active_tables = _basic_active_tool_line(
+            "database.tables",
+            started_at=None,
+            updated_at=None,
+            display_projection=tables_projection,
+        )
+        running_inspect = _basic_active_tool_line(
+            "database.inspect",
+            started_at=1.0,
+            updated_at=3.0,
+            display_projection=inspect_projection,
+        )
+        completed_run = _basic_completed_tool_line(
+            "database.run",
+            "completed",
+            0.019,
+            display_projection=run_projection,
+        )
+
+        self.assertIn(
+            "[bold]Listing[/bold] [dim]tables[/dim] "
+            "[dim]in database[/dim] [bold]analytics[/bold]...",
+            active_tables,
+        )
+        self.assertIn(
+            "[bold]Inspecting[/bold] [dim]tables[/dim] "
+            "[bold]users, orders[/bold] [dim]in database[/dim] for 2s.",
+            running_inspect,
+        )
+        self.assertIn(
+            "[bold]Ran[/bold] [bold]SELECT[/bold] [dim]statement[/dim] "
+            "[dim]in database[/dim] [bold]· 19ms[/bold]",
+            completed_run,
+        )
+
+    def test_database_projection_lines_cover_operation_variants(self) -> None:
+        cases = (
+            ("database.count", "users", "Counted rows in table users"),
+            ("database.keys", "users", "Inspected keys for table users"),
+            (
+                "database.relationships",
+                "users",
+                "Inspected relationships for table users",
+            ),
+            ("database.plan", "SQL statement", "Explained SQL statement"),
+            ("database.sample", "users", "Sampled rows from table users"),
+            ("database.size", "users", "Measured table users"),
+            ("database.tasks", "tasks", "Listed tasks"),
+            ("database.locks", "locks", "Inspected locks"),
+        )
+
+        for label, target, expected in cases:
+            with self.subTest(label=label):
+                projection = ToolDisplayProjection(
+                    action=label.rsplit(".", 1)[1],
+                    label=label,
+                    target=target,
+                    scope="database",
+                    status="completed",
+                )
+                line = _render_text(
+                    _basic_completed_tool_line(
+                        label,
+                        "completed",
+                        None,
+                        display_projection=projection,
+                    )
+                )
+
+                self.assertIn(expected, line)
+
+        task_projection = ToolDisplayProjection(
+            action="list",
+            target="tasks",
+            scope="database",
+            status="completed",
+        )
+        redacted_sql_projection = ToolDisplayProjection(
+            action="query",
+            target="SQL statement",
+            scope="database",
+            details=(ToolDisplayDetail(label="sql", value=None),),
+        )
+        redacted_database_projection = ToolDisplayProjection(
+            action="list",
+            target="tables",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(
+                    label="database",
+                    value="private-db",
+                    redacted=True,
+                ),
+            ),
+        )
+        unknown_projection = ToolDisplayProjection(
+            action="inspect",
+            target="things",
+            scope="database",
+            details=(ToolDisplayDetail(label="operation", value="unknown"),),
+        )
+
+        self.assertIn(
+            "Listed tasks",
+            _render_text(
+                _basic_completed_tool_line(
+                    "database.tasks",
+                    "completed",
+                    None,
+                    display_projection=task_projection,
+                )
+            ),
+        )
+        redacted_database_text = _render_text(
+            _basic_completed_tool_line(
+                "database.tables",
+                "completed",
+                None,
+                display_projection=redacted_database_projection,
+            )
+        )
+        self.assertIn("Listed tables in database", redacted_database_text)
+        self.assertNotIn("private-db", redacted_database_text)
+        self.assertIn(
+            "Running SQL statement",
+            _render_text(
+                _basic_active_tool_line(
+                    "database.run",
+                    started_at=1.0,
+                    updated_at=1.5,
+                    display_projection=redacted_sql_projection,
+                )
+            ),
+        )
+        self.assertIn(
+            "Executed tool inspect things in database",
+            _render_text(
+                _basic_completed_tool_line(
+                    "database.unknown",
+                    "completed",
+                    None,
+                    display_projection=unknown_projection,
+                )
+            ),
+        )
 
     async def test_projected_completed_tool_without_result_uses_projection(
         self,
@@ -675,12 +981,105 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         text = _render_text(_frames(items)[0].renderable)
         compact_text = " ".join(text.split())
         self.assertIn(
-            "Executed tool cancel [task-1] in database (500ms): "
-            "completed cancel_requested - Cancellation "
-            "[yellow]requested[/yellow]. - details: task_id=[task-1].",
+            "Cancelled task [task-1] in database · 500ms",
             compact_text,
         )
+        self.assertNotIn("Executed tool", compact_text)
+        self.assertNotIn("details:", compact_text)
         self.assertNotIn("raw-json", text)
+
+    async def test_projected_shell_success_omits_run_default_scope_and_summary(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_tools_events=8,
+            interactive=False,
+        )
+        projection = ToolDisplayProjection(
+            action="run",
+            target="rg --no-heading needle",
+            scope=".",
+            status="completed",
+            outcome="completed",
+            summary="rg completed.",
+            details=(ToolDisplayDetail(label="exit code", value=0),),
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(
+            tool_call_id="shell-call",
+            name="shell.run",
+            display_projection=projection,
+        )
+        builder.complete_tool(
+            tool_call_id="shell-call",
+            name="shell.run",
+            display_projection=projection,
+            elapsed_seconds=0.133,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="shell-call",
+            name="shell.run",
+            status="result",
+            result={"status": "completed"},
+            arguments_count=1,
+            display_projection=projection,
+            elapsed_seconds=0.133,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        text = _render_text(_frames(items)[0].renderable)
+        self.assertIn("Executed tool rg --no-heading needle · 133ms", text)
+        self.assertNotIn("Executed tool run", text)
+        self.assertNotIn(" in .", text)
+        self.assertNotIn("rg completed", text)
+        self.assertNotIn("details:", text)
+
+    async def test_projected_shell_non_success_keeps_status_summary(self):
+        config = _stream_config(
+            display_tools=True,
+            display_tools_events=8,
+            interactive=False,
+        )
+        projection = ToolDisplayProjection(
+            action="run",
+            target="pdftotext",
+            scope=".",
+            status="policy_denied",
+            outcome="policy_denied",
+            summary="pdftotext was denied by policy.",
+            details=(ToolDisplayDetail(label="exit code", value=None),),
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(
+            tool_call_id="shell-call",
+            name="shell.run",
+            display_projection=projection,
+        )
+        builder.complete_tool(
+            tool_call_id="shell-call",
+            name="shell.run",
+            status="policy_denied",
+            display_projection=projection,
+            elapsed_seconds=0.001,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        text = _render_text(_frames(items)[0].renderable)
+        self.assertIn("Executed tool pdftotext · 1ms: policy_denied", text)
+        self.assertIn("pdftotext was denied by policy", text)
+        self.assertNotIn("details:", text)
+        self.assertNotIn("exit code=none", text)
 
     async def test_projected_tool_lines_prefer_display_projection(
         self,
@@ -755,11 +1154,11 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         completed_text = _render_text(_frames(completed_items)[0].renderable)
         completed_compact = " ".join(completed_text.split())
         self.assertIn(
-            "Executed tool inspect [users] in database (1.2s): "
-            "completed rows - Returned [green]2 rows[/green]. - "
-            "details: [table]=[users], rows=2",
+            "Inspected tables [users] in database · 1.2s",
             completed_compact,
         )
+        self.assertNotIn("Executed tool", completed_compact)
+        self.assertNotIn("details:", completed_compact)
         self.assertNotIn('"raw"', completed_text)
         self.assertNotIn('"json"', completed_text)
 
@@ -802,7 +1201,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
 
         text = _render_text(_frames(items)[0].renderable)
         compact_text = " ".join(text.split())
-        self.assertIn("inspect " + ("x" * 20), compact_text)
+        self.assertIn("Inspected tables " + ("x" * 20), compact_text)
         self.assertIn("...", text)
         self.assertNotIn('"rows": ["raw"]', text)
 
@@ -1107,7 +1506,9 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         frames = _frames(items)
         self.assertEqual([frame.role for frame in frames], ["tools"])
         self.assertIsInstance(frames[0].renderable, str)
-        self.assertIn("Starting tool calc", str(frames[0].renderable))
+        self.assertIn(
+            "Starting tool [bold]calc[/bold]", str(frames[0].renderable)
+        )
 
     def test_active_model_and_tool_non_spinner_renderables(self) -> None:
         model_renderable = _basic_active_model_renderable(
@@ -1125,10 +1526,18 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             started_at=1.0,
             updated_at=2.0,
         )
+        unknown_start_spinner = _BasicActiveModelSpinner(
+            started_at=None,
+            updated_at=None,
+        )
 
         self.assertIn("Thinking for 1s...", str(model_renderable))
-        self.assertIn("Running tool calc for 1s.", str(tool_renderable))
+        self.assertIn(
+            "Running tool [bold]calc[/bold] for 1s.",
+            str(tool_renderable),
+        )
         self.assertEqual(spinner._current_updated_at(), 2.0)
+        self.assertIsNone(unknown_start_spinner._current_updated_at())
 
     async def test_stderr_tool_history_emits_only_new_lines(self) -> None:
         config = _stream_config(
@@ -1188,11 +1597,20 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
                 ),
             )
         )
+        mismatch_text = projection_terminal_markup(
+            ToolDisplayProjection(
+                action="inspect",
+                status="completed",
+                outcome="rows",
+            ),
+            fallback_status="fallback",
+        )
 
         self.assertIn("completed", text)
         self.assertIn("cached=true", text)
         self.assertIn("available=false", text)
         self.assertIn("owner=none", text)
+        self.assertIn("completed rows", mismatch_text)
 
     async def test_completed_empty_response_reports_no_final_answer(
         self,
@@ -1264,7 +1682,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
 
     def test_active_tool_edge_lines_keep_progress_style(self) -> None:
         self.assertIn(
-            "[cyan]Starting tool calc.",
+            "[cyan]Starting tool [bold]calc[/bold].",
             _basic_active_tool_line(
                 "calc",
                 started_at=1.0,
@@ -1272,7 +1690,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertIn(
-            "[cyan]Running tool calc.",
+            "[cyan]Running tool [bold]calc[/bold].",
             _basic_active_tool_line(
                 "calc",
                 started_at=None,

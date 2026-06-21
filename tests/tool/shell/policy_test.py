@@ -2717,6 +2717,29 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(resolver.calls, ("head", "tail", "wc"))
 
+    async def test_head_allows_two_hundred_lines_by_default(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "file.txt").write_text("first\nsecond\n", encoding="utf-8")
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(workspace_root=str(root))
+            )
+
+            head = await policy.normalize(
+                _request(
+                    tool_name="shell.head",
+                    command="head",
+                    options={"lines": 200},
+                    paths=(_path("file.txt"),),
+                )
+            )
+
+        self.assertEqual(head.argv, ("head", "-n", "200", "--", "file.txt"))
+        self.assertEqual(
+            head.display_argv,
+            ("head", "-n", "200", "--", "file.txt"),
+        )
+
     async def test_wc_count_bytes_allows_binary_large_files(self) -> None:
         fixture_root = Path(__file__).parent / "fixtures" / "filesystem"
         resolver = _CountingResolver("/usr/bin/wc")
