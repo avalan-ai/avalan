@@ -662,7 +662,7 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 options={
                     "pattern": "needle",
                     "context_lines": 0,
-                    "before_context": 1,
+                    "before_context": 0,
                     "after_context": 2,
                     "max_depth": 0,
                     "max_filesize_bytes": 2048,
@@ -681,7 +681,7 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             "1000",
             "--max-columns-preview",
             "--before-context",
-            "1",
+            "0",
             "--after-context",
             "2",
             "--max-depth",
@@ -702,6 +702,60 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 *_glob_args(_rg_policy_deny_globs(settings)),
                 *expected_display_argv[-4:],
             ),
+        )
+
+    async def test_rg_allows_zero_directional_context(self) -> None:
+        spec = await ExecutionPolicy(
+            resolver=_CountingResolver("/usr/bin/rg"),
+        ).normalize(
+            _request(
+                options={
+                    "pattern": "needle",
+                    "before_context": 0,
+                    "after_context": 0,
+                }
+            )
+        )
+
+        self.assertIn("--before-context", spec.display_argv)
+        self.assertIn("--after-context", spec.display_argv)
+        self.assertEqual(
+            spec.display_argv[spec.display_argv.index("--before-context") + 1],
+            "0",
+        )
+        self.assertEqual(
+            spec.display_argv[spec.display_argv.index("--after-context") + 1],
+            "0",
+        )
+
+    async def test_rg_allows_combined_and_directional_context(self) -> None:
+        spec = await ExecutionPolicy(
+            resolver=_CountingResolver("/usr/bin/rg"),
+        ).normalize(
+            _request(
+                options={
+                    "pattern": "needle",
+                    "context_lines": 2,
+                    "before_context": 0,
+                    "after_context": 1,
+                }
+            )
+        )
+
+        self.assertIn("--context", spec.display_argv)
+        self.assertIn("--before-context", spec.display_argv)
+        self.assertIn("--after-context", spec.display_argv)
+        self.assertEqual(
+            spec.display_argv[spec.display_argv.index("--context") + 1],
+            "2",
+        )
+        self.assertEqual(
+            spec.display_argv[spec.display_argv.index("--before-context") + 1],
+            "0",
+        )
+        self.assertEqual(
+            spec.display_argv[spec.display_argv.index("--after-context") + 1],
+            "1",
         )
 
     async def test_rg_rejects_invalid_options_before_resolver(self) -> None:
@@ -732,19 +786,11 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 ShellExecutionErrorCode.INVALID_OPTION,
             ),
             (
-                {"pattern": "needle", "before_context": 0},
+                {"pattern": "needle", "before_context": -1},
                 ShellExecutionErrorCode.INVALID_OPTION,
             ),
             (
                 {"pattern": "needle", "after_context": -1},
-                ShellExecutionErrorCode.INVALID_OPTION,
-            ),
-            (
-                {
-                    "pattern": "needle",
-                    "context_lines": 1,
-                    "before_context": 1,
-                },
                 ShellExecutionErrorCode.INVALID_OPTION,
             ),
             (
@@ -787,6 +833,30 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     policy=policy,
                 )
         self.assertEqual(resolver.calls, ())
+
+    async def test_rg_option_policy_denials_include_option_name(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(resolver=_CountingResolver("/usr/bin/rg"))
+        cases = (
+            (
+                {"pattern": "needle", "pattern_typo": "value"},
+                "unknown rg option: pattern_typo",
+            ),
+            (
+                {"pattern": "needle", "hidden": True},
+                "unsupported rg option: hidden",
+            ),
+        )
+
+        for options, message in cases:
+            with self.subTest(options=options):
+                await self._assert_denied(
+                    _request(options=options),
+                    ShellExecutionErrorCode.INVALID_OPTION,
+                    policy=policy,
+                    message=message,
+                )
 
     async def test_rg_rejects_invalid_globs_before_resolver(self) -> None:
         resolver = _CountingResolver("/usr/bin/rg")
@@ -3925,7 +3995,7 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
 
         exact = await ExecutionPolicy(
             settings=ShellToolSettings(
-                max_arguments=len(baseline.argv),
+                max_arguments=len(baseline.display_argv),
                 max_argument_bytes=max_argument_bytes,
                 max_command_bytes=command_bytes,
             ),
@@ -3937,7 +4007,9 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
 
         for settings, error_code in (
             (
-                ShellToolSettings(max_arguments=len(baseline.argv) - 1),
+                ShellToolSettings(
+                    max_arguments=len(baseline.display_argv) - 1
+                ),
                 ShellExecutionErrorCode.TOO_MANY_ARGUMENTS,
             ),
             (
@@ -3960,6 +4032,52 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     ),
                 )
             self.assertEqual(denied_resolver.calls, ())
+
+    async def test_rg_internal_deny_globs_do_not_consume_argv_count_budget(
+        self,
+    ) -> None:
+        request = _request(
+            options={
+                "pattern": "stream",
+                "case": "insensitive",
+                "context_lines": 2,
+                "before_context": 0,
+                "after_context": 0,
+                "max_matches_per_file": 5,
+                "max_depth": 6,
+                "max_filesize_bytes": 9999999,
+                "globs": (),
+            }
+        )
+        baseline = await ExecutionPolicy(
+            resolver=_CountingResolver("/usr/bin/rg"),
+        ).normalize(request)
+
+        self.assertGreater(len(baseline.argv), len(baseline.display_argv))
+
+        exact = await ExecutionPolicy(
+            settings=ShellToolSettings(
+                max_arguments=len(baseline.display_argv),
+                max_argument_bytes=64,
+                max_command_bytes=4096,
+            ),
+            resolver=_CountingResolver("/usr/bin/rg"),
+        ).normalize(request)
+
+        self.assertEqual(exact.argv, baseline.argv)
+
+        await self._assert_denied(
+            request,
+            ShellExecutionErrorCode.TOO_MANY_ARGUMENTS,
+            policy=ExecutionPolicy(
+                settings=ShellToolSettings(
+                    max_arguments=len(baseline.display_argv) - 1,
+                    max_argument_bytes=64,
+                    max_command_bytes=4096,
+                ),
+                resolver=_CountingResolver("/usr/bin/rg"),
+            ),
+        )
 
     async def test_display_argv_does_not_drive_process_argument_budgets(
         self,
@@ -4018,11 +4136,14 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         error_code: ShellExecutionErrorCode,
         *,
         policy: ExecutionPolicy | None = None,
+        message: str | None = None,
     ) -> None:
         active_policy = policy or ExecutionPolicy()
         with self.assertRaises(ShellPolicyDenied) as context:
             await active_policy.normalize(request)
         self.assertEqual(context.exception.error_code, error_code)
+        if message is not None:
+            self.assertEqual(str(context.exception), message)
 
 
 class _CountingResolver:

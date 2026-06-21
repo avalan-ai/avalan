@@ -638,10 +638,18 @@ class ShellDisplayProjectionTerminalTest(IsolatedAsyncioTestCase):
         payload = dumps(projection.to_payload(), sort_keys=True)
 
         self.assertEqual(projection.status, "policy_denied")
+        self.assertEqual(
+            projection.summary,
+            "cat was denied by policy: path is denied.",
+        )
         self.assertNotIn("credentials", payload)
         self.assertEqual(
             _detail_value(projection, "error code"),
             "sensitive_path",
+        )
+        self.assertEqual(
+            _detail_value(projection, "error message"),
+            "path is denied",
         )
 
     def test_generated_output_projection_uses_display_paths(self) -> None:
@@ -748,6 +756,21 @@ class ShellDisplayProjectionTerminalTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(projection.target, "command")
+
+    def test_policy_denied_projection_handles_missing_error_message(
+        self,
+    ) -> None:
+        projection = project_shell_execution_result(
+            _direct_execution_result(
+                status=ShellExecutionStatus.POLICY_DENIED,
+                exit_code=None,
+                error_code=ShellExecutionErrorCode.POLICY_DENIED,
+                error_message=None,
+            )
+        )
+
+        self.assertEqual(projection.summary, "command was denied by policy.")
+        self.assertEqual(projection.severity, "warning")
 
     def test_terminal_status_summaries_cover_error_cases(self) -> None:
         cases = (
@@ -1047,6 +1070,7 @@ def _direct_execution_result(
     error_code: ShellExecutionErrorCode | None = (
         ShellExecutionErrorCode.COMPLETED
     ),
+    error_message: str | None = None,
     generated_files: tuple[GeneratedFile, ...] = (),
     output_kind: ShellOutputKind = ShellOutputKind.TEXT,
     stdout_media_type: str = "text/plain",
@@ -1070,6 +1094,7 @@ def _direct_execution_result(
         stderr_bytes=0,
         duration_ms=1,
         error_code=error_code,
+        error_message=error_message,
     )
 
 

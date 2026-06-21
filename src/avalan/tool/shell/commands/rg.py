@@ -181,6 +181,7 @@ def build_argv(
         },
         forbidden_options=_FORBIDDEN_OPTIONS,
         command="rg",
+        include_option_name=True,
     )
     pattern = _required_string_option(request.options, "pattern")
     case_mode = _literal_option(
@@ -204,22 +205,15 @@ def build_argv(
     before_context = _optional_bounded_int_option(
         request.options,
         "before_context",
-        min_value=1,
+        min_value=0,
         max_value=settings.max_rg_context_lines,
     )
     after_context = _optional_bounded_int_option(
         request.options,
         "after_context",
-        min_value=1,
+        min_value=0,
         max_value=settings.max_rg_context_lines,
     )
-    if context_lines and (
-        before_context is not None or after_context is not None
-    ):
-        raise policy_denied(
-            ShellExecutionErrorCode.INVALID_OPTION,
-            "directional context conflicts with context_lines",
-        )
     max_matches_per_file = _optional_bounded_int_option(
         request.options,
         "max_matches_per_file",
