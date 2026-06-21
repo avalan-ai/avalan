@@ -1446,7 +1446,7 @@ class _PublicStreamingReturnVisitor(NodeVisitor):
                 container_names=self._streaming_container_names(),
                 item_alias_symbols=self._legacy_item_alias_symbols(),
             )
-            if symbols:
+            if symbols and self._is_public_qualname(node.name):
                 self.sites[(self.module, node.name, "base")] = frozenset(
                     symbols
                 )
@@ -1497,13 +1497,15 @@ class _PublicStreamingReturnVisitor(NodeVisitor):
         for target in node.targets:
             target_name = _target_name(target)
             if target_name is not None:
-                self.sites[
-                    (
-                        self.module,
-                        ".".join(self.stack + [target_name]),
-                        "alias",
-                    )
-                ] = frozenset(symbols)
+                qualname = ".".join(self.stack + [target_name])
+                if self._is_public_qualname(qualname):
+                    self.sites[
+                        (
+                            self.module,
+                            qualname,
+                            "alias",
+                        )
+                    ] = frozenset(symbols)
 
     def visit_AnnAssign(self, node: AnnAssign) -> None:
         value = node.value or node.annotation
@@ -1522,9 +1524,11 @@ class _PublicStreamingReturnVisitor(NodeVisitor):
         self._record_legacy_item_aliases((node.target,), value)
         target_name = _target_name(node.target)
         if symbols and target_name is not None:
-            self.sites[
-                (self.module, ".".join(self.stack + [target_name]), "alias")
-            ] = frozenset(symbols)
+            qualname = ".".join(self.stack + [target_name])
+            if self._is_public_qualname(qualname):
+                self.sites[(self.module, qualname, "alias")] = frozenset(
+                    symbols
+                )
 
     def _visit_function_return(
         self, node: FunctionDef | AsyncFunctionDef
@@ -1537,9 +1541,16 @@ class _PublicStreamingReturnVisitor(NodeVisitor):
             item_alias_symbols=self._legacy_item_alias_symbols(),
         )
         if symbols:
-            self.sites[
-                (self.module, ".".join(self.stack + [node.name]), "return")
-            ] = frozenset(symbols)
+            qualname = ".".join(self.stack + [node.name])
+            if self._is_public_qualname(qualname):
+                self.sites[(self.module, qualname, "return")] = frozenset(
+                    symbols
+                )
+
+    def _is_public_qualname(self, qualname: str) -> bool:
+        return all(
+            part and not part.startswith("_") for part in qualname.split(".")
+        )
 
     def _push_scope(self) -> None:
         self._streaming_container_name_scopes.append(set())
@@ -9115,6 +9126,44 @@ class Holder:
                     "Holder.stream",
                     "return",
                 ): frozenset({"Token", "TokenDetail", "str"}),
+            },
+        )
+
+    def test_public_streaming_return_guard_ignores_private_qualnames(
+        self,
+    ) -> None:
+        tree = parse("""from collections.abc import AsyncIterator as Stream
+
+def _private_stream() -> Stream[str]:
+    ...
+
+def public_stream() -> Stream[str]:
+    ...
+
+class _PrivateHolder:
+    PublicAlias = Stream[str]
+
+    def public_method(self) -> Stream[Token]:
+        ...
+
+class PublicHolder:
+    _PrivateAlias = Stream[str]
+
+    def _private_method(self) -> Stream[Token]:
+        ...
+""")
+
+        visitor = _PublicStreamingReturnVisitor("avalan.synthetic")
+        visitor.visit(tree)
+
+        self.assertEqual(
+            visitor.sites,
+            {
+                (
+                    "avalan.synthetic",
+                    "public_stream",
+                    "return",
+                ): frozenset({"str"})
             },
         )
 

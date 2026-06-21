@@ -9,6 +9,7 @@ from asyncio import (
 from contextlib import suppress
 from json import dumps, loads
 from logging import getLogger
+from sys import modules
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, cast
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -81,6 +82,17 @@ class DummyResponse:
 
     async def to_str(self) -> str:
         return self.text
+
+
+def _ensure_typing_override() -> None:
+    typing_module = modules["typing"]
+    if hasattr(typing_module, "override"):
+        return
+
+    def override(function: Any) -> Any:
+        return function
+
+    setattr(typing_module, "override", override)
 
 
 def legacy_fixture_mcp_projection_state() -> (
@@ -1456,6 +1468,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_stream_response_notifications_validate_as_mcp_sdk_types(
         self,
     ) -> None:
+        _ensure_typing_override()
         from mcp.types import ServerNotification
 
         items = canonical_fixture_mcp_tool_execution_items(

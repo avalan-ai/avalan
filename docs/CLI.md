@@ -565,6 +565,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--sync] [--tools-confirm]
                         [--input-file INPUT_FILE]
                         [--tool-format {json,react,bracket,openai,harmony,dsml}]
+                        [--tool-choice TOOL_CHOICE]
                         [--tool-recovery-format {tool_call_block,minimax_xml,tool_code,broad_xml,dsml_leakage,fenced}]
                         [--reasoning-tag {think,channel}] [--ds4-ctx DS4_CTX]
                         [--ds4-native-backend {auto,metal,cuda,cpu}]
@@ -783,6 +784,8 @@ options:
                         generation. May be specified multiple times.
   --tool-format {json,react,bracket,openai,harmony,dsml}
                         Tool format
+  --tool-choice TOOL_CHOICE
+                        Force a tool by canonical name when supported.
   --tool-recovery-format {tool_call_block,minimax_xml,tool_code,broad_xml,dsml_leakage,fenced}
                         Enable a tool-call recovery format
   --reasoning-tag {think,channel}

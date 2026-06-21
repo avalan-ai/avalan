@@ -9,7 +9,6 @@ from uuid import uuid4
 from fastapi import FastAPI
 from httpx import ASGITransport
 
-import avalan.server as server_pkg
 from avalan.entities import (
     ToolCall,
     ToolCallContext,
@@ -473,13 +472,7 @@ class McpCallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
         )
         orchestrator = _E2EOrchestrator()
         app.state.logger = getLogger("test.mcp.tool.e2e")
-
-        async def orchestrator_override() -> _E2EOrchestrator:
-            return orchestrator
-
-        app.dependency_overrides[server_pkg.di_get_orchestrator] = (
-            orchestrator_override
-        )
+        app.state.orchestrator = orchestrator
         app.include_router(mcp_router.create_router(), prefix="/mcp")
         events: list[ToolExecutionStreamEvent] = []
 
