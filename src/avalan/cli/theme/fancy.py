@@ -19,6 +19,13 @@ from ...cli.theme.stream_presenter import (
     CliStreamRenderableFrame,
     StreamFrameRole,
 )
+from ...cli.theme.tool_projection import (
+    projection_details_markup,
+    projection_outcome,
+    projection_status,
+    projection_subject_markup,
+    projection_summary_markup,
+)
 from ...entities import (
     EngineMessage,
     EngineMessageScored,
@@ -3822,6 +3829,14 @@ def _fancy_history_panel_height(
 def _fancy_active_tool_line(
     tool: CliToolExecutionSummarySnapshot,
 ) -> str:
+    if tool.display_projection is not None:
+        return (
+            "Executing tool [gray78]"
+            + projection_subject_markup(tool.display_projection)
+            + "[/gray78] call #[gray78]"
+            + _fancy_short_id(tool.tool_call_id)
+            + "[/gray78]."
+        )
     arguments = tool.arguments_summary or tool.tool_call_id
     return (
         "Executing tool [gray78]"
@@ -3837,6 +3852,27 @@ def _fancy_active_tool_line(
 def _fancy_completed_tool_line(
     tool: CliToolExecutionSummarySnapshot,
 ) -> str:
+    if tool.display_projection is not None:
+        status = projection_status(tool.display_projection, tool.status)
+        outcome = projection_outcome(tool.display_projection)
+        summary = projection_summary_markup(tool.display_projection)
+        details = projection_details_markup(tool.display_projection)
+        line = (
+            "Completed tool [gray78]"
+            + projection_subject_markup(tool.display_projection)
+            + "[/gray78] call #[gray78]"
+            + _fancy_short_id(tool.tool_call_id)
+            + "[/gray78] with status [gray78]"
+            + escape(status or tool.status)
+            + "[/gray78]"
+        )
+        if outcome and outcome != status:
+            line += " and outcome [gray78]" + escape(outcome) + "[/gray78]"
+        if summary:
+            line += ": " + summary
+        if details:
+            line += " Details [gray78]" + details + "[/gray78]"
+        return line + "."
     return (
         "Completed tool [gray78]"
         + tool.name
@@ -3862,6 +3898,51 @@ def _fancy_tool_result_line(
         result.status,
         success_style="spring_green3",
     )
+    if result.display_projection is not None:
+        status = projection_status(result.display_projection, result.status)
+        outcome = projection_outcome(result.display_projection)
+        summary = projection_summary_markup(result.display_projection)
+        details = projection_details_markup(result.display_projection)
+        result_style = tool_status_style(
+            status or result.status,
+            success_style="spring_green3",
+        )
+        line = (
+            "Executed tool [gray78]"
+            + projection_subject_markup(result.display_projection)
+            + "[/gray78] call #[gray78]"
+            + _fancy_short_id(result.tool_call_id)
+            + "[/gray78] with status ["
+            + result_style
+            + "]"
+            + escape(status or result.status)
+            + "[/"
+            + result_style
+            + "]"
+        )
+        if outcome and outcome != status:
+            line += (
+                " and outcome ["
+                + result_style
+                + "]"
+                + escape(outcome)
+                + "[/"
+                + result_style
+                + "]"
+            )
+        if summary:
+            line += (
+                ": ["
+                + result_style
+                + "]"
+                + summary
+                + "[/"
+                + result_style
+                + "]"
+            )
+        if details:
+            line += " Details [gray78]" + details + "[/gray78]"
+        return line + elapsed + "."
     return (
         "Executed tool [gray78]"
         + result.name

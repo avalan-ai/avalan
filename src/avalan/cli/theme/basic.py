@@ -1,6 +1,7 @@
 from ...agent.orchestrator import Orchestrator
 from ...entities import Model, User
 from ...event import EventStats
+from ...tool.display import ToolDisplayProjection
 from ..display_safety import safe_text as _safe_text
 from . import Theme
 from . import tool_status_icon as _theme_tool_status_icon
@@ -12,6 +13,11 @@ from .stream_presenter import (
     CliStreamPresenterRequest,
     CliStreamRenderableFrame,
     StreamFrameRole,
+)
+from .tool_projection import (
+    projection_status,
+    projection_subject_markup,
+    projection_terminal_markup,
 )
 
 from collections.abc import AsyncGenerator, Mapping, Sequence
@@ -447,7 +453,7 @@ def _basic_tool_frame(
     ]
     active_tool_renderables = [
         _basic_active_tool_renderable(
-            tool.name,
+            tool,
             started_at=tool.started_at,
             updated_at=tool.updated_at,
             spinner=request.display_config.diagnostic_channel == "live",
@@ -496,6 +502,7 @@ def _basic_tool_entries(
                     tool.name,
                     tool.status,
                     tool.elapsed_seconds,
+                    display_projection=tool.display_projection,
                 ),
                 executed=True,
             )
@@ -510,6 +517,7 @@ def _basic_tool_entries(
                     result.status,
                     result.result_summary,
                     result.elapsed_seconds,
+                    display_projection=result.display_projection,
                 ),
                 executed=True,
             )
@@ -568,6 +576,7 @@ def _basic_tool_entries(
                     tool.name,
                     started_at=tool.started_at,
                     updated_at=tool.updated_at,
+                    display_projection=tool.display_projection,
                 ),
             )
             for tool in snapshot.active_tools
@@ -750,8 +759,9 @@ def _basic_active_tool_line(
     *,
     started_at: float | None,
     updated_at: float | None,
+    display_projection: ToolDisplayProjection | None = None,
 ) -> str:
-    tool_name = _basic_markup_summary(name)
+    tool_name = _basic_active_tool_name(name, display_projection)
     if updated_at is None:
         return _basic_tool_progress_line("Starting", tool_name)
     if started_at is not None:
@@ -762,6 +772,15 @@ def _basic_active_tool_line(
         if elapsed:
             return _basic_tool_progress_line("Running", tool_name, elapsed)
     return _basic_tool_progress_line("Running", tool_name)
+
+
+def _basic_active_tool_name(
+    name: str,
+    display_projection: ToolDisplayProjection | None,
+) -> str:
+    if display_projection is None:
+        return _basic_markup_summary(name)
+    return projection_subject_markup(display_projection)
 
 
 def _basic_tool_progress_line(
@@ -785,8 +804,10 @@ class _BasicActiveToolSpinner(Spinner):
         *,
         started_at: float | None,
         updated_at: float | None,
+        display_projection: ToolDisplayProjection | None = None,
     ) -> None:
         self._tool_name = name
+        self._display_projection = display_projection
         self._started_at = started_at
         self._updated_at = updated_at
         self._created_at = perf_counter()
@@ -817,6 +838,7 @@ class _BasicActiveToolSpinner(Spinner):
             self._tool_name,
             started_at=self._started_at,
             updated_at=self._current_updated_at(),
+            display_projection=self._display_projection,
         )
 
     def _current_updated_at(self) -> float | None:
@@ -845,16 +867,28 @@ def _basic_is_tool_progress_line(line: str) -> bool:
 
 
 def _basic_active_tool_renderable(
-    name: str,
+    tool: object,
     *,
     started_at: float | None,
     updated_at: float | None,
     spinner: bool,
 ) -> RenderableType:
+    if isinstance(tool, str):
+        name = tool
+        display_projection = None
+    else:
+        name = getattr(tool, "name")
+        assert isinstance(name, str)
+        display_projection = getattr(tool, "display_projection", None)
+        assert display_projection is None or isinstance(
+            display_projection,
+            ToolDisplayProjection,
+        )
     line = _basic_active_tool_line(
         name,
         started_at=started_at,
         updated_at=updated_at,
+        display_projection=display_projection,
     )
     if not spinner:
         return line
@@ -862,6 +896,7 @@ def _basic_active_tool_renderable(
         name,
         started_at=started_at,
         updated_at=updated_at,
+        display_projection=display_projection,
     )
 
 
@@ -869,15 +904,35 @@ def _basic_completed_tool_line(
     name: str,
     status: str,
     elapsed_seconds: float | None,
+    *,
+    display_projection: ToolDisplayProjection | None = None,
 ) -> str:
     elapsed = _basic_tool_elapsed_text(elapsed_seconds)
     elapsed_text = f" ({escape(elapsed)})" if elapsed else ""
-    status_style = _theme_tool_status_style(status)
-    status_icon = _theme_tool_status_icon(status)
+    display_status = (
+        status
+        if display_projection is None
+        else projection_status(display_projection, status) or status
+    )
+    status_style = _theme_tool_status_style(display_status)
+    status_icon = _theme_tool_status_icon(display_status)
+    tool_name = (
+        _basic_markup_summary(name)
+        if display_projection is None
+        else projection_subject_markup(display_projection)
+    )
+    summary = (
+        _basic_markup_summary(status)
+        if display_projection is None
+        else projection_terminal_markup(
+            display_projection,
+            fallback_status=status,
+        )
+    )
     return (
         f"[{status_style}]{status_icon} Executed tool "
-        f"{_basic_markup_summary(name)}{elapsed_text}: "
-        f"{_basic_markup_summary(status)}.[/{status_style}]"
+        f"{tool_name}{elapsed_text}: "
+        f"{summary}.[/{status_style}]"
     )
 
 
@@ -886,15 +941,35 @@ def _basic_tool_result_line(
     status: str,
     result_summary: str,
     elapsed_seconds: float | None,
+    *,
+    display_projection: ToolDisplayProjection | None = None,
 ) -> str:
-    status_style = _theme_tool_status_style(status)
-    status_icon = _theme_tool_status_icon(status)
+    display_status = (
+        status
+        if display_projection is None
+        else projection_status(display_projection, status) or status
+    )
+    status_style = _theme_tool_status_style(display_status)
+    status_icon = _theme_tool_status_icon(display_status)
     elapsed = _basic_tool_elapsed_text(elapsed_seconds)
     elapsed_text = f" ({escape(elapsed)})" if elapsed else ""
+    tool_name = (
+        _basic_markup_summary(name)
+        if display_projection is None
+        else projection_subject_markup(display_projection)
+    )
+    summary = (
+        _basic_markup_summary(_basic_tool_result_summary(result_summary))
+        if display_projection is None
+        else projection_terminal_markup(
+            display_projection,
+            fallback_status=status,
+        )
+    )
     return (
         f"[{status_style}]{status_icon} Executed tool "
-        f"{_basic_markup_summary(name)}{elapsed_text}: "
-        f"{_basic_markup_summary(_basic_tool_result_summary(result_summary))}"
+        f"{tool_name}{elapsed_text}: "
+        f"{summary}"
         f"[/{status_style}]"
     )
 

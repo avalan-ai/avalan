@@ -56,6 +56,7 @@ from avalan.entities import (
 )
 from avalan.event import Event, EventType
 from avalan.model.stream import StreamTerminalOutcome
+from avalan.tool.display import ToolDisplayDetail, ToolDisplayProjection
 
 
 def _gettext(message: str) -> str:
@@ -633,6 +634,176 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Executed tool math.calculator: completed", tool_text)
         self.assertNotIn("(", tool_text)
         self.assertNotIn("unknown", tool_text)
+
+    async def test_projected_completed_tool_without_result_uses_projection(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_tools_events=8,
+            interactive=False,
+        )
+        projection = ToolDisplayProjection(
+            action="cancel",
+            target="[task-1]",
+            scope="database",
+            status="completed",
+            outcome="cancel_requested",
+            summary="Cancellation [yellow]requested[/yellow].",
+            details=(ToolDisplayDetail(label="task_id", value="[task-1]"),),
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(
+            tool_call_id="database-call",
+            name="database.kill",
+            arguments={"task_id": "raw-json"},
+        )
+        builder.complete_tool(
+            tool_call_id="database-call",
+            name="database.kill",
+            display_projection=projection,
+            elapsed_seconds=0.5,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        text = _render_text(_frames(items)[0].renderable)
+        compact_text = " ".join(text.split())
+        self.assertIn(
+            "Executed tool cancel [task-1] in database (500ms): "
+            "completed cancel_requested - Cancellation "
+            "[yellow]requested[/yellow]. - details: task_id=[task-1].",
+            compact_text,
+        )
+        self.assertNotIn("raw-json", text)
+
+    async def test_projected_tool_lines_prefer_display_projection(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_tools_events=8,
+            interactive=False,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        active_projection = ToolDisplayProjection(
+            action="search",
+            target="[TODO]",
+            scope="src/[avalan]",
+            summary="Search [red]source[/red].",
+        )
+        builder.add_active_tool(
+            tool_call_id="shell-call",
+            name="shell.run",
+            arguments={"query": "raw-json"},
+            display_projection=active_projection,
+            started_at=1.0,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        active_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        active_text = _render_text(_frames(active_items)[0].renderable)
+        self.assertIn(
+            "Starting tool search [TODO] in src/[avalan]",
+            active_text,
+        )
+        self.assertNotIn("raw-json", active_text)
+        self.assertNotIn('"query"', active_text)
+
+        terminal_projection = ToolDisplayProjection(
+            action="inspect",
+            target="[users]",
+            scope="database",
+            status="completed",
+            outcome="rows",
+            summary="Returned [green]2 rows[/green].",
+            details=(
+                ToolDisplayDetail(label="[table]", value="[users]"),
+                ToolDisplayDetail(label="rows", value=2),
+            ),
+        )
+        builder.complete_tool(
+            tool_call_id="shell-call",
+            name="database.query",
+            display_projection=terminal_projection,
+            elapsed_seconds=1.25,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="shell-call",
+            name="database.query",
+            status="result",
+            result={"raw": "json"},
+            arguments_count=1,
+            display_projection=terminal_projection,
+            elapsed_seconds=1.25,
+        )
+
+        completed_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        completed_text = _render_text(_frames(completed_items)[0].renderable)
+        completed_compact = " ".join(completed_text.split())
+        self.assertIn(
+            "Executed tool inspect [users] in database (1.2s): "
+            "completed rows - Returned [green]2 rows[/green]. - "
+            "details: [table]=[users], rows=2",
+            completed_compact,
+        )
+        self.assertNotIn('"raw"', completed_text)
+        self.assertNotIn('"json"', completed_text)
+
+    async def test_projected_tool_lines_bound_long_values(self) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_tools_events=8,
+            interactive=False,
+        )
+        long_value = "x" * 500
+        projection = ToolDisplayProjection(
+            action="inspect",
+            target=long_value,
+            scope="database",
+            status="completed",
+            outcome="rows",
+            summary=long_value,
+            details=(
+                ToolDisplayDetail(label="path", value=long_value),
+                ToolDisplayDetail(label="rows", value=25),
+                ToolDisplayDetail(label="statement", value=long_value),
+                ToolDisplayDetail(label="extra", value=long_value),
+            ),
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_result_summary(
+            tool_call_id="database-call",
+            name="database.query",
+            status="result",
+            result={"rows": ["raw"]},
+            arguments_count=1,
+            display_projection=projection,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        text = _render_text(_frames(items)[0].renderable)
+        compact_text = " ".join(text.split())
+        self.assertIn("inspect " + ("x" * 20), compact_text)
+        self.assertIn("...", text)
+        self.assertNotIn('"rows": ["raw"]', text)
 
     async def test_failed_calculator_error_is_hidden_until_tools_display(
         self,
