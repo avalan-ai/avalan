@@ -3231,6 +3231,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             descriptor = describe_tool_call(call)
         except Exception:
             return None
+        if isawaitable(descriptor):
+            close = getattr(descriptor, "close", None)
+            if callable(close):
+                close()
+            return None
         return descriptor if isinstance(descriptor, ToolDescriptor) else None
 
     @staticmethod

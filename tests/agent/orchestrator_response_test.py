@@ -8403,6 +8403,25 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             def describe_tool_call(self, call: ToolCall) -> object:
                 return object()
 
+        class AwaitableDescriptor:
+            closed = False
+
+            def __await__(self) -> Generator[None, None, object]:
+                yield None
+                return object()
+
+            def close(self) -> None:
+                self.closed = True
+
+        class AwaitableDescribeToolManager:
+            is_empty = False
+
+            def __init__(self) -> None:
+                self.descriptor = AwaitableDescriptor()
+
+            def describe_tool_call(self, call: ToolCall) -> object:
+                return self.descriptor
+
         class BadSignatureProjector:
             @property
             def __signature__(self) -> object:
@@ -8440,6 +8459,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             NonCallableDescribeToolManager(),
             RaisingDescribeToolManager(),
             InvalidDescribeToolManager(),
+            AwaitableDescribeToolManager(),
         ):
             with self.subTest(manager=type(manager).__name__):
                 resp = _make_response(
@@ -8460,6 +8480,8 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
                     ],
                 )
                 self.assertEqual(projection["action"], "call")
+                if isinstance(manager, AwaitableDescribeToolManager):
+                    self.assertTrue(manager.descriptor.closed)
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
