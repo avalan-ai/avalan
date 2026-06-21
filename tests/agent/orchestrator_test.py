@@ -95,6 +95,86 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.orch.tool, self.tool)
         self.assertIs(self.orch.event_manager, self.event_manager)
 
+    async def test_call_uses_default_maximum_tool_cycles(self):
+        captured = {}
+
+        def response_factory(*args, **kwargs):
+            captured["kwargs"] = kwargs
+            return "resp"
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            response_factory,
+        ):
+            resp = await self.orch("hi")
+
+        self.assertEqual(resp, "resp")
+        self.assertEqual(captured["kwargs"]["maximum_tool_cycles"], 24)
+
+    async def test_call_consumes_maximum_tool_cycles_option(self):
+        captured = {}
+        self.orch._call_options = {
+            "max_new_tokens": 10,
+            "maximum_tool_cycles": 64,
+        }
+
+        def response_factory(*args, **kwargs):
+            captured["kwargs"] = kwargs
+            return "resp"
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            response_factory,
+        ):
+            resp = await self.orch("hi")
+
+        self.assertEqual(resp, "resp")
+        self.assertEqual(captured["kwargs"]["maximum_tool_cycles"], 64)
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(context.engine_args, {"max_new_tokens": 10})
+
+    async def test_call_consumes_max_tool_cycles_alias(self):
+        captured = {}
+        self.orch._call_options = {"max_tool_cycles": 32}
+
+        def response_factory(*args, **kwargs):
+            captured["kwargs"] = kwargs
+            return "resp"
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            response_factory,
+        ):
+            resp = await self.orch("hi")
+
+        self.assertEqual(resp, "resp")
+        self.assertEqual(captured["kwargs"]["maximum_tool_cycles"], 32)
+
+    async def test_call_rejects_invalid_maximum_tool_cycles(self):
+        self.orch._call_options = {"maximum_tool_cycles": 0}
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "maximum_tool_cycles must be a positive integer",
+        ):
+            await self.orch("hi")
+
+        self.engine_agent.assert_not_awaited()
+
+    async def test_call_rejects_conflicting_tool_cycle_options(self):
+        self.orch._call_options = {
+            "maximum_tool_cycles": 24,
+            "max_tool_cycles": 12,
+        }
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "Use only one of maximum_tool_cycles or max_tool_cycles",
+        ):
+            await self.orch("hi")
+
+        self.engine_agent.assert_not_awaited()
+
     async def test_call_response_uses_effective_agent_prompt(self):
         captured = {}
         effective_messages = [

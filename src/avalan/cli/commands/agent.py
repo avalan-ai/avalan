@@ -87,6 +87,7 @@ def get_orchestrator_settings(
     memory_recent: bool | None = None,
     memory_permanent_message: str | None = None,
     memory_permanent: list[str] | None = None,
+    maximum_tool_cycles: int | None = None,
     max_new_tokens: int | None = None,
     temperature: float | None = None,
     tools: list[str] | None | _Unset = _UNSET,
@@ -115,6 +116,11 @@ def get_orchestrator_settings(
         if max_new_tokens is not None
         else args.run_max_new_tokens
     )
+    call_maximum_tool_cycles = (
+        maximum_tool_cycles
+        if maximum_tool_cycles is not None
+        else getattr(args, "run_maximum_tool_cycles", None)
+    )
 
     chat_settings = {
         k[len("run_chat_") :]: v
@@ -139,6 +145,8 @@ def get_orchestrator_settings(
         call_options["use_cache"] = use_cache
     if cache_strategy is not None:
         call_options["cache_strategy"] = cache_strategy
+    if call_maximum_tool_cycles is not None:
+        call_options["maximum_tool_cycles"] = call_maximum_tool_cycles
     engine_config: dict[str, Any] = {
         "backend": getattr(args, "backend", Backend.TRANSFORMERS.value)
     }

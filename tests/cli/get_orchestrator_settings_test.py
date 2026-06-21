@@ -17,6 +17,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             engine_uri="ai://m",
             backend="transformers",
             run_max_new_tokens=10,
+            run_maximum_tool_cycles=64,
             run_skip_special_tokens=False,
             memory_recent=None,
             no_session=False,
@@ -33,6 +34,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         self.assertTrue(result.memory_recent)
         self.assertEqual(result.uri, "ai://m")
         self.assertEqual(result.call_options["max_new_tokens"], 10)
+        self.assertEqual(result.call_options["maximum_tool_cycles"], 64)
         self.assertEqual(result.engine_config, {"backend": "transformers"})
         self.assertEqual(result.agent_config, {"name": "a", "role": "r"})
         self.assertEqual(result.tools, [])

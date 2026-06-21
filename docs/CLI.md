@@ -378,7 +378,8 @@ plicate}]
                                    [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
                                    [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
                                    [--memory-engine-window MEMORY_ENGINE_WINDOW] [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
-                                   [--run-skip-special-tokens] [--run-disable-cache]
+                                   [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--run-skip-special-tokens]
+                                   [--run-disable-cache]
                                    [--run-cache-strategy 
 {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                                    [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
@@ -487,6 +488,8 @@ inline agent settings:
                         Window size for memory sentence transformer
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
+  --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
+                        Maximum model/tool result cycles for an agent run
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -582,6 +585,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
                         [--memory-engine-window MEMORY_ENGINE_WINDOW]
                         [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
+                        [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES]
                         [--run-skip-special-tokens] [--run-disable-cache]
                         [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                         [--run-temperature RUN_TEMPERATURE]
@@ -835,6 +839,8 @@ inline agent settings:
                         Window size for memory sentence transformer
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
+  --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
+                        Maximum model/tool result cycles for an agent run
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -969,7 +975,9 @@ plicate}]
                           [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                           [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
                           [--memory-engine-overlap MEMORY_ENGINE_OVERLAP] [--memory-engine-window MEMORY_ENGINE_WINDOW]
-                          [--run-max-new-tokens RUN_MAX_NEW_TOKENS] [--run-skip-special-tokens] [--run-disable-cache]
+                          [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
+                          [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--run-skip-special-tokens]
+                          [--run-disable-cache]
                           [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                           [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P] [--tool TOOL]
                           [--tools TOOLS] [--tool-browser-engine TOOL_BROWSER_ENGINE] [--tool-browser-search]
@@ -1096,6 +1104,8 @@ inline agent settings:
                         Window size for memory sentence transformer
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
+  --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
+                        Maximum model/tool result cycles for an agent run
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -1162,7 +1172,9 @@ plicate}]
                           [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                           [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
                           [--memory-engine-overlap MEMORY_ENGINE_OVERLAP] [--memory-engine-window MEMORY_ENGINE_WINDOW]
-                          [--run-max-new-tokens RUN_MAX_NEW_TOKENS] [--run-skip-special-tokens] [--run-disable-cache]
+                          [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
+                          [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--run-skip-special-tokens]
+                          [--run-disable-cache]
                           [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                           [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P] [--tool TOOL]
                           [--tools TOOLS] [--tool-browser-engine TOOL_BROWSER_ENGINE] [--tool-browser-search]
@@ -1289,6 +1301,8 @@ inline agent settings:
                         Window size for memory sentence transformer
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
+  --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
+                        Maximum model/tool result cycles for an agent run
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -1350,7 +1364,8 @@ plicate}]
                          [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                          [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS] [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
                          [--memory-engine-window MEMORY_ENGINE_WINDOW] [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
-                         [--run-skip-special-tokens] [--run-disable-cache]
+                         [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--run-skip-special-tokens]
+                         [--run-disable-cache]
                          [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                          [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P] [--tool TOOL]
                          [--tools TOOLS]
@@ -1433,6 +1448,8 @@ inline agent settings:
                         Window size for memory sentence transformer
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
+  --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
+                        Maximum model/tool result cycles for an agent run
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache

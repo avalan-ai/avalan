@@ -2740,6 +2740,7 @@ temperature = 0.5
 top_p = 0.9
 top_k = 5
 max_new_tokens = 42
+maximum_tool_cycles = 64
 """
         with TemporaryDirectory() as tmp:
             path = f"{tmp}/agent.toml"
@@ -2767,6 +2768,9 @@ max_new_tokens = 42
                 self.assertEqual(settings.call_options["top_p"], 0.9)
                 self.assertEqual(settings.call_options["top_k"], 5)
                 self.assertEqual(settings.call_options["max_new_tokens"], 42)
+                self.assertEqual(
+                    settings.call_options["maximum_tool_cycles"], 64
+                )
             await stack.aclose()
 
     async def test_run_response_format_schema_ref_is_resolved(self):
