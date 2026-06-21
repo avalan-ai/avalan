@@ -70,6 +70,10 @@ class _FakeClient:
         return False
 
 
+class _IncompleteMCPHTTPResponse(mcp_module._MCPHTTPResponse):
+    headers: dict[str, str] = {}
+
+
 class McpCallToolTestCase(IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.addCleanup(patch.stopall)
@@ -90,6 +94,16 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
         self.tool = McpCallTool(
             call_params={"request_id": "req-1", "timeout": 1}
         )
+
+    async def test_incomplete_http_response_methods_raise(self):
+        response = _IncompleteMCPHTTPResponse()
+
+        with self.assertRaises(NotImplementedError):
+            await response.aread()
+        with self.assertRaises(NotImplementedError):
+            response.aiter_lines()
+        with self.assertRaises(NotImplementedError):
+            response.raise_for_status()
 
     async def test_call_with_arguments_returns_full_result(self):
         context = ToolCallContext()
