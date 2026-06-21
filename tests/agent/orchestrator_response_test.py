@@ -10512,6 +10512,85 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         validate_canonical_stream_items(resp.canonical_items)
         validate_tool_lifecycle_items(resp.canonical_items)
 
+    async def test_iteration_repeated_tool_skip_continues_to_model(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        call = ToolCall(
+            id="call1",
+            name="calc",
+            arguments={"expression": "25 * 2"},
+        )
+        repeated_call = ToolCall(
+            id="call2",
+            name="calc",
+            arguments={"expression": "25 * 2"},
+        )
+        agent.side_effect = [
+            _tool_call_response(repeated_call),
+            _string_response("done", async_gen=True),
+        ]
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.return_value = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="50",
+        )
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(call),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        items = await _collect_stream_items(resp)
+
+        self.assertEqual(_answer_text(items), "done")
+        tool.assert_awaited_once()
+        self.assertEqual(agent.await_count, 2)
+
+        first_context = agent.await_args_list[0].args[0]
+        second_context = agent.await_args_list[1].args[0]
+        assert isinstance(first_context.input, list)
+        assert isinstance(second_context.input, list)
+        first_tool_messages = [
+            message
+            for message in first_context.input
+            if message.role is MessageRole.TOOL
+        ]
+        second_tool_messages = [
+            message
+            for message in second_context.input
+            if message.role is MessageRole.TOOL
+        ]
+        self.assertEqual(len(first_tool_messages), 1)
+        self.assertEqual(len(second_tool_messages), 2)
+        self.assertIsNone(second_tool_messages[-1].tool_call_result)
+        diagnostic = second_tool_messages[-1].tool_call_diagnostic
+        self.assertIsNotNone(diagnostic)
+        assert diagnostic is not None
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.REPEATED_CALL,
+        )
+        payload = loads(str(second_tool_messages[-1].content))
+        self.assertEqual(payload["code"], "tool_call.repeated")
+
+        validate_canonical_stream_items(resp.canonical_items)
+        validate_tool_lifecycle_items(resp.canonical_items)
+
 
 class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
     async def test_tool_context_ids(self):

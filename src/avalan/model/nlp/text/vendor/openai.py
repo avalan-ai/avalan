@@ -239,6 +239,8 @@ class OpenAIStream(TextGenerationVendorStream):
                         provider_event_type=event_type,
                     ),
                 )
+            if not self._answer_text_seen:
+                return ()
             self._answer_done_seen = True
             return (
                 StreamProviderEvent(

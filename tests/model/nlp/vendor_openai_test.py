@@ -965,6 +965,33 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             '{"answer":"done"}',
         )
 
+    async def test_stream_empty_output_text_done_uses_completion_output(self):
+        events = [
+            SimpleNamespace(type="response.output_text.done"),
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(output_text='{"answer":"done"}'),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            '{"answer":"done"}',
+        )
+
     async def test_stream_completion_output_prefers_output_text(self):
         events = [
             SimpleNamespace(
