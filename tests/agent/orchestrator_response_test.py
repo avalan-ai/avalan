@@ -31,6 +31,7 @@ from avalan.agent.orchestrator.response.orchestrator_response import (
 )
 from avalan.cli import CommandAbortException
 from avalan.entities import (
+    TOOL_DISPLAY_PROJECTOR_METADATA_KEY,
     EngineUri,
     GenerationSettings,
     Input,
@@ -48,6 +49,8 @@ from avalan.entities import (
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
+    ToolCapabilities,
+    ToolDescriptor,
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
     ToolFormat,
@@ -8229,6 +8232,36 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(projection["action"], "existing")
         self.assertEqual(projection["summary"], "Already projected.")
 
+    async def test_ready_tool_item_keeps_metadata_for_unprojectable_data(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+        )
+        metadata = {"source": "fixture"}
+
+        non_mapping = resp._tool_call_ready_display_metadata(
+            "ready-call-1",
+            "not a mapping",
+            metadata,
+        )
+        missing_name = resp._tool_call_ready_display_metadata(
+            "ready-call-2",
+            {"id": "ready-call-2", "arguments": {"value": "ok"}},
+            metadata,
+        )
+
+        self.assertEqual(non_mapping, metadata)
+        self.assertEqual(missing_name, metadata)
+
     async def test_call_projection_accepts_keyword_only_projector(
         self,
     ) -> None:
@@ -8339,6 +8372,140 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(invocations), 1)
         self.assertEqual(projection["action"], "call")
+
+    async def test_call_projection_uses_fallback_for_unusable_projector(
+        self,
+    ) -> None:
+        async def projected_tool(value: str) -> str:
+            return value
+
+        class BadSignatureToolDescriptor(ToolDescriptor):
+            @property
+            def display_projector(self) -> object:
+                raise AssertionError("bad projector")
+
+        class MissingDescribeToolManager:
+            is_empty = False
+
+        class NonCallableDescribeToolManager:
+            is_empty = False
+            describe_tool_call = "not callable"
+
+        class RaisingDescribeToolManager:
+            is_empty = False
+
+            def describe_tool_call(self, call: ToolCall) -> ToolDescriptor:
+                raise RuntimeError("boom")
+
+        class InvalidDescribeToolManager:
+            is_empty = False
+
+            def describe_tool_call(self, call: ToolCall) -> object:
+                return object()
+
+        class BadSignatureProjector:
+            @property
+            def __signature__(self) -> object:
+                raise ValueError("bad signature")
+
+            def __call__(self, call: ToolCall) -> ToolDisplayProjection:
+                return ToolDisplayProjection(
+                    action="bad-signature",
+                    target=call.name,
+                )
+
+        def requires_unavailable_argument(
+            *,
+            missing: str,
+        ) -> ToolDisplayProjection:
+            return ToolDisplayProjection(action=missing)
+
+        descriptor = BadSignatureToolDescriptor(
+            name="projected_tool",
+            namespace=None,
+            schema={},
+            capabilities=ToolCapabilities(),
+            metadata={
+                TOOL_DISPLAY_PROJECTOR_METADATA_KEY: projected_tool,
+            },
+        )
+        call = ToolCall(
+            id="fallback-call",
+            name="projected_tool",
+            arguments={"value": "ok"},
+        )
+
+        for manager in (
+            MissingDescribeToolManager(),
+            NonCallableDescribeToolManager(),
+            RaisingDescribeToolManager(),
+            InvalidDescribeToolManager(),
+        ):
+            with self.subTest(manager=type(manager).__name__):
+                resp = _make_response(
+                    Message(role=MessageRole.USER, content="hi"),
+                    _string_response("hi", async_gen=False),
+                    MagicMock(spec=EngineAgent),
+                    _dummy_operation(),
+                    {},
+                    tool=cast(Any, manager),
+                )
+
+                resp._append_canonical_tool_execution_started(call)
+
+                projection = cast(
+                    dict[str, object],
+                    resp.canonical_items[-1].metadata[
+                        TOOL_DISPLAY_PROJECTION_METADATA_KEY
+                    ],
+                )
+                self.assertEqual(projection["action"], "call")
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            MagicMock(spec=EngineAgent),
+            _dummy_operation(),
+            {},
+        )
+        self.assertIsNone(
+            resp._project_tool_display(
+                descriptor,
+                call,
+                call=call,
+            )
+        )
+        keyword_only_descriptor = ToolDescriptor(
+            name="projected_tool",
+            metadata={
+                TOOL_DISPLAY_PROJECTOR_METADATA_KEY: (
+                    requires_unavailable_argument
+                ),
+            },
+        )
+        self.assertIsNone(
+            resp._project_tool_display(
+                keyword_only_descriptor,
+                call,
+                call=call,
+            )
+        )
+        bad_signature_descriptor = ToolDescriptor(
+            name="projected_tool",
+            metadata={
+                TOOL_DISPLAY_PROJECTOR_METADATA_KEY: BadSignatureProjector(),
+            },
+        )
+
+        projection = resp._project_tool_display(
+            bad_signature_descriptor,
+            call,
+            call=call,
+        )
+
+        self.assertIsInstance(projection, ToolDisplayProjection)
+        assert isinstance(projection, ToolDisplayProjection)
+        self.assertEqual(projection.action, "bad-signature")
 
     async def test_call_projection_accepts_tool_manager_subclass(self) -> None:
         async def subclass_calc(expression: str) -> str:

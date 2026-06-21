@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from typing import Any, cast
 
+from pytest import MonkeyPatch
+
 from avalan.entities import (
     ToolCall,
     ToolCallDiagnostic,
@@ -23,6 +25,7 @@ from avalan.tool.database import (
     TableSize,
     TableSizeMetric,
 )
+from avalan.tool.database import display as database_display
 from avalan.tool.database.count import DatabaseCountTool
 from avalan.tool.database.inspect import DatabaseInspectTool
 from avalan.tool.database.keys import DatabaseKeysTool
@@ -35,7 +38,7 @@ from avalan.tool.database.sample import DatabaseSampleTool
 from avalan.tool.database.size import DatabaseSizeTool
 from avalan.tool.database.tables import DatabaseTablesTool
 from avalan.tool.database.tasks import DatabaseTasksTool
-from avalan.tool.display import ToolDisplayProjection
+from avalan.tool.display import ToolDisplayDetail, ToolDisplayProjection
 from avalan.tool.manager import ToolManager
 
 _DSN = "postgresql+asyncpg://db_user:super-secret-password@example.com/app"
@@ -157,6 +160,133 @@ def test_operational_calls_show_task_and_lock_intent() -> None:
     assert locks.target == "locks"
 
 
+def test_unusual_call_arguments_use_safe_fallbacks() -> None:
+    manager = _manager()
+
+    inspect_without_tables = _project_call(
+        manager, "database.inspect", {"table_names": 123}
+    )
+    inspect_string_table = _project_call(
+        manager,
+        "database.inspect",
+        {"schema": "analytics", "table_names": "orders"},
+    )
+    count_without_table = _project_call(manager, "database.count", {})
+    run_without_sql = _project_call(manager, "database.run", {})
+    sample_string_columns = _project_call(
+        manager,
+        "database.sample",
+        {"table_name": "users", "columns": "id"},
+    )
+    tasks_bool_filter = _project_call(
+        manager, "database.tasks", {"running_for": True}
+    )
+    tasks_negative_filter = _project_call(
+        manager, "database.tasks", {"running_for": -1}
+    )
+
+    assert inspect_without_tables.target == "tables"
+    assert inspect_string_table.target == "analytics.orders"
+    assert _detail_value(inspect_string_table, "tables") == "orders"
+    assert count_without_table.target == "database"
+    assert run_without_sql.target == "SQL"
+    assert run_without_sql.preview is None
+    assert _detail_value(sample_string_columns, "columns") == "id"
+    assert _detail_value(sample_string_columns, "limit") == 10
+    assert _detail_value(tasks_bool_filter, "running_for_seconds") is None
+    assert _detail_value(tasks_negative_filter, "running_for_seconds") is None
+
+
+def test_sample_call_details_summarize_filters_and_ordering() -> None:
+    manager = _manager()
+    long_literal = "x" * 96
+    order = {f"col_{index}": "desc" for index in range(10)}
+
+    projection = _project_call(
+        manager,
+        "database.sample",
+        {
+            "table_name": "events",
+            "count": -5,
+            "columns": ["id", "", 7, "email"],
+            "conditions": f"status = 'active' AND note = '{long_literal}'",
+            "order": order,
+        },
+    )
+    conditions_detail = _detail(projection, "conditions")
+
+    assert _detail_value(projection, "limit") == 10
+    assert _detail_value(projection, "columns") == "id, email"
+    assert conditions_detail is not None
+    assert conditions_detail.truncated
+    assert long_literal not in str(conditions_detail.value)
+    assert (
+        _detail_value(projection, "order")
+        == "col_0: desc, col_1: desc, col_2: desc, col_3: desc, "
+        "col_4: desc, col_5: desc, col_6: desc, col_7: desc, ..."
+    )
+    assert projection.metrics["limit"] == 10
+
+
+def test_direct_projector_handles_unknown_operations_and_outcomes() -> None:
+    unknown = _project_direct_call("unknown", {})
+    unsupported = database_display.project_database_tool_display(
+        call=ToolCall(
+            id="database-run-unsupported",
+            name="database.run",
+            arguments={"sql": "SELECT 1"},
+        ),
+        settings=_settings(),
+        dialect="postgresql",
+        outcome=cast(Any, object()),
+    )
+
+    assert unknown.action == "inspect"
+    assert unknown.target == "database"
+    assert unknown.summary == "Use database tool."
+    assert unsupported is None
+
+
+def test_sql_literal_sanitization_bounds_literals(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    def never_sensitive_context(sql: str) -> bool:
+        assert sql
+        return False
+
+    monkeypatch.setattr(
+        database_display,
+        "_has_sensitive_sql_context",
+        never_sensitive_context,
+    )
+    long_literal = "value-" * 20
+
+    projection = _project_direct_call(
+        "database.run",
+        {"sql": f"SELECT 'active', N'credential value', '{long_literal}'"},
+    )
+
+    assert projection.preview is not None
+    assert "'active'" in projection.preview.content
+    assert "N'[redacted]'" in projection.preview.content
+    assert "credential value" not in projection.preview.content
+    assert long_literal not in projection.preview.content
+    assert projection.preview.redacted
+    assert projection.preview.truncated
+
+
+def test_long_sql_without_sensitive_context_is_truncated() -> None:
+    manager = _manager()
+    sql = "SELECT " + ", ".join(f"column_{index}" for index in range(80))
+
+    projection = _project_call(manager, "database.run", {"sql": sql})
+
+    assert projection.preview is not None
+    assert projection.preview.truncated
+    assert len(projection.preview.content) <= 320
+    assert sql not in projection.preview.content
+
+
 def test_typed_terminal_results_include_bounded_counts() -> None:
     manager = _manager()
 
@@ -267,6 +397,32 @@ def test_typed_terminal_results_include_bounded_counts() -> None:
         assert "secret" not in _projection_text(projection)
 
 
+def test_size_results_include_schema_detail() -> None:
+    manager = _manager()
+
+    projection = _project_result(
+        manager,
+        "database.size",
+        {"table_name": "analytics.events"},
+        TableSize(
+            name="events",
+            schema="analytics",
+            metrics=(
+                TableSizeMetric(
+                    category="data",
+                    bytes=4096,
+                    human_readable=None,
+                ),
+            ),
+        ),
+    )
+
+    assert projection.target == "events"
+    assert _detail_value(projection, "schema") == "analytics"
+    assert _detail_value(projection, "data_size") == 4096
+    assert projection.metrics["data_bytes"] == 4096
+
+
 def test_kill_and_blocking_locks_use_elevated_terminal_severity() -> None:
     manager = _manager()
 
@@ -326,6 +482,70 @@ def test_task_preview_carries_sql_redaction_flags() -> None:
     assert projection.preview.redacted
     assert projection.redacted
     assert "secret" not in projection.preview.content
+
+
+def test_empty_terminal_previews_are_omitted() -> None:
+    manager = _manager()
+
+    tasks = _project_result(manager, "database.tasks", {}, [])
+    locks = _project_result(manager, "database.locks", {}, [])
+    not_locks = _project_result(manager, "database.locks", {}, "not locks")
+    non_sequence_rows = _project_result(
+        manager, "database.run", {"sql": "SELECT 1"}, {"id": 1}
+    )
+
+    assert tasks.preview is None
+    assert tasks.metrics["tasks"] == 0
+    assert locks.preview is None
+    assert locks.metrics["locks"] == 0
+    assert locks.metrics["blocking_locks"] == 0
+    assert not_locks.outcome == "result"
+    assert not_locks.metrics == {}
+    assert "rows" not in non_sequence_rows.metrics
+
+
+def test_task_and_lock_previews_are_bounded() -> None:
+    manager = _manager()
+    long_value = "x" * 500
+
+    task_projection = _project_result(
+        manager,
+        "database.tasks",
+        {},
+        [
+            DatabaseTask(
+                id=f"task-{long_value}",
+                user=None,
+                state=None,
+                query=" ",
+                duration=None,
+            )
+        ],
+    )
+    lock_projection = _project_result(
+        manager,
+        "database.locks",
+        {},
+        [
+            DatabaseLock(
+                pid="10",
+                user=None,
+                lock_type="relation",
+                lock_target=f"public.{long_value}",
+                mode="AccessExclusiveLock",
+                granted=True,
+            )
+        ],
+    )
+
+    assert task_projection.preview is not None
+    assert task_projection.preview.truncated
+    assert task_projection.truncated
+    assert len(task_projection.preview.content) <= 320
+    assert lock_projection.preview is not None
+    assert lock_projection.preview.truncated
+    assert lock_projection.truncated
+    assert len(lock_projection.preview.content) <= 320
 
 
 def test_error_and_diagnostic_terminal_projections_are_safe() -> None:
@@ -408,14 +628,31 @@ def _project_outcome(
     return projection
 
 
+def _project_direct_call(
+    name: str,
+    arguments: dict[str, Any],
+) -> ToolDisplayProjection:
+    projection = database_display.project_database_tool_display(
+        call=ToolCall(id=f"{name}-direct", name=name, arguments=arguments),
+        settings=_settings(),
+        dialect="postgresql",
+    )
+    assert isinstance(projection, ToolDisplayProjection)
+    return projection
+
+
 def _manager() -> ToolManager:
-    settings = DatabaseToolSettings(dsn=_DSN, read_only=True)
+    settings = _settings()
     return ToolManager.create_instance(
         available_toolsets=[
             ToolSet(namespace="database", tools=_tools(settings))
         ],
         settings=ToolManagerSettings(),
     )
+
+
+def _settings() -> DatabaseToolSettings:
+    return DatabaseToolSettings(dsn=_DSN, read_only=True)
 
 
 def _tools(settings: DatabaseToolSettings) -> list[DatabaseTool]:
@@ -468,9 +705,16 @@ def _call_arguments() -> dict[str, dict[str, Any]]:
 def _detail_value(
     projection: ToolDisplayProjection, label: str
 ) -> object | None:
+    detail = _detail(projection, label)
+    return detail.value if detail else None
+
+
+def _detail(
+    projection: ToolDisplayProjection, label: str
+) -> ToolDisplayDetail | None:
     for detail in projection.details:
         if detail.label == label:
-            return detail.value
+            return detail
     return None
 
 

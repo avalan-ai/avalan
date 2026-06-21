@@ -23,7 +23,10 @@ from avalan.tool.browser import (
     BrowserToolSettings,
 )
 from avalan.tool.builtin_display import (
+    _joined_limited_strings,
+    project_ast_grep_tool_display,
     project_browser_open_tool_display,
+    project_calculator_tool_display,
     project_code_run_tool_display,
     project_graph_tool_display,
     project_mcp_call_tool_display,
@@ -156,6 +159,51 @@ def test_browser_projection_does_not_require_browser_runtime() -> None:
     assert "https://example.test/page" in payload
 
 
+def test_browser_projection_handles_empty_and_malformed_urls() -> None:
+    missing_projection = project_browser_open_tool_display(
+        call=ToolCall(id="browser-open-1", name="browser.open")
+    )
+    malformed_projection = project_browser_open_tool_display(
+        call=ToolCall(
+            id="browser-open-2",
+            name="browser.open",
+            arguments={"url": "http://[::1"},
+        )
+    )
+    bad_port_projection = project_browser_open_tool_display(
+        call=ToolCall(
+            id="browser-open-3",
+            name="browser.open",
+            arguments={"url": "https://example.test:abc/page?token=secret"},
+        )
+    )
+    relative_query_projection = project_browser_open_tool_display(
+        call=ToolCall(
+            id="browser-open-4",
+            name="browser.open",
+            arguments={"url": "docs/page?token=secret#fragment"},
+        )
+    )
+    relative_projection = project_browser_open_tool_display(
+        call=ToolCall(
+            id="browser-open-5",
+            name="browser.open",
+            arguments={"url": "docs/page"},
+        )
+    )
+
+    assert missing_projection.target == "URL"
+    assert not missing_projection.redacted
+    assert malformed_projection.redacted
+    assert malformed_projection.target == "[redacted]"
+    assert bad_port_projection.redacted
+    assert bad_port_projection.target == "https://example.test/page"
+    assert relative_query_projection.redacted
+    assert relative_query_projection.target == "docs/page"
+    assert relative_projection.target == "docs/page"
+    assert not relative_projection.redacted
+
+
 def test_protocol_relative_urls_do_not_leak_credentials() -> None:
     browser_projection = project_browser_open_tool_display(
         call=ToolCall(
@@ -275,6 +323,110 @@ def test_code_call_projection_never_includes_source_body() -> None:
     assert "def run" not in payload
 
 
+def test_calculator_terminal_projection_includes_result_preview() -> None:
+    call = ToolCall(
+        id="calculator-1",
+        name="math.calculator",
+        arguments={"expression": "2 + 2"},
+    )
+
+    projection = project_calculator_tool_display(
+        call=call,
+        outcome=ToolCallResult(
+            id="calculator-result-1",
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            result=4,
+        ),
+    )
+
+    assert projection.status == "completed"
+    assert projection.target == "2 + 2"
+    assert _detail_value(projection, "result") == "4"
+    assert projection.preview is not None
+    assert projection.preview.content == "4"
+
+
+def test_ast_grep_terminal_projection_keeps_rewrite_action() -> None:
+    call = ToolCall(
+        id="ast-grep-1",
+        name="code.search.ast.grep",
+        arguments={
+            "pattern": "print($A)",
+            "rewrite": "logger.info($A)",
+            "paths": ["src"],
+        },
+    )
+
+    projection = project_ast_grep_tool_display(
+        call=call,
+        outcome=ToolCallResult(
+            id="ast-grep-result-1",
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            result=["src/a.py", "src/b.py"],
+        ),
+    )
+
+    assert projection.action == "rewrite"
+    assert projection.status == "completed"
+    assert projection.metrics["items"] == 2
+
+
+def test_ast_grep_path_projection_handles_edge_inputs() -> None:
+    no_paths_projection = project_ast_grep_tool_display(
+        call=ToolCall(
+            id="ast-grep-1",
+            name="code.search.ast.grep",
+            arguments={"pattern": "print($A)"},
+        )
+    )
+    string_path_projection = project_ast_grep_tool_display(
+        call=ToolCall(
+            id="ast-grep-2",
+            name="code.search.ast.grep",
+            arguments={"pattern": "print($A)", "paths": "src"},
+        )
+    )
+    mapping_path_projection = project_ast_grep_tool_display(
+        call=ToolCall(
+            id="ast-grep-3",
+            name="code.search.ast.grep",
+            arguments={"pattern": "print($A)", "paths": {"src": True}},
+        )
+    )
+    limited_path_projection = project_ast_grep_tool_display(
+        call=ToolCall(
+            id="ast-grep-4",
+            name="code.search.ast.grep",
+            arguments={
+                "pattern": "print($A)",
+                "paths": [
+                    "src0",
+                    7,
+                    "src1",
+                    "src2",
+                    "src3",
+                    "src4",
+                    "src5",
+                    "src6",
+                    "src7",
+                ],
+            },
+        )
+    )
+
+    assert no_paths_projection.scope == "workspace"
+    assert string_path_projection.scope == "src"
+    assert mapping_path_projection.scope == "workspace"
+    assert (
+        limited_path_projection.scope
+        == "src0, src1, src2, src3, src4, src5, src6, ..."
+    )
+
+
 def test_mcp_projection_redacts_uri_credentials_and_argument_keys() -> None:
     projection = project_mcp_call_tool_display(
         call=ToolCall(
@@ -299,6 +451,48 @@ def test_mcp_projection_redacts_uri_credentials_and_argument_keys() -> None:
     assert "secret-value" not in payload
     assert "api_key" not in payload
     assert "https://mcp.example.test/rpc" in payload
+
+
+def test_mcp_projection_limits_argument_keys() -> None:
+    projection = project_mcp_call_tool_display(
+        call=ToolCall(
+            id="mcp-call-1",
+            name="mcp.call",
+            arguments={
+                "uri": "https://mcp.example.test/rpc",
+                "name": "remote.search",
+                "arguments": {f"key_{index}": index for index in range(9)},
+            },
+        )
+    )
+
+    assert _detail_value(projection, "argument_count") == 9
+    assert (
+        _detail_value(projection, "argument_keys")
+        == "key_0, key_1, key_2, key_3, key_4, key_5, key_6, key_7, ..."
+    )
+
+
+def test_mcp_result_projection_counts_mapping_results() -> None:
+    call = ToolCall(
+        id="mcp-call-1",
+        name="mcp.call",
+        arguments={"name": "remote.info"},
+    )
+    projection = project_mcp_call_tool_display(
+        call=call,
+        outcome=ToolCallResult(
+            id="mcp-result-1",
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            result={"first": 1, "second": 2},
+        ),
+    )
+
+    assert projection.status == "completed"
+    assert projection.target == "remote.info"
+    assert projection.metrics["items"] == 2
 
 
 def test_query_like_results_are_summarized_without_output() -> None:
@@ -387,6 +581,90 @@ def test_graph_projection_excludes_input_values_and_data_uri() -> None:
     assert result_projection.metrics["points"] == 1
 
 
+def test_graph_projection_counts_series_mapping() -> None:
+    line_projection = project_graph_tool_display(
+        call=ToolCall(
+            id="graph-line-1",
+            name="graph.line",
+            arguments={
+                "x_labels": ["Q1", "Q2"],
+                "series": {"actual": [1, 2], "forecast": [3, 4]},
+                "width": True,
+                "height": False,
+            },
+        )
+    )
+    unknown_projection = project_graph_tool_display(
+        call=ToolCall(
+            id="graph-radar-1",
+            name="graph.radar",
+            arguments={"values": [1, 2, 3]},
+        )
+    )
+
+    assert line_projection.metrics["series"] == 2
+    assert line_projection.metrics["points"] == 4
+    assert _detail_value(line_projection, "width") is None
+    assert _detail_value(line_projection, "height") is None
+    assert unknown_projection.target == "radar chart"
+    assert unknown_projection.metrics["points"] == 0
+
+
+def test_graph_terminal_projection_falls_back_for_non_mapping_result() -> None:
+    call = ToolCall(
+        id="graph-line-1",
+        name="graph.line",
+        arguments={"title": "Revenue"},
+    )
+
+    projection = project_graph_tool_display(
+        call=call,
+        outcome=ToolCallResult(
+            id="graph-result-1",
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            result=["series-a", "series-b"],
+        ),
+    )
+
+    assert projection.status == "completed"
+    assert projection.outcome == "result"
+    assert projection.target == "Revenue"
+    assert projection.metrics["items"] == 2
+
+
+def test_graph_result_redacts_file_and_ignores_bool_dimensions() -> None:
+    call = ToolCall(
+        id="graph-line-1",
+        name="graph.line",
+        arguments={"title": "Revenue"},
+    )
+    projection = project_graph_tool_display(
+        call=call,
+        outcome=ToolCallResult(
+            id="graph-result-1",
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            result={
+                "chart_type": "line",
+                "format": "png",
+                "width": True,
+                "height": False,
+                "file": "/private/charts/revenue.png",
+            },
+        ),
+    )
+    payload = _payload_text(projection)
+
+    assert projection.redacted
+    assert _detail_value(projection, "width") is None
+    assert _detail_value(projection, "height") is None
+    assert _detail_value(projection, "file") == "[redacted]"
+    assert "/private/charts/revenue.png" not in payload
+
+
 def test_memory_terminal_projection_uses_typed_counts_without_data() -> None:
     memory = Memory(
         id=uuid4(),
@@ -426,6 +704,110 @@ def test_memory_terminal_projection_uses_typed_counts_without_data() -> None:
     assert "secret-identifier" not in payload
     assert "secret title" not in payload
     assert "secret description" not in payload
+
+
+def test_message_memory_terminal_projection_reports_match_status() -> None:
+    call = ToolCall(
+        id="message-read-1",
+        name="memory.message.read",
+        arguments={"search": "needle"},
+    )
+    found_projection = project_memory_tool_display(
+        call=call,
+        outcome=ToolCallResult(
+            id="message-read-result-1",
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            result="remembered answer",
+        ),
+    )
+    missing_projection = project_memory_tool_display(
+        call=call,
+        outcome=ToolCallResult(
+            id="message-read-result-2",
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            result="NOT_FOUND",
+        ),
+    )
+
+    assert found_projection.outcome == "result"
+    assert found_projection.metrics["matches"] == 1
+    assert found_projection.metrics["text_chars"] == len("remembered answer")
+    assert missing_projection.outcome == "not_found"
+    assert missing_projection.metrics["matches"] == 0
+    assert missing_projection.metrics["text_chars"] == 0
+
+
+def test_memory_search_terminal_projection_counts_partition_text() -> None:
+    call = ToolCall(
+        id="memory-read-1",
+        name="memory.read",
+        arguments={"namespace": "docs", "search": "needle"},
+    )
+    projection = project_memory_tool_display(
+        call=call,
+        outcome=ToolCallResult(
+            id="memory-read-result-1",
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            result=cast(Any, ["alpha", {"ignored": True}, "beta"]),
+        ),
+    )
+
+    assert projection.metrics["matches"] == 3
+    assert projection.metrics["text_chars"] == len("alpha") + len("beta")
+
+
+def test_memory_terminal_projection_handles_error_and_diagnostic() -> None:
+    call = ToolCall(
+        id="memory-list-1",
+        name="memory.list",
+        arguments={"namespace": "docs"},
+    )
+    error_projection = project_memory_tool_display(
+        call=call,
+        outcome=ToolCallError(
+            id="memory-error-1",
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            error=RuntimeError("failed"),
+            message="failed",
+        ),
+    )
+    diagnostic_projection = project_memory_tool_display(
+        call=call,
+        outcome=ToolCallDiagnostic(
+            id="memory-diag-1",
+            requested_name=call.name,
+            canonical_name=call.name,
+            code=ToolCallDiagnosticCode.USER_REJECTED,
+            stage=ToolCallDiagnosticStage.CONFIRM,
+            message="not approved",
+        ),
+    )
+
+    assert error_projection.action == "list"
+    assert error_projection.status == "error"
+    assert error_projection.outcome == "RuntimeError"
+    assert diagnostic_projection.action == "skip"
+    assert diagnostic_projection.severity == "warning"
+
+
+def test_unknown_memory_operation_uses_generic_summary() -> None:
+    projection = project_memory_tool_display(
+        call=ToolCall(
+            id="memory-prune-1",
+            name="memory.prune",
+            arguments={"namespace": "docs"},
+        )
+    )
+
+    assert projection.summary == "Use memory tool."
 
 
 def test_memory_store_projection_lists_namespaces_only() -> None:
@@ -515,6 +897,11 @@ def test_projection_coverage_excludes_youtube() -> None:
     assert not (REPO_ROOT / "src/avalan/tool/youtube.py").exists()
 
 
+def test_joined_limited_strings_ignores_scalar_inputs() -> None:
+    assert _joined_limited_strings("abc") is None
+    assert _joined_limited_strings(42) is None
+
+
 def _manager() -> ToolManager:
     return ToolManager.create_instance(
         available_toolsets=[
@@ -531,3 +918,10 @@ def _manager() -> ToolManager:
 
 def _payload_text(projection: ToolDisplayProjection) -> str:
     return dumps(projection.to_payload(), sort_keys=True)
+
+
+def _detail_value(projection: ToolDisplayProjection, label: str) -> Any:
+    for detail in projection.details:
+        if detail.label == label:
+            return detail.value
+    raise AssertionError(f"Missing detail {label}")

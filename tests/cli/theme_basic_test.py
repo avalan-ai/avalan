@@ -46,6 +46,7 @@ from avalan.cli.theme.stream_presenter import (
     CliStreamPresenterRequest,
     CliStreamRenderableFrame,
 )
+from avalan.cli.theme.tool_projection import projection_terminal_markup
 from avalan.entities import (
     Model,
     TokenizerConfig,
@@ -1172,6 +1173,26 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         second_text = _render_text(_frames(second_items)[0].renderable)
         self.assertIn("Executed tool database.run: []", second_text)
         self.assertNotIn("Executed tool calc", second_text)
+
+    def test_projection_terminal_markup_renders_status_and_scalars(
+        self,
+    ) -> None:
+        text = projection_terminal_markup(
+            ToolDisplayProjection(
+                action="inspect",
+                status="completed",
+                details=(
+                    ToolDisplayDetail(label="cached", value=True),
+                    ToolDisplayDetail(label="available", value=False),
+                    ToolDisplayDetail(label="owner", value=None),
+                ),
+            )
+        )
+
+        self.assertIn("completed", text)
+        self.assertIn("cached=true", text)
+        self.assertIn("available=false", text)
+        self.assertIn("owner=none", text)
 
     async def test_completed_empty_response_reports_no_final_answer(
         self,
