@@ -114,17 +114,24 @@ def _validate_known_options(
     allowed_options: set[str],
     forbidden_options: frozenset[str] = frozenset(),
     command: str,
+    include_option_name: bool = False,
 ) -> None:
     for option in options:
         if option in forbidden_options:
+            message = f"unsupported {command} option"
+            if include_option_name:
+                message = f"{message}: {option}"
             raise policy_denied(
                 ShellExecutionErrorCode.INVALID_OPTION,
-                f"unsupported {command} option",
+                message,
             )
         if option not in allowed_options:
+            message = f"unknown {command} option"
+            if include_option_name:
+                message = f"{message}: {option}"
             raise policy_denied(
                 ShellExecutionErrorCode.INVALID_OPTION,
-                f"unknown {command} option",
+                message,
             )
 
 

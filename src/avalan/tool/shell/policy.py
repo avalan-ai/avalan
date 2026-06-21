@@ -173,7 +173,7 @@ class ExecutionPolicy:
                 metadata=metadata,
             )
         )
-        _validate_argv_budgets(argv, self._settings)
+        _validate_argv_budgets(argv, display_argv, self._settings)
         await _enforce_content_policy(
             request,
             normalized_paths,
@@ -836,17 +836,34 @@ def _validate_argument_budgets(
 
 def _validate_argv_budgets(
     argv: tuple[str, ...],
+    display_argv: tuple[str, ...],
     settings: ShellToolSettings,
 ) -> None:
-    _validate_argument_fragments(argv, settings, "normalized command")
+    _validate_argument_fragments(
+        argv,
+        settings,
+        "normalized command",
+        trusted_argument_count=_trusted_internal_argument_count(
+            argv, display_argv
+        ),
+    )
 
 
 def _validate_argument_fragments(
     fragments: tuple[str, ...],
     settings: ShellToolSettings,
     label: str,
+    *,
+    trusted_argument_count: int = 0,
 ) -> None:
-    if len(fragments) > settings.max_arguments:
+    assert isinstance(
+        trusted_argument_count, int
+    ), "trusted_argument_count must be an integer"
+    assert (
+        trusted_argument_count >= 0
+    ), "trusted_argument_count must be non-negative"
+    counted_fragments = max(len(fragments) - trusted_argument_count, 0)
+    if counted_fragments > settings.max_arguments:
         raise _policy_denied(
             ShellExecutionErrorCode.TOO_MANY_ARGUMENTS,
             f"{label} has too many arguments",
@@ -869,6 +886,15 @@ def _validate_argument_fragments(
             ShellExecutionErrorCode.COMMAND_TOO_LARGE,
             f"{label} is too large",
         )
+
+
+def _trusted_internal_argument_count(
+    argv: tuple[str, ...],
+    display_argv: tuple[str, ...],
+) -> int:
+    assert isinstance(argv, tuple), "argv must be a tuple"
+    assert isinstance(display_argv, tuple), "display_argv must be a tuple"
+    return max(len(argv) - len(display_argv), 0)
 
 
 def _request_argument_fragments(

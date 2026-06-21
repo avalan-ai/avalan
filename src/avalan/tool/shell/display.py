@@ -362,6 +362,8 @@ def _result_fact_details(
     ]
     if result.error_code is not None:
         details.append(_detail("error code", result.error_code.value))
+    if result.error_message is not None:
+        details.append(_detail("error message", result.error_message))
     return tuple(details)
 
 
@@ -438,6 +440,11 @@ def _result_summary(result: ExecutionResult) -> str:
         case ShellExecutionStatus.NO_MATCHES:
             return f"{result.command} found no matches."
         case ShellExecutionStatus.POLICY_DENIED:
+            if result.error_message is not None:
+                return (
+                    f"{result.command} was denied by policy: "
+                    f"{result.error_message}."
+                )
             return f"{result.command} was denied by policy."
         case ShellExecutionStatus.NONZERO_EXIT:
             exit_code = result.exit_code
