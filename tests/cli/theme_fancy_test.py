@@ -70,6 +70,7 @@ from avalan.event import (
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import PermanentMemoryPartition
 from avalan.model.stream import StreamChannel, StreamItemKind
+from avalan.tool.display import ToolDisplayDetail, ToolDisplayProjection
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -672,6 +673,160 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, output)
+
+    async def test_tool_panel_prefers_display_projection_fields(self) -> None:
+        config = _stream_config(display_tools_events=8, display_events=False)
+        builder = CliStreamSnapshotBuilder(config)
+        active_projection = ToolDisplayProjection(
+            action="search",
+            target="[TODO]",
+            scope="src/[avalan]",
+            summary="Search [red]source[/red].",
+        )
+        builder.add_active_tool(
+            tool_call_id="active-call",
+            name="shell.run",
+            arguments={"query": "raw-json"},
+            display_projection=active_projection,
+        )
+        terminal_projection = ToolDisplayProjection(
+            action="inspect",
+            target="[users]",
+            scope="database",
+            status="completed",
+            outcome="rows",
+            summary="Returned [green]2 rows[/green].",
+            details=(
+                ToolDisplayDetail(label="[table]", value="[users]"),
+                ToolDisplayDetail(label="rows", value=2),
+            ),
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="done-call",
+            name="database.query",
+            status="result",
+            result={"raw": "json"},
+            arguments_count=1,
+            display_projection=terminal_projection,
+            elapsed_seconds=0.5,
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        tools_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "tools"
+        )
+        output = _frame_text(tools_frame)
+        self.assertIn("Executing tool search [TODO] in src/[avalan]", output)
+        self.assertIn("call #active-c", output)
+        self.assertIn("Executed tool inspect [users] in database", output)
+        self.assertIn("call #done-cal", output)
+        self.assertIn("with status completed and outcome rows", output)
+        self.assertIn("Returned [green]2 rows[/green].", output)
+        self.assertIn("Details [table]=[users], rows=2", output)
+        self.assertNotIn("raw-json", output)
+        self.assertNotIn('"query"', output)
+        self.assertNotIn('"raw"', output)
+        self.assertNotIn('"json"', output)
+
+    async def test_tool_panel_completed_without_result_uses_projection(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools_events=8, display_events=False)
+        projection = ToolDisplayProjection(
+            action="cancel",
+            target="[task-1]",
+            scope="database",
+            status="completed",
+            outcome="cancel_requested",
+            summary="Cancellation [yellow]requested[/yellow].",
+            details=(ToolDisplayDetail(label="task_id", value="[task-1]"),),
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(
+            tool_call_id="database-call",
+            name="database.kill",
+            arguments={"task_id": "raw-json"},
+        )
+        builder.complete_tool(
+            tool_call_id="database-call",
+            name="database.kill",
+            display_projection=projection,
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        tools_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "tools"
+        )
+        output = _frame_text(tools_frame)
+        self.assertIn("Completed tool cancel [task-1] in database", output)
+        self.assertIn("call #database", output)
+        self.assertIn(
+            "with status completed and outcome cancel_requested",
+            output,
+        )
+        self.assertIn("Cancellation [yellow]requested[/yellow].", output)
+        self.assertIn("Details task_id=[task-1]", output)
+        self.assertNotIn("raw-json", output)
+
+    async def test_tool_panel_bounds_long_projection_values(self) -> None:
+        config = _stream_config(display_tools_events=8, display_events=False)
+        long_value = "x" * 500
+        projection = ToolDisplayProjection(
+            action="inspect",
+            target=long_value,
+            scope="database",
+            status="completed",
+            outcome="rows",
+            summary=long_value,
+            details=(
+                ToolDisplayDetail(label="path", value=long_value),
+                ToolDisplayDetail(label="rows", value=25),
+                ToolDisplayDetail(label="statement", value=long_value),
+                ToolDisplayDetail(label="extra", value=long_value),
+            ),
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_result_summary(
+            tool_call_id="database-call",
+            name="database.query",
+            status="result",
+            result={"rows": ["raw"]},
+            arguments_count=1,
+            display_projection=projection,
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        tools_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "tools"
+        )
+        output = _frame_text(tools_frame)
+        self.assertIn("inspect " + ("x" * 20), output)
+        self.assertIn("...", output)
+        self.assertNotIn('"rows": ["raw"]', output)
 
     async def test_progress_title_pluralization_singular(self) -> None:
         config = _stream_config(display_tools=False, display_events=False)
