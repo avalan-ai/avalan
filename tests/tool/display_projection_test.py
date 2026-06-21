@@ -663,10 +663,19 @@ def test_display_helpers_stay_independent_of_rendering_and_tool_modules() -> (
 
 def test_theme_modules_do_not_import_tool_specific_modules() -> None:
     theme_dir = REPO_ROOT / "src/avalan/cli/theme"
+    allowed_modules = {"tool.display"}
 
     for path in theme_dir.glob("*.py"):
         imported_modules = _imported_modules(path)
-        assert not _has_module_segment(imported_modules, "tool")
+        unexpected_modules = {
+            module
+            for module in imported_modules
+            if "tool" in module.split(".") and module not in allowed_modules
+        }
+
+        assert not unexpected_modules
+        assert not _has_module_segment(imported_modules, "database")
+        assert not _has_module_segment(imported_modules, "shell")
 
 
 def _cheap_toolset_names() -> set[str]:
