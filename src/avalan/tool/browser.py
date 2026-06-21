@@ -197,25 +197,25 @@ class BrowserTool(Tool):
                 knowledge_chunk = (
                     knowledge_partitions[kn_id].data
                     if knowledge_partitions
-                    else query
-                    if kn_id == 0
-                    else None
+                    else query if kn_id == 0 else None
                 )
                 if not knowledge_chunk:
                     continue
 
                 knowledge_match = (
-                    "\n".join([
-                        kp.data
-                        for kp in knowledge_partitions[
-                            max(
-                                kn_id - self._settings.search_context, 0
-                            ) : min(
-                                kn_id + self._settings.search_context + 1,
-                                len(knowledge_partitions),
-                            )
+                    "\n".join(
+                        [
+                            kp.data
+                            for kp in knowledge_partitions[
+                                max(
+                                    kn_id - self._settings.search_context, 0
+                                ) : min(
+                                    kn_id + self._settings.search_context + 1,
+                                    len(knowledge_partitions),
+                                )
+                            ]
                         ]
-                    ])
+                    )
                     if self._settings.search_context
                     else knowledge_chunk
                 )

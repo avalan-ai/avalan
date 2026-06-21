@@ -80,9 +80,9 @@ class GraphRenderer:
         series_names: list[str],
         point_count: int,
     ) -> dict[str, object]:
-        assert output_format in GRAPH_MIME_TYPES, (
-            "output_format must be one of: png, svg, pdf"
-        )
+        assert (
+            output_format in GRAPH_MIME_TYPES
+        ), "output_format must be one of: png, svg, pdf"
         assert dpi > 0, "dpi must be greater than zero"
 
         buffer = BytesIO()
@@ -135,9 +135,9 @@ class GraphRenderer:
         *,
         series_name: str,
     ) -> dict[str, list[float]]:
-        assert (values is None) != (series is None), (
-            "provide either values or series"
-        )
+        assert (values is None) != (
+            series is None
+        ), "provide either values or series"
         if values is not None:
             return {series_name: self._numbers(values, "values")}
 
@@ -145,9 +145,9 @@ class GraphRenderer:
         assert series, "series must not be empty"
         cleaned: dict[str, list[float]] = {}
         for name, raw_values in series.items():
-            assert isinstance(name, str) and name.strip(), (
-                "series names must be non-empty strings"
-            )
+            assert (
+                isinstance(name, str) and name.strip()
+            ), "series names must be non-empty strings"
             cleaned[name] = self._numbers(raw_values, f"series[{name}]")
         return cleaned
 
@@ -155,9 +155,9 @@ class GraphRenderer:
         assert values, f"{name} must not be empty"
         labels = []
         for value in values:
-            assert isinstance(value, str) and value.strip(), (
-                f"{name} entries must be non-empty strings"
-            )
+            assert (
+                isinstance(value, str) and value.strip()
+            ), f"{name} entries must be non-empty strings"
             labels.append(value)
         return labels
 
@@ -171,9 +171,9 @@ class GraphRenderer:
         assert values, f"{name} must not be empty"
         numbers = []
         for value in values:
-            assert not isinstance(value, bool), (
-                f"{name} entries must be numbers"
-            )
+            assert not isinstance(
+                value, bool
+            ), f"{name} entries must be numbers"
             try:
                 number = float(value)
             except (TypeError, ValueError) as exc:
@@ -198,9 +198,9 @@ class GraphRenderer:
         axis_name: str,
     ) -> None:
         for name, values in series.items():
-            assert len(values) == expected, (
-                f"series[{name}] length must match {axis_name} length"
-            )
+            assert (
+                len(values) == expected
+            ), f"series[{name}] length must match {axis_name} length"
 
     @staticmethod
     def _assert_dimensions(width: float, height: float) -> None:
@@ -222,13 +222,13 @@ class GraphRenderer:
 
         path = Path(file).expanduser()
         parent = path.parent
-        assert not parent.exists() or parent.is_dir(), (
-            "graph file parent must be a directory"
-        )
+        assert (
+            not parent.exists() or parent.is_dir()
+        ), "graph file parent must be a directory"
         await to_thread(parent.mkdir, parents=True, exist_ok=True)
-        assert not path.exists() or path.is_file(), (
-            "graph file must be a file path"
-        )
+        assert (
+            not path.exists() or path.is_file()
+        ), "graph file must be a file path"
         await write_bytes(path, data)
         return str(path.resolve())
 
@@ -273,15 +273,15 @@ class PieChartTool(Tool, GraphRenderer):
         _ = context
         labels_clean = self._labels(labels, "labels")
         values_clean = self._numbers(values, "values", minimum=0)
-        assert len(labels_clean) == len(values_clean), (
-            "labels and values must have the same length"
-        )
+        assert len(labels_clean) == len(
+            values_clean
+        ), "labels and values must have the same length"
         assert sum(values_clean) > 0, "values must contain a positive total"
         if colors is not None:
             colors = self._labels(colors, "colors")
-            assert len(colors) == len(labels_clean), (
-                "colors length must match labels length"
-            )
+            assert len(colors) == len(
+                labels_clean
+            ), "colors length must match labels length"
 
         figure, axes = self._new_axes(width, height)
         if title:
@@ -594,14 +594,14 @@ class ScatterPlotTool(Tool, GraphRenderer):
         _ = context
         x_values = self._numbers(x, "x")
         y_values = self._numbers(y, "y")
-        assert len(x_values) == len(y_values), (
-            "x and y must have the same length"
-        )
+        assert len(x_values) == len(
+            y_values
+        ), "x and y must have the same length"
         if labels is not None:
             labels = self._labels(labels, "labels")
-            assert len(labels) == len(x_values), (
-                "labels length must match x and y length"
-            )
+            assert len(labels) == len(
+                x_values
+            ), "labels length must match x and y length"
         assert point_size > 0, "point_size must be greater than zero"
 
         figure, axes = self._new_axes(width, height)

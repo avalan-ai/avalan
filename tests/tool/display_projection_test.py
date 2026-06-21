@@ -277,11 +277,13 @@ def test_projection_bounds_trim_details_and_metrics() -> None:
 def test_projection_payload_stops_parsing_after_retained_bounds() -> None:
     payload = {
         "action": "measure",
-        "details": [
-            {"label": f"detail_{index}", "value": index}
-            for index in range(MAX_DISPLAY_DETAILS)
-        ]
-        + [{"malformed": object()}],
+        "details": (
+            [
+                {"label": f"detail_{index}", "value": index}
+                for index in range(MAX_DISPLAY_DETAILS)
+            ]
+            + [{"malformed": object()}]
+        ),
         "metrics": {
             **{
                 f"metric_{index}": index
@@ -309,8 +311,9 @@ def test_fallback_preview_uses_bounded_shallow_text() -> None:
         call=call,
         result={
             "custom": object(),
-            "items": ["x" * MAX_DISPLAY_PREVIEW_LENGTH]
-            * (MAX_DISPLAY_DETAILS + 2),
+            "items": (
+                ["x" * MAX_DISPLAY_PREVIEW_LENGTH] * (MAX_DISPLAY_DETAILS + 2)
+            ),
         },
     )
 
