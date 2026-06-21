@@ -34,6 +34,7 @@ from ..tool.graph import (
 from ..tool.graph_settings import GraphToolSettings
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
+from ..tool.mcp import McpToolSet
 from ..tool.memory import MemoryToolSet
 from ..tool.shell import (
     ShellToolSet,
@@ -753,6 +754,7 @@ class OrchestratorLoader:
 
         available_toolsets = [
             MathToolSet(namespace="math"),
+            McpToolSet(namespace="mcp"),
             MemoryToolSet(memory, namespace="memory"),
         ]
         if HAS_GRAPH_DEPENDENCIES:

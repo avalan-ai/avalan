@@ -845,7 +845,7 @@ def _stream_item_data(item: StreamConsumerProjection) -> dict[str, object]:
 
 def _mcp_message(payload: dict[str, object]) -> dict[str, object]:
     params = cast(dict[str, object], payload["params"])
-    return cast(dict[str, object], params["message"])
+    return cast(dict[str, object], params["data"])
 
 
 def _mcp_resource(payload: dict[str, object]) -> dict[str, object]:

@@ -10798,7 +10798,7 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
             _string_response("hi", async_gen=False),
             agent,
             operation,
-            {},
+            {"max_new_tokens": 5, "tool_choice": "mcp.call"},
             agent_id=aid,
             participant_id=pid,
             session_id=sid,
@@ -10813,6 +10813,8 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(child.participant_id, pid)
         self.assertEqual(child.session_id, sid)
         self.assertIs(child.parent, parent)
+        self.assertEqual(child.engine_args["max_new_tokens"], 5)
+        self.assertNotIn("tool_choice", child.engine_args)
 
 
 class OrchestratorResponseParsedTokensTestCase(IsolatedAsyncioTestCase):

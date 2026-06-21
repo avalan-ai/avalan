@@ -120,6 +120,10 @@ async def _from_settings_tool_manager_kwargs(
             side_effect=lambda *, namespace: _named_toolset(namespace),
         ),
         patch(
+            "avalan.agent.loader.McpToolSet",
+            side_effect=lambda *, namespace: _named_toolset(namespace),
+        ),
+        patch(
             "avalan.agent.loader.MemoryToolSet",
             side_effect=lambda _memory, *, namespace: _named_toolset(
                 namespace
@@ -177,6 +181,10 @@ async def _from_file_tool_manager_kwargs(config: str) -> dict[str, Any]:
             patch("avalan.agent.loader.HAS_BROWSER_DEPENDENCIES", False),
             patch(
                 "avalan.agent.loader.MathToolSet",
+                side_effect=lambda *, namespace: _named_toolset(namespace),
+            ),
+            patch(
+                "avalan.agent.loader.McpToolSet",
                 side_effect=lambda *, namespace: _named_toolset(namespace),
             ),
             patch(
@@ -375,6 +383,13 @@ async def _load_shell_agent_tool_result(
                 ),
                 patch(
                     "avalan.agent.loader.MathToolSet",
+                    side_effect=lambda *, namespace: ToolSet(
+                        namespace=namespace,
+                        tools=[],
+                    ),
+                ),
+                patch(
+                    "avalan.agent.loader.McpToolSet",
                     side_effect=lambda *, namespace: ToolSet(
                         namespace=namespace,
                         tools=[],
@@ -2985,7 +3000,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             _toolset_namespaces(kwargs),
-            ["math", "memory", "shell"],
+            ["math", "mcp", "memory", "shell"],
         )
         self.assertIsNone(kwargs["enable_tools"])
 
@@ -3429,6 +3444,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             patch("avalan.agent.loader.BrowserToolSet"),
             patch("avalan.agent.loader.CodeToolSet"),
             patch("avalan.agent.loader.MathToolSet"),
+            patch("avalan.agent.loader.McpToolSet"),
             patch("avalan.agent.loader.MemoryToolSet"),
             patch("avalan.agent.loader.DatabaseToolSet"),
         ):

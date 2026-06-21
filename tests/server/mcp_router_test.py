@@ -738,7 +738,7 @@ class MCPUtilityTestCase(TestCase):
 
         notification = mcp_router._canonical_flow_notification(item)
         params = cast(dict[str, Any], notification["params"])
-        message = cast(dict[str, Any], params["message"])
+        message = cast(dict[str, Any], params["data"])
 
         self.assertEqual(notification["method"], "notifications/message")
         self.assertEqual(params["level"], "info")
@@ -788,10 +788,10 @@ class MCPUtilityTestCase(TestCase):
         )
         message = mcp_router._canonical_tool_notification(delta)
         self.assertEqual(
-            message["params"]["message"]["delta"],
+            message["params"]["data"]["delta"],
             "chunk",
         )
-        self.assertEqual(message["params"]["message"]["toolCallId"], "call")
+        self.assertEqual(message["params"]["data"]["toolCallId"], "call")
 
         metadata_delta = CanonicalStreamItem(
             stream_session_id="s",
@@ -807,11 +807,9 @@ class MCPUtilityTestCase(TestCase):
         metadata_message = mcp_router._canonical_tool_notification(
             metadata_delta
         )
+        self.assertEqual(metadata_message["params"]["data"]["name"], "lookup")
         self.assertEqual(
-            metadata_message["params"]["message"]["name"], "lookup"
-        )
-        self.assertEqual(
-            metadata_message["params"]["message"]["arguments"],
+            metadata_message["params"]["data"]["arguments"],
             {"q": "docs"},
         )
 
@@ -830,7 +828,7 @@ class MCPUtilityTestCase(TestCase):
             metadata_only
         )
         self.assertEqual(
-            metadata_only_message["params"]["message"],
+            metadata_only_message["params"]["data"],
             {
                 "type": "tool.call",
                 "toolCallId": "call",
@@ -1190,15 +1188,53 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                     "method": "notifications/progress",
                     "params": {
                         "progressToken": "progress",
-                        "progress": {
-                            "type": "answer.delta",
-                            "delta": "answer",
-                        },
+                        "progress": item.sequence,
+                        "message": '{"type":"answer.delta","delta":"answer"}',
                     },
                 }
             ],
         )
+        self.assertEqual(
+            loads(notifications[0]["params"]["message"]),
+            {"type": "answer.delta", "delta": "answer"},
+        )
         self.assertEqual(state.accumulator.snapshot().answer_text, "answer")
+
+    async def test_stream_item_notifications_emit_flow_events(self) -> None:
+        state = legacy_fixture_mcp_projection_state()
+        start = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        flow = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.FLOW_EVENT,
+            channel=StreamChannel.FLOW,
+            correlation=StreamItemCorrelation(flow_run_id="flow-1"),
+            metadata={"event_type": "flow_started"},
+        )
+
+        self.assertEqual(
+            await mcp_router._mcp_stream_item_notifications(
+                project_canonical_stream_item(start), state, "progress"
+            ),
+            [],
+        )
+        notifications = await mcp_router._mcp_stream_item_notifications(
+            project_canonical_stream_item(flow), state, "progress"
+        )
+
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(
+            notifications[0]["params"]["data"]["type"], "flow.event"
+        )
 
     async def test_consume_call_request(self) -> None:
         message = {
@@ -1207,6 +1243,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             "method": "tools/call",
             "params": {
                 "name": "run",
+                "_meta": {"progressToken": 7},
                 "arguments": {
                     "input_string": "Hello",
                 },
@@ -1221,7 +1258,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(request_id, "call-1")
         self.assertEqual(req_model.input_string, "Hello")
-        self.assertTrue(token)
+        self.assertEqual(token, 7)
         remaining = []
         async for message in mcp_router._iter_jsonrpc_messages(request):
             remaining.append(message)
@@ -1416,6 +1453,74 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         summary = result_messages[-1]["result"]["structuredContent"]
         self.assertEqual(summary["model"], "gpt")
 
+    async def test_stream_response_notifications_validate_as_mcp_sdk_types(
+        self,
+    ) -> None:
+        from mcp.types import ServerNotification
+
+        items = canonical_fixture_mcp_tool_execution_items(
+            name="shell.run",
+            result={"ok": True},
+            outputs=(("stdout", "line\n"),),
+        )
+        items.extend(
+            [
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=5,
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    channel=StreamChannel.USAGE,
+                    usage={},
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=6,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ]
+        )
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        messages: list[dict[str, Any]] = []
+
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token=1,
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            messages.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        notifications = [
+            message for message in messages if "method" in message
+        ]
+        self.assertTrue(notifications)
+        for notification in notifications:
+            ServerNotification.model_validate(notification)
+
     async def test_stream_response_yields_item_notification_payload(
         self,
     ) -> None:
@@ -1512,9 +1617,10 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             if message.get("method") == "notifications/progress"
         ]
         self.assertEqual(
-            progress_messages[0]["params"]["progress"],
+            loads(progress_messages[0]["params"]["message"]),
             {"type": "answer.delta", "delta": "hello"},
         )
+        self.assertEqual(progress_messages[0]["params"]["progress"], 1)
         self.assertEqual(
             messages[-1]["result"]["content"],
             [{"type": "text", "text": "hello"}],
@@ -1927,9 +2033,23 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertIn('"delta": "plan"', notification_text)
         self.assertIn('"type": "tool.input_delta"', notification_text)
         self.assertIn('"toolCallId": "call-1"', notification_text)
-        stream_text = "".join(chunks)
-        self.assertIn('"type":"answer.delta"', stream_text)
-        self.assertEqual(stream_text.count('"type":"answer.completed"'), 1)
+        progress_payloads = [
+            loads(msg["params"]["message"])
+            for msg in messages
+            if msg.get("method") == "notifications/progress"
+        ]
+        self.assertTrue(
+            any(
+                payload == {"type": "answer.delta", "delta": "answer"}
+                for payload in progress_payloads
+            )
+        )
+        self.assertEqual(
+            [payload.get("type") for payload in progress_payloads].count(
+                "answer.completed"
+            ),
+            1,
+        )
         result_messages = [msg for msg in messages if msg.get("result")]
         summary = result_messages[-1]["result"]["structuredContent"]
         self.assertEqual(summary["reasoning"], "plan")
@@ -2282,7 +2402,8 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(
             any(
                 item.get("method") == "notifications/progress"
-                and item["params"]["progress"]["type"] == "stream.errored"
+                and loads(item["params"]["message"])["type"]
+                == "stream.errored"
                 for item in messages
             )
         )
@@ -2450,7 +2571,8 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(
             any(
                 item.get("method") == "notifications/progress"
-                and item["params"]["progress"]["type"] == "stream.cancelled"
+                and loads(item["params"]["message"])["type"]
+                == "stream.cancelled"
                 for item in messages
             )
         )
@@ -3397,7 +3519,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             item
             for item in messages
             if item.get("method") == "notifications/message"
-            and item["params"]["message"]["type"] == "tool.result"
+            and item["params"]["data"]["type"] == "tool.result"
         ]
         result = [item for item in messages if item.get("result")][-1]
 
@@ -3408,7 +3530,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             tool_output,
         )
         self.assertEqual(
-            tool_result_messages[-1]["params"]["message"]["resultDelta"],
+            tool_result_messages[-1]["params"]["data"]["resultDelta"],
             tool_result,
         )
         self.assertEqual(
@@ -5492,6 +5614,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             "method": "tools/call",
             "params": {
                 "name": "run",
+                "_meta": {"progressToken": 7},
                 "arguments": {
                     "input_string": "Hello",
                 },
@@ -5510,7 +5633,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(rid, "call-2")
         self.assertEqual(req_model.input_string, "Hello")
-        self.assertTrue(token)
+        self.assertEqual(token, 7)
 
     async def test_mcp_tool_result_projects_through_canonical_items(
         self,
@@ -5629,7 +5752,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertIn("c2", state.tool_summaries)
         summary = state.tool_summaries["c2"]
         self.assertEqual(summary["result"], '{"payload":"value"}')
-        message = notifications[-1]["params"]["message"]
+        message = notifications[-1]["params"]["data"]
         self.assertEqual(message["resultDelta"], '{"payload":"value"}')
 
     async def test_mcp_tool_diagnostic_projects_canonical_item(
@@ -5670,7 +5793,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(state.accumulator.snapshot().diagnostics), 1)
         summary = state.tool_summaries["c-d"]
         self.assertEqual(summary["diagnostic"]["code"], "tool.unknown")
-        message = notifications[-1]["params"]["message"]
+        message = notifications[-1]["params"]["data"]
         self.assertEqual(message["type"], "tool.diagnostic")
         self.assertEqual(message["toolCallId"], "c-d")
         self.assertEqual(message["diagnostic"]["message"], "Unknown tool.")
@@ -6419,7 +6542,7 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             if isinstance(item, dict)
             and item.get("method") == "notifications/message"
         ]
-        self.assertTrue(any("error" in e["params"]["message"] for e in errors))
+        self.assertTrue(any("error" in e["params"]["data"] for e in errors))
         self.assertFalse(any("error" in item for item in payloads))
 
     async def test_stream_mcp_response_handles_tool_diagnostic(self) -> None:
@@ -6469,11 +6592,11 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             for item in payloads
             if isinstance(item, dict)
             and item.get("method") == "notifications/message"
-            and item["params"]["message"].get("type") == "tool.diagnostic"
+            and item["params"]["data"].get("type") == "tool.diagnostic"
         ]
         self.assertEqual(len(diagnostics), 1)
         self.assertEqual(
-            diagnostics[0]["params"]["message"]["diagnostic"]["code"],
+            diagnostics[0]["params"]["data"]["diagnostic"]["code"],
             "tool.unknown",
         )
         self.assertFalse(any("error" in item for item in payloads))

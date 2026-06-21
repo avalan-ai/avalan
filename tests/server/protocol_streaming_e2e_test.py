@@ -596,7 +596,7 @@ async def _assert_simple_mcp_projection(
         )
 
     progress = [
-        payload["params"]["progress"]
+        _mcp_progress(payload)
         for payload in payloads
         if payload.get("method") == "notifications/progress"
     ]
@@ -844,7 +844,7 @@ async def _assert_mcp_projection(
 
     assert orchestrator.synced is True
     progress = [
-        payload["params"]["progress"]
+        _mcp_progress(payload)
         for payload in payloads
         if payload.get("method") == "notifications/progress"
     ]
@@ -856,7 +856,7 @@ async def _assert_mcp_projection(
         for item in progress
     )
     messages = [
-        payload["params"]["message"]
+        payload["params"]["data"]
         for payload in payloads
         if payload.get("method") == "notifications/message"
     ]
@@ -1027,12 +1027,12 @@ async def _assert_a2a_projection(
 
 def _mcp_message(payload: dict[str, object]) -> dict[str, object]:
     params = cast(dict[str, object], payload["params"])
-    return cast(dict[str, object], params["message"])
+    return cast(dict[str, object], params["data"])
 
 
 def _mcp_progress(payload: dict[str, object]) -> dict[str, object]:
     params = cast(dict[str, object], payload["params"])
-    return cast(dict[str, object], params["progress"])
+    return cast(dict[str, object], loads(cast(str, params["message"])))
 
 
 def _mcp_resource(payload: dict[str, object]) -> dict[str, object]:

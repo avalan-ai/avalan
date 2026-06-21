@@ -1236,6 +1236,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             tool_events=2,
             tool=None,
             tool_format=None,
+            tool_choice=None,
             run_max_new_tokens=100,
             run_skip_special_tokens=False,
             engine_uri=None,
@@ -3444,6 +3445,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.args.run_top_p = 0.9
         self.args.run_top_k = 5
         self.args.run_max_new_tokens = 42
+        self.args.tool_choice = "mcp.call"
 
         with (
             patch.object(agent_cmds, "get_input", return_value=None),
@@ -3474,6 +3476,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.call_options["top_p"], 0.9)
         self.assertEqual(settings.call_options["top_k"], 5)
         self.assertEqual(settings.call_options["max_new_tokens"], 42)
+        self.assertEqual(settings.call_options["tool_choice"], "mcp.call")
 
     async def test_run_engine_uri_use_cache_cli(self):
         self.args.specifications_file = None
