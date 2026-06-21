@@ -442,7 +442,7 @@ class BasicStreamPresenter:
     ) -> RenderableType | None:
         return _basic_tool_frame(
             request,
-            completed_model_lines=self._completed_model_lines(request),
+            completed_model_entries=self._completed_model_entries(request),
         )
 
     def _stderr_tool_frame(
@@ -452,7 +452,7 @@ class BasicStreamPresenter:
         entries = _basic_tool_entries(
             request,
             include_active=True,
-            completed_model_lines=self._completed_model_lines(request),
+            completed_model_entries=self._completed_model_entries(request),
         )
         new_lines: list[str] = []
         for entry in entries:
@@ -481,10 +481,10 @@ class BasicStreamPresenter:
             or visible_answer_text == self._last_visible_answer_text
         ):
             return None
-        lines = self._completed_model_lines(request)
-        if not lines:
+        entries = self._completed_model_entries(request)
+        if not entries:
             return None
-        renderable = _basic_frame_text(lines)
+        renderable = _basic_frame_text(tuple(entry.line for entry in entries))
         return self._role_frame("tools", renderable)
 
     def _needs_answer_separator(
@@ -526,10 +526,10 @@ class BasicStreamPresenter:
         self._visible_roles.remove(role)
         return CliStreamRenderableFrame(renderable="", role=role)
 
-    def _completed_model_lines(
+    def _completed_model_entries(
         self,
         request: CliStreamPresenterRequest,
-    ) -> tuple[str, ...]:
+    ) -> tuple[_BasicToolLineEntry, ...]:
         active: dict[str, tuple[float | None, float | None]] = {}
         for continuation in request.snapshot.active_model_continuations:
             active[continuation.model_continuation_id] = (
@@ -537,7 +537,7 @@ class BasicStreamPresenter:
                 continuation.updated_at,
             )
 
-        completed: list[str] = []
+        completed: list[_BasicToolLineEntry] = []
         for (
             continuation_id,
             timestamps,
@@ -554,9 +554,12 @@ class BasicStreamPresenter:
                 else perf_counter() if timestamps[0] is not None else None
             )
             completed.append(
-                _basic_completed_model_line(
-                    started_at=timestamps[0],
-                    updated_at=finished_at,
+                _BasicToolLineEntry(
+                    key=key,
+                    line=_basic_completed_model_line(
+                        started_at=timestamps[0],
+                        updated_at=finished_at,
+                    ),
                 )
             )
         self._active_model_continuations = active
@@ -582,7 +585,7 @@ def _basic_terminal_completed(request: CliStreamPresenterRequest) -> bool:
 def _basic_tool_frame(
     request: CliStreamPresenterRequest,
     *,
-    completed_model_lines: tuple[str, ...] = (),
+    completed_model_entries: tuple[_BasicToolLineEntry, ...] = (),
 ) -> RenderableType | None:
     if not request.display_config.show_tools:
         return None
@@ -591,7 +594,7 @@ def _basic_tool_frame(
         entry.line
         for entry in _basic_tool_entries(request, include_active=False)
     ]
-    history_lines.extend(completed_model_lines)
+    history_lines.extend(entry.line for entry in completed_model_entries)
     active_model_renderables = [
         _basic_active_model_renderable(
             started_at=continuation.started_at,
@@ -634,7 +637,7 @@ def _basic_tool_entries(
     request: CliStreamPresenterRequest,
     *,
     include_active: bool,
-    completed_model_lines: tuple[str, ...] = (),
+    completed_model_entries: tuple[_BasicToolLineEntry, ...] = (),
 ) -> tuple[_BasicToolLineEntry, ...]:
     if not request.display_config.show_tools:
         return ()
@@ -701,13 +704,7 @@ def _basic_tool_entries(
             if _basic_terminal_empty_answer(request)
             else []
         ),
-        *(
-            _BasicToolLineEntry(
-                key=f"model-completed:{index}",
-                line=line,
-            )
-            for index, line in enumerate(completed_model_lines)
-        ),
+        *completed_model_entries,
     ]
     limit = request.display_config.display_tools_events
     if limit is not None:

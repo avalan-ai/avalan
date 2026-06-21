@@ -1583,6 +1583,60 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Executed tool database.run: []", second_text)
         self.assertNotIn("Executed tool calc", second_text)
 
+    async def test_stderr_model_completion_keys_are_stable(self) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_tools_events=None,
+            interactive=False,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-1",
+            started_at=1.0,
+        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+        builder.finish_model_continuation(
+            model_continuation_id="continuation-1",
+        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            first_completed = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-2",
+            started_at=4.0,
+        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=5.0):
+            await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+        builder.finish_model_continuation(
+            model_continuation_id="continuation-2",
+        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=6.0):
+            second_completed = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+
+        self.assertIn(
+            "Thought for 1s.",
+            _render_text(_frames(first_completed)[0].renderable),
+        )
+        self.assertIn(
+            "Thought for 2s.",
+            _render_text(_frames(second_completed)[0].renderable),
+        )
+
     def test_projection_terminal_markup_renders_status_and_scalars(
         self,
     ) -> None:
