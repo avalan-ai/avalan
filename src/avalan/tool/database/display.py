@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from re import DOTALL, IGNORECASE
 from re import compile as compile_pattern
 from typing import Any, TypeAlias, TypeGuard, TypeVar
+from urllib.parse import unquote, urlsplit
 
 _SQL_DISPLAY_LIMIT = 320
 _SQL_LITERAL_LIMIT = 48
@@ -194,6 +195,9 @@ def _project_call(
                 truncated=sql.truncated,
             )
         )
+        command = _sql_command(sql.value)
+        if command:
+            details.append(_detail("sql_command", command))
         redacted = redacted or sql.redacted
         truncated = truncated or sql.truncated
 
@@ -272,7 +276,7 @@ def _project_result(
             [
                 _detail("operation", operation),
                 *_settings_details(settings, dialect),
-                *_result_details(operation, result),
+                *_result_details(operation, result, call),
             ]
         ),
         metrics=_result_metrics(operation, result),
@@ -364,6 +368,9 @@ def _settings_details(
     ]
     if dialect:
         details.insert(0, _detail("dialect", dialect))
+    database_name = _database_name_from_dsn(settings.dsn)
+    if database_name:
+        details.insert(1 if dialect else 0, _detail("database", database_name))
     return tuple(details)
 
 
@@ -537,9 +544,28 @@ def _result_severity(operation: str, result: object) -> str | None:
 
 
 def _result_details(
-    operation: str, result: object
+    operation: str, result: object, call: ToolCall
 ) -> tuple[ToolDisplayDetail, ...]:
     details: list[ToolDisplayDetail] = []
+    arguments = call.arguments if isinstance(call.arguments, dict) else {}
+    if operation in {"plan", "run"}:
+        sql = _call_sql(operation, arguments)
+        if sql is not None:
+            details.append(
+                _detail(
+                    "sql",
+                    sql.value,
+                    redacted=sql.redacted,
+                    truncated=sql.truncated,
+                )
+            )
+            command = _sql_command(sql.value)
+            if command:
+                details.append(_detail("sql_command", command))
+    if operation == "inspect":
+        tables = _table_names(arguments) or _result_table_names(result)
+        if tables:
+            details.append(_detail("tables", _join_limited(tables)))
     if operation == "plan" and isinstance(result, QueryPlan):
         details.append(_detail("plan_dialect", result.dialect))
         details.append(_detail("steps", len(result.steps)))
@@ -561,6 +587,33 @@ def _result_details(
         if blocking:
             details.append(_detail("blocking_locks", blocking))
     return tuple(details)
+
+
+def _result_table_names(result: object) -> tuple[str, ...]:
+    if not _is_table_sequence(result):
+        return ()
+    return tuple(table.name for table in result if table.name)
+
+
+def _database_name_from_dsn(dsn: str) -> str | None:
+    assert isinstance(dsn, str)
+    source = dsn.strip()
+    if not source:
+        return None
+
+    if "://" in source:
+        parsed = urlsplit(source)
+        path = unquote(parsed.path or "").strip("/")
+        if not path:
+            return None
+        if "/" in path:
+            return path.rsplit("/", 1)[-1] or None
+        return path
+
+    path = source.split("?", 1)[0].rstrip("/")
+    if "/" not in path:
+        return None
+    return unquote(path.rsplit("/", 1)[-1]) or None
 
 
 def _result_metrics(
@@ -764,6 +817,13 @@ def _safe_sql_text(sql: str) -> _DisplayText:
     return _DisplayText(
         value=normalized, redacted=redacted, truncated=truncated
     )
+
+
+def _sql_command(sql: str) -> str | None:
+    match = _SQL_VERB_PATTERN.search(sql)
+    if not match:
+        return None
+    return match.group(1).upper()
 
 
 def _has_sensitive_sql_context(sql: str) -> bool:

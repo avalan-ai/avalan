@@ -35,6 +35,7 @@ from rich.spinner import Spinner
 from rich.text import Text
 
 _BASIC_SUMMARY_LIMIT = 160
+_BASIC_DATABASE_SQL_PREVIEW_LIMIT = 72
 _BASIC_TOOL_RUNNING_THRESHOLD_SECONDS = 1.0
 _BASIC_TOOL_DYNAMIC_MAX_SECONDS = 3600.0
 _BASIC_TOOL_RUNNING_STYLE = "cyan"
@@ -1203,6 +1204,14 @@ def _basic_database_phrase_markup(
     verb = verbs.get(operation)
     if not verb:
         return None
+    phrase = _basic_database_specific_phrase_markup(
+        operation,
+        projection,
+        completed=completed,
+        verb=verb,
+    )
+    if phrase:
+        return phrase
     return " ".join(
         part
         for part in (
@@ -1232,6 +1241,131 @@ def _basic_database_operation(
     if projection.action == "list" and projection.target == "tasks":
         return "tasks"
     return _BASIC_DATABASE_ACTION_OPERATIONS.get(projection.action)
+
+
+def _basic_database_specific_phrase_markup(
+    operation: str,
+    projection: ToolDisplayProjection,
+    *,
+    completed: bool,
+    verb: str,
+) -> str | None:
+    if operation == "run":
+        return _basic_database_run_phrase_markup(
+            projection,
+            completed=completed,
+            verb=verb,
+        )
+    if operation == "inspect":
+        return _basic_database_inspect_phrase_markup(projection, verb=verb)
+    if operation == "tables":
+        return _basic_database_tables_phrase_markup(
+            projection,
+            completed=completed,
+            verb=verb,
+        )
+    return None
+
+
+def _basic_database_run_phrase_markup(
+    projection: ToolDisplayProjection,
+    *,
+    completed: bool,
+    verb: str,
+) -> str:
+    if completed and _basic_database_sql_verb(projection) == "SELECT":
+        return _basic_database_select_phrase_markup(projection)
+
+    phrase = " ".join(
+        part
+        for part in (
+            _basic_database_bold_markup(f"{verb} SQL"),
+            _basic_database_dim_markup("statement"),
+            _basic_database_sql_preview_markup(projection),
+            _basic_database_scope_markup(projection),
+        )
+        if part
+    )
+    row_count = _basic_projection_integer_value(projection, "rows")
+    if completed and row_count is not None:
+        rows = _basic_count_label(row_count, "row")
+        phrase = f"{phrase}: {_basic_database_bold_markup(rows)}"
+    return phrase
+
+
+def _basic_database_select_phrase_markup(
+    projection: ToolDisplayProjection,
+) -> str:
+    phrase = " ".join(
+        part
+        for part in (
+            _basic_database_bold_markup("Executed query"),
+            _basic_database_sql_preview_markup(projection),
+            _basic_database_scope_markup(projection),
+        )
+        if part
+    )
+    row_count = _basic_projection_integer_value(projection, "rows")
+    if row_count == 0:
+        return f"{phrase}: {_basic_markup_summary('no results')}."
+    if row_count is not None:
+        rows = _basic_count_label(row_count, "row")
+        return (
+            f"{phrase}: {_basic_database_bold_markup(rows)} "
+            f"{_basic_markup_summary('found')}."
+        )
+    return phrase
+
+
+def _basic_database_inspect_phrase_markup(
+    projection: ToolDisplayProjection,
+    *,
+    verb: str,
+) -> str:
+    table_names = _basic_database_table_names(projection)
+    table_count = _basic_database_table_count(projection, table_names)
+    subject = (
+        f"{verb} {_basic_count_label(table_count, 'table')}"
+        if table_count is not None
+        else f"{verb} tables"
+    )
+    table_phrase = _basic_database_bold_markup(subject)
+    if table_names:
+        table_phrase = f"{table_phrase}: {_basic_markup_summary(table_names)}"
+    return " ".join(
+        part
+        for part in (
+            table_phrase,
+            _basic_database_scope_markup(projection, preposition="from"),
+        )
+        if part
+    )
+
+
+def _basic_database_tables_phrase_markup(
+    projection: ToolDisplayProjection,
+    *,
+    completed: bool,
+    verb: str,
+) -> str:
+    table_count = _basic_projection_integer_value(projection, "tables")
+    if completed and table_count is not None:
+        subject = _basic_database_bold_markup(
+            f"{verb} {_basic_count_label(table_count, 'table')}"
+        )
+    else:
+        subject = (
+            f"{_basic_database_bold_markup(verb)} "
+            f"{_basic_database_dim_markup('tables')}"
+        )
+    return " ".join(
+        part
+        for part in (
+            subject,
+            _basic_database_scope_markup(projection),
+        )
+        if part
+    )
 
 
 def _basic_database_target_markup(
@@ -1265,15 +1399,28 @@ def _basic_database_statement_markup(
     )
 
 
+def _basic_database_sql_preview_markup(
+    projection: ToolDisplayProjection,
+) -> str | None:
+    sql = _basic_projection_detail_value(projection, "sql")
+    if not sql:
+        return None
+    if len(sql) > _BASIC_DATABASE_SQL_PREVIEW_LIMIT:
+        sql = f"{sql[: _BASIC_DATABASE_SQL_PREVIEW_LIMIT - 4].rstrip()} ..."
+    return _basic_markup_summary(sql)
+
+
 def _basic_database_scope_markup(
     projection: ToolDisplayProjection,
+    *,
+    preposition: str = "in",
 ) -> str:
     database_name = _basic_database_identity(projection)
     if not database_name:
-        return _basic_database_dim_markup("in database")
+        return _basic_database_dim_markup(f"{preposition} database")
     return (
-        f"{_basic_database_dim_markup('in database')} "
-        f"{_basic_database_bold_markup(database_name)}"
+        f"{_basic_database_dim_markup(f'{preposition} database')} "
+        f"{_basic_markup_summary(database_name)}"
     )
 
 
@@ -1294,6 +1441,9 @@ def _basic_database_identity(
 def _basic_database_sql_verb(
     projection: ToolDisplayProjection,
 ) -> str | None:
+    sql_command = _basic_projection_detail_value(projection, "sql_command")
+    if sql_command:
+        return sql_command.upper()
     sql = None
     if projection.preview and projection.preview.label == "sql":
         sql = projection.preview.content
@@ -1303,6 +1453,36 @@ def _basic_database_sql_verb(
         return None
     first = sql.lstrip().split(maxsplit=1)[0].strip('([`"').upper()
     return first or None
+
+
+def _basic_database_table_names(
+    projection: ToolDisplayProjection,
+) -> str | None:
+    tables = _basic_projection_detail_value(projection, "tables")
+    if tables:
+        return tables
+    target = _basic_summary(projection.target)
+    if not target or target in {"database", "tables"}:
+        return None
+    return target
+
+
+def _basic_database_table_count(
+    projection: ToolDisplayProjection,
+    table_names: str | None,
+) -> int | None:
+    count = _basic_projection_integer_value(projection, "tables")
+    if count is not None:
+        return count
+    if not table_names:
+        return None
+    return len(
+        [
+            table_name
+            for table_name in table_names.split(", ")
+            if table_name and table_name != "..."
+        ]
+    )
 
 
 def _basic_projection_detail_value(
@@ -1316,6 +1496,38 @@ def _basic_projection_detail_value(
             return None
         return _basic_summary(str(detail.value))
     return None
+
+
+def _basic_projection_integer_value(
+    projection: ToolDisplayProjection,
+    label: str,
+) -> int | None:
+    metric = projection.metrics.get(label)
+    value = _basic_integer_value(metric)
+    if value is not None:
+        return value
+    for detail in projection.details:
+        if detail.label != label or detail.redacted:
+            continue
+        value = _basic_integer_value(detail.value)
+        if value is not None:
+            return value
+    return None
+
+
+def _basic_integer_value(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _basic_count_label(value: int, singular: str) -> str:
+    suffix = "" if value == 1 else "s"
+    return f"{value} {singular}{suffix}"
 
 
 def _basic_database_bold_markup(value: str) -> str:

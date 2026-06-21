@@ -772,12 +772,38 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
                 ToolDisplayDetail(label="database", value="analytics"),
             ),
         )
+        completed_tables_projection = ToolDisplayProjection(
+            action="list",
+            label="database.tables",
+            target="tables",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="tables"),
+                ToolDisplayDetail(label="database", value="analytics"),
+                ToolDisplayDetail(label="tables", value=3),
+            ),
+        )
         inspect_projection = ToolDisplayProjection(
             action="inspect",
             label="database.inspect",
             target="users, orders",
             scope="database",
-            details=(ToolDisplayDetail(label="operation", value="inspect"),),
+            details=(
+                ToolDisplayDetail(label="operation", value="inspect"),
+                ToolDisplayDetail(label="database", value="claims"),
+            ),
+        )
+        unknown_inspect_projection = ToolDisplayProjection(
+            action="inspect",
+            label="database.inspect",
+            target="tables",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="inspect"),
+                ToolDisplayDetail(label="database", value="claims"),
+            ),
         )
         run_projection = ToolDisplayProjection(
             action="query",
@@ -787,12 +813,132 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             status="completed",
             details=(
                 ToolDisplayDetail(label="operation", value="run"),
+                ToolDisplayDetail(label="database", value="claims"),
                 ToolDisplayDetail(label="sql", value="SELECT * FROM users"),
             ),
+            metrics={"rows": 2},
             preview=ToolDisplayPreview(
                 label="sql",
                 content="SELECT * FROM users",
             ),
+        )
+        long_select = (
+            "SELECT field_1, field_2, field_3, field_4, field_5, "
+            "field_6 FROM synced_claims WHERE organization_id = 42"
+        )
+        long_select_projection = ToolDisplayProjection(
+            action="query",
+            label="database.run",
+            target="SQL statement",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="run"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(label="sql", value=long_select),
+            ),
+            metrics={"rows": 5},
+        )
+        empty_select_projection = ToolDisplayProjection(
+            action="query",
+            label="database.run",
+            target="SQL statement",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="run"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(
+                    label="sql",
+                    value=(
+                        "SELECT id FROM batches "
+                        "WHERE tag = 'reese-20260618'"
+                    ),
+                ),
+            ),
+            metrics={"rows": 0},
+        )
+        select_without_count_projection = ToolDisplayProjection(
+            action="query",
+            label="database.run",
+            target="SQL statement",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="run"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(label="sql", value="SELECT id FROM batches"),
+            ),
+        )
+        plan_projection = ToolDisplayProjection(
+            action="explain",
+            label="database.plan",
+            target="SQL statement",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="plan"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(label="sql_command", value="select"),
+            ),
+        )
+        inspect_detail_projection = ToolDisplayProjection(
+            action="inspect",
+            label="database.inspect",
+            target="tables",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="inspect"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(label="tables", value="users, orders"),
+            ),
+            metrics={"tables": 2},
+        )
+        update_projection = ToolDisplayProjection(
+            action="query",
+            label="database.run",
+            target="SQL statement",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="run"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(
+                    label="sql", value="UPDATE users SET active = TRUE"
+                ),
+            ),
+            metrics={"rows": 0},
+        )
+        float_rows_projection = ToolDisplayProjection(
+            action="query",
+            label="database.run",
+            target="SQL statement",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="run"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(
+                    label="sql", value="UPDATE users SET active = TRUE"
+                ),
+            ),
+            metrics={"rows": 2.0},
+        )
+        bool_rows_projection = ToolDisplayProjection(
+            action="query",
+            label="database.run",
+            target="SQL statement",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="run"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(
+                    label="sql", value="UPDATE users SET active = TRUE"
+                ),
+            ),
+            metrics={"rows": True},
         )
 
         active_tables = _basic_active_tool_line(
@@ -801,11 +947,23 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             updated_at=None,
             display_projection=tables_projection,
         )
+        completed_tables = _basic_completed_tool_line(
+            "database.tables",
+            "completed",
+            None,
+            display_projection=completed_tables_projection,
+        )
         running_inspect = _basic_active_tool_line(
             "database.inspect",
             started_at=1.0,
             updated_at=3.0,
             display_projection=inspect_projection,
+        )
+        completed_unknown_inspect = _basic_completed_tool_line(
+            "database.inspect",
+            "completed",
+            None,
+            display_projection=unknown_inspect_projection,
         )
         completed_run = _basic_completed_tool_line(
             "database.run",
@@ -813,22 +971,117 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             0.019,
             display_projection=run_projection,
         )
+        completed_long_select = _basic_completed_tool_line(
+            "database.run",
+            "completed",
+            None,
+            display_projection=long_select_projection,
+        )
+        completed_empty_select = _basic_completed_tool_line(
+            "database.run",
+            "completed",
+            None,
+            display_projection=empty_select_projection,
+        )
+        completed_select_without_count = _basic_completed_tool_line(
+            "database.run",
+            "completed",
+            None,
+            display_projection=select_without_count_projection,
+        )
+        completed_plan = _basic_completed_tool_line(
+            "database.plan",
+            "completed",
+            None,
+            display_projection=plan_projection,
+        )
+        completed_inspect_detail = _basic_completed_tool_line(
+            "database.inspect",
+            "completed",
+            None,
+            display_projection=inspect_detail_projection,
+        )
+        completed_update = _basic_completed_tool_line(
+            "database.run",
+            "completed",
+            None,
+            display_projection=update_projection,
+        )
+        completed_float_rows = _basic_completed_tool_line(
+            "database.run",
+            "completed",
+            None,
+            display_projection=float_rows_projection,
+        )
+        completed_bool_rows = _basic_completed_tool_line(
+            "database.run",
+            "completed",
+            None,
+            display_projection=bool_rows_projection,
+        )
 
         self.assertIn(
             "[bold]Listing[/bold] [dim]tables[/dim] "
-            "[dim]in database[/dim] [bold]analytics[/bold]...",
+            "[dim]in database[/dim] analytics...",
             active_tables,
         )
         self.assertIn(
-            "[bold]Inspecting[/bold] [dim]tables[/dim] "
-            "[bold]users, orders[/bold] [dim]in database[/dim] for 2s.",
+            "[bold]Listed 3 tables[/bold] [dim]in database[/dim] analytics",
+            completed_tables,
+        )
+        self.assertIn(
+            "[bold]Inspecting 2 tables[/bold]: users, orders "
+            "[dim]from database[/dim] claims for 2s.",
             running_inspect,
         )
         self.assertIn(
-            "[bold]Ran[/bold] [bold]SELECT[/bold] [dim]statement[/dim] "
-            "[dim]in database[/dim] [bold]· 19ms[/bold]",
+            "[bold]Inspected tables[/bold] [dim]from database[/dim] claims",
+            completed_unknown_inspect,
+        )
+        self.assertIn(
+            "[bold]Executed query[/bold] SELECT * FROM users "
+            "[dim]in database[/dim] claims: [bold]2 rows[/bold] found. "
+            "[bold]· 19ms[/bold]",
             completed_run,
         )
+        self.assertIn(
+            "[bold]Executed query[/bold] SELECT field_1", completed_long_select
+        )
+        self.assertIn(
+            " ... [dim]in database[/dim] claims", completed_long_select
+        )
+        self.assertIn("[bold]5 rows[/bold] found.", completed_long_select)
+        self.assertIn(
+            "[bold]Executed query[/bold] SELECT id FROM batches "
+            "WHERE tag = 'reese-20260618' "
+            "[dim]in database[/dim] claims: no results.",
+            completed_empty_select,
+        )
+        self.assertNotIn("[bold]no results[/bold]", completed_empty_select)
+        self.assertIn(
+            "[bold]Executed query[/bold] SELECT id FROM batches "
+            "[dim]in database[/dim] claims",
+            completed_select_without_count,
+        )
+        self.assertNotIn("found.", completed_select_without_count)
+        self.assertIn(
+            "[bold]Explained[/bold] [bold]SELECT[/bold] [dim]statement[/dim] "
+            "[dim]in database[/dim] claims",
+            completed_plan,
+        )
+        self.assertIn(
+            "[bold]Inspected 2 tables[/bold]: users, orders "
+            "[dim]from database[/dim] claims",
+            completed_inspect_detail,
+        )
+        self.assertIn(
+            "[bold]Ran SQL[/bold] [dim]statement[/dim] "
+            "UPDATE users SET active = TRUE [dim]in database[/dim] claims: "
+            "[bold]0 rows[/bold]",
+            completed_update,
+        )
+        self.assertIn("[bold]2 rows[/bold]", completed_float_rows)
+        self.assertNotIn("True rows", completed_bool_rows)
 
     def test_database_projection_lines_cover_operation_variants(self) -> None:
         cases = (
@@ -1154,7 +1407,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         completed_text = _render_text(_frames(completed_items)[0].renderable)
         completed_compact = " ".join(completed_text.split())
         self.assertIn(
-            "Inspected tables [users] in database · 1.2s",
+            "Inspected 1 table: [users] from database · 1.2s",
             completed_compact,
         )
         self.assertNotIn("Executed tool", completed_compact)
@@ -1201,7 +1454,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
 
         text = _render_text(_frames(items)[0].renderable)
         compact_text = " ".join(text.split())
-        self.assertIn("Inspected tables " + ("x" * 20), compact_text)
+        self.assertIn("Inspected 1 table: " + ("x" * 20), compact_text)
         self.assertIn("...", text)
         self.assertNotIn('"rows": ["raw"]', text)
 
