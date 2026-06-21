@@ -855,8 +855,8 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         _assert_answer_clean(self, _console_print_text(console, end=None))
         live_text = _live_text(live)
         self.assertIn("Executed tool calculate", live_text)
-        self.assertIn("Calculation completed", live_text)
-        self.assertIn("details: result=25", live_text)
+        self.assertNotIn("Calculation completed", live_text)
+        self.assertNotIn("details: result=25", live_text)
 
     async def test_cli_run_math_tool_basic_display_tools_shows_progress(
         self,
@@ -945,10 +945,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Starting tool call math.calculator", live_text)
         self.assertIn("Running tool call math.calculator", live_text)
         self.assertIn("Executed tool finish math.calculator", live_text)
-        self.assertIn(
-            "details: expression=(4 + 6) * 5 / 2",
-            live_text,
-        )
+        self.assertNotIn("details: expression=(4 + 6) * 5 / 2", live_text)
 
     async def test_cli_run_math_tool_basic_noninteractive_uses_stderr(
         self,
@@ -1021,8 +1018,8 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         _assert_answer_clean(self, _console_print_text(console, end=None))
         diagnostics = diagnostic_output.getvalue()
         self.assertIn("Executed tool calculate", diagnostics)
-        self.assertIn("Calculation completed", diagnostics)
-        self.assertIn("details: result=25", diagnostics)
+        self.assertNotIn("Calculation completed", diagnostics)
+        self.assertNotIn("details: result=25", diagnostics)
 
     async def test_cli_run_math_tool_basic_quiet_ignores_display_flags(
         self,

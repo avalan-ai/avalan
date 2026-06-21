@@ -104,6 +104,7 @@ _TOOL_CALL_LIFECYCLE_KINDS = frozenset(
     }
 )
 _INVALID_TOOL_CALL_ARGUMENTS = object()
+DEFAULT_MAXIMUM_TOOL_CYCLES = 24
 
 
 class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
@@ -112,7 +113,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _LEGACY_STREAM_ERROR = (
         "unsupported legacy orchestrator response stream item"
     )
-    _MAXIMUM_TOOL_CYCLES = 8
+    DEFAULT_MAXIMUM_TOOL_CYCLES = DEFAULT_MAXIMUM_TOOL_CYCLES
     _MAXIMUM_CONSECUTIVE_NON_EXECUTED_CYCLES = 2
     _MAXIMUM_STAGING_QUEUE_ITEMS = 4096
     _CANCELLATION_POLL_INTERVAL_SECONDS = 0.01
@@ -169,6 +170,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _active_model_continuation_id: str | None
     _response_drained: bool
     _pending_tool_batch_task: Task[list[_ToolExecutionOutcome]] | None
+    _maximum_tool_cycles: int
 
     def __init__(
         self,
@@ -188,8 +190,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             Callable[[ToolCall], _ToolConfirmationAction] | None
         ) = None,
         enable_tool_parsing: bool = True,
+        maximum_tool_cycles: int = DEFAULT_MAXIMUM_TOOL_CYCLES,
     ) -> None:
         assert input and response and engine_agent and operation
+        assert (
+            type(maximum_tool_cycles) is int and maximum_tool_cycles > 0
+        ), "maximum_tool_cycles must be a positive integer"
         self._input = input
         self._response = response
         self._engine_agent = engine_agent
@@ -252,6 +258,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._active_model_continuation_id = None
         self._response_drained = False
         self._pending_tool_batch_task = None
+        self._maximum_tool_cycles = maximum_tool_cycles
 
     @property
     def input_token_count(self) -> int:
@@ -2377,7 +2384,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             )
             return False
 
-        if self._tool_cycle_count >= self._MAXIMUM_TOOL_CYCLES:
+        if self._tool_cycle_count >= self._maximum_tool_cycles:
             self._append_canonical_guard_diagnostic(
                 code="orchestrator.tool_cycle.limit_exceeded",
                 message="Tool cycle stopped after reaching the cycle limit.",
@@ -2386,7 +2393,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                         self._attempted_call_signature_details()
                     ),
                     "cycle_count": self._tool_cycle_count,
-                    "maximum_cycles": self._MAXIMUM_TOOL_CYCLES,
+                    "maximum_cycles": self._maximum_tool_cycles,
                 },
             )
             return False
@@ -3223,6 +3230,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         try:
             descriptor = describe_tool_call(call)
         except Exception:
+            return None
+        if isawaitable(descriptor):
+            close = getattr(descriptor, "close", None)
+            if callable(close):
+                close()
             return None
         return descriptor if isinstance(descriptor, ToolDescriptor) else None
 

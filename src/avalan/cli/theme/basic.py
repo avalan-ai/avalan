@@ -15,9 +15,9 @@ from .stream_presenter import (
     StreamFrameRole,
 )
 from .tool_projection import (
+    projection_outcome,
     projection_status,
-    projection_subject_markup,
-    projection_terminal_markup,
+    projection_summary_markup,
 )
 
 from collections.abc import AsyncGenerator, Mapping, Sequence
@@ -35,9 +35,72 @@ from rich.spinner import Spinner
 from rich.text import Text
 
 _BASIC_SUMMARY_LIMIT = 160
+_BASIC_DATABASE_SQL_PREVIEW_LIMIT = 72
 _BASIC_TOOL_RUNNING_THRESHOLD_SECONDS = 1.0
 _BASIC_TOOL_DYNAMIC_MAX_SECONDS = 3600.0
 _BASIC_TOOL_RUNNING_STYLE = "cyan"
+_BASIC_TOOL_ARGUMENT_STYLE = "dim"
+_BASIC_TOOL_ELAPSED_STYLE = "bold"
+_BASIC_TOOL_NAME_STYLE = "bold"
+_BASIC_TOOL_SUCCESS_STATUSES = frozenset({"completed", "result"})
+_BASIC_DATABASE_ACTIVE_VERBS = {
+    "count": "Counting",
+    "inspect": "Inspecting",
+    "keys": "Inspecting",
+    "relationships": "Inspecting",
+    "plan": "Explaining",
+    "run": "Running",
+    "sample": "Sampling",
+    "size": "Measuring",
+    "tables": "Listing",
+    "tasks": "Listing",
+    "kill": "Cancelling",
+    "locks": "Inspecting",
+}
+_BASIC_DATABASE_COMPLETED_VERBS = {
+    "count": "Counted",
+    "inspect": "Inspected",
+    "keys": "Inspected",
+    "relationships": "Inspected",
+    "plan": "Explained",
+    "run": "Ran",
+    "sample": "Sampled",
+    "size": "Measured",
+    "tables": "Listed",
+    "tasks": "Listed",
+    "kill": "Cancelled",
+    "locks": "Inspected",
+}
+_BASIC_DATABASE_ACTION_OPERATIONS = {
+    "count": "count",
+    "inspect": "inspect",
+    "explain": "plan",
+    "query": "run",
+    "sample": "sample",
+    "measure": "size",
+    "list": "tables",
+    "cancel": "kill",
+}
+_BASIC_DATABASE_TARGET_DESCRIPTIONS = {
+    "count": ("rows in table", True),
+    "inspect": ("tables", True),
+    "keys": ("keys for table", True),
+    "relationships": ("relationships for table", True),
+    "sample": ("rows from table", True),
+    "size": ("table", True),
+    "tables": ("tables", False),
+    "tasks": ("tasks", False),
+    "kill": ("task", True),
+    "locks": ("locks", False),
+}
+_BASIC_DATABASE_IDENTITY_DETAIL_LABELS = frozenset(
+    {
+        "database",
+        "database_name",
+        "db",
+        "db_name",
+    }
+)
 _BASIC_XML_TOOL_BLOCK_PATTERN = compile(
     r"<(?P<tag>tool_call|tool|function_call|function|invoke|tool_code)\b"
     r"[^>]*(?:/>|>[\s\S]*?</(?P=tag)>)",
@@ -115,6 +178,7 @@ _BASIC_ALWAYS_HIDDEN_TOOL_EVENT_TYPES = frozenset(
     {
         "tool_model_run",
         "tool_model_response",
+        "tool_diagnostic",
         "tool_progress",
     }
 )
@@ -284,6 +348,10 @@ class BasicStreamPresenter:
         self._last_visible_answer_text = ""
         self._visible_roles: set[StreamFrameRole] = set()
         self._stderr_tool_line_keys: set[str] = set()
+        self._active_model_continuations: dict[
+            str, tuple[float | None, float | None]
+        ] = {}
+        self._completed_model_continuation_keys: set[str] = set()
 
     def reset(self) -> None:
         """Forget emitted answer text, newline, and visible frames."""
@@ -295,6 +363,8 @@ class BasicStreamPresenter:
         self._last_visible_answer_text = ""
         self._visible_roles.clear()
         self._stderr_tool_line_keys.clear()
+        self._active_model_continuations.clear()
+        self._completed_model_continuation_keys.clear()
 
     async def present(
         self,
@@ -303,6 +373,9 @@ class BasicStreamPresenter:
         """Yield Basic answer chunks before optional diagnostic frames."""
         assert isinstance(request, CliStreamPresenterRequest)
         _ = self._event_stats, self._logger
+        pre_answer_frame = self._pre_answer_completed_model_frame(request)
+        if pre_answer_frame is not None:
+            yield pre_answer_frame
         async for chunk in self._answer_presenter.present(
             _basic_answer_request(request)
         ):
@@ -349,7 +422,7 @@ class BasicStreamPresenter:
             )
         else:
             role_renderables = (
-                ("tools", _basic_tool_frame(request)),
+                ("tools", self._tool_frame(request)),
                 ("events", _basic_event_frame(request)),
                 ("stats", _basic_stats_frame(request)),
             )
@@ -364,11 +437,24 @@ class BasicStreamPresenter:
             if frame is not None:
                 yield frame
 
+    def _tool_frame(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> RenderableType | None:
+        return _basic_tool_frame(
+            request,
+            completed_model_entries=self._completed_model_entries(request),
+        )
+
     def _stderr_tool_frame(
         self,
         request: CliStreamPresenterRequest,
     ) -> RenderableType | None:
-        entries = _basic_tool_entries(request, include_active=True)
+        entries = _basic_tool_entries(
+            request,
+            include_active=True,
+            completed_model_entries=self._completed_model_entries(request),
+        )
         new_lines: list[str] = []
         for entry in entries:
             if entry.key in self._stderr_tool_line_keys:
@@ -376,6 +462,31 @@ class BasicStreamPresenter:
             self._stderr_tool_line_keys.add(entry.key)
             new_lines.append(entry.line)
         return _basic_frame_text(new_lines)
+
+    def _pre_answer_completed_model_frame(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> CliStreamRenderableFrame | None:
+        if request.mode == "answer":
+            return None
+        if request.display_config.diagnostic_channel != "live":
+            return None
+        if not request.display_config.show_tools:
+            return None
+        visible_answer_text = _basic_visible_answer_text(
+            request.snapshot.answer_text,
+            terminal_completed=_basic_terminal_completed(request),
+        )
+        if (
+            not visible_answer_text
+            or visible_answer_text == self._last_visible_answer_text
+        ):
+            return None
+        entries = self._completed_model_entries(request)
+        if not entries:
+            return None
+        renderable = _basic_frame_text(tuple(entry.line for entry in entries))
+        return self._role_frame("tools", renderable)
 
     def _needs_answer_separator(
         self,
@@ -416,6 +527,45 @@ class BasicStreamPresenter:
         self._visible_roles.remove(role)
         return CliStreamRenderableFrame(renderable="", role=role)
 
+    def _completed_model_entries(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> tuple[_BasicToolLineEntry, ...]:
+        active: dict[str, tuple[float | None, float | None]] = {}
+        for continuation in request.snapshot.active_model_continuations:
+            active[continuation.model_continuation_id] = (
+                continuation.started_at,
+                continuation.updated_at,
+            )
+
+        completed: list[_BasicToolLineEntry] = []
+        for (
+            continuation_id,
+            timestamps,
+        ) in self._active_model_continuations.items():
+            if continuation_id in active:
+                continue
+            key = f"model:{continuation_id}:completed"
+            if key in self._completed_model_continuation_keys:
+                continue
+            self._completed_model_continuation_keys.add(key)
+            finished_at = (
+                timestamps[1]
+                if timestamps[1] is not None
+                else perf_counter() if timestamps[0] is not None else None
+            )
+            completed.append(
+                _BasicToolLineEntry(
+                    key=key,
+                    line=_basic_completed_model_line(
+                        started_at=timestamps[0],
+                        updated_at=finished_at,
+                    ),
+                )
+            )
+        self._active_model_continuations = active
+        return tuple(completed)
+
 
 def _basic_answer_request(
     request: CliStreamPresenterRequest,
@@ -435,6 +585,8 @@ def _basic_terminal_completed(request: CliStreamPresenterRequest) -> bool:
 
 def _basic_tool_frame(
     request: CliStreamPresenterRequest,
+    *,
+    completed_model_entries: tuple[_BasicToolLineEntry, ...] = (),
 ) -> RenderableType | None:
     if not request.display_config.show_tools:
         return None
@@ -443,6 +595,7 @@ def _basic_tool_frame(
         entry.line
         for entry in _basic_tool_entries(request, include_active=False)
     ]
+    history_lines.extend(entry.line for entry in completed_model_entries)
     active_model_renderables = [
         _basic_active_model_renderable(
             started_at=continuation.started_at,
@@ -485,6 +638,7 @@ def _basic_tool_entries(
     request: CliStreamPresenterRequest,
     *,
     include_active: bool,
+    completed_model_entries: tuple[_BasicToolLineEntry, ...] = (),
 ) -> tuple[_BasicToolLineEntry, ...]:
     if not request.display_config.show_tools:
         return ()
@@ -551,6 +705,7 @@ def _basic_tool_entries(
             if _basic_terminal_empty_answer(request)
             else []
         ),
+        *completed_model_entries,
     ]
     limit = request.display_config.display_tools_events
     if limit is not None:
@@ -700,6 +855,21 @@ def _basic_active_model_line(
     )
 
 
+def _basic_completed_model_line(
+    *,
+    started_at: float | None,
+    updated_at: float | None,
+) -> str:
+    elapsed = None
+    if started_at is not None and updated_at is not None:
+        elapsed = _basic_tool_elapsed_text(max(updated_at - started_at, 0.0))
+    suffix = f" for {escape(elapsed)}" if elapsed else ""
+    return (
+        f"[{_BASIC_TOOL_RUNNING_STYLE}]Thought{suffix}."
+        f"[/{_BASIC_TOOL_RUNNING_STYLE}]"
+    )
+
+
 class _BasicActiveModelSpinner(Spinner):
     """Render active model continuation text while Rich refreshes."""
 
@@ -761,6 +931,16 @@ def _basic_active_tool_line(
     updated_at: float | None,
     display_projection: ToolDisplayProjection | None = None,
 ) -> str:
+    database_phrase = _basic_database_phrase_markup(
+        display_projection,
+        completed=False,
+    )
+    if database_phrase:
+        return _basic_database_progress_line(
+            database_phrase,
+            started_at=started_at,
+            updated_at=updated_at,
+        )
     tool_name = _basic_active_tool_name(name, display_projection)
     if updated_at is None:
         return _basic_tool_progress_line("Starting", tool_name)
@@ -779,8 +959,8 @@ def _basic_active_tool_name(
     display_projection: ToolDisplayProjection | None,
 ) -> str:
     if display_projection is None:
-        return _basic_markup_summary(name)
-    return projection_subject_markup(display_projection)
+        return _basic_tool_subject_markup(name)
+    return _basic_projection_subject_markup(display_projection)
 
 
 def _basic_tool_progress_line(
@@ -907,8 +1087,6 @@ def _basic_completed_tool_line(
     *,
     display_projection: ToolDisplayProjection | None = None,
 ) -> str:
-    elapsed = _basic_tool_elapsed_text(elapsed_seconds)
-    elapsed_text = f" ({escape(elapsed)})" if elapsed else ""
     display_status = (
         status
         if display_projection is None
@@ -917,22 +1095,26 @@ def _basic_completed_tool_line(
     status_style = _theme_tool_status_style(display_status)
     status_icon = _theme_tool_status_icon(display_status)
     tool_name = (
-        _basic_markup_summary(name)
+        _basic_tool_subject_markup(name)
         if display_projection is None
-        else projection_subject_markup(display_projection)
+        else _basic_projection_subject_markup(display_projection)
     )
-    summary = (
-        _basic_markup_summary(status)
-        if display_projection is None
-        else projection_terminal_markup(
-            display_projection,
-            fallback_status=status,
-        )
+    database_phrase = _basic_database_phrase_markup(
+        display_projection,
+        completed=display_status in _BASIC_TOOL_SUCCESS_STATUSES,
     )
+    summary = _basic_tool_terminal_markup(
+        status,
+        display_status,
+        display_projection=display_projection,
+    )
+    summary_text = f": {summary}" if summary else ""
+    elapsed_text = _basic_elapsed_suffix(elapsed_seconds)
     return (
-        f"[{status_style}]{status_icon} Executed tool "
-        f"{tool_name}{elapsed_text}: "
-        f"{summary}.[/{status_style}]"
+        f"[{status_style}]{status_icon} "
+        f"{database_phrase or f'Executed tool {tool_name}'}"
+        f"{elapsed_text}{summary_text}"
+        f"[/{status_style}]"
     )
 
 
@@ -951,27 +1133,501 @@ def _basic_tool_result_line(
     )
     status_style = _theme_tool_status_style(display_status)
     status_icon = _theme_tool_status_icon(display_status)
-    elapsed = _basic_tool_elapsed_text(elapsed_seconds)
-    elapsed_text = f" ({escape(elapsed)})" if elapsed else ""
+    elapsed_text = _basic_elapsed_suffix(elapsed_seconds)
     tool_name = (
-        _basic_markup_summary(name)
+        _basic_tool_subject_markup(name)
         if display_projection is None
-        else projection_subject_markup(display_projection)
+        else _basic_projection_subject_markup(display_projection)
+    )
+    database_phrase = _basic_database_phrase_markup(
+        display_projection,
+        completed=display_status in _BASIC_TOOL_SUCCESS_STATUSES,
     )
     summary = (
         _basic_markup_summary(_basic_tool_result_summary(result_summary))
         if display_projection is None
-        else projection_terminal_markup(
-            display_projection,
-            fallback_status=status,
+        else _basic_tool_terminal_markup(
+            status,
+            display_status,
+            display_projection=display_projection,
         )
     )
+    summary_text = f": {summary}" if summary else ""
     return (
-        f"[{status_style}]{status_icon} Executed tool "
-        f"{tool_name}{elapsed_text}: "
-        f"{summary}"
+        f"[{status_style}]{status_icon} "
+        f"{database_phrase or f'Executed tool {tool_name}'}"
+        f"{elapsed_text}{summary_text}"
         f"[/{status_style}]"
     )
+
+
+def _basic_database_progress_line(
+    phrase: str,
+    *,
+    started_at: float | None,
+    updated_at: float | None,
+) -> str:
+    if updated_at is None:
+        return (
+            f"[{_BASIC_TOOL_RUNNING_STYLE}]{phrase}..."
+            f"[/{_BASIC_TOOL_RUNNING_STYLE}]"
+        )
+    if started_at is not None:
+        elapsed_seconds = max(updated_at - started_at, 0.0)
+        if elapsed_seconds >= _BASIC_TOOL_RUNNING_THRESHOLD_SECONDS:
+            elapsed = _basic_tool_elapsed_text(elapsed_seconds)
+            if elapsed:
+                return (
+                    f"[{_BASIC_TOOL_RUNNING_STYLE}]{phrase} for "
+                    f"{escape(elapsed)}.[/{_BASIC_TOOL_RUNNING_STYLE}]"
+                )
+    return (
+        f"[{_BASIC_TOOL_RUNNING_STYLE}]{phrase}.[/{_BASIC_TOOL_RUNNING_STYLE}]"
+    )
+
+
+def _basic_database_phrase_markup(
+    projection: ToolDisplayProjection | None,
+    *,
+    completed: bool,
+) -> str | None:
+    if projection is None:
+        return None
+    operation = _basic_database_operation(projection)
+    if operation is None:
+        return None
+    verbs = (
+        _BASIC_DATABASE_COMPLETED_VERBS
+        if completed
+        else _BASIC_DATABASE_ACTIVE_VERBS
+    )
+    verb = verbs.get(operation)
+    if not verb:
+        return None
+    phrase = _basic_database_specific_phrase_markup(
+        operation,
+        projection,
+        completed=completed,
+        verb=verb,
+    )
+    if phrase:
+        return phrase
+    return " ".join(
+        part
+        for part in (
+            _basic_database_bold_markup(verb),
+            _basic_database_target_markup(operation, projection),
+            _basic_database_scope_markup(projection),
+        )
+        if part
+    )
+
+
+def _basic_database_operation(
+    projection: ToolDisplayProjection,
+) -> str | None:
+    assert isinstance(projection, ToolDisplayProjection)
+    label = projection.label or ""
+    if label.startswith("database."):
+        return label.rsplit(".", 1)[1]
+    operation_detail = _basic_projection_detail_value(
+        projection,
+        "operation",
+    )
+    if operation_detail:
+        return operation_detail
+    if projection.scope != "database":
+        return None
+    if projection.action == "list" and projection.target == "tasks":
+        return "tasks"
+    return _BASIC_DATABASE_ACTION_OPERATIONS.get(projection.action)
+
+
+def _basic_database_specific_phrase_markup(
+    operation: str,
+    projection: ToolDisplayProjection,
+    *,
+    completed: bool,
+    verb: str,
+) -> str | None:
+    if operation == "run":
+        return _basic_database_run_phrase_markup(
+            projection,
+            completed=completed,
+            verb=verb,
+        )
+    if operation == "inspect":
+        return _basic_database_inspect_phrase_markup(projection, verb=verb)
+    if operation == "tables":
+        return _basic_database_tables_phrase_markup(
+            projection,
+            completed=completed,
+            verb=verb,
+        )
+    return None
+
+
+def _basic_database_run_phrase_markup(
+    projection: ToolDisplayProjection,
+    *,
+    completed: bool,
+    verb: str,
+) -> str:
+    if completed and _basic_database_sql_verb(projection) == "SELECT":
+        return _basic_database_select_phrase_markup(projection)
+
+    phrase = " ".join(
+        part
+        for part in (
+            _basic_database_bold_markup(f"{verb} SQL"),
+            _basic_database_dim_markup("statement"),
+            _basic_database_sql_preview_markup(projection),
+            _basic_database_scope_markup(projection),
+        )
+        if part
+    )
+    row_count = _basic_projection_integer_value(projection, "rows")
+    if completed and row_count is not None:
+        rows = _basic_count_label(row_count, "row")
+        phrase = f"{phrase}: {_basic_database_bold_markup(rows)}"
+    return phrase
+
+
+def _basic_database_select_phrase_markup(
+    projection: ToolDisplayProjection,
+) -> str:
+    phrase = " ".join(
+        part
+        for part in (
+            _basic_database_bold_markup("Executed query"),
+            _basic_database_sql_preview_markup(projection),
+            _basic_database_scope_markup(projection),
+        )
+        if part
+    )
+    row_count = _basic_projection_integer_value(projection, "rows")
+    if row_count == 0:
+        return f"{phrase}: {_basic_markup_summary('no results')}."
+    if row_count is not None:
+        rows = _basic_count_label(row_count, "row")
+        return (
+            f"{phrase}: {_basic_database_bold_markup(rows)} "
+            f"{_basic_markup_summary('found')}."
+        )
+    return phrase
+
+
+def _basic_database_inspect_phrase_markup(
+    projection: ToolDisplayProjection,
+    *,
+    verb: str,
+) -> str:
+    table_names = _basic_database_table_names(projection)
+    table_count = _basic_database_table_count(projection, table_names)
+    subject = (
+        f"{verb} {_basic_count_label(table_count, 'table')}"
+        if table_count is not None
+        else f"{verb} tables"
+    )
+    table_phrase = _basic_database_bold_markup(subject)
+    if table_names:
+        table_phrase = f"{table_phrase}: {_basic_markup_summary(table_names)}"
+    return " ".join(
+        part
+        for part in (
+            table_phrase,
+            _basic_database_scope_markup(projection, preposition="from"),
+        )
+        if part
+    )
+
+
+def _basic_database_tables_phrase_markup(
+    projection: ToolDisplayProjection,
+    *,
+    completed: bool,
+    verb: str,
+) -> str:
+    table_count = _basic_projection_integer_value(projection, "tables")
+    if completed and table_count is not None:
+        subject = _basic_database_bold_markup(
+            f"{verb} {_basic_count_label(table_count, 'table')}"
+        )
+    else:
+        subject = (
+            f"{_basic_database_bold_markup(verb)} "
+            f"{_basic_database_dim_markup('tables')}"
+        )
+    return " ".join(
+        part
+        for part in (
+            subject,
+            _basic_database_scope_markup(projection),
+        )
+        if part
+    )
+
+
+def _basic_database_target_markup(
+    operation: str,
+    projection: ToolDisplayProjection,
+) -> str:
+    if operation in {"plan", "run"}:
+        return _basic_database_statement_markup(projection)
+    description, include_target = _BASIC_DATABASE_TARGET_DESCRIPTIONS.get(
+        operation,
+        (projection.target or "database", False),
+    )
+    target = projection.target
+    if include_target and target and target != description:
+        return (
+            f"{_basic_database_dim_markup(description)} "
+            f"{_basic_database_bold_markup(target)}"
+        )
+    return _basic_database_dim_markup(description)
+
+
+def _basic_database_statement_markup(
+    projection: ToolDisplayProjection,
+) -> str:
+    sql_verb = _basic_database_sql_verb(projection)
+    if not sql_verb:
+        return _basic_database_dim_markup("SQL statement")
+    return (
+        f"{_basic_database_bold_markup(sql_verb)} "
+        f"{_basic_database_dim_markup('statement')}"
+    )
+
+
+def _basic_database_sql_preview_markup(
+    projection: ToolDisplayProjection,
+) -> str | None:
+    sql = _basic_projection_detail_value(projection, "sql")
+    if not sql:
+        return None
+    if len(sql) > _BASIC_DATABASE_SQL_PREVIEW_LIMIT:
+        sql = f"{sql[: _BASIC_DATABASE_SQL_PREVIEW_LIMIT - 4].rstrip()} ..."
+    return _basic_markup_summary(sql)
+
+
+def _basic_database_scope_markup(
+    projection: ToolDisplayProjection,
+    *,
+    preposition: str = "in",
+) -> str:
+    database_name = _basic_database_identity(projection)
+    if not database_name:
+        return _basic_database_dim_markup(f"{preposition} database")
+    return (
+        f"{_basic_database_dim_markup(f'{preposition} database')} "
+        f"{_basic_markup_summary(database_name)}"
+    )
+
+
+def _basic_database_identity(
+    projection: ToolDisplayProjection,
+) -> str | None:
+    for detail in projection.details:
+        if detail.label not in _BASIC_DATABASE_IDENTITY_DETAIL_LABELS:
+            continue
+        if detail.redacted or detail.value is None:
+            continue
+        value = _basic_summary(str(detail.value))
+        if value:
+            return value
+    return None
+
+
+def _basic_database_sql_verb(
+    projection: ToolDisplayProjection,
+) -> str | None:
+    sql_command = _basic_projection_detail_value(projection, "sql_command")
+    if sql_command:
+        return sql_command.upper()
+    sql = None
+    if projection.preview and projection.preview.label == "sql":
+        sql = projection.preview.content
+    if not sql:
+        sql = _basic_projection_detail_value(projection, "sql")
+    if not sql:
+        return None
+    first = sql.lstrip().split(maxsplit=1)[0].strip('([`"').upper()
+    return first or None
+
+
+def _basic_database_table_names(
+    projection: ToolDisplayProjection,
+) -> str | None:
+    tables = _basic_projection_detail_value(projection, "tables")
+    if tables:
+        return tables
+    target = _basic_summary(projection.target)
+    if not target or target in {"database", "tables"}:
+        return None
+    return target
+
+
+def _basic_database_table_count(
+    projection: ToolDisplayProjection,
+    table_names: str | None,
+) -> int | None:
+    count = _basic_projection_integer_value(projection, "tables")
+    if count is not None:
+        return count
+    if not table_names:
+        return None
+    return len(
+        [
+            table_name
+            for table_name in table_names.split(", ")
+            if table_name and table_name != "..."
+        ]
+    )
+
+
+def _basic_projection_detail_value(
+    projection: ToolDisplayProjection,
+    label: str,
+) -> str | None:
+    for detail in projection.details:
+        if detail.label != label:
+            continue
+        if detail.redacted or detail.value is None:
+            return None
+        return _basic_summary(str(detail.value))
+    return None
+
+
+def _basic_projection_integer_value(
+    projection: ToolDisplayProjection,
+    label: str,
+) -> int | None:
+    metric = projection.metrics.get(label)
+    value = _basic_integer_value(metric)
+    if value is not None:
+        return value
+    for detail in projection.details:
+        if detail.label != label or detail.redacted:
+            continue
+        value = _basic_integer_value(detail.value)
+        if value is not None:
+            return value
+    return None
+
+
+def _basic_integer_value(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _basic_count_label(value: int, singular: str) -> str:
+    suffix = "" if value == 1 else "s"
+    return f"{value} {singular}{suffix}"
+
+
+def _basic_database_bold_markup(value: str) -> str:
+    return (
+        f"[{_BASIC_TOOL_NAME_STYLE}]{_basic_markup_summary(value)}"
+        f"[/{_BASIC_TOOL_NAME_STYLE}]"
+    )
+
+
+def _basic_database_dim_markup(value: str) -> str:
+    return (
+        f"[{_BASIC_TOOL_ARGUMENT_STYLE}]{_basic_markup_summary(value)}"
+        f"[/{_BASIC_TOOL_ARGUMENT_STYLE}]"
+    )
+
+
+def _basic_tool_subject_markup(subject: str) -> str:
+    summary = _basic_summary(subject)
+    if not summary:
+        return ""
+    name, separator, arguments = summary.partition(" ")
+    if not separator:
+        return (
+            f"[{_BASIC_TOOL_NAME_STYLE}]"
+            f"{escape(name)}"
+            f"[/{_BASIC_TOOL_NAME_STYLE}]"
+        )
+    return (
+        f"[{_BASIC_TOOL_NAME_STYLE}]"
+        f"{escape(name)}"
+        f"[/{_BASIC_TOOL_NAME_STYLE}]"
+        f" [{_BASIC_TOOL_ARGUMENT_STYLE}]"
+        f"{escape(arguments)}"
+        f"[/{_BASIC_TOOL_ARGUMENT_STYLE}]"
+    )
+
+
+def _basic_projection_subject_markup(
+    projection: ToolDisplayProjection,
+) -> str:
+    assert isinstance(projection, ToolDisplayProjection)
+    action = projection.action
+    target = projection.target
+    scope = projection.scope
+    if action == "run" and target:
+        subject = target
+    else:
+        subject = action
+        if target:
+            subject = f"{subject} {target}"
+    if scope and not _basic_is_default_tool_scope(scope) and scope != target:
+        subject = f"{subject} in {scope}"
+    return _basic_tool_subject_markup(subject)
+
+
+def _basic_is_default_tool_scope(scope: str) -> bool:
+    assert isinstance(scope, str)
+    return scope.strip() in {"", "."}
+
+
+def _basic_elapsed_suffix(elapsed_seconds: float | None) -> str:
+    elapsed = _basic_tool_elapsed_text(elapsed_seconds)
+    if not elapsed:
+        return ""
+    return (
+        f" [{_BASIC_TOOL_ELAPSED_STYLE}]·"
+        f" {escape(elapsed)}[/{_BASIC_TOOL_ELAPSED_STYLE}]"
+    )
+
+
+def _basic_tool_terminal_markup(
+    status: str,
+    display_status: str,
+    *,
+    display_projection: ToolDisplayProjection | None,
+) -> str | None:
+    if display_status in _BASIC_TOOL_SUCCESS_STATUSES:
+        return None
+    if display_projection is None:
+        return _basic_markup_summary(status)
+    status_text = _basic_tool_status_outcome_markup(
+        display_status,
+        projection_outcome(display_projection),
+    )
+    summary = projection_summary_markup(display_projection)
+    terminal = " - ".join(part for part in (status_text, summary) if part)
+    return terminal or _basic_markup_summary(status)
+
+
+def _basic_tool_status_outcome_markup(
+    status: str | None,
+    outcome: str | None,
+) -> str | None:
+    if not status and not outcome:
+        return None
+    if status and outcome and status != outcome:
+        return (
+            f"{_basic_markup_summary(status)} {_basic_markup_summary(outcome)}"
+        )
+    return _basic_markup_summary(outcome or status)
 
 
 def _basic_tool_diagnostic_line(

@@ -113,8 +113,8 @@ class ToolDisplayProjectionE2ETestCase(IsolatedAsyncioTestCase):
         output = await _render_theme("basic", snapshot, _config())
 
         self.assertIn("Executed tool search needle in workspace", output)
-        self.assertIn("Found matches.", output)
-        self.assertIn("details: matches=3", output)
+        self.assertNotIn("Found matches.", output)
+        self.assertNotIn("details: matches=3", output)
         _assert_not_promoted(self, output)
 
     async def test_fancy_renders_projected_tool_metadata_cleanly(
@@ -145,9 +145,13 @@ class ToolDisplayProjectionE2ETestCase(IsolatedAsyncioTestCase):
             with self.subTest(theme=theme_name):
                 output = await _render_theme(theme_name, snapshot, _config())
 
-                self.assertIn("inspect locks in database", output)
-                self.assertIn("blocking", output)
-                self.assertIn("Found blocking database locks.", output)
+                if theme_name == "basic":
+                    self.assertIn("Inspected locks in database", output)
+                    self.assertNotIn("Found blocking database locks.", output)
+                else:
+                    self.assertIn("inspect locks in database", output)
+                    self.assertIn("blocking", output)
+                    self.assertIn("Found blocking database locks.", output)
                 self.assertNotIn("db-password", output)
                 self.assertNotIn("db_user", output)
                 self.assertNotIn(_DB_DSN, output)
@@ -168,8 +172,11 @@ class ToolDisplayProjectionE2ETestCase(IsolatedAsyncioTestCase):
                 output = await _render_theme(theme_name, snapshot, _config())
 
                 self.assertIn("calculate 2 + 2 in math", output)
-                self.assertIn("Calculation completed.", output)
-                self.assertIn("4", output)
+                if theme_name == "basic":
+                    self.assertNotIn("Calculation completed.", output)
+                else:
+                    self.assertIn("Calculation completed.", output)
+                    self.assertIn("4", output)
                 self.assertNotIn(_RAW_ARGUMENT_SECRET, output)
                 self.assertNotIn(_RAW_RESULT_SECRET, output)
 
@@ -186,7 +193,10 @@ class ToolDisplayProjectionE2ETestCase(IsolatedAsyncioTestCase):
                 output = await _render_theme(theme_name, snapshot, _config())
 
                 self.assertIn("read [redacted]", output)
-                self.assertIn("Read a file.", output)
+                if theme_name == "basic":
+                    self.assertNotIn("Read a file.", output)
+                else:
+                    self.assertIn("Read a file.", output)
                 self.assertNotIn(_DENIED_SHELL_PATH, output)
                 self.assertNotIn("/private/fixture", output)
 

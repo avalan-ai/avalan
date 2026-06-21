@@ -3652,6 +3652,14 @@ class CLI:
             default=None,
         )
         group.add_argument(
+            "--maximum-tool-cycles",
+            "--run-maximum-tool-cycles",
+            type=int,
+            dest="run_maximum_tool_cycles",
+            help="Maximum model/tool result cycles for an agent run",
+            default=None,
+        )
+        group.add_argument(
             "--run-skip-special-tokens",
             action="store_true",
             default=False,

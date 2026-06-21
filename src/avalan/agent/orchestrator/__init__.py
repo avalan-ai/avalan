@@ -30,7 +30,10 @@ from .. import (
 )
 from ..engine import EngineAgent
 from ..renderer import Renderer, TemplateEngineAgent
-from .response.orchestrator_response import OrchestratorResponse
+from .response.orchestrator_response import (
+    DEFAULT_MAXIMUM_TOOL_CYCLES,
+    OrchestratorResponse,
+)
 
 import asyncio
 from contextlib import ExitStack
@@ -44,6 +47,7 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 _INPUT_TEMPLATE_REFERENCE_PATTERN = compile_regex(r"{{\s*input\b")
+_MAXIMUM_TOOL_CYCLE_OPTION_KEYS = ("maximum_tool_cycles", "max_tool_cycles")
 
 
 class Orchestrator:
@@ -112,6 +116,23 @@ class Orchestrator:
         self._engines = []
         self._engine_agents = {}
         self._model_ids = set()
+
+    @staticmethod
+    def _pop_maximum_tool_cycles(engine_args: dict[str, Any]) -> int:
+        values: dict[str, Any] = {}
+        for key in _MAXIMUM_TOOL_CYCLE_OPTION_KEYS:
+            if key in engine_args:
+                values[key] = engine_args.pop(key)
+        assert (
+            len(values) <= 1
+        ), "Use only one of maximum_tool_cycles or max_tool_cycles"
+        if not values:
+            return DEFAULT_MAXIMUM_TOOL_CYCLES
+        value = next(iter(values.values()))
+        assert (
+            type(value) is int and value > 0
+        ), "maximum_tool_cycles must be a positive integer"
+        return value
 
     @property
     def engine_agent(self) -> EngineAgent | None:
@@ -229,6 +250,7 @@ class Orchestrator:
 
         # Execute operation
         engine_args = {**(self._call_options or {}), **kwargs}
+        maximum_tool_cycles = self._pop_maximum_tool_cycles(engine_args)
         start = perf_counter()
         await self._event_manager.trigger(
             Event(
@@ -292,6 +314,7 @@ class Orchestrator:
             agent_id=self._id,
             participant_id=participant_id,
             session_id=session_id,
+            maximum_tool_cycles=maximum_tool_cycles,
         )
 
     async def __aenter__(self) -> "Orchestrator":

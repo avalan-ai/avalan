@@ -8403,6 +8403,25 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             def describe_tool_call(self, call: ToolCall) -> object:
                 return object()
 
+        class AwaitableDescriptor:
+            closed = False
+
+            def __await__(self) -> Generator[None, None, object]:
+                yield None
+                return object()
+
+            def close(self) -> None:
+                self.closed = True
+
+        class AwaitableDescribeToolManager:
+            is_empty = False
+
+            def __init__(self) -> None:
+                self.descriptor = AwaitableDescriptor()
+
+            def describe_tool_call(self, call: ToolCall) -> object:
+                return self.descriptor
+
         class BadSignatureProjector:
             @property
             def __signature__(self) -> object:
@@ -8440,6 +8459,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             NonCallableDescribeToolManager(),
             RaisingDescribeToolManager(),
             InvalidDescribeToolManager(),
+            AwaitableDescribeToolManager(),
         ):
             with self.subTest(manager=type(manager).__name__):
                 resp = _make_response(
@@ -8460,6 +8480,8 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
                     ],
                 )
                 self.assertEqual(projection["action"], "call")
+                if isinstance(manager, AwaitableDescribeToolManager):
+                    self.assertTrue(manager.descriptor.closed)
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
@@ -10229,7 +10251,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
         )
-        limited._MAXIMUM_TOOL_CYCLES = 0
+        limited._tool_cycle_count = 24
         self.assertFalse(
             limited._should_continue_tool_cycle(messages, [result])
         )
@@ -10237,6 +10259,131 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             limited.canonical_items[-1].data["code"],
             "orchestrator.tool_cycle.limit_exceeded",
         )
+        self.assertEqual(
+            limited.canonical_items[-1].data["details"]["maximum_cycles"], 24
+        )
+
+    async def test_iteration_stops_at_configured_maximum_tool_cycles(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        first_call = ToolCall(id="call1", name="calc", arguments={"value": 1})
+        second_call = ToolCall(id="call2", name="calc", arguments={"value": 2})
+        agent.return_value = _tool_call_response(second_call)
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+
+        async def execute(
+            call: ToolCall, _: ToolCallContext
+        ) -> ToolCallResult:
+            return ToolCallResult(
+                id=f"result-{call.id}",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result=f"ok-{call.id}",
+            )
+
+        tool.side_effect = execute
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(first_call),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+            maximum_tool_cycles=1,
+        )
+
+        items = []
+        async for item in resp:
+            items.append(item)
+
+        self.assertFalse(
+            any(item.kind is StreamItemKind.ANSWER_DELTA for item in items)
+        )
+        self.assertEqual(agent.await_count, 1)
+        self.assertEqual(tool.await_count, 2)
+        diagnostics = [
+            item
+            for item in items
+            if item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+        ]
+        self.assertEqual(
+            diagnostics[-1].data["code"],
+            "orchestrator.tool_cycle.limit_exceeded",
+        )
+        self.assertEqual(diagnostics[-1].data["details"]["maximum_cycles"], 1)
+        validate_canonical_stream_items(items)
+
+    async def test_iteration_allows_configured_extra_tool_cycles(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        first_call = ToolCall(id="call1", name="calc", arguments={"value": 1})
+        second_call = ToolCall(id="call2", name="calc", arguments={"value": 2})
+        agent.side_effect = [
+            _tool_call_response(second_call),
+            _response_from_items(
+                *_canonical_answer_items("final json"),
+            ),
+        ]
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+
+        async def execute(
+            call: ToolCall, _: ToolCallContext
+        ) -> ToolCallResult:
+            return ToolCallResult(
+                id=f"result-{call.id}",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result=f"ok-{call.id}",
+            )
+
+        tool.side_effect = execute
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(first_call),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+            maximum_tool_cycles=2,
+        )
+
+        items = []
+        async for item in resp:
+            items.append(item)
+
+        self.assertTrue(
+            any(
+                item.kind is StreamItemKind.ANSWER_DELTA
+                and item.text_delta == "final json"
+                for item in items
+            )
+        )
+        self.assertEqual(agent.await_count, 2)
+        self.assertEqual(tool.await_count, 2)
+        self.assertFalse(
+            any(
+                item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+                and item.data
+                and item.data.get("code")
+                == "orchestrator.tool_cycle.limit_exceeded"
+                for item in items
+            )
+        )
+        validate_canonical_stream_items(items)
 
     async def test_null_tool_result_projects_empty_observation(self):
         call = ToolCall(id="call1", name="calc", arguments={})
@@ -10509,6 +10656,85 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             tool_result_observations,
             [['"50"'], ['"50"', '"100"']],
         )
+        validate_canonical_stream_items(resp.canonical_items)
+        validate_tool_lifecycle_items(resp.canonical_items)
+
+    async def test_iteration_repeated_tool_skip_continues_to_model(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        call = ToolCall(
+            id="call1",
+            name="calc",
+            arguments={"expression": "25 * 2"},
+        )
+        repeated_call = ToolCall(
+            id="call2",
+            name="calc",
+            arguments={"expression": "25 * 2"},
+        )
+        agent.side_effect = [
+            _tool_call_response(repeated_call),
+            _string_response("done", async_gen=True),
+        ]
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.return_value = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="50",
+        )
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(call),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        items = await _collect_stream_items(resp)
+
+        self.assertEqual(_answer_text(items), "done")
+        tool.assert_awaited_once()
+        self.assertEqual(agent.await_count, 2)
+
+        first_context = agent.await_args_list[0].args[0]
+        second_context = agent.await_args_list[1].args[0]
+        assert isinstance(first_context.input, list)
+        assert isinstance(second_context.input, list)
+        first_tool_messages = [
+            message
+            for message in first_context.input
+            if message.role is MessageRole.TOOL
+        ]
+        second_tool_messages = [
+            message
+            for message in second_context.input
+            if message.role is MessageRole.TOOL
+        ]
+        self.assertEqual(len(first_tool_messages), 1)
+        self.assertEqual(len(second_tool_messages), 2)
+        self.assertIsNone(second_tool_messages[-1].tool_call_result)
+        diagnostic = second_tool_messages[-1].tool_call_diagnostic
+        self.assertIsNotNone(diagnostic)
+        assert diagnostic is not None
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.REPEATED_CALL,
+        )
+        payload = loads(str(second_tool_messages[-1].content))
+        self.assertEqual(payload["code"], "tool_call.repeated")
+
         validate_canonical_stream_items(resp.canonical_items)
         validate_tool_lifecycle_items(resp.canonical_items)
 

@@ -60,6 +60,7 @@ def test_database_descriptors_expose_call_projection() -> None:
         assert projection.scope == "database"
         assert projection.label == name
         assert _detail_value(projection, "operation") == name.rsplit(".", 1)[1]
+        assert _detail_value(projection, "database") == "app"
         assert "super-secret-password" not in _projection_text(projection)
         assert "db_user" not in _projection_text(projection)
 
@@ -114,6 +115,7 @@ def test_query_calls_show_bounded_redacted_sql_summary() -> None:
         assert projection.redacted
         assert projection.truncated
         assert len(projection.preview.content) <= 320
+        assert _detail_value(projection, "sql_command") == "SELECT"
 
 
 def test_query_calls_redact_sensitive_sql_edge_cases() -> None:
@@ -395,6 +397,78 @@ def test_typed_terminal_results_include_bounded_counts() -> None:
         assert projection.status == "completed"
         assert projection.metrics[metric] == expected
         assert "secret" not in _projection_text(projection)
+
+
+def test_terminal_results_keep_database_request_context() -> None:
+    manager = _manager()
+
+    query = _project_result(
+        manager,
+        "database.run",
+        {"sql": "SELECT id FROM users"},
+        [{"id": 1}, {"id": 2}],
+    )
+    inspected = _project_result(
+        manager,
+        "database.inspect",
+        {"table_names": ["users", "orders"]},
+        [
+            Table(name="users", columns={"id": "INTEGER"}, foreign_keys=[]),
+            Table(name="orders", columns={"id": "INTEGER"}, foreign_keys=[]),
+        ],
+    )
+
+    assert _detail_value(query, "database") == "app"
+    assert _detail_value(query, "sql") == "SELECT id FROM users"
+    assert _detail_value(query, "sql_command") == "SELECT"
+    assert query.metrics["rows"] == 2
+    assert _detail_value(inspected, "database") == "app"
+    assert _detail_value(inspected, "tables") == "users, orders"
+    assert inspected.metrics["tables"] == 2
+
+
+def test_inspect_terminal_results_can_supply_table_context() -> None:
+    manager = _manager()
+
+    inferred = _project_result(
+        manager,
+        "database.inspect",
+        {},
+        [
+            Table(name="users", columns={"id": "INTEGER"}, foreign_keys=[]),
+            Table(name="orders", columns={"id": "INTEGER"}, foreign_keys=[]),
+        ],
+    )
+    invalid = _project_result(manager, "database.inspect", {}, "not tables")
+
+    assert _detail_value(inferred, "tables") == "users, orders"
+    assert _detail_value(invalid, "tables") is None
+
+
+def test_database_name_from_dsn_handles_edge_cases() -> None:
+    assert database_display._database_name_from_dsn(" ") is None
+    assert (
+        database_display._database_name_from_dsn("postgresql://host") is None
+    )
+    assert (
+        database_display._database_name_from_dsn(
+            "sqlite:////tmp/checkmate/app.db"
+        )
+        == "app.db"
+    )
+    assert database_display._database_name_from_dsn("memory") is None
+    assert (
+        database_display._database_name_from_dsn(
+            "postgresql://user@host/checkmate39?sslmode=require"
+        )
+        == "checkmate39"
+    )
+    assert (
+        database_display._database_name_from_dsn(
+            "user@host/checkmate%2039?sslmode=require"
+        )
+        == "checkmate 39"
+    )
 
 
 def test_size_results_include_schema_detail() -> None:
