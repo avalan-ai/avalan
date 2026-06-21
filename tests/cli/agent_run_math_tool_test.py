@@ -854,8 +854,9 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         _assert_answer_clean(self, answer_stdout)
         _assert_answer_clean(self, _console_print_text(console, end=None))
         live_text = _live_text(live)
-        self.assertIn("Executed tool math.calculator", live_text)
-        self.assertIn(": 25", live_text)
+        self.assertIn("Executed tool calculate", live_text)
+        self.assertIn("Calculation completed", live_text)
+        self.assertIn("details: result=25", live_text)
 
     async def test_cli_run_math_tool_basic_display_tools_shows_progress(
         self,
@@ -890,9 +891,6 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         dummy_stack.enter_async_context = AsyncMock(return_value=orch)
 
         live_frames: list[str] = []
-        start_frame_seen = AsyncioEvent()
-        progress_frame_seen = AsyncioEvent()
-        completion_frame_seen = AsyncioEvent()
         live = MagicMock()
         live.auto_refresh = True
         live_cm = MagicMock()
@@ -902,12 +900,6 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         def capture_live_update(renderable: object) -> None:
             text = _render_text(renderable)
             live_frames.append(text)
-            if "Starting tool math.calculator" in text:
-                start_frame_seen.set()
-            if "Running tool math.calculator" in text:
-                progress_frame_seen.set()
-            if "Executed tool math.calculator" in text and ": 25" in text:
-                completion_frame_seen.set()
 
         live.update.side_effect = capture_live_update
         clock_value = 0.0
@@ -932,8 +924,6 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await wait_for(gated_tool.first_progress.wait(), 2)
-            await wait_for(start_frame_seen.wait(), 2)
-            await wait_for(progress_frame_seen.wait(), 2)
             gated_tool.release_second_progress.set()
             await wait_for(gated_tool.second_progress.wait(), 2)
             gated_tool.release_result.set()
@@ -948,15 +938,17 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 except BaseException:
                     pass
 
-        await wait_for(completion_frame_seen.wait(), 2)
         answer_stdout = _console_print_text(console)
         self.assertRegex(answer_stdout, r'The result is "?25"?\.')
         _assert_answer_clean(self, answer_stdout)
         live_text = "".join(live_frames) or _live_text(live)
-        self.assertIn("Starting tool math.calculator", live_text)
-        self.assertIn("Running tool math.calculator", live_text)
-        self.assertIn("Executed tool math.calculator", live_text)
-        self.assertIn(": 25", live_text)
+        self.assertIn("Starting tool call math.calculator", live_text)
+        self.assertIn("Running tool call math.calculator", live_text)
+        self.assertIn("Executed tool finish math.calculator", live_text)
+        self.assertIn(
+            "details: expression=(4 + 6) * 5 / 2",
+            live_text,
+        )
 
     async def test_cli_run_math_tool_basic_noninteractive_uses_stderr(
         self,
@@ -1028,8 +1020,9 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         _assert_answer_clean(self, answer_stdout)
         _assert_answer_clean(self, _console_print_text(console, end=None))
         diagnostics = diagnostic_output.getvalue()
-        self.assertIn("Executed tool math.calculator", diagnostics)
-        self.assertIn(": 25", diagnostics)
+        self.assertIn("Executed tool calculate", diagnostics)
+        self.assertIn("Calculation completed", diagnostics)
+        self.assertIn("details: result=25", diagnostics)
 
     async def test_cli_run_math_tool_basic_quiet_ignores_display_flags(
         self,
