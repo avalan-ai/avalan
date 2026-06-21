@@ -1,6 +1,7 @@
 from dataclasses import FrozenInstanceError
 from importlib import import_module
 from sys import modules
+from typing import Any, cast
 from unittest import TestCase
 
 from avalan.cli.display import CliStreamDisplayConfig
@@ -30,6 +31,7 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamTerminalOutcome,
 )
+from avalan.tool.display import ToolDisplayProjection
 
 
 def _config(**overrides: object) -> CliStreamDisplayConfig:
@@ -580,6 +582,61 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertIn(
             "<redacted>", second.active_tools[0].arguments_summary or ""
         )
+
+    def test_tool_display_projection_arguments_are_validated(self) -> None:
+        builder = CliStreamSnapshotBuilder(
+            _config(display_tools=True, display_tools_events=2)
+        )
+        projection = ToolDisplayProjection(action="inspect")
+
+        builder.add_active_tool(
+            tool_call_id="call-1",
+            name="search",
+            display_projection=projection,
+        )
+        builder.update_active_tool(
+            tool_call_id="call-1",
+            display_projection=projection,
+        )
+        builder.complete_tool(
+            tool_call_id="call-1",
+            display_projection=projection,
+        )
+        builder.add_tool_result(
+            ToolCallResult(
+                id="result-1",
+                call=ToolCall(id="call-1", name="search"),
+                name="search",
+                result="ok",
+            ),
+            display_projection=projection,
+        )
+
+        snapshot = builder.snapshot()
+        self.assertIs(
+            snapshot.completed_tools[0].display_projection, projection
+        )
+        self.assertIs(snapshot.tool_results[0].display_projection, projection)
+        with self.assertRaises(AssertionError):
+            builder.update_active_tool(
+                tool_call_id="call-1",
+                display_projection=cast(Any, object()),
+            )
+        with self.assertRaises(AssertionError):
+            builder.complete_tool(
+                tool_call_id="call-1",
+                display_projection=cast(Any, object()),
+            )
+        with self.assertRaises(AssertionError):
+            builder.add_tool_result(
+                ToolCallResult(
+                    id="result-2",
+                    call=ToolCall(id="call-2", name="search"),
+                    name="search",
+                    result="ok",
+                ),
+                display_projection=cast(Any, object()),
+            )
 
     def test_retention_disables_unrequested_tool_event_and_stats_history(
         self,
