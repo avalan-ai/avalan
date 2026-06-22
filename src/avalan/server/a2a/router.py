@@ -9,7 +9,13 @@ from ...model.stream import (
     StreamValidationError,
     canonical_item_from_consumer_projection,
 )
-from ..entities import ChatCompletionRequest, ChatMessage
+from ..entities import (
+    ChatCompletionRequest,
+    ChatMessage,
+    ContentFile,
+    ContentImage,
+    ContentText,
+)
 from ..routers import orchestrate, resolve_model_id
 from ..routers.streaming import (
     cleanup_stream_sources,
@@ -18,14 +24,32 @@ from ..routers.streaming import (
 )
 
 from asyncio import CancelledError
-from collections.abc import AsyncIterable, AsyncIterator
+from base64 import b64decode, b64encode
+from binascii import Error as BinasciiError
+from collections.abc import AsyncIterable, AsyncIterator, Mapping, Sequence
 from copy import deepcopy
 from importlib import import_module
+from json import dumps, loads
 from logging import Logger
 from typing import Any, cast
 from urllib.parse import urljoin
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+
+A2A_FILE_MODES = [
+    "text/plain",
+    "text/markdown",
+    "text/*",
+    "image/png",
+    "image/jpeg",
+    "image/*",
+    "application/json",
+    "application/pdf",
+    "application/octet-stream",
+]
+A2A_OUTPUT_MODES = ["text/plain"]
+_MISSING = object()
 
 
 def install_a2a_routes(
@@ -71,6 +95,23 @@ def install_a2a_routes(
         task_store=task_store_module.InMemoryTaskStore(),
         agent_card=card,
     )
+    jsonrpc_routes = _validated_a2a_routes(
+        _a2a_jsonrpc_routes(
+            jsonrpc_routes_module,
+            request_handler,
+            prefix=prefix,
+        ),
+        route_class=routing_module.Route,
+        jsonrpc=True,
+    )
+    rest_routes = _validated_a2a_routes(
+        rest_routes_module.create_rest_routes(
+            request_handler,
+            path_prefix=prefix,
+            enable_v0_3_compat=False,
+        ),
+        route_class=routing_module.Route,
+    )
     route_module.add_a2a_routes_to_fastapi(
         app,
         agent_card_routes=_agent_card_routes(
@@ -80,14 +121,8 @@ def install_a2a_routes(
             json_response=responses_module.JSONResponse,
             route_class=routing_module.Route,
         ),
-        jsonrpc_routes=jsonrpc_routes_module.create_jsonrpc_routes(
-            request_handler, rpc_url=prefix, enable_v0_3_compat=False
-        ),
-        rest_routes=rest_routes_module.create_rest_routes(
-            request_handler,
-            path_prefix=prefix,
-            enable_v0_3_compat=False,
-        ),
+        jsonrpc_routes=jsonrpc_routes,
+        rest_routes=rest_routes,
     )
 
 
@@ -119,6 +154,214 @@ def _absolute_url(request: Any, path: str) -> str:
     return urljoin(str(request.base_url), path.lstrip("/"))
 
 
+def _a2a_jsonrpc_routes(
+    jsonrpc_routes_module: Any,
+    request_handler: Any,
+    *,
+    prefix: str,
+) -> list[Any]:
+    root_routes = jsonrpc_routes_module.create_jsonrpc_routes(
+        request_handler,
+        rpc_url=prefix,
+        enable_v0_3_compat=False,
+    )
+    tenant_routes = jsonrpc_routes_module.create_jsonrpc_routes(
+        request_handler,
+        rpc_url=f"/{{tenant}}{prefix}",
+        enable_v0_3_compat=False,
+    )
+    return [*root_routes, *tenant_routes]
+
+
+def _validated_a2a_routes(
+    routes: Sequence[Any], *, route_class: Any, jsonrpc: bool = False
+) -> list[Any]:
+    return [
+        _validated_a2a_route(route, route_class=route_class, jsonrpc=jsonrpc)
+        for route in routes
+    ]
+
+
+def _validated_a2a_route(
+    route: Any, *, route_class: Any, jsonrpc: bool = False
+) -> Any:
+    nested_routes = getattr(route, "routes", None)
+    if _is_sequence(nested_routes):
+        wrapped_routes = _validated_a2a_routes(
+            cast(Sequence[Any], nested_routes),
+            route_class=route_class,
+            jsonrpc=jsonrpc,
+        )
+        if isinstance(nested_routes, list):
+            nested_routes[:] = wrapped_routes
+        return route
+
+    endpoint = getattr(route, "endpoint", None)
+    methods = getattr(route, "methods", None)
+    path = getattr(route, "path", None)
+    if endpoint is None or path is None or methods is None:
+        return route
+    if "POST" not in methods:
+        return route
+    return route_class(
+        path=path,
+        endpoint=_validated_a2a_endpoint(endpoint, jsonrpc=jsonrpc),
+        methods=list(methods),
+        name=getattr(route, "name", None),
+        include_in_schema=getattr(route, "include_in_schema", True),
+    )
+
+
+def _validated_a2a_endpoint(endpoint: Any, *, jsonrpc: bool = False) -> Any:
+    async def _endpoint(request: Any) -> Any:
+        try:
+            payload = await _validate_a2a_json_file_parts(request)
+        except HTTPException as exc:
+            if jsonrpc:
+                return await _a2a_jsonrpc_validation_error_response(
+                    request, exc.detail
+                )
+            raise
+        if jsonrpc:
+            _inject_a2a_jsonrpc_tenant(request, payload)
+        return await endpoint(request)
+
+    return _endpoint
+
+
+async def _validate_a2a_json_file_parts(request: Any) -> object | None:
+    body = await request.body()
+    if not body:
+        return None
+    try:
+        payload: object = loads(body)
+    except ValueError:
+        return None
+    for part_payload in _a2a_json_part_payloads(payload):
+        _validate_a2a_json_part_payload(part_payload)
+    return payload
+
+
+async def _a2a_jsonrpc_validation_error_response(
+    request: Any, detail: object
+) -> JSONResponse:
+    body = await request.body()
+    try:
+        payload = loads(body)
+    except ValueError:
+        payload = None
+    return JSONResponse(
+        {
+            "jsonrpc": "2.0",
+            "id": _a2a_jsonrpc_request_id(payload),
+            "error": {
+                "code": -32602,
+                "message": "Invalid params",
+                "data": detail,
+            },
+        },
+        status_code=200,
+    )
+
+
+def _a2a_jsonrpc_request_id(payload: object) -> str | int | None:
+    if not isinstance(payload, Mapping):
+        return None
+    request_id = payload.get("id")
+    if isinstance(request_id, bool):
+        return None
+    return request_id if isinstance(request_id, str | int) else None
+
+
+def _inject_a2a_jsonrpc_tenant(request: Any, payload: object | None) -> None:
+    if not isinstance(payload, dict):
+        return
+    path_params = getattr(request, "path_params", {})
+    if not isinstance(path_params, Mapping):
+        return
+    tenant = path_params.get("tenant")
+    if not isinstance(tenant, str) or not tenant:
+        return
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        return
+    params["tenant"] = tenant
+    request._body = dumps(payload).encode("utf-8")
+
+
+def _a2a_json_part_payloads(value: object) -> list[Mapping[object, object]]:
+    payloads: list[Mapping[object, object]] = []
+    if isinstance(value, Mapping):
+        if _a2a_json_part_content_fields(value):
+            return payloads
+        parts = value.get("parts")
+        if _is_sequence(parts):
+            for part in cast(Sequence[object], parts):
+                if isinstance(part, Mapping):
+                    payloads.append(_a2a_json_part_payload(part))
+        for key, item in value.items():
+            if key in {"data", "metadata", "parts"}:
+                continue
+            payloads.extend(_a2a_json_part_payloads(item))
+    elif _is_sequence(value):
+        for item in cast(Sequence[object], value):
+            payloads.extend(_a2a_json_part_payloads(item))
+    return payloads
+
+
+def _a2a_json_part_payload(
+    part: Mapping[object, object],
+) -> Mapping[object, object]:
+    root = part.get("root")
+    return root if isinstance(root, Mapping) else part
+
+
+def _validate_a2a_json_part_payload(
+    payload: Mapping[object, object],
+) -> None:
+    content_fields = _a2a_json_part_content_fields(payload)
+    if len(content_fields) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="A2A parts must contain exactly one content field",
+        )
+    if "raw" in payload:
+        _validate_a2a_json_raw_part(payload["raw"])
+
+
+def _a2a_json_part_content_fields(
+    payload: Mapping[object, object],
+) -> list[str]:
+    return [
+        field for field in ("text", "raw", "url", "data") if field in payload
+    ]
+
+
+def _validate_a2a_json_raw_part(value: object) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="A2A raw file parts must be base64 strings",
+        )
+    try:
+        _decode_a2a_base64(value)
+    except (BinasciiError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="A2A raw file parts must be base64 strings",
+        ) from exc
+
+
+def _decode_a2a_base64(value: str) -> bytes:
+    payload = "".join(value.split())
+    padding = "=" * (-len(payload) % 4)
+    return b64decode(
+        payload + padding,
+        altchars=b"-_",
+        validate=True,
+    )
+
+
 def _ensure_typing_override() -> None:
     typing_module = import_module("typing")
     if hasattr(typing_module, "override"):
@@ -148,18 +391,369 @@ def _build_agent_card(
             )
         ],
         capabilities=a2a_pb2.AgentCapabilities(streaming=True),
-        default_input_modes=["text/plain"],
-        default_output_modes=["text/plain"],
+        default_input_modes=A2A_FILE_MODES,
+        default_output_modes=A2A_OUTPUT_MODES,
         skills=[
             a2a_pb2.AgentSkill(
                 id=name,
                 name=name,
                 description=skill_description,
                 tags=["avalan", "agent"],
-                input_modes=["text/plain"],
-                output_modes=["text/plain"],
+                input_modes=A2A_FILE_MODES,
+                output_modes=A2A_OUTPUT_MODES,
             )
         ],
+    )
+
+
+def _chat_content_from_a2a_context(
+    context: Any,
+) -> str | list[ContentFile | ContentImage | ContentText]:
+    assert context is not None
+    message = _a2a_context_message(context)
+    content = _chat_content_from_a2a_message(message)
+    if content is not None:
+        return content
+
+    get_user_input = getattr(context, "get_user_input", None)
+    assert callable(get_user_input)
+    text = get_user_input()
+    assert isinstance(text, str)
+    return text
+
+
+def _a2a_context_message(context: Any) -> object | None:
+    message = _field_value(context, "message")
+    if message is not _MISSING and _a2a_message_parts(message):
+        return message
+
+    current_task = _field_value(context, "current_task")
+    if current_task is _MISSING or current_task is None:
+        return message if message is not _MISSING else None
+
+    status = _field_value(current_task, "status")
+    if status is not _MISSING and status is not None:
+        status_message = _field_value(status, "message")
+        if status_message is not _MISSING and _a2a_message_parts(
+            status_message
+        ):
+            return status_message
+
+    history = _field_value(current_task, "history")
+    if _is_sequence(history):
+        messages = list(cast(Sequence[object], history))
+        for candidate in reversed(messages):
+            if _is_user_a2a_message(candidate) and _a2a_message_parts(
+                candidate
+            ):
+                return candidate
+        for candidate in reversed(messages):
+            if _a2a_message_parts(candidate):
+                return candidate
+
+    return message if message is not _MISSING else None
+
+
+def _chat_content_from_a2a_message(
+    message: object | None,
+) -> str | list[ContentFile | ContentImage | ContentText] | None:
+    parts = _a2a_message_parts(message)
+    if not parts:
+        return None
+
+    content: list[ContentFile | ContentImage | ContentText] = []
+    for part in parts:
+        content_part = _content_from_a2a_part(part)
+        if content_part is not None:
+            content.append(content_part)
+    if not content:
+        return None
+    text_content = [part for part in content if isinstance(part, ContentText)]
+    if len(text_content) == len(content):
+        return "\n".join(part.text for part in text_content)
+    return content
+
+
+def _content_from_a2a_part(part: object) -> ContentFile | ContentText | None:
+    payload = _a2a_part_payload(part)
+    content_fields = _a2a_part_content_fields(payload)
+    if len(content_fields) != 1:
+        return None
+
+    content_field = content_fields[0]
+    if content_field == "text":
+        text = _string_field(payload, "text")
+        if text is not None:
+            return ContentText(type="text", text=text)
+        return None
+
+    if content_field == "raw":
+        raw_source = _a2a_raw_source(payload)
+        raw_data = _raw_file_data(raw_source)
+        if raw_data is not None:
+            file_payload = _field_value(payload, "file")
+            return ContentFile(
+                type="file",
+                file=_file_metadata(payload, file_payload),
+                file_data=raw_data,
+                filename=_filename(payload, file_payload),
+            )
+        return None
+
+    if content_field == "url":
+        url = _string_field_value(_a2a_url_source(payload))
+        if url is not None:
+            file_payload = _field_value(payload, "file")
+            return ContentFile(
+                type="file",
+                file=_file_metadata(payload, file_payload),
+                file_url=url,
+                filename=_filename(payload, file_payload),
+            )
+        return None
+
+    data = _field_value(payload, "data")
+    data_text = _data_part_text(data)
+    if data_text is not None:
+        return ContentText(type="text", text=data_text)
+    return None
+
+
+def _a2a_part_content_fields(payload: object) -> list[str]:
+    fields: list[str] = []
+    if _field_value(payload, "text") is not _MISSING:
+        fields.append("text")
+    if _a2a_raw_source(payload) is not _MISSING:
+        fields.append("raw")
+    if _a2a_url_source(payload) is not _MISSING:
+        fields.append("url")
+    if _field_value(payload, "data") is not _MISSING:
+        fields.append("data")
+    return fields
+
+
+def _a2a_raw_source(payload: object) -> object:
+    raw_source = _field_value(payload, "raw")
+    if raw_source is not _MISSING:
+        return raw_source
+
+    file_payload = _field_value(payload, "file")
+    if file_payload is _MISSING:
+        return _MISSING
+    return _field_value(
+        file_payload, "raw", "bytes", "file_data", "data", "base64"
+    )
+
+
+def _a2a_url_source(payload: object) -> object:
+    url = _field_value(payload, "url", "uri", "file_url")
+    if url is not _MISSING:
+        return url
+
+    file_payload = _field_value(payload, "file")
+    if file_payload is _MISSING:
+        return _MISSING
+    return _field_value(file_payload, "url", "uri", "file_url")
+
+
+def _string_field_value(value: object) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _a2a_part_payload(part: object) -> object:
+    root = _field_value(part, "root")
+    return root if root is not _MISSING and root is not None else part
+
+
+def _a2a_message_parts(message: object | None) -> list[object]:
+    if message is None:
+        return []
+    parts = _field_value(message, "parts")
+    if not _is_sequence(parts):
+        return []
+    return list(cast(Sequence[object], parts))
+
+
+def _is_user_a2a_message(message: object) -> bool:
+    role = _field_value(message, "role")
+    if role is _MISSING or role is None:
+        return True
+    role_name = getattr(role, "name", None)
+    is_user = _role_value_is_user(role_name)
+    if is_user is not None:
+        return is_user
+    role_value = getattr(role, "value", None)
+    is_user = _role_value_is_user(role_value)
+    if is_user is not None:
+        return is_user
+    is_user = _role_value_is_user(role)
+    if is_user is not None:
+        return is_user
+    return str(role).lower().endswith("user")
+
+
+def _role_value_is_user(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value == 1
+    if isinstance(value, str):
+        return value.lower().endswith("user")
+    return None
+
+
+def _raw_file_data(value: object) -> str | None:
+    if value is _MISSING or value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            decoded = _decode_a2a_base64(stripped)
+        except (BinasciiError, ValueError):
+            return None
+        return b64encode(decoded).decode("ascii")
+    if isinstance(value, bytes):
+        return b64encode(value).decode("ascii") if value else None
+    if isinstance(value, bytearray):
+        return b64encode(bytes(value)).decode("ascii") if value else None
+    if isinstance(value, memoryview):
+        data = value.tobytes()
+        return b64encode(data).decode("ascii") if data else None
+    nested = _field_value(value, "raw", "bytes", "file_data", "data", "base64")
+    if nested is value:
+        return None
+    return _raw_file_data(nested)
+
+
+def _file_metadata(*sources: object) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    filename = _filename(*sources)
+    if filename is not None:
+        metadata["filename"] = filename
+    media_type = _media_type(*sources)
+    if media_type is not None:
+        metadata["mime_type"] = media_type
+    return metadata
+
+
+def _filename(*sources: object) -> str | None:
+    return _first_string(
+        sources,
+        "filename",
+        "file_name",
+        "name",
+        "display_name",
+        "displayName",
+    )
+
+
+def _media_type(*sources: object) -> str | None:
+    return _first_string(
+        sources,
+        "media_type",
+        "mediaType",
+        "mime_type",
+        "mimeType",
+    )
+
+
+def _first_string(sources: tuple[object, ...], *names: str) -> str | None:
+    for source in sources:
+        value = _string_field(source, *names)
+        if value is not None:
+            return value
+        metadata = _field_value(source, "metadata")
+        value = _string_field(metadata, *names)
+        if value is not None:
+            return value
+    return None
+
+
+def _string_field(source: object, *names: str) -> str | None:
+    value = _field_value(source, *names)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _data_part_text(value: object) -> str | None:
+    if value is _MISSING or value is None:
+        return None
+    jsonable = _jsonable_value(value)
+    if jsonable is _MISSING:
+        return None
+    return dumps(jsonable, separators=(",", ":"), sort_keys=True)
+
+
+def _jsonable_value(value: object) -> object:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Mapping):
+        result: dict[str, object] = {}
+        for key, item in value.items():
+            jsonable_item = _jsonable_value(item)
+            if jsonable_item is not _MISSING:
+                result[str(key)] = jsonable_item
+        return result
+    if _is_sequence(value):
+        return [
+            item
+            for item in (
+                _jsonable_value(item) for item in cast(Sequence[object], value)
+            )
+            if item is not _MISSING
+        ]
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump(mode="python", exclude_none=True)
+        except TypeError:
+            dumped = model_dump()
+        return _jsonable_value(dumped)
+
+    if hasattr(value, "DESCRIPTOR"):
+        json_format = import_module("google.protobuf.json_format")
+        return _jsonable_value(json_format.MessageToDict(value))
+
+    return _MISSING
+
+
+def _field_value(source: object, *names: str) -> object:
+    if source is _MISSING or source is None:
+        return _MISSING
+    if isinstance(source, Mapping):
+        for name in names:
+            if name in source:
+                return source[name]
+        return _MISSING
+    has_field = getattr(source, "HasField", None)
+    for name in names:
+        if callable(has_field):
+            try:
+                if not has_field(name):
+                    continue
+            except (TypeError, ValueError):
+                pass
+        try:
+            value = getattr(source, name)
+        except AttributeError:
+            continue
+        if callable(value):
+            continue
+        return value
+    return _MISSING
+
+
+def _is_sequence(value: object) -> bool:
+    return isinstance(value, Sequence) and not isinstance(
+        value, (bytes, bytearray, memoryview, str)
     )
 
 
@@ -261,7 +855,7 @@ class AvalanA2AAgentExecutor:
             messages=[
                 ChatMessage(
                     role=MessageRole.USER,
-                    content=context.get_user_input(),
+                    content=_chat_content_from_a2a_context(context),
                 )
             ],
             stream=True,
