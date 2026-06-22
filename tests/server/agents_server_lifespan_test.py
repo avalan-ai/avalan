@@ -16,6 +16,12 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+def _fake_a2a_module() -> ModuleType:
+    module = ModuleType("avalan.server.a2a")
+    module.install_a2a_routes = MagicMock(name="install_a2a_routes")
+    return module
+
+
 @pytest.mark.anyio
 async def test_agents_server_lifespan_initializes_state() -> None:
     logger = MagicMock(spec=Logger)
@@ -50,7 +56,10 @@ async def test_agents_server_lifespan_initializes_state() -> None:
     uvicorn_module.Config = config_mock
     uvicorn_module.Server = server_mock
 
-    with patch.dict(sys.modules, {"uvicorn": uvicorn_module}):
+    with patch.dict(
+        sys.modules,
+        {"uvicorn": uvicorn_module, "avalan.server.a2a": _fake_a2a_module()},
+    ):
         with (
             patch(
                 "avalan.server.FastAPI", side_effect=build_fastapi
@@ -151,7 +160,10 @@ async def test_agents_server_lifespan_sets_mcp_description() -> None:
     uvicorn_module.Config = MagicMock(return_value=config_instance)
     uvicorn_module.Server = MagicMock(return_value=server_instance)
 
-    with patch.dict(sys.modules, {"uvicorn": uvicorn_module}):
+    with patch.dict(
+        sys.modules,
+        {"uvicorn": uvicorn_module, "avalan.server.a2a": _fake_a2a_module()},
+    ):
         with (
             patch("avalan.server.FastAPI", side_effect=build_fastapi),
             patch(
@@ -218,7 +230,10 @@ async def test_agents_server_lifespan_sets_a2a_description() -> None:
     uvicorn_module.Config = MagicMock(return_value=config_instance)
     uvicorn_module.Server = MagicMock(return_value=server_instance)
 
-    with patch.dict(sys.modules, {"uvicorn": uvicorn_module}):
+    with patch.dict(
+        sys.modules,
+        {"uvicorn": uvicorn_module, "avalan.server.a2a": _fake_a2a_module()},
+    ):
         with (
             patch("avalan.server.FastAPI", side_effect=build_fastapi),
             patch(

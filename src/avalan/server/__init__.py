@@ -125,9 +125,6 @@ def _create_lifespan(
             app.state.logger = logger
             app.state.agent_id = agent_id
             if "a2a" in selected_protocols:
-                from .a2a.store import TaskStore
-
-                app.state.a2a_store = TaskStore()
                 app.state.a2a_tool_name = a2a_tool_name or "run"
                 if a2a_tool_description:
                     app.state.a2a_tool_description = a2a_tool_description
@@ -178,6 +175,8 @@ def _include_protocol_routers(
     flow_prefix: str,
     mcp_prefix: str,
     a2a_prefix: str,
+    a2a_tool_name: str,
+    a2a_tool_description: str | None,
 ) -> None:
     openai_endpoints = selected_protocols.get("openai")
     if openai_endpoints:
@@ -196,8 +195,12 @@ def _include_protocol_routers(
 
     if "a2a" in selected_protocols:
         a2a_module = import_module("avalan.server.a2a")
-        app.include_router(a2a_module.router, prefix=a2a_prefix)
-        app.include_router(a2a_module.well_known_router)
+        a2a_module.install_a2a_routes(
+            app,
+            prefix=a2a_prefix,
+            name=a2a_tool_name or "run",
+            description=a2a_tool_description,
+        )
 
     if "mcp" in selected_protocols:
         mcp_http_router = mcp_router.create_router()
@@ -290,6 +293,8 @@ def register_agent_endpoints(
         flow_prefix=flow_prefix,
         mcp_prefix=mcp_prefix,
         a2a_prefix=a2a_prefix,
+        a2a_tool_name=a2a_tool_name,
+        a2a_tool_description=a2a_tool_description,
     )
 
 
@@ -364,6 +369,8 @@ def agents_server(
         flow_prefix=flow_prefix,
         mcp_prefix=mcp_prefix,
         a2a_prefix=a2a_prefix,
+        a2a_tool_name=a2a_tool_name,
+        a2a_tool_description=a2a_tool_description,
     )
 
     logger.debug("Starting %s server at %s:%d", name, host, port)
@@ -398,16 +405,16 @@ def di_get_logger(request: Request) -> Logger:
     return logger
 
 
-async def di_get_orchestrator(request: Request) -> Orchestrator:
-    """Retrieve the orchestrator from the request."""
-    if not hasattr(request.app.state, "orchestrator"):
-        ctx: OrchestratorContext = request.app.state.ctx
-        loader: OrchestratorLoader = request.app.state.loader
-        stack: AsyncExitStack = request.app.state.stack
+async def di_get_orchestrator_from_app(app: FastAPI) -> Orchestrator:
+    """Retrieve the orchestrator from the application."""
+    if not hasattr(app.state, "orchestrator"):
+        ctx: OrchestratorContext = app.state.ctx
+        loader: OrchestratorLoader = app.state.loader
+        stack: AsyncExitStack = app.state.stack
         if ctx.specs_path:
             orchestrator_cm = await loader.from_file(
                 ctx.specs_path,
-                agent_id=request.app.state.agent_id,
+                agent_id=app.state.agent_id,
                 tool_settings=ctx.tool_settings,
                 event_manager_mode=EventManagerMode.SERVER,
             )
@@ -419,6 +426,11 @@ async def di_get_orchestrator(request: Request) -> Orchestrator:
                 event_manager_mode=EventManagerMode.SERVER,
             )
         orchestrator = await stack.enter_async_context(orchestrator_cm)
-        request.app.state.orchestrator = orchestrator
-        request.app.state.agent_id = orchestrator.id
-    return cast(Orchestrator, request.app.state.orchestrator)
+        app.state.orchestrator = orchestrator
+        app.state.agent_id = orchestrator.id
+    return cast(Orchestrator, app.state.orchestrator)
+
+
+async def di_get_orchestrator(request: Request) -> Orchestrator:
+    """Retrieve the orchestrator from the request."""
+    return await di_get_orchestrator_from_app(request.app)

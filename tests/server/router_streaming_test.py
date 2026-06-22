@@ -28,7 +28,6 @@ from avalan.model.stream import (
     StreamValidationError,
     project_canonical_stream_item,
 )
-from avalan.server.a2a.store import TaskStoreRetention
 from avalan.server.routers.mcp import MCPResourceStore
 from avalan.server.routers.streaming import (
     ProtocolStreamAccumulator,
@@ -2018,7 +2017,6 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         policy = StreamRetentionPolicy()
         settings = protocol_stream_retention_settings()
         event_manager = EventManager(mode=EventManagerMode.SERVER)
-        task_retention = TaskStoreRetention()
         resource_store = MCPResourceStore()
 
         self.assertEqual(
@@ -2054,21 +2052,6 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
             event_manager.default_delivery_config.queue_limit,
             32,
         )
-
-        self.assertEqual(
-            task_retention.max_tasks,
-            policy.a2a_task_record_item_limit,
-        )
-        for value in (
-            task_retention.max_events_per_task,
-            task_retention.max_message_chunks,
-            task_retention.max_message_bytes,
-            task_retention.max_artifact_items,
-            task_retention.max_artifact_bytes,
-        ):
-            with self.subTest(value=value):
-                self.assertIsInstance(value, int)
-                self.assertGreater(value, 0)
 
         resource = await resource_store.create(base_path="/mcp")
         for index in range(policy.mcp_resource_item_limit + 2):

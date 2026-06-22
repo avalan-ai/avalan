@@ -8,7 +8,6 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-from a2a import types as a2a_types
 from streaming_trace_fixtures import (
     TERMINAL_ERROR_DATA,
     TERMINAL_TRACE_USAGE,
@@ -33,11 +32,6 @@ from avalan.model.stream import (
     accumulate_canonical_stream_items,
     iter_stream_consumer_projections,
 )
-from avalan.server.a2a.router import (
-    A2AResponseTranslator,
-    A2AStreamEventConverter,
-)
-from avalan.server.a2a.store import TaskStore
 from avalan.server.entities import ChatCompletionRequest, ChatMessage
 from avalan.server.routers import chat, responses
 from avalan.server.routers import mcp as mcp_router
@@ -97,7 +91,6 @@ async def _run_canonical_trace_conforms_across_public_stream_surfaces() -> (
     _assert_chat_projection(projections, accumulator.final_usage)
     _assert_responses_projection(projections)
     await _assert_mcp_projection(trace.items)
-    await _assert_a2a_projection(trace.items)
 
 
 def test_canonical_golden_trace_locks_item_semantics() -> None:
@@ -707,67 +700,6 @@ async def _assert_mcp_projection(
         "output_text_tokens": 5,
         "total_tokens": 7,
     }
-
-
-async def _assert_a2a_projection(
-    items: tuple[CanonicalStreamItem, ...],
-) -> None:
-    store = TaskStore()
-    task_id = "conformance-task"
-    await store.create_task(
-        task_id,
-        model="test-model",
-        instructions=None,
-        input_messages=[],
-        metadata={},
-    )
-    translator = A2AResponseTranslator(task_id, store)
-    converter = A2AStreamEventConverter(task_id, store)
-
-    status_updates: list[a2a_types.TaskStatusUpdateEvent] = []
-    artifact_updates: list[a2a_types.TaskArtifactUpdateEvent] = []
-    async for raw_event in translator.run_stream(async_items(items)):
-        converted = await converter.convert(raw_event)
-        if not isinstance(converted, dict) or "result" not in converted:
-            continue
-        response = (
-            a2a_types.SendStreamingMessageSuccessResponse.model_validate(
-                converted
-            )
-        )
-        if isinstance(response.result, a2a_types.TaskStatusUpdateEvent):
-            status_updates.append(response.result)
-        if isinstance(response.result, a2a_types.TaskArtifactUpdateEvent):
-            artifact_updates.append(response.result)
-
-    assert translator.text == "final answer"
-    task = await store.get_task(task_id)
-    artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
-    assert task["status"] == "completed"
-    assert artifacts["reasoning"]["content"][0]["text"] == "plan"
-    assert artifacts["answer"]["content"] == [
-        {"type": "text", "text": "final "},
-        {"type": "text", "text": "answer"},
-    ]
-    assert artifacts[TOOL_CALL_ID]["kind"] == "tool_execution"
-    tool_content = artifacts[TOOL_CALL_ID]["content"]
-    terminal_index = next(
-        index
-        for index, item in enumerate(tool_content)
-        if item.get("type") == "tool_terminal"
-    )
-    live_tool_content = [
-        item
-        for item in tool_content[:terminal_index]
-        if item.get("type") in {"tool_output", "progress"}
-    ]
-    assert [
-        item.get("category", item.get("progress", {}).get("category"))
-        for item in live_tool_content
-    ] == ["stdout", "stderr", "log", "progress"]
-    assert artifact_updates
-    assert status_updates[-1].status.state is a2a_types.TaskState.completed
-    assert status_updates[-1].final is True
 
 
 def _sse_event_name(message: str) -> str:

@@ -96,6 +96,50 @@ def project_mcp_call_tool_display(
     )
 
 
+def project_a2a_call_tool_display(
+    *,
+    call: ToolCall,
+    outcome: ToolCallOutcome | None = None,
+) -> ToolDisplayProjection:
+    assert isinstance(call, ToolCall)
+    if outcome is not None:
+        return _terminal_projection(
+            call=call,
+            outcome=outcome,
+            action="call",
+            scope="A2A",
+            completed_summary="A2A agent call completed.",
+            result_projector=_mcp_result_projection,
+        )
+    arguments = _arguments(call)
+    uri, uri_redacted = _safe_url(_string_argument(arguments, "uri"))
+    skill_name = _string_argument(arguments, "name")
+    tool_arguments = arguments.get("arguments")
+    argument_count = (
+        len(tool_arguments) if isinstance(tool_arguments, dict) else 0
+    )
+    argument_keys = (
+        _joined_limited_strings(tool_arguments.keys())
+        if isinstance(tool_arguments, dict)
+        else None
+    )
+    return ToolDisplayProjection(
+        action="call",
+        label=call.name,
+        target=skill_name or "A2A agent",
+        scope=uri or "A2A server",
+        summary="Call an A2A agent.",
+        details=(
+            _detail("uri", uri, redacted=uri_redacted),
+            _detail("skill", skill_name),
+            _detail("argument_count", argument_count),
+            _detail("argument_keys", argument_keys),
+        ),
+        metrics={"arguments": argument_count},
+        redacted=uri_redacted,
+    )
+
+
 def project_browser_open_tool_display(
     *,
     call: ToolCall,
