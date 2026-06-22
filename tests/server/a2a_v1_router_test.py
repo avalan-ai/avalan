@@ -22,6 +22,7 @@ from avalan.server.a2a.router import (
     AvalanA2AAgentExecutor,
     install_a2a_routes,
 )
+from avalan.server.entities import ContentFile, ContentImage, ContentText
 
 
 @pytest.fixture
@@ -330,6 +331,11 @@ async def test_chat_request_builds_multimodal_content_from_a2a_parts() -> None:
                     },
                 ),
                 _FakePart(
+                    raw=b"\x89PNG\r\n\x1a\n",
+                    filename="inline.png",
+                    mediaType="image/png",
+                ),
+                _FakePart(
                     url="https://files.example/image.png",
                     filename="image.png",
                     media_type="image/png",
@@ -343,24 +349,29 @@ async def test_chat_request_builds_multimodal_content_from_a2a_parts() -> None:
     content = request.messages[0].content
 
     assert isinstance(content, list)
+    assert isinstance(content[0], ContentText)
     assert content[0].text == "summarize these"
+    assert isinstance(content[1], ContentFile)
     assert content[1].file_data == b64encode(b"%PDF-1.7").decode("ascii")
     assert content[1].filename == "report.pdf"
     assert content[1].file == {
         "filename": "report.pdf",
         "mime_type": "application/pdf",
     }
+    assert isinstance(content[2], ContentFile)
     assert content[2].file_data == raw_text
     assert content[2].file == {
         "filename": "note.txt",
         "mime_type": "text/plain",
     }
-    assert content[3].file_url == "https://files.example/image.png"
-    assert content[3].file == {
-        "filename": "image.png",
-        "mime_type": "image/png",
+    assert isinstance(content[3], ContentImage)
+    assert content[3].image_url == {
+        "url": "data:image/png;base64,iVBORw0KGgo="
     }
-    assert content[4].text == '{"kind":"metadata","page":1}'
+    assert isinstance(content[4], ContentImage)
+    assert content[4].image_url == {"url": "https://files.example/image.png"}
+    assert isinstance(content[5], ContentText)
+    assert content[5].text == '{"kind":"metadata","page":1}'
 
 
 @pytest.mark.anyio

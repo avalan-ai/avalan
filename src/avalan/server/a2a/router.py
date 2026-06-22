@@ -474,7 +474,9 @@ def _chat_content_from_a2a_message(
     return content
 
 
-def _content_from_a2a_part(part: object) -> ContentFile | ContentText | None:
+def _content_from_a2a_part(
+    part: object,
+) -> ContentFile | ContentImage | ContentText | None:
     payload = _a2a_part_payload(part)
     content_fields = _a2a_part_content_fields(payload)
     if len(content_fields) != 1:
@@ -492,6 +494,14 @@ def _content_from_a2a_part(part: object) -> ContentFile | ContentText | None:
         raw_data = _raw_file_data(raw_source)
         if raw_data is not None:
             file_payload = _field_value(payload, "file")
+            media_type = _media_type(payload, file_payload)
+            if _is_image_media_type(media_type):
+                return ContentImage(
+                    type="image_url",
+                    image_url={
+                        "url": f"data:{media_type};base64,{raw_data}",
+                    },
+                )
             return ContentFile(
                 type="file",
                 file=_file_metadata(payload, file_payload),
@@ -504,6 +514,9 @@ def _content_from_a2a_part(part: object) -> ContentFile | ContentText | None:
         url = _string_field_value(_a2a_url_source(payload))
         if url is not None:
             file_payload = _field_value(payload, "file")
+            media_type = _media_type(payload, file_payload)
+            if _is_image_media_type(media_type):
+                return ContentImage(type="image_url", image_url={"url": url})
             return ContentFile(
                 type="file",
                 file=_file_metadata(payload, file_payload),
@@ -662,6 +675,10 @@ def _media_type(*sources: object) -> str | None:
     )
 
 
+def _is_image_media_type(media_type: str | None) -> bool:
+    return media_type is not None and media_type.lower().startswith("image/")
+
+
 def _first_string(sources: tuple[object, ...], *names: str) -> str | None:
     for source in sources:
         value = _string_field(source, *names)
@@ -740,6 +757,8 @@ def _field_value(source: object, *names: str) -> object:
                 if not has_field(name):
                     continue
             except (TypeError, ValueError):
+                # HasField raises for non-protobuf or unsupported names; fall
+                # back to getattr probing for dict-like SDK variants.
                 pass
         try:
             value = getattr(source, name)
