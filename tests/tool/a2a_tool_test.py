@@ -1,12 +1,13 @@
-import sys
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack
-from json import dumps
+from importlib import import_module
 from logging import getLogger
-from types import ModuleType
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
+from a2a.types import a2a_pb2
 from fastapi import FastAPI
 from httpx import ASGITransport
 
@@ -28,84 +29,59 @@ from avalan.tool import a2a as a2a_module
 from avalan.tool.a2a import A2ACallTool, A2AToolSet
 
 
-class _FakeResponse:
-    def __init__(
-        self,
-        *,
-        body: bytes | None = None,
-        lines: list[str] | None = None,
-        content_type: str,
-    ) -> None:
-        self._body = body or b""
-        self._lines = lines or []
-        self.headers = {"content-type": content_type}
-        self.raise_for_status = MagicMock()
+class _FakeSdkClient:
+    def __init__(self, responses: Sequence[object]) -> None:
+        self.responses = responses
+        self.requests: list[Any] = []
+        self.contexts: list[Any] = []
+        self.entered = 0
+        self.exited = 0
 
-    async def __aenter__(self) -> "_FakeResponse":
+    async def __aenter__(self) -> "_FakeSdkClient":
+        self.entered += 1
         return self
 
     async def __aexit__(self, *args: object) -> bool:
+        self.exited += 1
         return False
 
-    async def aread(self) -> bytes:
-        return self._body
-
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
-
-
-class _FakeClient:
-    def __init__(self, response: _FakeResponse, **kwargs: object) -> None:
-        self.response = response
-        self.kwargs = kwargs
-        self.stream = MagicMock(return_value=response)
-
-    async def __aenter__(self) -> "_FakeClient":
-        return self
-
-    async def __aexit__(self, *args: object) -> bool:
-        return False
-
-
-class _IncompleteA2AHTTPResponse(a2a_module._A2AHTTPResponse):
-    headers: dict[str, str] = {}
+    async def send_message(
+        self, request: object, *, context: object = None
+    ) -> AsyncIterator[object]:
+        self.requests.append(request)
+        self.contexts.append(context)
+        for response in self.responses:
+            if isinstance(response, BaseException):
+                raise response
+            yield response
 
 
 class A2ACallToolTestCase(IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
+    async def asyncSetUp(self) -> None:
         self.addCleanup(patch.stopall)
-        self.response = _FakeResponse(
-            content_type="text/event-stream",
-            lines=_completed_a2a_lines(answer="ok"),
-        )
-        self.client = _FakeClient(self.response)
-        self.AsyncClient = MagicMock(return_value=self.client)
-        httpx_mod = ModuleType("httpx")
-        httpx_mod.AsyncClient = self.AsyncClient
-        patch.dict(sys.modules, {"httpx": httpx_mod}).start()
+        self.client = _FakeSdkClient(_completed_a2a_responses(answer="ok"))
+        self.created_cards: list[Any] = []
+        self.created_configs: list[Any] = []
+
+        async def create_client(
+            agent: object, *, client_config: object
+        ) -> _FakeSdkClient:
+            self.created_cards.append(agent)
+            self.created_configs.append(client_config)
+            return self.client
+
+        self.AsyncClient = MagicMock(return_value="httpx-client")
+        patch("httpx.AsyncClient", self.AsyncClient).start()
+        patch("a2a.client.create_client", new=create_client).start()
         patch("avalan.tool.a2a.uuid4", return_value="req-1").start()
         self.tool = A2ACallTool(
             call_params={"request_id": "req-1", "timeout": 1}
         )
 
-    async def test_incomplete_http_response_methods_raise(self):
-        response = _IncompleteA2AHTTPResponse()
-
-        with self.assertRaises(NotImplementedError):
-            await response.aread()
-        with self.assertRaises(NotImplementedError):
-            response.aiter_lines()
-        with self.assertRaises(NotImplementedError):
-            response.raise_for_status()
-
-    async def test_call_streams_answer_tool_and_status_events(self):
-        self.response = _FakeResponse(
-            content_type="text/event-stream",
-            lines=_completed_a2a_lines(answer="Hello", tool_output="stderr"),
+    async def test_call_streams_answer_tool_and_status_events(self) -> None:
+        self.client.responses = _completed_a2a_responses(
+            answer="Hello", tool_output="stderr"
         )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
         events: list[ToolExecutionStreamEvent] = []
 
         async def stream(event: ToolExecutionStreamEvent) -> None:
@@ -121,7 +97,7 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             result["content"], [{"type": "text", "text": "Hello"}]
         )
-        structured = result["structuredContent"]
+        structured = cast(dict[str, Any], result["structuredContent"])
         self.assertEqual(structured["taskId"], "task-1")
         self.assertEqual(structured["state"], "TASK_STATE_COMPLETED")
         self.assertEqual(structured["artifacts"][0]["text"], "Hello")
@@ -135,37 +111,42 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(events[-1].progress, 1)
 
         self.AsyncClient.assert_called_once_with(
+            timeout=None,
             headers={
                 "A2A-Version": "1.0",
                 "Accept": "application/json, text/event-stream",
                 "Content-Type": "application/json",
-            }
+            },
         )
-        self.client.stream.assert_called_once()
-        _, uri = self.client.stream.call_args.args
-        self.assertEqual(uri, "http://host/a2a")
-        request = self.client.stream.call_args.kwargs["json"]
-        self.assertEqual(request["method"], "SendStreamingMessage")
+        card = self.created_cards[0]
+        self.assertEqual(card.supported_interfaces[0].url, "http://host/a2a")
         self.assertEqual(
-            request["params"]["message"]["parts"][0]["text"], "Ping"
+            card.supported_interfaces[0].protocol_binding, "JSONRPC"
         )
-        self.assertEqual(request["params"]["metadata"]["skill"], "run")
-        self.assertEqual(self.client.stream.call_args.kwargs["timeout"], 1)
+        request = self.client.requests[0]
+        self.assertEqual(
+            request.message.parts[0].text,
+            "Ping",
+        )
+        self.assertEqual(request.metadata["skill"], "run")
+        self.assertEqual(self.client.contexts[0].timeout, 1)
+        self.assertEqual(self.client.entered, 1)
+        self.assertEqual(self.client.exited, 1)
 
-    async def test_call_without_arguments_uses_skill_name_message(self):
+    async def test_call_without_arguments_uses_skill_name_message(
+        self,
+    ) -> None:
         result = await self.tool(
             "http://host/a2a", "run", None, context=ToolCallContext()
         )
 
-        request = self.client.stream.call_args.kwargs["json"]
-        self.assertEqual(
-            request["params"]["message"]["parts"], [{"text": "run"}]
-        )
+        request = self.client.requests[0]
+        self.assertEqual(request.message.parts[0].text, "run")
         self.assertEqual(result["content"], [{"type": "text", "text": "ok"}])
 
     async def test_call_serializes_non_text_arguments_and_merges_metadata(
         self,
-    ):
+    ) -> None:
         tool = A2ACallTool(
             call_params={
                 "request_id": "req-1",
@@ -181,218 +162,126 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
             context=ToolCallContext(),
         )
 
-        request = self.client.stream.call_args.kwargs["json"]
+        request = self.client.requests[0]
         self.assertEqual(
-            request["params"]["message"]["parts"][0]["text"],
+            request.message.parts[0].text,
             '{"count":2,"metadata":{"arg":"meta"}}',
         )
-        self.assertEqual(request["params"]["message"]["messageId"], "msg-1")
-        self.assertEqual(
-            request["params"]["metadata"],
-            {
-                "skill": "run",
-                "arg": "meta",
-                "call": "meta",
-                "arguments": {"count": 2, "metadata": {"arg": "meta"}},
-            },
-        )
+        self.assertEqual(request.message.message_id, "msg-1")
+        self.assertEqual(request.metadata["skill"], "run")
+        self.assertEqual(request.metadata["arg"], "meta")
+        self.assertEqual(request.metadata["call"], "meta")
+        self.assertEqual(request.metadata["arguments"]["count"], 2)
 
-    async def test_passes_client_params_and_preserves_headers(self):
+    async def test_passes_client_params_and_preserves_headers(self) -> None:
         tool = A2ACallTool(
-            client_params={"headers": {"Authorization": "Bearer token"}},
-            call_params={"request_id": "req-1"},
+            client_params={
+                "headers": {"Authorization": "Bearer token"},
+                "http2": True,
+                "verify": False,
+            },
+            call_params={
+                "request_id": "req-1",
+                "service_parameters": {"A2A-Extensions": "demo"},
+                "state": {"tenant": "demo"},
+            },
         )
 
         await tool("http://host/a2a", "run", None, context=ToolCallContext())
 
         self.AsyncClient.assert_called_once_with(
+            timeout=None,
+            http2=True,
+            verify=False,
             headers={
                 "Authorization": "Bearer token",
                 "A2A-Version": "1.0",
                 "Accept": "application/json, text/event-stream",
                 "Content-Type": "application/json",
-            }
+            },
         )
-        self.assertIsNone(self.client.stream.call_args.kwargs["timeout"])
+        self.assertIsNone(self.client.contexts[0].timeout)
+        self.assertEqual(self.client.contexts[0].state, {"tenant": "demo"})
+        self.assertEqual(
+            self.client.contexts[0].service_parameters,
+            {"A2A-Extensions": "demo"},
+        )
 
-    async def test_json_rpc_error_response_raises(self):
-        self.response = _FakeResponse(
-            body=(
-                b'{"jsonrpc":"2.0","id":"req-1","error":'
-                b'{"code":-32000,"message":"broken"}}'
-            ),
-            content_type="application/json",
+    async def test_does_not_close_injected_httpx_client(self) -> None:
+        httpx_client = MagicMock()
+        httpx_client.aclose = AsyncMock()
+        tool = A2ACallTool(
+            client_params={"httpx_client": httpx_client},
+            call_params={"request_id": "req-1"},
         )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
+
+        await tool("http://host/a2a", "run", None, context=ToolCallContext())
+
+        self.AsyncClient.assert_not_called()
+        self.assertIs(self.created_configs[0].httpx_client, httpx_client)
+        self.assertEqual(self.client.entered, 0)
+        self.assertEqual(self.client.exited, 0)
+        httpx_client.aclose.assert_not_called()
+
+    async def test_sdk_client_error_response_raises(self) -> None:
+        self.client.responses = [RuntimeError("broken")]
 
         with self.assertRaisesRegex(RuntimeError, "broken"):
             await self.tool(
                 "http://host/a2a", "run", None, context=ToolCallContext()
             )
 
-    async def test_json_response_success_returns_after_single_message(self):
-        self.response = _FakeResponse(
-            body=dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": "req-1",
-                    "result": {
-                        "statusUpdate": {
-                            "taskId": "task-1",
-                            "status": {"state": "TASK_STATE_COMPLETED"},
-                        }
-                    },
-                },
-                separators=(",", ":"),
-            ).encode("utf-8"),
-            content_type="application/json",
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
+    async def test_task_response_success_returns_after_single_message(
+        self,
+    ) -> None:
+        self.client.responses = [
+            _task_response(
+                task_id="task-1",
+                state=a2a_pb2.TaskState.TASK_STATE_COMPLETED,
+            )
+        ]
 
         result = await self.tool(
             "http://host/a2a", "run", None, context=ToolCallContext()
         )
+        structured = cast(dict[str, Any], result["structuredContent"])
 
-        self.assertEqual(
-            result["structuredContent"]["state"], "TASK_STATE_COMPLETED"
-        )
+        self.assertEqual(structured["state"], "TASK_STATE_COMPLETED")
 
-    async def test_sse_comments_raw_json_and_trailing_data_are_consumed(self):
-        self.response = _FakeResponse(
-            content_type="text/event-stream",
-            lines=[
-                ": keepalive",
-                dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": "other",
-                        "result": {"statusUpdate": {}},
-                    },
-                    separators=(",", ":"),
-                ),
-                dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": "req-1",
-                        "result": {"result": "ignored"},
-                    },
-                    separators=(",", ":"),
-                ),
-                _sse(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": "req-1",
-                        "result": {
-                            "statusUpdate": {
-                                "task_id": "task-1",
-                                "context_id": "ctx-1",
-                                "status": {"state": "TASK_STATE_COMPLETED"},
-                            }
-                        },
-                    }
-                ),
-            ],
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
-
-        result = await self.tool(
-            "http://host/a2a", "run", None, context=ToolCallContext()
-        )
-
-        self.assertEqual(
-            result["structuredContent"]["state"], "TASK_STATE_COMPLETED"
-        )
-
-    async def test_invalid_json_response_raises(self):
-        self.response = _FakeResponse(
-            body=b"not-json", content_type="application/json"
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
-
-        with self.assertRaisesRegex(RuntimeError, "Invalid A2A JSON-RPC"):
-            await self.tool(
-                "http://host/a2a", "run", None, context=ToolCallContext()
+    async def test_response_without_terminal_status_raises(self) -> None:
+        self.client.responses = [
+            _status_response(
+                state=a2a_pb2.TaskState.TASK_STATE_WORKING,
             )
-
-    async def test_non_object_json_response_raises(self):
-        self.response = _FakeResponse(
-            body=b'["not-object"]', content_type="application/json"
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
-
-        with self.assertRaisesRegex(RuntimeError, "Invalid A2A JSON-RPC"):
-            await self.tool(
-                "http://host/a2a", "run", None, context=ToolCallContext()
-            )
-
-    async def test_response_without_terminal_status_raises(self):
-        self.response = _FakeResponse(
-            content_type="text/event-stream",
-            lines=[
-                _sse(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": "req-1",
-                        "result": {
-                            "statusUpdate": {
-                                "taskId": "task-1",
-                                "status": {"state": "TASK_STATE_WORKING"},
-                            }
-                        },
-                    }
-                ),
-                "",
-            ],
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
+        ]
 
         with self.assertRaisesRegex(RuntimeError, "terminal event"):
             await self.tool(
                 "http://host/a2a", "run", None, context=ToolCallContext()
             )
 
-    async def test_failed_terminal_status_raises(self):
-        self.response = _FakeResponse(
-            content_type="text/event-stream",
-            lines=[
-                _sse(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": "req-1",
-                        "result": {
-                            "statusUpdate": {
-                                "taskId": "task-1",
-                                "status": {"state": "TASK_STATE_FAILED"},
-                                "final": True,
-                            }
-                        },
-                    }
-                ),
-                "",
-            ],
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
+    async def test_failed_terminal_status_raises(self) -> None:
+        self.client.responses = [
+            _status_response(
+                state=a2a_pb2.TaskState.TASK_STATE_FAILED,
+            )
+        ]
 
         with self.assertRaisesRegex(RuntimeError, "TASK_STATE_FAILED"):
             await self.tool(
                 "http://host/a2a", "run", None, context=ToolCallContext()
             )
 
-    async def test_ignores_stream_events_without_context_callback(self):
+    async def test_ignores_stream_events_without_context_callback(
+        self,
+    ) -> None:
         result = await self.tool(
             "http://host/a2a", "run", None, context=ToolCallContext()
         )
 
         self.assertEqual(result["content"], [{"type": "text", "text": "ok"}])
 
-    async def test_cancellation_checker_runs_before_stream_emit(self):
+    async def test_cancellation_checker_runs_before_stream_emit(self) -> None:
         events: list[ToolExecutionStreamEvent] = []
         cancelled = False
 
@@ -415,7 +304,7 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(cancelled)
         self.assertEqual(events[0].content, "log")
 
-    async def test_tool_display_projector_returns_projection(self):
+    async def test_tool_display_projector_returns_projection(self) -> None:
         projection = self.tool.tool_display_projector(
             ToolCall(
                 id="call-1",
@@ -426,7 +315,9 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(projection)
 
-    async def test_tool_display_projector_returns_terminal_projection(self):
+    async def test_tool_display_projector_returns_terminal_projection(
+        self,
+    ) -> None:
         call = ToolCall(
             id="call-1",
             name="a2a.call",
@@ -444,12 +335,13 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertIsNotNone(projection)
+        projection = cast(Any, projection)
         self.assertEqual(projection.status, "completed")
         self.assertEqual(projection.scope, "A2A")
 
     async def test_state_records_task_message_snake_artifact_and_data_parts(
         self,
-    ):
+    ) -> None:
         state = a2a_module._A2AStreamState()
         await state.process(
             {
@@ -491,19 +383,20 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
             ToolCallContext(),
         )
         result = state.result()
+        structured = cast(dict[str, Any], result["structuredContent"])
 
         self.assertEqual(
             result["content"], [{"type": "text", "text": '["x"]'}]
         )
         self.assertEqual(
-            result["structuredContent"]["messages"][0]["text"],
+            structured["messages"][0]["text"],
             'plain{"value":1}',
         )
-        self.assertTrue(
-            result["structuredContent"]["artifacts"][0]["completed"]
-        )
+        self.assertTrue(structured["artifacts"][0]["completed"])
 
-    async def test_task_snapshot_artifacts_and_history_are_consumed(self):
+    async def test_task_snapshot_artifacts_and_history_are_consumed(
+        self,
+    ) -> None:
         state = a2a_module._A2AStreamState()
         events: list[ToolExecutionStreamEvent] = []
 
@@ -536,29 +429,45 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
             ToolCallContext(stream_event=stream),
         )
         result = state.result()
+        structured = cast(dict[str, Any], result["structuredContent"])
 
         self.assertEqual(result["content"], [{"type": "text", "text": "42"}])
-        self.assertEqual(
-            result["structuredContent"]["messages"][0]["text"], "done"
-        )
+        self.assertEqual(structured["messages"][0]["text"], "done")
         self.assertEqual(events[0].kind, ToolExecutionStreamKind.STDOUT)
 
-    async def test_direct_helpers_cover_ignored_payloads_and_fallbacks(self):
+    async def test_direct_helpers_cover_ignored_payloads_and_fallbacks(
+        self,
+    ) -> None:
         state = a2a_module._A2AStreamState()
-        await a2a_module._handle_a2a_message(
-            {"id": "req-1", "result": "ignored"},
-            state=state,
-            request_id="req-1",
-            context=ToolCallContext(),
+        await state.process(
+            a2a_module._stream_response_payload(a2a_pb2.StreamResponse()),
+            ToolCallContext(),
         )
+        await state.process(
+            a2a_module._stream_response_payload(
+                a2a_pb2.StreamResponse(
+                    message=a2a_pb2.Message(
+                        message_id="msg-1",
+                        role=a2a_pb2.Role.ROLE_AGENT,
+                        parts=[a2a_pb2.Part(text="done")],
+                    )
+                )
+            ),
+            ToolCallContext(),
+        )
+        result = state.result()
+        structured = cast(dict[str, Any], result["structuredContent"])
 
+        self.assertEqual(structured["messages"][0]["text"], "done")
         self.assertEqual(a2a_module._part_text({"data": 1}), "")
         self.assertTrue(a2a_module._is_answer_artifact({"id": "answer"}))
         self.assertEqual(
             a2a_module._stream_kind({}), ToolExecutionStreamKind.LOG
         )
 
-    async def test_emit_helpers_skip_missing_callbacks_and_map_stdout(self):
+    async def test_emit_helpers_skip_missing_callbacks_and_map_stdout(
+        self,
+    ) -> None:
         await a2a_module._emit_status_update(
             {"state": "TASK_STATE_WORKING"}, ToolCallContext()
         )
@@ -586,15 +495,15 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
 
 
 class A2AToolSetTestCase(TestCase):
-    def test_default_namespace(self):
+    def test_default_namespace(self) -> None:
         toolset = A2AToolSet()
         self.assertEqual(toolset.namespace, "a2a")
         self.assertEqual(len(toolset.tools), 1)
-        self.assertEqual(toolset.tools[0].__name__, "call")
+        self.assertEqual(cast(Any, toolset.tools[0]).__name__, "call")
 
 
 class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
-    async def test_calls_sdk_v1_router_and_streams_status(self):
+    async def test_calls_sdk_v1_router_and_streams_status(self) -> None:
         try:
             from avalan.server.a2a import router as a2a_router
         except ImportError as exc:
@@ -617,7 +526,9 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
         async def stream(event: ToolExecutionStreamEvent) -> None:
             events.append(event)
 
-        async def fake_orchestrate(*args: object, **kwargs: object):
+        async def fake_orchestrate(
+            *args: object, **kwargs: object
+        ) -> tuple["_CanonicalResponse", UUID, int]:
             return _CanonicalResponse(), uuid4(), 123
 
         a2a_router.install_a2a_routes(
@@ -648,9 +559,8 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
         self.assertEqual(orchestrator.sync_count, 1)
 
         self.assertEqual(result["content"], [{"type": "text", "text": "25"}])
-        self.assertEqual(
-            result["structuredContent"]["state"], "TASK_STATE_COMPLETED"
-        )
+        structured = cast(dict[str, Any], result["structuredContent"])
+        self.assertEqual(structured["state"], "TASK_STATE_COMPLETED")
         self.assertTrue(
             any(
                 event.kind is ToolExecutionStreamKind.PROGRESS
@@ -660,103 +570,107 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
         )
 
 
-def _sse(payload: dict[str, object]) -> str:
-    return f"data: {dumps(payload, separators=(',', ':'))}"
+def _struct(payload: dict[str, object]) -> Any:
+    struct_pb2 = import_module("google.protobuf.struct_pb2")
+    value = struct_pb2.Struct()
+    value.update(payload)
+    return value
 
 
-def _completed_a2a_lines(
+def _status_response(
+    *,
+    state: Any,
+    task_id: str = "task-1",
+    context_id: str = "ctx-1",
+    metadata: dict[str, object] | None = None,
+) -> a2a_pb2.StreamResponse:
+    return a2a_pb2.StreamResponse(
+        status_update=a2a_pb2.TaskStatusUpdateEvent(
+            task_id=task_id,
+            context_id=context_id,
+            status=a2a_pb2.TaskStatus(state=state),
+            metadata=_struct(metadata or {}),
+        )
+    )
+
+
+def _artifact_response(
+    *,
+    artifact_id: str,
+    text: str,
+    metadata: dict[str, object],
+    name: str | None = None,
+    append: bool = True,
+    last_chunk: bool = False,
+) -> a2a_pb2.StreamResponse:
+    return a2a_pb2.StreamResponse(
+        artifact_update=a2a_pb2.TaskArtifactUpdateEvent(
+            task_id="task-1",
+            context_id="ctx-1",
+            artifact=a2a_pb2.Artifact(
+                artifact_id=artifact_id,
+                name=name or "",
+                parts=[a2a_pb2.Part(text=text)],
+                metadata=_struct(metadata),
+            ),
+            append=append,
+            last_chunk=last_chunk,
+        )
+    )
+
+
+def _task_response(
+    *,
+    task_id: str,
+    state: Any,
+) -> a2a_pb2.StreamResponse:
+    return a2a_pb2.StreamResponse(
+        task=a2a_pb2.Task(
+            id=task_id,
+            context_id="ctx-1",
+            status=a2a_pb2.TaskStatus(state=state),
+        )
+    )
+
+
+def _completed_a2a_responses(
     *, answer: str, tool_output: str | None = None
-) -> list[str]:
-    lines = [
-        _sse(
-            {
-                "jsonrpc": "2.0",
-                "id": "req-1",
-                "result": {
-                    "statusUpdate": {
-                        "taskId": "task-1",
-                        "contextId": "ctx-1",
-                        "status": {"state": "TASK_STATE_WORKING"},
-                        "metadata": {"phase": "start"},
-                    }
-                },
-            }
+) -> list[a2a_pb2.StreamResponse]:
+    responses = [
+        _status_response(
+            state=a2a_pb2.TaskState.TASK_STATE_WORKING,
+            metadata={"phase": "start"},
         ),
-        "",
-        _sse(
-            {
-                "jsonrpc": "2.0",
-                "id": "req-1",
-                "result": {
-                    "artifactUpdate": {
-                        "taskId": "task-1",
-                        "contextId": "ctx-1",
-                        "artifact": {
-                            "artifactId": "answer",
-                            "name": "Answer",
-                            "parts": [{"text": answer}],
-                            "metadata": {
-                                "kind": "answer",
-                                "channel": "output",
-                            },
-                        },
-                        "append": True,
-                    }
-                },
-            }
+        _artifact_response(
+            artifact_id="answer",
+            name="Answer",
+            text=answer,
+            metadata={
+                "kind": "answer",
+                "channel": "output",
+            },
         ),
-        "",
     ]
     if tool_output is not None:
-        lines.extend(
-            [
-                _sse(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": "req-1",
-                        "result": {
-                            "artifactUpdate": {
-                                "taskId": "task-1",
-                                "contextId": "ctx-1",
-                                "artifact": {
-                                    "artifactId": "call-1",
-                                    "name": "shell.run",
-                                    "parts": [{"text": tool_output}],
-                                    "metadata": {
-                                        "kind": "tool",
-                                        "category": "stderr",
-                                    },
-                                },
-                                "append": True,
-                                "lastChunk": True,
-                            }
-                        },
-                    }
-                ),
-                "",
-            ]
+        responses.append(
+            _artifact_response(
+                artifact_id="call-1",
+                name="shell.run",
+                text=tool_output,
+                metadata={
+                    "kind": "tool",
+                    "category": "stderr",
+                },
+                last_chunk=True,
+            )
         )
-    lines.extend(
-        [
-            _sse(
-                {
-                    "jsonrpc": "2.0",
-                    "id": "req-1",
-                    "result": {
-                        "statusUpdate": {
-                            "taskId": "task-1",
-                            "contextId": "ctx-1",
-                            "status": {"state": "TASK_STATE_COMPLETED"},
-                            "final": True,
-                            "metadata": {"phase": "done"},
-                        }
-                    },
-                }
-            ),
-            "",
-        ]
+    responses.append(
+        _status_response(
+            state=a2a_pb2.TaskState.TASK_STATE_COMPLETED,
+            metadata={"phase": "done"},
+        )
     )
-    return lines
+    return responses
 
 
 class _E2EOrchestrator:
@@ -775,7 +689,9 @@ class _E2ELoader:
         self.orchestrator = orchestrator
         self.from_file_calls = 0
 
-    async def from_file(self, *args: object, **kwargs: object):
+    async def from_file(
+        self, *args: object, **kwargs: object
+    ) -> "_E2EOrchestratorContext":
         self.from_file_calls += 1
         return _E2EOrchestratorContext(self.orchestrator)
 
@@ -799,10 +715,10 @@ class _CanonicalResponse:
     async def to_str(self) -> str:
         return ""
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
         return self._iter()
 
-    async def _iter(self):
+    async def _iter(self) -> AsyncIterator[CanonicalStreamItem]:
         yield CanonicalStreamItem(
             stream_session_id="s",
             run_id="r",

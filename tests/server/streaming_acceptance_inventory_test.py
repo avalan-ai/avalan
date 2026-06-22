@@ -716,7 +716,7 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/tool/a2a_tool_test.py"
             "::A2ACallToolTestCase"
-            "::test_json_rpc_error_response_raises"
+            "::test_sdk_client_error_response_raises"
         ),
         (
             "tests/tool/a2a_tool_test.py"

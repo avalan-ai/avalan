@@ -9,16 +9,17 @@ from ..entities import (
 from . import Tool, ToolSet
 from .builtin_display import project_a2a_call_tool_display
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from importlib import import_module
-from json import JSONDecodeError, dumps, loads
-from typing import Protocol, cast
+from json import dumps
+from typing import Any, cast
 from uuid import uuid4
 
 JSONValue = dict[str, object] | list[object] | str | int | float | bool | None
 JSONObject = dict[str, JSONValue]
 
+_A2A_HTTPX_CLIENT_PARAM_KEY = "httpx_client"
 _FINAL_STATES = {
     "TASK_STATE_CANCELED",
     "TASK_STATE_CANCELLED",
@@ -34,24 +35,11 @@ _ERROR_STATES = {
 }
 
 
-class _A2AHTTPResponse(Protocol):
-    headers: Mapping[str, str]
-
-    async def aread(self) -> bytes:
-        raise NotImplementedError
-
-    def aiter_lines(self) -> AsyncIterator[str]:
-        raise NotImplementedError
-
-    def raise_for_status(self) -> None:
-        raise NotImplementedError
-
-
 class A2ACallTool(Tool):
     """Call a remote A2A agent skill.
 
     Args:
-        uri: URI of the A2A JSON-RPC streaming endpoint.
+        uri: URI of the A2A endpoint.
         name: Name of the remote A2A skill to invoke.
         arguments: Arguments to send to the remote agent.
 
@@ -126,38 +114,59 @@ async def _call_a2a_agent(
     client_params: Mapping[str, object],
     call_params: Mapping[str, object],
 ) -> dict[str, object]:
-    httpx_module = import_module("httpx")
-    client_factory = getattr(httpx_module, "AsyncClient")
     request_id = str(call_params.get("request_id") or uuid4())
-    payload = _jsonrpc_stream_request(
+    a2a_pb2 = import_module("a2a.types.a2a_pb2")
+    client_module = import_module("a2a.client")
+    constants = import_module("a2a.utils.constants")
+    httpx_module = import_module("httpx")
+    client_config, owns_httpx_client = _client_config(
+        client_module=client_module,
+        constants=constants,
+        httpx_module=httpx_module,
+        client_params=client_params,
+    )
+    client = await client_module.create_client(
+        _agent_card(
+            a2a_pb2=a2a_pb2,
+            constants=constants,
+            uri=uri,
+            name=name,
+        ),
+        client_config=client_config,
+    )
+    request = _send_message_request(
+        a2a_pb2=a2a_pb2,
         request_id=request_id,
         name=name,
         arguments=arguments,
         call_params=call_params,
     )
-    request_params = {
-        key: value
-        for key, value in call_params.items()
-        if key not in {"message_id", "metadata", "request_id"}
-    }
-    request_params.setdefault("timeout", None)
+    call_context = _client_call_context(
+        client_module=client_module,
+        call_params=call_params,
+    )
+    json_format = import_module("google.protobuf.json_format")
 
     state = _A2AStreamState()
-    async with client_factory(**_client_options(client_params)) as client:
-        async with client.stream(
-            "POST",
-            uri,
-            json=payload,
-            **request_params,
-        ) as response:
-            response.raise_for_status()
-            async for message in _iter_a2a_response_messages(response):
-                await _handle_a2a_message(
-                    message,
-                    state=state,
-                    request_id=request_id,
-                    context=context,
-                )
+    if owns_httpx_client:
+        async with client:
+            await _consume_a2a_stream(
+                client=client,
+                request=request,
+                call_context=call_context,
+                json_format=json_format,
+                state=state,
+                context=context,
+            )
+    else:
+        await _consume_a2a_stream(
+            client=client,
+            request=request,
+            call_context=call_context,
+            json_format=json_format,
+            state=state,
+            context=context,
+        )
 
     if state.error_state is not None:
         raise RuntimeError(f"A2A task ended with {state.error_state}")
@@ -166,33 +175,89 @@ async def _call_a2a_agent(
     return state.result()
 
 
-def _jsonrpc_stream_request(
+def _client_config(
     *,
+    client_module: Any,
+    constants: Any,
+    httpx_module: Any,
+    client_params: Mapping[str, object],
+) -> tuple[Any, bool]:
+    owns_httpx_client = False
+    httpx_client = client_params.get(_A2A_HTTPX_CLIENT_PARAM_KEY)
+    if httpx_client is None:
+        owns_httpx_client = True
+        httpx_client = httpx_module.AsyncClient(
+            **_client_options(client_params)
+        )
+    return (
+        client_module.ClientConfig(
+            streaming=True,
+            httpx_client=httpx_client,
+            supported_protocol_bindings=[constants.TransportProtocol.JSONRPC],
+            accepted_output_modes=["text/plain", "text/markdown"],
+        ),
+        owns_httpx_client,
+    )
+
+
+def _agent_card(
+    *,
+    a2a_pb2: Any,
+    constants: Any,
+    uri: str,
+    name: str,
+) -> Any:
+    return a2a_pb2.AgentCard(
+        name=name,
+        description=f"Call the {name} A2A agent.",
+        version="1.0.0",
+        supported_interfaces=[
+            a2a_pb2.AgentInterface(
+                url=uri,
+                protocol_binding=constants.TransportProtocol.JSONRPC,
+                protocol_version=constants.PROTOCOL_VERSION_1_0,
+            )
+        ],
+        capabilities=a2a_pb2.AgentCapabilities(streaming=True),
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
+        skills=[
+            a2a_pb2.AgentSkill(
+                id=name,
+                name=name,
+                description=f"Call the {name} A2A agent.",
+                tags=["a2a", "agent"],
+                input_modes=["text/plain"],
+                output_modes=["text/plain"],
+            )
+        ],
+    )
+
+
+def _send_message_request(
+    *,
+    a2a_pb2: Any,
     request_id: str,
     name: str,
     arguments: Mapping[str, object],
     call_params: Mapping[str, object],
-) -> JSONObject:
+) -> Any:
+    metadata = _request_metadata(name, arguments, call_params)
+    struct_pb2 = import_module("google.protobuf.struct_pb2")
+    metadata_struct = struct_pb2.Struct()
+    metadata_struct.update(metadata)
     message_id = str(call_params.get("message_id") or request_id)
-    return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "SendStreamingMessage",
-        "params": {
-            "message": {
-                "messageId": message_id,
-                "role": "ROLE_USER",
-                "parts": [{"text": _message_text(name, arguments)}],
-            },
-            "configuration": {
-                "acceptedOutputModes": [
-                    "text/plain",
-                    "text/markdown",
-                ]
-            },
-            "metadata": _request_metadata(name, arguments, call_params),
-        },
-    }
+    return a2a_pb2.SendMessageRequest(
+        message=a2a_pb2.Message(
+            message_id=message_id,
+            role=a2a_pb2.Role.ROLE_USER,
+            parts=[a2a_pb2.Part(text=_message_text(name, arguments))],
+        ),
+        configuration=a2a_pb2.SendMessageConfiguration(
+            accepted_output_modes=["text/plain", "text/markdown"],
+        ),
+        metadata=metadata_struct,
+    )
 
 
 def _message_text(name: str, arguments: Mapping[str, object]) -> str:
@@ -222,7 +287,11 @@ def _request_metadata(
 
 
 def _client_options(client_params: Mapping[str, object]) -> dict[str, object]:
-    options = dict(client_params)
+    options = {
+        key: value
+        for key, value in client_params.items()
+        if key != _A2A_HTTPX_CLIENT_PARAM_KEY
+    }
     raw_headers = options.pop("headers", None)
     headers = (
         dict(cast(Mapping[str, str], raw_headers))
@@ -232,77 +301,57 @@ def _client_options(client_params: Mapping[str, object]) -> dict[str, object]:
     headers.setdefault("Accept", "application/json, text/event-stream")
     headers.setdefault("Content-Type", "application/json")
     headers.setdefault("A2A-Version", "1.0")
+    options.setdefault("timeout", None)
     options["headers"] = headers
     return options
 
 
-async def _iter_a2a_response_messages(
-    response: _A2AHTTPResponse,
-) -> AsyncIterator[JSONObject]:
-    content_type = response.headers.get("content-type", "").lower()
-    if "text/event-stream" not in content_type:
-        body = await response.aread()
-        yield _decode_json_object(body.decode("utf-8"))
-        return
-
-    data_lines: list[str] = []
-    async for line in response.aiter_lines():
-        if not line:
-            if data_lines:
-                yield _decode_sse_data(data_lines)
-                data_lines = []
-            continue
-        if line.startswith(":"):
-            continue
-        if line.startswith("data:"):
-            data_lines.append(line[5:].lstrip())
-            continue
-        if line.startswith("{"):
-            yield _decode_json_object(line)
-    if data_lines:
-        yield _decode_sse_data(data_lines)
-
-
-def _decode_sse_data(data_lines: list[str]) -> JSONObject:
-    return _decode_json_object("\n".join(data_lines))
-
-
-def _decode_json_object(text: str) -> JSONObject:
-    try:
-        message = loads(text)
-    except JSONDecodeError as exc:
-        raise RuntimeError("Invalid A2A JSON-RPC response") from exc
-    if not isinstance(message, dict):
-        raise RuntimeError("Invalid A2A JSON-RPC response")
-    return cast(JSONObject, message)
-
-
-async def _handle_a2a_message(
-    message: JSONObject,
+def _client_call_context(
     *,
+    client_module: Any,
+    call_params: Mapping[str, object],
+) -> Any:
+    kwargs: dict[str, object] = {}
+    state = call_params.get("state")
+    if isinstance(state, Mapping):
+        kwargs["state"] = dict(state)
+    service_parameters = call_params.get("service_parameters")
+    if service_parameters is not None:
+        kwargs["service_parameters"] = service_parameters
+    timeout = call_params.get("timeout")
+    if isinstance(timeout, (int, float)) and not isinstance(timeout, bool):
+        kwargs["timeout"] = timeout
+    return client_module.ClientCallContext(**kwargs)
+
+
+async def _consume_a2a_stream(
+    *,
+    client: Any,
+    request: Any,
+    call_context: Any,
+    json_format: Any,
     state: "_A2AStreamState",
-    request_id: str,
     context: ToolCallContext,
 ) -> None:
-    if not _matches_request_id(message, request_id):
-        return
-
-    error = message.get("error")
-    if isinstance(error, dict):
-        code = error.get("code")
-        detail = error.get("message")
-        raise RuntimeError(f"A2A call failed [{code}]: {detail}")
-
-    result = message.get("result")
-    if not isinstance(result, dict):
-        return
-    await state.process(cast(JSONObject, result), context)
+    async for stream_response in client.send_message(
+        request,
+        context=call_context,
+    ):
+        payload = _stream_response_payload(
+            stream_response,
+            json_format=json_format,
+        )
+        await state.process(payload, context)
 
 
-def _matches_request_id(message: JSONObject, request_id: str) -> bool:
-    return message.get("id") == request_id or str(message.get("id")) == str(
-        request_id
-    )
+def _stream_response_payload(
+    stream_response: Any, *, json_format: Any | None = None
+) -> JSONObject:
+    if json_format is None:
+        json_format = import_module("google.protobuf.json_format")
+    payload = json_format.MessageToDict(stream_response)
+    assert isinstance(payload, dict)
+    return cast(JSONObject, payload)
 
 
 class _A2AStreamState:
