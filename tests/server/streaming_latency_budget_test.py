@@ -45,9 +45,6 @@ from avalan.model.stream import (
     StreamProviderEvent,
     normalize_provider_stream,
 )
-from avalan.server.a2a.router import _cleanup_stream_sources_safely
-from avalan.server.a2a.router import create_task as create_a2a_task
-from avalan.server.a2a.store import TaskStore
 from avalan.server.entities import (
     ChatCompletionRequest,
     ChatMessage,
@@ -415,16 +412,10 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
             "mcp_stream_response_adapter": (
                 await self._mcp_stream_response_cancellation_latency()
             ),
-            "a2a_route_stream_adapter": (
-                await self._a2a_route_cancellation_latency()
-            ),
             "http_sse_adapter_cleanup": await self._http_cleanup_latency(
                 cancelled=True
             ),
             "mcp_cleanup_wrapper": await self._mcp_cleanup_latency(
-                cancelled=True
-            ),
-            "a2a_cleanup_wrapper": await self._a2a_cleanup_latency(
                 cancelled=True
             ),
         }
@@ -446,14 +437,10 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
             "mcp_stream_response_adapter": (
                 await self._mcp_stream_response_close_latency()
             ),
-            "a2a_route_stream_adapter": await self._a2a_route_close_latency(),
             "http_sse_adapter_cleanup": await self._http_cleanup_latency(
                 cancelled=False
             ),
             "mcp_cleanup_wrapper": await self._mcp_cleanup_latency(
-                cancelled=False
-            ),
-            "a2a_cleanup_wrapper": await self._a2a_cleanup_latency(
                 cancelled=False
             ),
         }
@@ -746,37 +733,6 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(source.close_count, 1)
         return elapsed_ms
 
-    async def _a2a_route_cancellation_latency(self) -> float:
-        source = _LatencyResponse()
-        response = await self._a2a_streaming_response(source)
-        iterator = cast(AsyncIterator[str], response.body_iterator)
-        for _ in range(3):
-            await anext(iterator)
-        pull = create_task(anext(iterator))
-        await wait_for(source.started.wait(), STREAM_LATENCY_TEST_TIMEOUT)
-
-        elapsed_ms = await _elapsed_ms(
-            lambda: self._cancel_a2a_pull(pull, iterator)
-        )
-
-        self.assertTrue(source.cancelled_by_pull)
-        self.assertEqual(source.cancel_count, 1)
-        self.assertEqual(source.close_count, 1)
-        return elapsed_ms
-
-    async def _a2a_route_close_latency(self) -> float:
-        source = _LatencyResponse(_canonical_answer_delta_items("partial"))
-        response = await self._a2a_streaming_response(source)
-        iterator = cast(AsyncIterator[str], response.body_iterator)
-        while source.read_count == 0:
-            await wait_for(anext(iterator), STREAM_LATENCY_TEST_TIMEOUT)
-
-        elapsed_ms = await _elapsed_ms(lambda: cast(Any, iterator).aclose())
-
-        self.assertEqual(source.cancel_count, 1)
-        self.assertEqual(source.close_count, 1)
-        return elapsed_ms
-
     async def _chat_sse_response(self, source: _LatencyResponse) -> Any:
         request = ChatCompletionRequest(
             model="m",
@@ -845,23 +801,6 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
             cancel_event=cancel_event or AsyncEvent(),
         )
 
-    async def _a2a_streaming_response(self, source: _LatencyResponse) -> Any:
-        async def orchestrate_stub(
-            request: ChatCompletionRequest,
-            logger: Any,
-            orchestrator: Orchestrator,
-        ) -> tuple[_LatencyResponse, object, int]:
-            _ = request, logger, orchestrator
-            return source, uuid4(), 1
-
-        with patch("avalan.server.a2a.router.orchestrate", orchestrate_stub):
-            return await create_a2a_task(
-                _a2a_request(),
-                logger=getLogger("tests.streaming_latency.a2a"),
-                orchestrator=_test_orchestrator(),
-                store=TaskStore(),
-            )
-
     async def _http_cleanup_latency(self, *, cancelled: bool) -> float:
         source = _CleanupProbe()
         iterator = _CleanupProbe()
@@ -890,26 +829,6 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
                 cancelled=cancelled,
             )
         )
-
-        self.assertEqual(source.cancel_count, int(cancelled))
-        self.assertEqual(iterator.cancel_count, int(cancelled))
-        self.assertEqual(source.close_count, 1)
-        self.assertEqual(iterator.close_count, 1)
-        return elapsed_ms
-
-    async def _a2a_cleanup_latency(self, *, cancelled: bool) -> float:
-        source = _CleanupProbe()
-        iterator = _CleanupProbe()
-
-        async def cleanup() -> None:
-            cleanup_error = await _cleanup_stream_sources_safely(
-                source,
-                iterator,
-                cancelled=cancelled,
-            )
-            self.assertIsNone(cleanup_error)
-
-        elapsed_ms = await _elapsed_ms(cleanup)
 
         self.assertEqual(source.cancel_count, int(cancelled))
         self.assertEqual(iterator.cancel_count, int(cancelled))

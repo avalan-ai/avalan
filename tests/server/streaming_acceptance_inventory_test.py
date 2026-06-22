@@ -220,8 +220,9 @@ ACCEPTANCE_HARNESS_TESTS = {
             "::test_iteration_parallel_results_emit_before_continuation"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_canonical_tool_completion_keeps_task_working_until_terminal"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolTestCase"
+            "::test_call_streams_answer_tool_and_status_events"
         ),
     ),
     "protocol consistency": (
@@ -380,8 +381,9 @@ ACCEPTANCE_HARNESS_TESTS = {
             "::test_stream_response_cleans_up_when_terminal_emit_closes"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_repeated_create_task_stream_requests_bound_state_without_ui_listener"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolHttpE2ETestCase"
+            "::test_calls_sdk_v1_router_and_streams_status"
         ),
         (
             "tests/server/router_streaming_test.py"
@@ -589,12 +591,13 @@ HARDENING_COVERAGE_TESTS = {
             "::test_long_stream_retention_peak_memory_within_budget"
         ),
         (
-            "tests/server/a2a_store_test.py"
-            "::test_task_store_bounds_records_and_histories"
+            "tests/server/a2a_v1_router_test.py"
+            "::test_install_a2a_routes_mounts_v1_sdk_routes"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_translator_reconstructs_final_text_under_retention_pressure"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolHttpE2ETestCase"
+            "::test_calls_sdk_v1_router_and_streams_status"
         ),
     ),
     "protocol route e2e surfaces": (
@@ -706,16 +709,19 @@ HARDENING_COVERAGE_TESTS = {
             "::test_default_protocol_routes_legacy_rejection_first_item"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_canonical_duplicate_terminal_is_rejected"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolTestCase"
+            "::test_failed_terminal_status_raises"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_canonical_content_after_terminal_is_rejected"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolTestCase"
+            "::test_sdk_client_error_response_raises"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_canonical_stream_missing_terminal_is_rejected"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolTestCase"
+            "::test_response_without_terminal_status_raises"
         ),
     ),
     "parser negatives": (
@@ -1176,8 +1182,15 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
         ),
     ),
     "A2A": (
-        "tests/server/test_a2a.py::test_translator_streams_canonical_items",
-        "tests/server/test_a2a.py::test_create_task_streams_jsonrpc_request",
+        (
+            "tests/server/a2a_v1_router_test.py"
+            "::test_install_a2a_routes_mounts_v1_sdk_routes"
+        ),
+        (
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolHttpE2ETestCase"
+            "::test_calls_sdk_v1_router_and_streams_status"
+        ),
         (
             "tests/server/protocol_streaming_e2e_test.py"
             "::test_terminal_outcome_traces_project_through_protocols"
@@ -1187,16 +1200,19 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
             "::test_default_protocol_routes_legacy_rejection_first_item"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_canonical_duplicate_terminal_is_rejected"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolTestCase"
+            "::test_failed_terminal_status_raises"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_canonical_stream_missing_terminal_is_rejected"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolTestCase"
+            "::test_response_without_terminal_status_raises"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_translator_cancels_response_when_consumer_closes"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolTestCase"
+            "::test_cancellation_checker_runs_before_stream_emit"
         ),
     ),
     "flow": (
@@ -1242,8 +1258,9 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
             "::test_stream_response_interrupts_pending_pull_on_cancellation"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_translator_cancels_response_when_consumer_closes"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolTestCase"
+            "::test_cancellation_checker_runs_before_stream_emit"
         ),
     ),
     "backpressure": (
@@ -1284,8 +1301,9 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
             "::test_repeated_stream_responses_bound_shared_resource_store"
         ),
         (
-            "tests/server/test_a2a.py"
-            "::test_repeated_create_task_stream_requests_bound_state_without_ui_listener"
+            "tests/tool/a2a_tool_test.py"
+            "::A2ACallToolHttpE2ETestCase"
+            "::test_calls_sdk_v1_router_and_streams_status"
         ),
         (
             "tests/server/router_streaming_test.py"
@@ -1530,8 +1548,9 @@ FINAL_GATE_ACCEPTANCE_HARNESSES = {
                 "::test_iteration_parallel_results_emit_before_continuation"
             ),
             (
-                "tests/server/test_a2a.py"
-                "::test_canonical_tool_completion_keeps_task_working_until_terminal"
+                "tests/tool/a2a_tool_test.py"
+                "::A2ACallToolTestCase"
+                "::test_call_streams_answer_tool_and_status_events"
             ),
         ),
     ),
@@ -1631,8 +1650,8 @@ FINAL_GATE_ACCEPTANCE_HARNESSES = {
                 "::test_default_server_stream_retention_surfaces_are_bounded"
             ),
             (
-                "tests/server/a2a_store_test.py"
-                "::test_task_store_bounds_records_and_histories"
+                "tests/server/a2a_v1_router_test.py"
+                "::test_install_a2a_routes_mounts_v1_sdk_routes"
             ),
         ),
     ),
@@ -1685,8 +1704,8 @@ FINAL_GATE_ACCEPTANCE_HARNESSES = {
                 "::test_default_server_stream_retention_surfaces_are_bounded"
             ),
             (
-                "tests/server/a2a_store_test.py"
-                "::test_task_store_bounds_records_and_histories"
+                "tests/server/a2a_v1_router_test.py"
+                "::test_install_a2a_routes_mounts_v1_sdk_routes"
             ),
         ),
         integration=(
@@ -1711,8 +1730,9 @@ FINAL_GATE_ACCEPTANCE_HARNESSES = {
                 "::test_repeated_stream_responses_bound_shared_resource_store"
             ),
             (
-                "tests/server/test_a2a.py"
-                "::test_repeated_create_task_stream_requests_bound_state_without_ui_listener"
+                "tests/tool/a2a_tool_test.py"
+                "::A2ACallToolHttpE2ETestCase"
+                "::test_calls_sdk_v1_router_and_streams_status"
             ),
         ),
     ),

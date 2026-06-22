@@ -73,27 +73,23 @@ class TestNormalizeProtocols:
         with pytest.raises(AssertionError):
             _normalize_protocols({"openai": {"search"}})
 
-    def test_a2a_router_import_fails_without_a2a_sdk(
+    def test_a2a_route_install_fails_without_a2a_sdk(
         self, monkeypatch
     ) -> None:
-        """Test a2a router import error when a2a-sdk is not installed."""
+        """Test a2a route install error when a2a-sdk is not installed."""
         import builtins
 
-        # Remove a2a and avalan.server.a2a from sys.modules if they exist
         modules_to_remove = [
-            key
-            for key in sys.modules.keys()
-            if key.startswith("a2a") or key.startswith("avalan.server.a2a")
+            key for key in sys.modules.keys() if key.startswith("a2a")
         ]
         original_modules = {}
         for module in modules_to_remove:
             original_modules[module] = sys.modules.pop(module, None)
 
-        # Mock the import to raise ImportError
         original_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
-            if name == "a2a":
+            if name.startswith("a2a"):
                 raise ImportError("No module named 'a2a'")
             return original_import(name, *args, **kwargs)
 
@@ -104,7 +100,14 @@ class TestNormalizeProtocols:
                 ImportError,
                 match="A2A router requires the a2a-sdk package",
             ):
-                from avalan.server.a2a import router  # noqa: F401
+                from avalan.server.a2a.router import install_a2a_routes
+
+                install_a2a_routes(
+                    object(),
+                    prefix="/a2a",
+                    name="run",
+                    description=None,
+                )
         finally:
             # Restore original modules
             for module, value in original_modules.items():

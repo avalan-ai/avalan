@@ -223,6 +223,14 @@ def _mcp_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
     ]
 
 
+def _a2a_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
+    return [
+        toolset.namespace
+        for toolset in kwargs["available_toolsets"]
+        if toolset.namespace == "a2a"
+    ]
+
+
 def _toolset_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
     return [toolset.namespace for toolset in kwargs["available_toolsets"]]
 
@@ -3031,6 +3039,39 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 )
 
                 self.assertEqual(_mcp_namespaces(kwargs), ["mcp"])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
+
+    async def test_a2a_toolset_is_not_registered_without_a2a_opt_in(self):
+        cases = (
+            (None, None),
+            ([], []),
+            (["a2ax.*"], ["a2ax.*"]),
+            (["mcp.call"], ["mcp.call"]),
+        )
+
+        for tools, expected_enable in cases:
+            with self.subTest(tools=tools):
+                kwargs = await _from_settings_tool_manager_kwargs(
+                    _orchestrator_settings(tools=tools)
+                )
+
+                self.assertEqual(_a2a_namespaces(kwargs), [])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
+
+    async def test_a2a_toolset_is_registered_for_a2a_selections(self):
+        cases = (
+            (["a2a"], ["a2a"]),
+            (["a2a.*"], ["a2a.*"]),
+            (["a2a.call"], ["a2a.call"]),
+        )
+
+        for tools, expected_enable in cases:
+            with self.subTest(tools=tools):
+                kwargs = await _from_settings_tool_manager_kwargs(
+                    _orchestrator_settings(tools=tools)
+                )
+
+                self.assertEqual(_a2a_namespaces(kwargs), ["a2a"])
                 self.assertEqual(kwargs["enable_tools"], expected_enable)
 
     async def test_cli_shell_settings_preserve_default_toolsets(self):

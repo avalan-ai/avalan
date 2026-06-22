@@ -5,7 +5,6 @@ from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 from avalan.server import agents_server
-from avalan.server.a2a import router as a2a_router
 
 
 class AgentsServerHttpTestCase(TestCase):
@@ -30,6 +29,8 @@ class AgentsServerHttpTestCase(TestCase):
         responses_mod.router = MagicMock(name="responses_router")
         flow_mod = ModuleType("avalan.server.routers.flow")
         flow_mod.router = MagicMock(name="flow_router")
+        a2a_mod = ModuleType("avalan.server.a2a")
+        a2a_mod.install_a2a_routes = MagicMock(name="install_a2a_routes")
 
         modules = {
             "fastapi": fastapi_mod,
@@ -38,6 +39,7 @@ class AgentsServerHttpTestCase(TestCase):
             "avalan.server.routers.engine": engine_mod,
             "avalan.server.routers.responses": responses_mod,
             "avalan.server.routers.flow": flow_mod,
+            "avalan.server.a2a": a2a_mod,
         }
 
         self.FastAPI = FastAPI
@@ -47,6 +49,7 @@ class AgentsServerHttpTestCase(TestCase):
         self.engine_router = engine_mod.router
         self.responses_router = responses_mod.router
         self.flow_router = flow_mod.router
+        self.install_a2a_routes = a2a_mod.install_a2a_routes
 
         return modules
 
@@ -102,7 +105,9 @@ class AgentsServerHttpTestCase(TestCase):
         app.include_router.assert_any_call(self.chat_router, prefix="/o")
         app.include_router.assert_any_call(self.responses_router, prefix="/o")
         app.include_router.assert_any_call(self.engine_router)
-        app.include_router.assert_any_call(a2a_router, prefix="/a2a")
+        self.install_a2a_routes.assert_called_once_with(
+            app, prefix="/a2a", name="run", description=None
+        )
         app.include_router.assert_any_call(mcp_router, prefix="/m")
         self.Config.assert_called_once_with(
             app, host="h", port=8080, reload=False
@@ -151,7 +156,9 @@ class AgentsServerHttpTestCase(TestCase):
                     logger=logger,
                 )
 
-        app.include_router.assert_any_call(a2a_router, prefix="/custom")
+        self.install_a2a_routes.assert_called_once_with(
+            app, prefix="/custom", name="run", description=None
+        )
 
     def test_agents_server_cors_options(self) -> None:
         modules = self._install_modules()
@@ -243,5 +250,5 @@ class AgentsServerHttpTestCase(TestCase):
         app.include_router.assert_any_call(self.engine_router)
         for args, _ in app.include_router.call_args_list:
             self.assertNotEqual(args[0], self.chat_router)
-            self.assertNotEqual(args[0], a2a_router)
+        self.install_a2a_routes.assert_not_called()
         create_router.assert_not_called()

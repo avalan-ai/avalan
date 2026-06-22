@@ -18,6 +18,7 @@ from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..task.schema import TaskSchemaResolutionError, resolve_schema_ref
+from ..tool.a2a import A2AToolSet
 from ..tool.browser import (
     HAS_BROWSER_DEPENDENCIES,
     BrowserToolSet,
@@ -69,6 +70,16 @@ def should_append_mcp_toolset(enabled_tools: list[str] | None) -> bool:
         return False
     return any(
         matches_tool_namespace("mcp.call", enabled)
+        for enabled in enabled_tools
+    )
+
+
+def should_append_a2a_toolset(enabled_tools: list[str] | None) -> bool:
+    """Return whether A2A tools were explicitly enabled."""
+    if not enabled_tools:
+        return False
+    return any(
+        matches_tool_namespace("a2a.call", enabled)
         for enabled in enabled_tools
     )
 
@@ -767,6 +778,8 @@ class OrchestratorLoader:
             MathToolSet(namespace="math"),
             MemoryToolSet(memory, namespace="memory"),
         ]
+        if should_append_a2a_toolset(enabled_tools):
+            available_toolsets.insert(1, A2AToolSet(namespace="a2a"))
         if should_append_mcp_toolset(enabled_tools):
             available_toolsets.insert(1, McpToolSet(namespace="mcp"))
         if HAS_GRAPH_DEPENDENCIES:

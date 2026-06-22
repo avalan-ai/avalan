@@ -2,7 +2,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from logging import Logger
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
@@ -17,6 +17,12 @@ SERVER_MODULE = sys.modules[MODULE]
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+def _fake_a2a_module() -> ModuleType:
+    module = ModuleType("avalan.server.a2a")
+    module.install_a2a_routes = MagicMock(name="install_a2a_routes")
+    return module
 
 
 @pytest.mark.anyio
@@ -48,6 +54,7 @@ async def test_register_agent_endpoints_wraps_existing_lifespan() -> None:
             "MCPResourceStore",
             return_value=resource_store_instance,
         ) as resource_store_cls,
+        patch.dict(sys.modules, {"avalan.server.a2a": _fake_a2a_module()}),
         patch.object(
             SERVER_MODULE, "uuid4", return_value=generated_participant_id
         ),
