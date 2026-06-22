@@ -71,6 +71,24 @@ def test_agent_card_uses_v1_supported_interfaces() -> None:
     assert card["skills"][0]["id"] == "run"
 
 
+def test_typing_override_compat_installs_missing_override(monkeypatch) -> None:
+    typing_module = SimpleNamespace()
+    override = object()
+
+    def fake_import(name: str):
+        if name == "typing":
+            return typing_module
+        if name == "typing_extensions":
+            return SimpleNamespace(override=override)
+        raise AssertionError(name)
+
+    monkeypatch.setattr(a2a_router, "import_module", fake_import)
+
+    a2a_router._ensure_typing_override()
+
+    assert typing_module.override is override
+
+
 def test_install_a2a_routes_reports_missing_sdk(monkeypatch) -> None:
     def fail_import(name: str):
         if name == "a2a.types.a2a_pb2":

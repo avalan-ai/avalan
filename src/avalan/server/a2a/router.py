@@ -37,6 +37,7 @@ def install_a2a_routes(
 ) -> None:
     """Install A2A SDK v1 routes on ``app``."""
     try:
+        _ensure_typing_override()
         a2a_pb2 = import_module("a2a.types.a2a_pb2")
         constants = import_module("a2a.utils.constants")
         route_module = import_module("a2a.server.routes.fastapi_routes")
@@ -118,6 +119,14 @@ def _absolute_url(request: Any, path: str) -> str:
     return urljoin(str(request.base_url), path.lstrip("/"))
 
 
+def _ensure_typing_override() -> None:
+    typing_module = import_module("typing")
+    if hasattr(typing_module, "override"):
+        return
+    typing_extensions_module = import_module("typing_extensions")
+    setattr(typing_module, "override", typing_extensions_module.override)
+
+
 def _build_agent_card(
     *,
     a2a_pb2: Any,
@@ -161,6 +170,7 @@ class AvalanA2AAgentExecutor:
         self._app = app
 
     async def execute(self, context: Any, event_queue: Any) -> None:
+        _ensure_typing_override()
         task_id = cast(str, context.task_id)
         context_id = cast(str, context.context_id)
         updater_module = import_module("a2a.server.tasks.task_updater")
@@ -227,6 +237,7 @@ class AvalanA2AAgentExecutor:
                 )
 
     async def cancel(self, context: Any, event_queue: Any) -> None:
+        _ensure_typing_override()
         task_id = cast(str, context.task_id)
         context_id = cast(str, context.context_id)
         updater_module = import_module("a2a.server.tasks.task_updater")
