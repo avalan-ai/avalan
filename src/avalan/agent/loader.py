@@ -44,6 +44,7 @@ from ..tool.shell import (
     normalize_shell_enabled_tools,
     should_append_shell_toolset,
 )
+from ..tool.shell.input_files import shell_input_file_filter
 
 from contextlib import AsyncExitStack
 from importlib import import_module
@@ -805,13 +806,15 @@ class OrchestratorLoader:
                     settings=database_settings, namespace="database"
                 )
             )
+        active_shell_settings = None
         if should_append_shell_toolset(
             shell_settings=shell_settings,
             enabled_tools=enabled_tools,
         ):
+            active_shell_settings = shell_settings or ShellToolSettings()
             available_toolsets.append(
                 ShellToolSet(
-                    settings=shell_settings or ShellToolSettings(),
+                    settings=active_shell_settings,
                     namespace="shell",
                 )
             )
@@ -821,6 +824,11 @@ class OrchestratorLoader:
             enable_tools=enabled_tools,
             settings=ToolManagerSettings(
                 tool_format=tool_format,
+                filters=(
+                    [shell_input_file_filter(active_shell_settings)]
+                    if active_shell_settings is not None
+                    else None
+                ),
                 recovery_formats=tool_recovery_formats or [],
             ),
         )

@@ -43,6 +43,7 @@ async def input_files(
                         b64encode(await read_bytes(path)).decode("ascii")
                     ),
                     "filename": path.name,
+                    "local_path": str(path.resolve()),
                     "mime_type": mime_type,
                 },
             )

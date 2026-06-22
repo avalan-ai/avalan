@@ -606,6 +606,7 @@ class MessageFile(TypedDict, total=False):
     file_id: str
     file_url: str
     filename: str
+    local_path: str
     mime_type: str
     title: str
     url: str

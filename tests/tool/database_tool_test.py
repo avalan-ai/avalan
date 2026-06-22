@@ -537,6 +537,61 @@ class DatabaseInspectCollectTestCase(TestCase):
             )
         self.assertEqual(tables[0].name, "other.t")
 
+    def test_collect_accepts_schema_qualified_table_names(self):
+        column_calls: list[tuple[str | None, str]] = []
+
+        def get_columns(table_name, schema):
+            column_calls.append((schema, table_name))
+            return [{"name": "id", "type": "INTEGER"}]
+
+        inspector = SimpleNamespace(
+            default_schema_name="public",
+            get_columns=get_columns,
+            get_foreign_keys=lambda table_name, schema: [],
+        )
+
+        tool = DatabaseInspectTool(
+            SimpleNamespace(), DatabaseToolSettings(dsn="sqlite:///db.sqlite")
+        )
+
+        with (
+            patch("avalan.tool.database.inspect", return_value=inspector),
+            patch(
+                "avalan.tool.database.DatabaseTool._schemas",
+                return_value=("public", ["public", "sales"]),
+            ),
+        ):
+            tables = tool._collect(
+                SimpleNamespace(),
+                schema="public",
+                table_names=["public.jobs", "sales.orders"],
+            )
+
+        self.assertEqual(
+            column_calls,
+            [("public", "jobs"), ("sales", "orders")],
+        )
+        self.assertEqual(
+            [table.name for table in tables],
+            ["jobs", "sales.orders"],
+        )
+
+    def test_table_reference_preserves_malformed_qualified_names(self):
+        self.assertEqual(
+            DatabaseInspectTool._table_reference(
+                schema="public",
+                table_name="schema.",
+            ),
+            ("public", "schema."),
+        )
+        self.assertEqual(
+            DatabaseInspectTool._table_reference(
+                schema="public",
+                table_name=".table",
+            ),
+            ("public", ".table"),
+        )
+
     def test_collect_skips_missing_tables_and_missing_foreign_keys(self):
         def get_columns(table_name, schema):
             if table_name == "missing":

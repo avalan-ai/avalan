@@ -30,6 +30,7 @@ def test_input_files_with_text_and_file() -> None:
         file={
             "file_data": b64encode(b"%PDF-1.7").decode("ascii"),
             "filename": Path(tmp.name).name,
+            "local_path": str(Path(tmp.name).resolve()),
             "mime_type": "application/pdf",
         },
     )
@@ -50,6 +51,7 @@ def test_input_files_without_text() -> None:
             file={
                 "file_data": b64encode(b"content").decode("ascii"),
                 "filename": Path(tmp.name).name,
+                "local_path": str(Path(tmp.name).resolve()),
                 "mime_type": "text/markdown",
             },
         )
