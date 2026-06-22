@@ -499,6 +499,8 @@ def _result_target(
             operation,
             call.arguments if isinstance(call.arguments, dict) else {},
         )
+    if operation == "inspect" and _is_table_sequence(result):
+        return _safe_target(result[0].name if len(result) == 1 else "tables")
     if isinstance(result, Sequence) and not isinstance(
         result, str | bytes | bytearray
     ):
@@ -563,7 +565,11 @@ def _result_details(
             if command:
                 details.append(_detail("sql_command", command))
     if operation == "inspect":
-        tables = _table_names(arguments) or _result_table_names(result)
+        tables = (
+            _result_table_names(result)
+            if _is_table_sequence(result)
+            else _table_names(arguments)
+        )
         if tables:
             details.append(_detail("tables", _join_limited(tables)))
     if operation == "plan" and isinstance(result, QueryPlan):

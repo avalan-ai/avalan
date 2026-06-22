@@ -69,11 +69,17 @@ class DatabaseInspectTool(DatabaseTool):
 
         tables: list[Table] = []
         for table_name in table_names:
+            table_schema, table_name = self._table_reference(
+                schema=sch,
+                table_name=table_name,
+            )
             actual_table = self._denormalize_table_name(
-                connection, sch, table_name
+                connection, table_schema, table_name
             )
             try:
-                column_info = inspector.get_columns(actual_table, schema=sch)
+                column_info = inspector.get_columns(
+                    actual_table, schema=table_schema
+                )
             except NoSuchTableError:
                 continue
 
@@ -81,7 +87,9 @@ class DatabaseInspectTool(DatabaseTool):
 
             fkeys: list[ForeignKey] = []
             try:
-                fks = inspector.get_foreign_keys(actual_table, schema=sch)
+                fks = inspector.get_foreign_keys(
+                    actual_table, schema=table_schema
+                )
             except NoSuchTableError:
                 fks = []
 
@@ -105,11 +113,24 @@ class DatabaseInspectTool(DatabaseTool):
             table_display = self._normalize_table_for_output(actual_table)
             name = (
                 table_display
-                if sch in (None, default_schema)
-                else f"{sch}.{table_display}"
+                if table_schema in (None, default_schema)
+                else f"{table_schema}.{table_display}"
             )
             tables.append(
                 Table(name=name, columns=columns, foreign_keys=fkeys)
             )
 
         return tables
+
+    @staticmethod
+    def _table_reference(
+        *,
+        schema: str | None,
+        table_name: str,
+    ) -> tuple[str | None, str]:
+        if "." not in table_name:
+            return schema, table_name
+        table_schema, unqualified_table = table_name.split(".", 1)
+        if not table_schema or not unqualified_table:
+            return schema, table_name
+        return table_schema, unqualified_table

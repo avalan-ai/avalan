@@ -450,6 +450,7 @@ class CliModelTestCase(TestCase):
                 file={
                     "file_data": b64encode(b"%PDF-1.7").decode("ascii"),
                     "filename": Path(tmp.name).name,
+                    "local_path": str(Path(tmp.name).resolve()),
                     "mime_type": "application/pdf",
                 },
             ),
@@ -473,6 +474,7 @@ class CliModelTestCase(TestCase):
                 file={
                     "file_data": b64encode(b"doc").decode("ascii"),
                     "filename": Path(tmp.name).name,
+                    "local_path": str(Path(tmp.name).resolve()),
                     "mime_type": "application/pdf",
                 },
             ),
@@ -9349,6 +9351,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
                     file={
                         "file_data": b64encode(b"%PDF-1.7").decode("ascii"),
                         "filename": Path(tmp.name).name,
+                        "local_path": str(Path(tmp.name).resolve()),
                         "mime_type": "application/pdf",
                     },
                 )

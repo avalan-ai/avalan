@@ -27,6 +27,7 @@ from avalan.tool.database import (
 )
 from avalan.tool.database import display as database_display
 from avalan.tool.database.count import DatabaseCountTool
+from avalan.tool.database.display import _result_table_names
 from avalan.tool.database.inspect import DatabaseInspectTool
 from avalan.tool.database.keys import DatabaseKeysTool
 from avalan.tool.database.kill import DatabaseKillTool
@@ -443,6 +444,35 @@ def test_inspect_terminal_results_can_supply_table_context() -> None:
 
     assert _detail_value(inferred, "tables") == "users, orders"
     assert _detail_value(invalid, "tables") is None
+    assert _result_table_names("not tables") == ()
+
+
+def test_non_inspect_table_sequence_result_keeps_table_target() -> None:
+    manager = _manager()
+
+    projection = _project_result(
+        manager,
+        "database.run",
+        {"sql": "SELECT id FROM users"},
+        [Table(name="users", columns={"id": "INTEGER"}, foreign_keys=[])],
+    )
+
+    assert projection.target == "users"
+
+
+def test_empty_inspect_terminal_result_uses_actual_empty_context() -> None:
+    manager = _manager()
+
+    projection = _project_result(
+        manager,
+        "database.inspect",
+        {"table_names": ["public.jobs"]},
+        [],
+    )
+
+    assert projection.target == "tables"
+    assert _detail_value(projection, "tables") is None
+    assert projection.metrics["tables"] == 0
 
 
 def test_database_name_from_dsn_handles_edge_cases() -> None:

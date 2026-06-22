@@ -1324,6 +1324,8 @@ def _basic_database_inspect_phrase_markup(
 ) -> str:
     table_names = _basic_database_table_names(projection)
     table_count = _basic_database_table_count(projection, table_names)
+    if table_count == 0:
+        table_names = None
     subject = (
         f"{verb} {_basic_count_label(table_count, 'table')}"
         if table_count is not None

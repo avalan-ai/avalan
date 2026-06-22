@@ -851,8 +851,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
                 ToolDisplayDetail(
                     label="sql",
                     value=(
-                        "SELECT id FROM batches "
-                        "WHERE tag = 'reese-20260618'"
+                        "SELECT id FROM batches WHERE tag = 'reese-20260618'"
                     ),
                 ),
             ),
@@ -1082,6 +1081,36 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("[bold]2 rows[/bold]", completed_float_rows)
         self.assertNotIn("True rows", completed_bool_rows)
+
+    def test_zero_count_database_inspect_does_not_show_table_list(
+        self,
+    ) -> None:
+        projection = ToolDisplayProjection(
+            action="inspect",
+            label="database.inspect",
+            target="public.jobs",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="inspect"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(label="tables", value="public.jobs"),
+            ),
+            metrics={"tables": 0},
+        )
+
+        line = _basic_completed_tool_line(
+            "database.inspect",
+            "completed",
+            None,
+            display_projection=projection,
+        )
+
+        self.assertIn(
+            "[bold]Inspected 0 tables[/bold] [dim]from database[/dim] claims",
+            line,
+        )
+        self.assertNotIn("public.jobs", line)
 
     def test_database_projection_lines_cover_operation_variants(self) -> None:
         cases = (
