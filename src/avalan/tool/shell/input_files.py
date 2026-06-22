@@ -11,6 +11,7 @@ from .settings import ShellToolSettings
 
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
+from os.path import relpath
 from pathlib import Path
 from typing import cast
 
@@ -35,7 +36,11 @@ def _rewrite_shell_input_file_paths(
     arguments = call.arguments
     if not isinstance(arguments, dict):
         return None
-    aliases = _input_file_path_aliases(context.input, settings)
+    aliases = _input_file_path_aliases(
+        context.input,
+        settings,
+        request_cwd=arguments.get("cwd"),
+    )
     if not aliases:
         return None
 
@@ -101,8 +106,17 @@ def _rewrite_paths_argument(
 def _input_file_path_aliases(
     input_value: Input | None,
     settings: ShellToolSettings,
+    *,
+    request_cwd: object | None = None,
 ) -> dict[str, str]:
     workspace_root = Path(settings.workspace_root).resolve()
+    effective_cwd = _effective_shell_cwd(
+        workspace_root,
+        settings,
+        request_cwd,
+    )
+    if effective_cwd is None:
+        return {}
     aliases: dict[str, str] = {}
     conflicts: set[str] = set()
     for file_content in _iter_input_file_content(input_value):
@@ -113,9 +127,10 @@ def _input_file_path_aliases(
         if not isinstance(local_path, str) or not local_path:
             continue
         source_path = Path(local_path).resolve()
-        try:
-            relative_path = source_path.relative_to(workspace_root).as_posix()
-        except ValueError:
+        if not _is_relative_to(source_path, workspace_root):
+            continue
+        relative_path = _cwd_relative_file_path(effective_cwd, source_path)
+        if relative_path is None:
             continue
         for alias in (filename, f"./{filename}", str(source_path)):
             _add_alias(
@@ -125,6 +140,46 @@ def _input_file_path_aliases(
                 relative_path,
             )
     return aliases
+
+
+def _effective_shell_cwd(
+    workspace_root: Path,
+    settings: ShellToolSettings,
+    request_cwd: object | None,
+) -> Path | None:
+    cwd_value = request_cwd if request_cwd is not None else settings.cwd
+    if not isinstance(cwd_value, str) or not cwd_value.strip():
+        return None
+    cwd_path = Path(cwd_value)
+    if _path_has_part(cwd_path, ".."):
+        return None
+    if cwd_path.is_absolute() and not settings.allow_absolute_paths:
+        return None
+    if not cwd_path.is_absolute():
+        cwd_path = workspace_root / cwd_path
+    cwd_path = cwd_path.resolve()
+    if not _is_relative_to(cwd_path, workspace_root):
+        return None
+    return cwd_path
+
+
+def _cwd_relative_file_path(cwd: Path, source_path: Path) -> str | None:
+    relative_path = Path(relpath(source_path, cwd))
+    if _path_has_part(relative_path, ".."):
+        return None
+    return relative_path.as_posix()
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _path_has_part(path: Path, part: str) -> bool:
+    return any(path_part == part for path_part in path.parts)
 
 
 def _iter_input_file_content(

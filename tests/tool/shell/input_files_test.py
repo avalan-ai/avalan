@@ -10,10 +10,14 @@ from avalan.entities import (
 )
 from avalan.tool.shell.input_files import (
     _add_alias,
+    _cwd_relative_file_path,
+    _effective_shell_cwd,
     _input_file_path_aliases,
+    _is_relative_to,
     _iter_input_file_content,
     _iter_message_file_content,
     _path_alias,
+    _path_has_part,
     _rewrite_path_argument,
     _rewrite_paths_argument,
     _rewrite_shell_input_file_paths,
@@ -87,6 +91,129 @@ def test_shell_input_file_filter_preserves_unmapped_arguments(
         ("nested/report.pdf",),
         True,
     )
+
+
+def test_shell_input_file_aliases_are_relative_to_settings_cwd(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "nested" / "report.pdf"
+    source.parent.mkdir()
+    source.write_bytes(b"%PDF-1.7")
+    settings = ShellToolSettings(
+        workspace_root=str(tmp_path),
+        cwd="nested",
+    )
+
+    aliases = _input_file_path_aliases(_message(source), settings)
+
+    assert aliases[source.name] == "report.pdf"
+    assert _rewrite_path_argument(f"./{source.name}", aliases) == (
+        "report.pdf",
+        True,
+    )
+    assert aliases[str(source.resolve())] == "report.pdf"
+
+
+def test_shell_input_file_filter_uses_per_call_cwd(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "nested" / "report.pdf"
+    source.parent.mkdir()
+    source.write_bytes(b"%PDF-1.7")
+    settings = ShellToolSettings(
+        workspace_root=str(tmp_path),
+        cwd="other",
+    )
+    call = ToolCall(
+        id="call-1",
+        name="shell.pdfinfo",
+        arguments={
+            "path": source.name,
+            "paths": [str(source.resolve())],
+            "cwd": "nested",
+        },
+    )
+
+    result = _rewrite_shell_input_file_paths(
+        call,
+        ToolCallContext(input=_message(source)),
+        settings,
+    )
+
+    assert result is not None
+    filtered_call, _ = result
+    assert filtered_call.arguments == {
+        "path": "report.pdf",
+        "paths": ["report.pdf"],
+        "cwd": "nested",
+    }
+
+
+def test_shell_input_file_aliases_skip_files_outside_effective_cwd(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"%PDF-1.7")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+
+    assert (
+        _input_file_path_aliases(
+            _message(source),
+            ShellToolSettings(workspace_root=str(tmp_path), cwd="nested"),
+        )
+        == {}
+    )
+    assert (
+        _cwd_relative_file_path(nested.resolve(), source.resolve())
+        is None
+    )
+
+
+def test_effective_shell_cwd_rejects_invalid_values(tmp_path: Path) -> None:
+    workspace_root = tmp_path.resolve()
+    settings = ShellToolSettings(workspace_root=str(tmp_path))
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"%PDF-1.7")
+
+    assert (
+        _input_file_path_aliases(
+            _message(source),
+            settings,
+            request_cwd=1,
+        )
+        == {}
+    )
+    assert _effective_shell_cwd(workspace_root, settings, 1) is None
+    assert _effective_shell_cwd(workspace_root, settings, "") is None
+    assert _effective_shell_cwd(workspace_root, settings, "../tmp") is None
+    assert (
+        _effective_shell_cwd(
+            workspace_root,
+            settings,
+            str(workspace_root),
+        )
+        is None
+    )
+    assert (
+        _effective_shell_cwd(
+            workspace_root,
+            ShellToolSettings(
+                workspace_root=str(tmp_path),
+                allow_absolute_paths=True,
+            ),
+            str(tmp_path.parent),
+        )
+        is None
+    )
+    assert _effective_shell_cwd(
+        workspace_root,
+        ShellToolSettings(
+            workspace_root=str(tmp_path),
+            allow_absolute_paths=True,
+        ),
+        str(workspace_root),
+    ) == workspace_root
 
 
 def test_shell_input_file_rewrite_noops(tmp_path: Path) -> None:
@@ -204,6 +331,9 @@ def test_add_alias_and_path_alias_helpers() -> None:
     assert aliases == {}
     assert conflicts == {"name.pdf"}
     assert _path_alias("././name.pdf") == "name.pdf"
+    assert _is_relative_to(Path("a/b"), Path("a"))
+    assert not _is_relative_to(Path("a/b"), Path("c"))
+    assert _path_has_part(Path("a/../b"), "..")
 
 
 def _message(path: Path) -> Message:
