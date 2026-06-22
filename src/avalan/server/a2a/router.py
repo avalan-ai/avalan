@@ -19,9 +19,11 @@ from ..routers.streaming import (
 
 from asyncio import CancelledError
 from collections.abc import AsyncIterable, AsyncIterator
+from copy import deepcopy
 from importlib import import_module
 from logging import Logger
 from typing import Any, cast
+from urllib.parse import urljoin
 
 from fastapi import FastAPI
 
@@ -38,19 +40,21 @@ def install_a2a_routes(
         a2a_pb2 = import_module("a2a.types.a2a_pb2")
         constants = import_module("a2a.utils.constants")
         route_module = import_module("a2a.server.routes.fastapi_routes")
-        card_routes_module = import_module(
-            "a2a.server.routes.agent_card_routes"
-        )
         jsonrpc_routes_module = import_module(
             "a2a.server.routes.jsonrpc_routes"
         )
         rest_routes_module = import_module("a2a.server.routes.rest_routes")
+        response_helpers_module = import_module(
+            "a2a.server.request_handlers.response_helpers"
+        )
         handler_module = import_module(
             "a2a.server.request_handlers.default_request_handler_v2"
         )
         task_store_module = import_module(
             "a2a.server.tasks.inmemory_task_store"
         )
+        responses_module = import_module("starlette.responses")
+        routing_module = import_module("starlette.routing")
     except ImportError as exc:
         raise ImportError("A2A router requires the a2a-sdk package") from exc
 
@@ -68,7 +72,13 @@ def install_a2a_routes(
     )
     route_module.add_a2a_routes_to_fastapi(
         app,
-        agent_card_routes=card_routes_module.create_agent_card_routes(card),
+        agent_card_routes=_agent_card_routes(
+            agent_card=card,
+            interface_url=prefix,
+            agent_card_to_dict=response_helpers_module.agent_card_to_dict,
+            json_response=responses_module.JSONResponse,
+            route_class=routing_module.Route,
+        ),
         jsonrpc_routes=jsonrpc_routes_module.create_jsonrpc_routes(
             request_handler, rpc_url=prefix, enable_v0_3_compat=False
         ),
@@ -78,6 +88,34 @@ def install_a2a_routes(
             enable_v0_3_compat=False,
         ),
     )
+
+
+def _agent_card_routes(
+    *,
+    agent_card: Any,
+    interface_url: str,
+    agent_card_to_dict: Any,
+    json_response: Any,
+    route_class: Any,
+) -> list[Any]:
+    async def _get_agent_card(request: Any) -> Any:
+        card = deepcopy(agent_card)
+        absolute_interface_url = _absolute_url(request, interface_url)
+        for supported_interface in card.supported_interfaces:
+            supported_interface.url = absolute_interface_url
+        return json_response(agent_card_to_dict(card))
+
+    return [
+        route_class(
+            path="/.well-known/agent-card.json",
+            endpoint=_get_agent_card,
+            methods=["GET"],
+        )
+    ]
+
+
+def _absolute_url(request: Any, path: str) -> str:
+    return urljoin(str(request.base_url), path.lstrip("/"))
 
 
 def _build_agent_card(

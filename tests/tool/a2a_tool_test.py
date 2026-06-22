@@ -248,6 +248,32 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(structured["state"], "TASK_STATE_COMPLETED")
 
+    async def test_message_response_success_returns_answer_and_streams(
+        self,
+    ) -> None:
+        self.client.responses = [_message_response(text="direct")]
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def stream(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        result = await self.tool(
+            "http://host/a2a",
+            "run",
+            None,
+            context=ToolCallContext(stream_event=stream),
+        )
+        structured = cast(dict[str, Any], result["structuredContent"])
+
+        self.assertEqual(
+            result["content"], [{"type": "text", "text": "direct"}]
+        )
+        self.assertEqual(structured["state"], "TASK_STATE_COMPLETED")
+        self.assertEqual(structured["messages"][0]["text"], "direct")
+        self.assertEqual(events[0].kind, ToolExecutionStreamKind.STDOUT)
+        self.assertEqual(events[0].content, "direct")
+        self.assertEqual(events[0].progress, 1)
+
     async def test_response_without_terminal_status_raises(self) -> None:
         self.client.responses = [
             _status_response(
@@ -386,7 +412,8 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
         structured = cast(dict[str, Any], result["structuredContent"])
 
         self.assertEqual(
-            result["content"], [{"type": "text", "text": '["x"]'}]
+            result["content"],
+            [{"type": "text", "text": 'plain{"value":1}["x"]'}],
         )
         self.assertEqual(
             structured["messages"][0]["text"],
@@ -629,6 +656,16 @@ def _task_response(
             id=task_id,
             context_id="ctx-1",
             status=a2a_pb2.TaskStatus(state=state),
+        )
+    )
+
+
+def _message_response(*, text: str) -> a2a_pb2.StreamResponse:
+    return a2a_pb2.StreamResponse(
+        message=a2a_pb2.Message(
+            message_id="msg-1",
+            role=a2a_pb2.Role.ROLE_AGENT,
+            parts=[a2a_pb2.Part(text=text)],
         )
     )
 

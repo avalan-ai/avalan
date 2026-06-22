@@ -52,7 +52,7 @@ def test_agent_card_uses_v1_supported_interfaces() -> None:
         name="run",
         description="Run the test agent.",
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://agents.example")
 
     response = client.get("/.well-known/agent-card.json")
 
@@ -63,7 +63,7 @@ def test_agent_card_uses_v1_supported_interfaces() -> None:
     assert card["capabilities"]["streaming"] is True
     assert card["supportedInterfaces"] == [
         {
-            "url": "/a2a",
+            "url": "https://agents.example/a2a",
             "protocolBinding": "JSONRPC",
             "protocolVersion": "1.0",
         }

@@ -387,7 +387,7 @@ class _A2AStreamState:
 
         message = _object_member(result, "message")
         if message is not None:
-            self.messages.append(_message_payload(message))
+            await self._record_message(message, context)
             return
 
         status_update = _object_member(result, "statusUpdate")
@@ -451,6 +451,17 @@ class _A2AStreamState:
             await _emit_artifact_update(artifact, chunks, context)
         for message in _mapping_items(task, "history"):
             self.messages.append(_message_payload(message))
+
+    async def _record_message(
+        self, message: Mapping[str, object], context: ToolCallContext
+    ) -> None:
+        payload = _message_payload(message)
+        self.messages.append(payload)
+        self._record_state("TASK_STATE_COMPLETED")
+        text = payload.get("text")
+        if isinstance(text, str) and text:
+            self.answer_chunks.append(text)
+            await _emit_message_response(text, context)
 
     def _record_status(self, status: dict[str, object]) -> None:
         task_id = status.get("taskId")
@@ -640,6 +651,24 @@ async def _emit_artifact_update(
             "a2a_type": "artifact",
             "a2a_artifact_id": str(artifact.get("id") or ""),
             **metadata,
+        },
+    )
+
+
+async def _emit_message_response(
+    text: str, context: ToolCallContext
+) -> None:
+    if context.stream_event is None:
+        return
+    await _emit_a2a_stream_event(
+        context,
+        kind=ToolExecutionStreamKind.STDOUT,
+        content=text,
+        progress=1,
+        metadata={
+            "a2a_type": "message",
+            "kind": "answer",
+            "channel": "output",
         },
     )
 
