@@ -10358,7 +10358,7 @@ task-otel = ["opentelemetry-sdk"]
 task-pdf-images = ["pypdfium2"]
 task-pgsql = ["psycopg", "psycopg-binary"]
 task-prometheus = ["prometheus-client"]
-tool = ["SQLAlchemy", "aiomysql", "asyncpg", "matplotlib", "sqlglot", "sympy"]
+tool = ["SQLAlchemy", "aiomysql", "asyncpg", "httpx", "matplotlib", "sqlglot", "sympy"]
 translation = ["protobuf", "sentencepiece"]
 vendors = ["aioboto3", "aiohttp", "anthropic", "diffusers", "google-genai", "openai", "pillow", "safetensors"]
 vision = ["diffusers", "imageio", "imageio-ffmpeg", "opencv-python", "pillow", "safetensors", "torchvision"]
@@ -10367,4 +10367,4 @@ vllm = []
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "23e2452ff6fea976fed250ae1e78345f1034e835013adc1eeec96a0f4505f63b"
+content-hash = "5f4c9f0f30d792e6301864deef15167361a288dfa7f8734261e53489f0eebeee"

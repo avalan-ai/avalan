@@ -34,7 +34,7 @@ from . import (
     TextGenerationVendorModel,
 )
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from importlib import import_module
 from mimetypes import guess_type
 from typing import Any, cast
@@ -861,6 +861,10 @@ class OpenAIClient(TextGenerationVendor):
             schemas = OpenAIClient._tool_schemas(tool)
             if schemas:
                 kwargs["tools"] = schemas
+                if settings and settings.tool_choice is not None:
+                    kwargs["tool_choice"] = OpenAIClient._tool_choice(
+                        settings.tool_choice, schemas
+                    )
         client_stream = await self._client.responses.create(**kwargs)
 
         if use_async_generator:
@@ -1254,6 +1258,19 @@ class OpenAIClient(TextGenerationVendor):
             if schemas
             else None
         )
+
+    @staticmethod
+    def _tool_choice(
+        tool_choice: str,
+        schemas: Sequence[Mapping[str, Any]],
+    ) -> dict[str, str]:
+        assert tool_choice, "OpenAI tool_choice must be a tool name"
+        name = TextGenerationVendor.encode_tool_name(tool_choice)
+        schema_names = {schema.get("name") for schema in schemas}
+        assert (
+            name in schema_names
+        ), "OpenAI tool_choice must match an available tool"
+        return {"type": "function", "name": name}
 
     @staticmethod
     def _non_stream_response_content(response: object) -> str:

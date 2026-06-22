@@ -1425,6 +1425,11 @@ class CLI:
             help="Tool format",
         )
         agent_run_parser.add_argument(
+            "--tool-choice",
+            type=str,
+            help="Force a tool by canonical name when supported.",
+        )
+        agent_run_parser.add_argument(
             "--tool-recovery-format",
             action="append",
             choices=[t.value for t in ToolCallRecoveryFormat],

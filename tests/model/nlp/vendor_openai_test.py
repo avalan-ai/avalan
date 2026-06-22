@@ -371,6 +371,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             reasoning=ReasoningSettings(effort=ReasoningEffort.HIGH),
             response_format={"type": "json_object"},
             stop_strings=["END"],
+            tool_choice="pkg.lookup",
         )
 
         await client(
@@ -417,10 +418,33 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             reasoning={"effort": "high"},
             prompt_cache_retention="24h",
             tools=[{"type": "function", "name": "avl_cGtnLmxvb2t1cA"}],
+            tool_choice={"type": "function", "name": "avl_cGtnLmxvb2t1cA"},
         )
         self.assertNotIn(
             "top-level policy", str(create_mock.await_args.kwargs["input"])
         )
+
+    async def test_rejects_tool_choice_missing_from_schemas(self):
+        create_mock = AsyncMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        tool = MagicMock()
+        tool.json_schemas.return_value = [
+            {"type": "function", "function": {"name": "pkg.lookup"}}
+        ]
+
+        with self.assertRaisesRegex(AssertionError, "tool_choice"):
+            await client(
+                "gpt-5",
+                [Message(role=MessageRole.USER, content="hi")],
+                settings=GenerationSettings(tool_choice="pkg.other"),
+                tool=tool,
+                use_async_generator=False,
+            )
+
+        create_mock.assert_not_awaited()
 
     async def test_rejects_invalid_instructions_before_provider_call(self):
         create_mock = AsyncMock()

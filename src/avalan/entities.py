@@ -526,6 +526,8 @@ class GenerationSettings:
     # Response settings ------------------------------------------------------
     # How to format the model response
     response_format: dict[str, Any] | None = None
+    # Force an available tool by canonical name, when supported.
+    tool_choice: str | None = None
 
 
 @final

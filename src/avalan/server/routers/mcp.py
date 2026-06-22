@@ -439,7 +439,7 @@ def create_router() -> APIRouter:
 
 async def _consume_call_request(
     request: Request,
-) -> tuple[str | int, MCPToolRequest, str]:
+) -> tuple[str | int, MCPToolRequest, str | int]:
     call_message, messages = await _expect_jsonrpc_message(
         request, {"tools/call"}
     )
@@ -450,7 +450,7 @@ def _parse_call_request(
     request: Request,
     call_message: JSONObject,
     messages: AsyncIterator[JSONObject],
-) -> tuple[str | int, MCPToolRequest, str]:
+) -> tuple[str | int, MCPToolRequest, str | int]:
     method = call_message.get("method")
     if method != "tools/call":
         raise HTTPException(
@@ -477,7 +477,11 @@ def _parse_call_request(
             status_code=400, detail="Invalid MCP arguments"
         ) from exc
 
-    progress_token = cast(str | None, params.get("progressToken"))
+    progress_token = cast(str | int | None, params.get("progressToken"))
+    if progress_token is None:
+        meta = params.get("_meta")
+        if isinstance(meta, dict):
+            progress_token = cast(str | int | None, meta.get("progressToken"))
     if not progress_token:
         progress_token = str(uuid4())
 
@@ -569,7 +573,7 @@ async def _start_tool_streaming_response(
     orchestrator: Orchestrator,
     request_id: str | int,
     tool_request: MCPToolRequest,
-    progress_token: str,
+    progress_token: str | int,
 ) -> Response:
     chat_request = _build_chat_request(tool_request, orchestrator)
     response, response_uuid, timestamp = await orchestrate(
@@ -819,7 +823,7 @@ async def _stream_mcp_response(
     response: StreamResponse,
     response_id: UUID,
     timestamp: int,
-    progress_token: str,
+    progress_token: str | int,
     orchestrator: Orchestrator,
     logger: Logger,
     resource_store: MCPResourceStore,
@@ -1050,7 +1054,7 @@ async def _stream_mcp_response(
 async def _mcp_notifications(
     item: StreamConsumerProjection,
     state: _MCPStreamProjectionState,
-    progress_token: str,
+    progress_token: str | int,
 ) -> list[JSONObject]:
     return await _mcp_stream_item_notifications(item, state, progress_token)
 
@@ -1058,7 +1062,7 @@ async def _mcp_notifications(
 async def _mcp_stream_item_notifications(
     item: StreamConsumerProjection,
     state: _MCPStreamProjectionState,
-    progress_token: str,
+    progress_token: str | int,
 ) -> list[JSONObject]:
     return await _mcp_canonical_stream_item_notifications(
         canonical_item_from_consumer_projection(item),
@@ -1070,7 +1074,7 @@ async def _mcp_stream_item_notifications(
 async def _mcp_canonical_stream_item_notifications(
     item: CanonicalStreamItem,
     state: _MCPStreamProjectionState,
-    progress_token: str,
+    progress_token: str | int,
 ) -> list[JSONObject]:
     notifications: list[JSONObject] = []
 
@@ -1090,7 +1094,7 @@ async def _mcp_canonical_stream_item_notifications(
                     "method": "notifications/message",
                     "params": {
                         "level": "debug",
-                        "message": {
+                        "data": {
                             "type": "reasoning",
                             "delta": reasoning_delta,
                         },
@@ -1157,22 +1161,22 @@ def _record_canonical_tool_call_ready(
 
 def _canonical_progress_notification(
     item: CanonicalStreamItem,
-    progress_token: str,
+    progress_token: str | int,
 ) -> JSONObject | None:
     if item.kind is StreamItemKind.ANSWER_DELTA:
         delta = item.text_delta or ""
         if not delta:
             return None
-        progress: dict[str, JSONValue] = {
+        message: dict[str, JSONValue] = {
             "type": "answer.delta",
             "delta": delta,
         }
     elif item.kind is StreamItemKind.STREAM_COMPLETED:
-        progress = {"type": "answer.completed"}
+        message = {"type": "answer.completed"}
     elif item.kind is StreamItemKind.STREAM_CANCELLED:
-        progress = {"type": "stream.cancelled"}
+        message = {"type": "stream.cancelled"}
     elif item.kind is StreamItemKind.STREAM_ERRORED:
-        progress = {"type": "stream.errored"}
+        message = {"type": "stream.errored"}
     else:
         return None
     return {
@@ -1180,7 +1184,8 @@ def _canonical_progress_notification(
         "method": "notifications/progress",
         "params": {
             "progressToken": progress_token,
-            "progress": progress,
+            "progress": item.sequence,
+            "message": dumps(message, separators=(",", ":")),
         },
     }
 
@@ -1247,7 +1252,7 @@ def _canonical_tool_notification(
         "method": "notifications/message",
         "params": {
             "level": "info",
-            "message": message,
+            "data": message,
         },
     }
 
@@ -1277,7 +1282,7 @@ def _canonical_flow_notification(item: CanonicalStreamItem) -> JSONObject:
         "method": "notifications/message",
         "params": {
             "level": "info",
-            "message": message,
+            "data": message,
         },
     }
 
@@ -1356,7 +1361,7 @@ def _tool_call_notification(
         "method": "notifications/message",
         "params": {
             "level": "info",
-            "message": {
+            "data": {
                 "type": "tool.call",
                 "toolCallId": tool_call_id,
                 "name": name,
@@ -1379,7 +1384,7 @@ def _tool_diagnostic_notification(
         "method": "notifications/message",
         "params": {
             "level": "warning",
-            "message": {
+            "data": {
                 "type": "tool.diagnostic",
                 "toolCallId": tool_call_id,
                 "name": name,
@@ -1416,7 +1421,7 @@ def _tool_result_notification(
         "method": "notifications/message",
         "params": {
             "level": "info",
-            "message": message,
+            "data": message,
         },
     }
 
@@ -1581,7 +1586,10 @@ def _resource_notification(resource: MCPResource) -> JSONObject:
         resource_payload["closed"] = True
     else:
         resource_payload["delta"] = {"set": {"text": resource.text}}
-    params: dict[str, JSONValue] = {"resources": [resource_payload]}
+    params: dict[str, JSONValue] = {
+        "uri": resource.uri,
+        "resources": [resource_payload],
+    }
     return {
         "jsonrpc": "2.0",
         "method": "notifications/resources/updated",

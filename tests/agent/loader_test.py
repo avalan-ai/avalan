@@ -120,6 +120,10 @@ async def _from_settings_tool_manager_kwargs(
             side_effect=lambda *, namespace: _named_toolset(namespace),
         ),
         patch(
+            "avalan.agent.loader.McpToolSet",
+            side_effect=lambda *, namespace: _named_toolset(namespace),
+        ),
+        patch(
             "avalan.agent.loader.MemoryToolSet",
             side_effect=lambda _memory, *, namespace: _named_toolset(
                 namespace
@@ -180,6 +184,10 @@ async def _from_file_tool_manager_kwargs(config: str) -> dict[str, Any]:
                 side_effect=lambda *, namespace: _named_toolset(namespace),
             ),
             patch(
+                "avalan.agent.loader.McpToolSet",
+                side_effect=lambda *, namespace: _named_toolset(namespace),
+            ),
+            patch(
                 "avalan.agent.loader.MemoryToolSet",
                 side_effect=lambda _memory, *, namespace: _named_toolset(
                     namespace
@@ -204,6 +212,14 @@ def _shell_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
         toolset.namespace
         for toolset in kwargs["available_toolsets"]
         if toolset.namespace == "shell"
+    ]
+
+
+def _mcp_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
+    return [
+        toolset.namespace
+        for toolset in kwargs["available_toolsets"]
+        if toolset.namespace == "mcp"
     ]
 
 
@@ -375,6 +391,13 @@ async def _load_shell_agent_tool_result(
                 ),
                 patch(
                     "avalan.agent.loader.MathToolSet",
+                    side_effect=lambda *, namespace: ToolSet(
+                        namespace=namespace,
+                        tools=[],
+                    ),
+                ),
+                patch(
+                    "avalan.agent.loader.McpToolSet",
                     side_effect=lambda *, namespace: ToolSet(
                         namespace=namespace,
                         tools=[],
@@ -2977,6 +3000,39 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_shell_namespaces(kwargs), ["shell"])
         self.assertIsNone(kwargs["enable_tools"])
 
+    async def test_mcp_toolset_is_not_registered_without_mcp_opt_in(self):
+        cases = (
+            (None, None),
+            ([], []),
+            (["mcpx.*"], ["mcpx.*"]),
+            (["shell.rg"], ["shell.rg"]),
+        )
+
+        for tools, expected_enable in cases:
+            with self.subTest(tools=tools):
+                kwargs = await _from_settings_tool_manager_kwargs(
+                    _orchestrator_settings(tools=tools)
+                )
+
+                self.assertEqual(_mcp_namespaces(kwargs), [])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
+
+    async def test_mcp_toolset_is_registered_for_mcp_selections(self):
+        cases = (
+            (["mcp"], ["mcp"]),
+            (["mcp.*"], ["mcp.*"]),
+            (["mcp.call"], ["mcp.call"]),
+        )
+
+        for tools, expected_enable in cases:
+            with self.subTest(tools=tools):
+                kwargs = await _from_settings_tool_manager_kwargs(
+                    _orchestrator_settings(tools=tools)
+                )
+
+                self.assertEqual(_mcp_namespaces(kwargs), ["mcp"])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
+
     async def test_cli_shell_settings_preserve_default_toolsets(self):
         kwargs = await _from_settings_tool_manager_kwargs(
             _orchestrator_settings(tools=None),
@@ -3429,6 +3485,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             patch("avalan.agent.loader.BrowserToolSet"),
             patch("avalan.agent.loader.CodeToolSet"),
             patch("avalan.agent.loader.MathToolSet"),
+            patch("avalan.agent.loader.McpToolSet"),
             patch("avalan.agent.loader.MemoryToolSet"),
             patch("avalan.agent.loader.DatabaseToolSet"),
         ):

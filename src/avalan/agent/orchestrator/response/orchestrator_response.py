@@ -2743,7 +2743,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         context = ModelCallContext(
             specification=self._operation.specification,
             input=messages,
-            engine_args=dict(self._engine_args),
+            engine_args=self._continuation_engine_args(),
             parent=parent_context,
             root_parent=root_parent,
             agent_id=(
@@ -2762,6 +2762,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         )
         self._context = context
         return context
+
+    def _continuation_engine_args(self) -> dict[str, Any]:
+        engine_args = dict(self._engine_args)
+        engine_args.pop("tool_choice", None)
+        return engine_args
 
     def _append_canonical_item(
         self,
