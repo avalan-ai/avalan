@@ -1,16 +1,19 @@
 from unittest import TestCase, main
 
 from avalan.container import (
+    CONTAINER_SETTINGS_PRECEDENCE,
     ContainerAuditEvent,
     ContainerAuditEventType,
     ContainerAuditMode,
     ContainerAuditPolicy,
+    ContainerAuthorityCaps,
     ContainerAuthorizationDecision,
     ContainerAuthorizationDecisionType,
     ContainerBackend,
     ContainerBackendCapabilities,
     ContainerCleanupMode,
     ContainerCleanupPolicy,
+    ContainerCleanupPolicyOverride,
     ContainerCommandMode,
     ContainerCommandPlan,
     ContainerDeviceClass,
@@ -28,6 +31,7 @@ from avalan.container import (
     ContainerNetworkMode,
     ContainerNetworkPolicy,
     ContainerOutputPolicy,
+    ContainerOutputPolicyOverride,
     ContainerPoolingMode,
     ContainerPoolingPolicy,
     ContainerProfile,
@@ -39,6 +43,8 @@ from avalan.container import (
     ContainerRuntimeEnvelopePlan,
     ContainerSecretReference,
     ContainerSettings,
+    ContainerSettingsOverride,
+    ContainerSettingsPrecedence,
     ContainerSettingsSource,
     ContainerSurface,
     ContainerTrustLevel,
@@ -453,6 +459,480 @@ class ContainerSettingsTest(TestCase):
                 source=source,
             )
 
+    def test_authority_caps_merge_narrows_each_policy_field(self) -> None:
+        settings = _authority_settings(ContainerSurface.SERVER)
+        caps = ContainerAuthorityCaps(settings=settings)
+        profile = settings.profiles["workspace-rich"]
+        sdk = ContainerSettingsOverride(
+            source=_trusted_source(ContainerSurface.SDK),
+            layer=ContainerSettingsPrecedence.SDK,
+            profile="workspace-rich",
+            backend=ContainerBackend.DOCKER,
+            image=profile.image,
+            workspace=profile.workspace,
+            resources=ContainerResourceLimits(
+                cpu_count=2,
+                memory_bytes=268435456,
+                pids=64,
+                timeout_seconds=20,
+            ),
+            output=ContainerOutputPolicyOverride(
+                max_stdout_bytes=4096,
+                max_artifact_bytes=512,
+                allow_artifacts=True,
+            ),
+            cleanup=ContainerCleanupPolicyOverride(grace_seconds=4),
+            command_mode=ContainerCommandMode.FIXED_EXECUTABLE,
+            read_only_rootfs=True,
+            user="1000:1000",
+        )
+        cli = ContainerSettingsOverride.from_dict(
+            {
+                "layer": "cli",
+                "network": {
+                    "mode": "allowlist",
+                    "egress_allowlist": ["api.example.test"],
+                },
+                "devices": {"devices": ["cpu"]},
+                "output": {"max_stdout_bytes": 2048},
+                "cleanup": {
+                    "mode": "quarantine",
+                    "grace_seconds": 4,
+                },
+                "audit": {"mode": "full"},
+            },
+            source=_trusted_source(ContainerSurface.CLI),
+        )
+        agent = ContainerSettingsOverride.from_dict(
+            {
+                "mounts": [
+                    {
+                        "source": ".",
+                        "target": "/workspace",
+                        "mount_type": "workspace",
+                    }
+                ],
+                "environment": {
+                    "variables": {"LC_ALL": "C.UTF-8"},
+                    "allowlist": ["PATH"],
+                },
+                "secrets": [
+                    {
+                        "name": "api-token",
+                        "env_name": "API_TOKEN",
+                    }
+                ],
+            },
+            source=_untrusted_source(
+                ContainerSurface.AGENT_TOML,
+                ContainerTrustLevel.UNTRUSTED_AGENT,
+            ),
+        )
+        flow = ContainerSettingsOverride.from_dict(
+            {
+                "network": {"mode": "loopback"},
+                "escalation": {"mode": "require_review"},
+            },
+            source=_untrusted_source(
+                ContainerSurface.FLOW_TOML,
+                ContainerTrustLevel.UNTRUSTED_FLOW,
+            ),
+        )
+        task = ContainerSettingsOverride.from_dict(
+            {
+                "profile": "workspace-rich",
+                "required": True,
+                "scope": "shell_container_execution",
+                "network": {"mode": "none"},
+                "output": {"allow_artifacts": False},
+                "escalation": {"mode": "deny"},
+            },
+            source=_untrusted_source(
+                ContainerSurface.TASK_TOML,
+                ContainerTrustLevel.UNTRUSTED_TASK,
+            ),
+        )
+
+        effective = caps.merge((task, flow, cli, agent, sdk))
+        narrowed = effective.profile
+
+        self.assertTrue(effective.required)
+        self.assertEqual(effective.profile_registry_id, "unit-registry")
+        self.assertEqual(effective.policy_version, "phase1")
+        self.assertEqual(effective.profile_name, "workspace-rich")
+        self.assertEqual(
+            effective.canonical_policy_input()["profile_name"],
+            "workspace-rich",
+        )
+        self.assertEqual(sdk.to_dict()["backend"], "docker")
+        self.assertEqual(cli.to_dict()["network"]["mode"], "allowlist")
+        self.assertEqual(narrowed.mounts[0].target, "/workspace")
+        self.assertEqual(len(narrowed.mounts), 1)
+        self.assertEqual(
+            dict(narrowed.environment.variables),
+            {
+                "LC_ALL": "C.UTF-8",
+            },
+        )
+        self.assertEqual(narrowed.environment.allowlist, ("PATH",))
+        self.assertEqual(narrowed.secrets[0].name, "api-token")
+        self.assertEqual(narrowed.network.mode, ContainerNetworkMode.NONE)
+        self.assertEqual(narrowed.devices.devices, (ContainerDeviceClass.CPU,))
+        self.assertEqual(narrowed.resources.cpu_count, 2)
+        self.assertEqual(narrowed.resources.timeout_seconds, 20)
+        self.assertEqual(narrowed.output.max_stdout_bytes, 2048)
+        self.assertFalse(narrowed.output.allow_artifacts)
+        self.assertEqual(narrowed.output.max_artifact_bytes, 0)
+        self.assertEqual(narrowed.cleanup.grace_seconds, 4)
+        self.assertEqual(narrowed.audit.mode, ContainerAuditMode.FULL)
+        self.assertEqual(
+            narrowed.escalation.mode,
+            ContainerEscalationMode.DENY,
+        )
+
+    def test_precedence_and_finite_resource_narrowing_are_deterministic(
+        self,
+    ) -> None:
+        settings = _authority_settings(ContainerSurface.CLI)
+        caps = ContainerAuthorityCaps(settings=settings)
+        sdk = ContainerSettingsOverride.from_dict(
+            {"profile": "workspace-rich"},
+            source=_trusted_source(ContainerSurface.SDK),
+        )
+        worker = ContainerSettingsOverride.from_dict(
+            {},
+            source=_trusted_source(ContainerSurface.SERVER),
+            layer=ContainerSettingsPrecedence.WORKER,
+        )
+        task = ContainerSettingsOverride.from_dict(
+            {
+                "resources": {"cpu_count": 1},
+            },
+            source=_untrusted_source(
+                ContainerSurface.TASK_TOML,
+                ContainerTrustLevel.UNTRUSTED_TASK,
+            ),
+        )
+
+        effective = caps.merge((task, sdk, worker))
+
+        self.assertEqual(
+            CONTAINER_SETTINGS_PRECEDENCE,
+            (
+                ContainerSettingsPrecedence.SERVER_OPERATOR,
+                ContainerSettingsPrecedence.WORKER,
+                ContainerSettingsPrecedence.SDK,
+                ContainerSettingsPrecedence.CLI,
+                ContainerSettingsPrecedence.AGENT_TOML,
+                ContainerSettingsPrecedence.FLOW_TOML,
+                ContainerSettingsPrecedence.TASK_TOML,
+                ContainerSettingsPrecedence.REQUEST,
+            ),
+        )
+        self.assertEqual(effective.profile_name, "workspace-rich")
+        self.assertEqual(effective.profile.resources.cpu_count, 1)
+        self.assertEqual(worker.layer, ContainerSettingsPrecedence.WORKER)
+
+    def test_disabled_authority_caps_merge_without_runtime_profile(
+        self,
+    ) -> None:
+        source = _trusted_source(ContainerSurface.SERVER)
+        caps = ContainerAuthorityCaps(
+            settings=ContainerSettings(source=source),
+        )
+        override = ContainerSettingsOverride.from_dict(
+            {"required": True},
+            source=_trusted_source(ContainerSurface.CLI),
+        )
+
+        effective = caps.merge((override,))
+
+        self.assertFalse(effective.enabled)
+        self.assertTrue(effective.required)
+        self.assertIsNone(effective.profile)
+
+    def test_fake_e2e_equivalent_merges_have_same_canonical_policy(
+        self,
+    ) -> None:
+        cli = ContainerAuthorityCaps(
+            settings=_authority_settings(
+                ContainerSurface.CLI,
+                allowed_profiles=("workspace-rich", "workspace-readonly"),
+                rich_profile=_rich_profile(),
+            ),
+        )
+        server = ContainerAuthorityCaps(
+            settings=_authority_settings(
+                ContainerSurface.SERVER,
+                allowed_profiles=("workspace-readonly", "workspace-rich"),
+                rich_profile=_rich_profile(reverse_order=True),
+            ),
+        )
+        overrides = (
+            ContainerSettingsOverride.from_dict(
+                {
+                    "profile": "workspace-rich",
+                    "network": {
+                        "mode": "allowlist",
+                        "egress_allowlist": ["api.example.test"],
+                    },
+                    "resources": {
+                        "cpu_count": 2,
+                        "timeout_seconds": 30,
+                    },
+                },
+                source=_trusted_source(ContainerSurface.CLI),
+            ),
+        )
+
+        self.assertEqual(
+            cli.merge(overrides).canonical_policy_input(),
+            server.merge(overrides).canonical_policy_input(),
+        )
+        self.assertNotEqual(
+            cli.merge(overrides).to_dict()["profile"],
+            server.merge(overrides).to_dict()["profile"],
+        )
+
+    def test_untrusted_overrides_cannot_define_authority_fields(self) -> None:
+        source = _untrusted_source(
+            ContainerSurface.AGENT_TOML,
+            ContainerTrustLevel.UNTRUSTED_AGENT,
+        )
+        forbidden = (
+            {"backend": "docker"},
+            {"image": {"reference": _IMAGE}},
+            {"workspace": {"host_root": ".", "container_path": "/workspace"}},
+            {"command_mode": "fixed_entrypoint"},
+            {"read_only_rootfs": True},
+            {"user": "1000:1000"},
+        )
+
+        for raw in forbidden:
+            with self.subTest(raw=raw):
+                with self.assertRaises(AssertionError):
+                    ContainerSettingsOverride.from_dict(raw, source=source)
+        with self.assertRaises(AssertionError):
+            ContainerSettingsOverride.from_dict(
+                {"privileged": True},
+                source=source,
+            )
+        with self.assertRaises(AssertionError):
+            ContainerSettingsOverride.from_dict(
+                {"capabilities": ["SYS_ADMIN"]},
+                source=source,
+            )
+        with self.assertRaises(AssertionError):
+            ContainerSettingsOverride.from_dict(
+                {"layer": "task_toml"},
+                source=source,
+            )
+        with self.assertRaises(AssertionError):
+            ContainerSettingsOverride.from_dict(
+                {"scope": "runtime_envelope"},
+                source=source,
+            )
+        with self.assertRaises(AssertionError):
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+            )
+        with self.assertRaises(AssertionError):
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.AGENT_TOML,
+                scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+            )
+        with self.assertRaises(AssertionError):
+            ContainerSettingsOverride.from_dict(
+                {},
+                source=_untrusted_source(
+                    ContainerSurface.SERVER,
+                    ContainerTrustLevel.MODEL,
+                ),
+            )
+
+    def test_untrusted_selection_cannot_raise_scope(self) -> None:
+        source = _untrusted_source(
+            ContainerSurface.TASK_TOML,
+            ContainerTrustLevel.UNTRUSTED_TASK,
+        )
+
+        with self.assertRaises(AssertionError):
+            ContainerProfileSelection.from_dict(
+                {"scope": "runtime_envelope"},
+                source=source,
+            )
+
+    def test_untrusted_server_request_uses_request_precedence(self) -> None:
+        source = _untrusted_source(
+            ContainerSurface.SERVER,
+            ContainerTrustLevel.UNTRUSTED_REQUEST,
+        )
+
+        override = ContainerSettingsOverride.from_dict({}, source=source)
+
+        self.assertEqual(override.layer, ContainerSettingsPrecedence.REQUEST)
+        with self.assertRaises(AssertionError):
+            ContainerSettingsOverride.from_dict(
+                {"layer": "server_operator"},
+                source=source,
+            )
+        with self.assertRaises(AssertionError):
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.SERVER_OPERATOR,
+            )
+
+    def test_merge_rejects_untrusted_widening_attempts(self) -> None:
+        caps = ContainerAuthorityCaps(
+            settings=_authority_settings(ContainerSurface.CLI),
+        )
+        source = _untrusted_source(
+            ContainerSurface.TASK_TOML,
+            ContainerTrustLevel.UNTRUSTED_TASK,
+        )
+        attempts = (
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-rich",
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-rich",
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="cache",
+                        target="/cache",
+                        mount_type=ContainerMountType.CACHE,
+                    ),
+                ),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-rich",
+                secrets=(
+                    ContainerSecretReference(
+                        name="new-token",
+                        env_name="NEW_TOKEN",
+                    ),
+                ),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-readonly",
+                network=ContainerNetworkPolicy(
+                    mode=ContainerNetworkMode.ALLOWLIST,
+                    egress_allowlist=("api.example.test",),
+                ),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-rich",
+                devices=ContainerDevicePolicy(
+                    devices=(ContainerDeviceClass.VULKAN_FORWARDED,),
+                ),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-rich",
+                resources=ContainerResourceLimits(cpu_count=9),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-rich",
+                output=ContainerOutputPolicyOverride(
+                    max_stdout_bytes=90000,
+                ),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-rich",
+                cleanup=ContainerCleanupPolicyOverride(grace_seconds=99),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-rich",
+                audit=ContainerAuditPolicy(mode=ContainerAuditMode.MINIMAL),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.TASK_TOML,
+                profile="workspace-readonly",
+                escalation=ContainerEscalationPolicy(
+                    mode=ContainerEscalationMode.REQUIRE_REVIEW,
+                ),
+            ),
+        )
+
+        for attempt in attempts:
+            with self.subTest(attempt=attempt.to_dict()):
+                with self.assertRaises(AssertionError):
+                    caps.merge((attempt,))
+
+    def test_merge_rejects_trusted_specificity_widening(self) -> None:
+        caps = ContainerAuthorityCaps(
+            settings=_authority_settings(ContainerSurface.CLI),
+        )
+        source = _trusted_source(ContainerSurface.SDK)
+        attempts = (
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.SDK,
+                profile="workspace-rich",
+                image=ContainerImagePolicy(
+                    reference=f"ghcr.io/example/other@sha256:{_DIGEST}",
+                ),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.SDK,
+                profile="workspace-rich",
+                workspace=ContainerWorkspaceMapping(
+                    host_root="other",
+                    container_path="/workspace",
+                ),
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.SDK,
+                profile="workspace-rich",
+                command_mode=ContainerCommandMode.FIXED_ENTRYPOINT,
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.SDK,
+                profile="workspace-rich",
+                read_only_rootfs=False,
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.SDK,
+                profile="workspace-rich",
+                user="2000:2000",
+            ),
+            ContainerSettingsOverride(
+                source=source,
+                layer=ContainerSettingsPrecedence.SDK,
+                profile="workspace-rich",
+                backend=ContainerBackend.PODMAN,
+            ),
+        )
+
+        for attempt in attempts:
+            with self.subTest(attempt=attempt.to_dict()):
+                with self.assertRaises(AssertionError):
+                    caps.merge((attempt,))
+
 
 class ContainerRunResultFactory:
     @staticmethod
@@ -472,10 +952,106 @@ def _trusted_source(surface: ContainerSurface) -> ContainerSettingsSource:
     )
 
 
+def _untrusted_source(
+    surface: ContainerSurface,
+    trust_level: ContainerTrustLevel,
+) -> ContainerSettingsSource:
+    return ContainerSettingsSource(
+        surface=surface,
+        trust_level=trust_level,
+    )
+
+
 def _readonly_profile() -> ContainerProfile:
     return ContainerProfile.minimal_readonly(
         name="workspace-readonly",
         image_reference=_IMAGE,
+    )
+
+
+def _rich_profile(*, reverse_order: bool = False) -> ContainerProfile:
+    mounts = (
+        ContainerMountDeclaration(
+            source=".",
+            target="/workspace",
+            mount_type=ContainerMountType.WORKSPACE,
+        ),
+        ContainerMountDeclaration(
+            source="out",
+            target="/out",
+            mount_type=ContainerMountType.OUTPUT,
+            access=ContainerMountAccess.WRITE,
+        ),
+    )
+    env_variables = {
+        "LC_ALL": "C.UTF-8",
+        "TOOL_MODE": "safe",
+    }
+    env_allowlist = ("PATH", "PYTHONPATH")
+    secrets = (
+        ContainerSecretReference(
+            name="api-token",
+            env_name="API_TOKEN",
+        ),
+        ContainerSecretReference(
+            name="mounted-token",
+            mount_path="/run/secrets/token",
+        ),
+    )
+    egress_allowlist = ("api.example.test", "cdn.example.test")
+    devices = (
+        ContainerDeviceClass.CPU,
+        ContainerDeviceClass.NVIDIA_CDI,
+    )
+    if reverse_order:
+        mounts = tuple(reversed(mounts))
+        env_variables = {
+            "TOOL_MODE": "safe",
+            "LC_ALL": "C.UTF-8",
+        }
+        env_allowlist = tuple(reversed(env_allowlist))
+        secrets = tuple(reversed(secrets))
+        egress_allowlist = tuple(reversed(egress_allowlist))
+        devices = tuple(reversed(devices))
+    return ContainerProfile(
+        name="workspace-rich",
+        image=ContainerImagePolicy(reference=_IMAGE),
+        workspace=ContainerWorkspaceMapping(
+            host_root=".",
+            container_path="/workspace",
+            working_directory="/workspace",
+        ),
+        mounts=mounts,
+        environment=ContainerEnvironmentPolicy(
+            variables=env_variables,
+            allowlist=env_allowlist,
+        ),
+        secrets=secrets,
+        network=ContainerNetworkPolicy(
+            mode=ContainerNetworkMode.ALLOWLIST,
+            egress_allowlist=egress_allowlist,
+        ),
+        devices=ContainerDevicePolicy(devices=devices),
+        resources=ContainerResourceLimits(
+            cpu_count=4,
+            memory_bytes=536870912,
+            pids=128,
+            timeout_seconds=60,
+        ),
+        output=ContainerOutputPolicy(
+            max_stdout_bytes=8192,
+            max_stderr_bytes=4096,
+            max_artifact_bytes=1024,
+            allow_artifacts=True,
+        ),
+        cleanup=ContainerCleanupPolicy(
+            mode=ContainerCleanupMode.QUARANTINE,
+            grace_seconds=8,
+        ),
+        audit=ContainerAuditPolicy(mode=ContainerAuditMode.FULL),
+        escalation=ContainerEscalationPolicy(
+            mode=ContainerEscalationMode.PREAUTHORIZED,
+        ),
     )
 
 
@@ -487,6 +1063,28 @@ def _trusted_settings(surface: ContainerSurface) -> ContainerSettings:
         default_profile=profile.name,
         allowed_profiles=(profile.name,),
         profiles={profile.name: profile},
+        profile_registry_id="unit-registry",
+        policy_version="phase1",
+    )
+
+
+def _authority_settings(
+    surface: ContainerSurface,
+    allowed_profiles: tuple[str, ...] | None = None,
+    rich_profile: ContainerProfile | None = None,
+) -> ContainerSettings:
+    readonly = _readonly_profile()
+    rich = rich_profile or _rich_profile()
+    profile_names = allowed_profiles or (readonly.name, rich.name)
+    return ContainerSettings(
+        source=_trusted_source(surface),
+        backend=ContainerBackend.DOCKER,
+        default_profile=readonly.name,
+        allowed_profiles=profile_names,
+        profiles={
+            readonly.name: readonly,
+            rich.name: rich,
+        },
         profile_registry_id="unit-registry",
         policy_version="phase1",
     )
