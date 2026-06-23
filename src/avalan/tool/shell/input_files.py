@@ -188,6 +188,7 @@ async def _materialize_input_file(
     try:
         await _make_directory(materialized_root)
     except FileExistsError:
+        # The shared materialization root may already exist from prior/concurrent requests.
         pass
     target_dir = materialized_root / uuid4().hex
     await _make_directory(target_dir)
