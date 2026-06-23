@@ -269,7 +269,7 @@ state or source-of-truth systems.
 
 ## Related Documentation
 
-- [AGENTS.md](AGENTS.md) - Configure memory on agents.
+- [AGENT_GUIDE.md](AGENT_GUIDE.md) - Configure memory on agents.
 - [TOOLS.md](TOOLS.md) - Memory tools, retrieval, and confirmation.
 - [TASKS.md](TASKS.md) - Durable execution and output storage.
 - [MEMORY_POSTGRESQL.md](MEMORY_POSTGRESQL.md) - PostgreSQL memory setup.

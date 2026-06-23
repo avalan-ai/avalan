@@ -272,5 +272,5 @@ avalan task validate task.toml \
 - [TASK_POSTGRESQL.md](TASK_POSTGRESQL.md) - PostgreSQL task storage.
 - [task_file_delivery.md](task_file_delivery.md) - File delivery rules.
 - [FLOWS.md](FLOWS.md) - Flow-backed task execution.
-- [AGENTS.md](AGENTS.md) - Agent-backed task execution.
+- [AGENT_GUIDE.md](AGENT_GUIDE.md) - Agent-backed task execution.
 - [CLI.md](CLI.md) - Complete task CLI reference.

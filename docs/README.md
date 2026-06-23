@@ -8,7 +8,7 @@ agents and workflows across local and hosted models.
 - [Models](MODELS.md) - Choose hosted provider URIs or local backends, tune
   generation settings, stream responses, and understand where the model layer
   fits.
-- [Agents](AGENTS.md) - Configure agent TOML, prompts, tools, memory,
+- [Agents](AGENT_GUIDE.md) - Configure agent TOML, prompts, tools, memory,
   structured output, multimodal inputs, and serving protocols.
 - [Tools and reasoning](TOOLS.md) - Use built-in tools, custom tools,
   confirmation, observability, safety boundaries, and reasoning strategies.

@@ -289,5 +289,5 @@ The flow defines how work moves from step to step. See [TASKS.md](TASKS.md).
 - [FLOW_AUTHORING.md](FLOW_AUTHORING.md) - Full flow authoring reference.
 - [FLOW_COMPATIBILITY.md](FLOW_COMPATIBILITY.md) - Runtime compatibility notes.
 - [TASKS.md](TASKS.md) - Task contracts for flow execution.
-- [AGENTS.md](AGENTS.md) - Agent nodes and model behavior.
+- [AGENT_GUIDE.md](AGENT_GUIDE.md) - Agent nodes and model behavior.
 - [TOOLS.md](TOOLS.md) - Tool nodes and tool-calling agents.

@@ -271,6 +271,6 @@ See [DS4.md](DS4.md) for the DS4 setup guide.
 - [ai_uri.md](ai_uri.md) - Engine URI syntax.
 - [INSTALL.md](INSTALL.md) - Extras and backend dependencies.
 - [MODALITIES.md](MODALITIES.md) - Text, vision, and audio examples.
-- [AGENTS.md](AGENTS.md) - Model use inside agents.
+- [AGENT_GUIDE.md](AGENT_GUIDE.md) - Model use inside agents.
 - [FLOWS.md](FLOWS.md) - Model and agent nodes in flows.
 - [TASKS.md](TASKS.md) - Agent-backed and flow-backed tasks that use models.

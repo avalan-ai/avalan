@@ -398,7 +398,7 @@ local runs often use `harmony`, while DS4 native tool calls use `dsml`.
 
 ## Related Documentation
 
-- [AGENTS.md](AGENTS.md) - Agent configuration and serving.
+- [AGENT_GUIDE.md](AGENT_GUIDE.md) - Agent configuration and serving.
 - [MEMORIES.md](MEMORIES.md) - Memory tools and retrieval.
 - [FLOWS.md](FLOWS.md) - Tool calls inside multi-step workflows.
 - [TASKS.md](TASKS.md) - Durable task execution.

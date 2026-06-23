@@ -150,7 +150,7 @@ With Avalan, you can:
   source builds.
 - [docs/MODELS.md](docs/MODELS.md) - Model URIs, local and hosted backends,
   generation settings, and streaming.
-- [docs/AGENTS.md](docs/AGENTS.md) - Agent TOML, prompts, tools, memory,
+- [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md) - Agent TOML, prompts, tools, memory,
   structured output, multimodal inputs, and serving.
 - [docs/TOOLS.md](docs/TOOLS.md) - Built-in tools, MCP, A2A, shell tools,
   confirmation, safety controls, and reasoning strategies.
