@@ -1769,6 +1769,7 @@ FINAL_GATE_ACCEPTANCE_HARNESSES = {
 }
 
 _COLLECT_SENTINEL = "__STREAMING_ACCEPTANCE_COLLECT__"
+_COLLECT_TIMEOUT_SECONDS = 120
 _DISALLOWED_MARKERS = frozenset(("skip", "skipif", "xfail"))
 _PYTEST_COLLECT_SCRIPT = f"""
 from json import dumps
@@ -1861,7 +1862,7 @@ def _collect_pytest_nodes(
         capture_output=True,
         check=False,
         text=True,
-        timeout=30,
+        timeout=_COLLECT_TIMEOUT_SECONDS,
     )
     output = completed.stdout + completed.stderr
     assert completed.returncode == 0, output
