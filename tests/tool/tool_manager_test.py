@@ -2111,6 +2111,34 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
         assert isinstance(prepared, PreparedToolCall)
         self.assertEqual(prepared.arguments, {"a": 3, "b": 4})
 
+    async def test_prepare_call_accepts_async_filter_modify(self):
+        async def modify(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> ToolFilterResult:
+            return ToolFilterResult(
+                status=ToolFilterResultStatus.MODIFY,
+                call=ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"a": 5, "b": 6},
+                ),
+                context=context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[modify]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        prepared = await manager.prepare_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.arguments, {"a": 5, "b": 6})
+
     async def test_prepare_call_returns_explicit_filter_suppress_diagnostic(
         self,
     ):

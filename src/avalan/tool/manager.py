@@ -615,7 +615,10 @@ class ToolManager:
         if isinstance(prepared, ToolCallDiagnostic):
             return prepared
 
-        filtered = self._apply_filters(prepared.call, prepared.context)
+        filtered = await self._apply_filters(
+            prepared.call,
+            prepared.context,
+        )
         if isinstance(filtered, ToolCallDiagnostic):
             return filtered
         call, context = filtered
@@ -733,7 +736,7 @@ class ToolManager:
 
         await _check_cancelled(context)
 
-        filtered = self._apply_filters(call, context)
+        filtered = await self._apply_filters(call, context)
         if isinstance(filtered, ToolCallDiagnostic):
             return None
         call, context = filtered
@@ -1231,7 +1234,7 @@ class ToolManager:
             return " or ".join(expected_type)
         return expected_type
 
-    def _apply_filters(
+    async def _apply_filters(
         self, call: ToolCall, context: ToolCallContext
     ) -> tuple[ToolCall, ToolCallContext] | ToolCallDiagnostic:
         if not self._settings.filters:
@@ -1251,6 +1254,8 @@ class ToolManager:
             ):
                 continue
             modified = filter_func(call, context)
+            if isinstance(modified, Awaitable):
+                modified = await modified
             if modified is None:
                 continue
             if isinstance(modified, ToolFilterResult):

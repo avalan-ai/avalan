@@ -1,4 +1,8 @@
+from base64 import b64encode
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from avalan.entities import (
     Message,
@@ -25,8 +29,15 @@ from avalan.tool.shell.input_files import (
 )
 from avalan.tool.shell.settings import ShellToolSettings
 
+pytestmark = pytest.mark.anyio
 
-def test_shell_input_file_filter_rewrites_attachment_paths(
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+async def test_shell_input_file_filter_rewrites_attachment_paths(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "nested" / "report.pdf"
@@ -44,7 +55,7 @@ def test_shell_input_file_filter_rewrites_attachment_paths(
     settings = ShellToolSettings(workspace_root=str(tmp_path))
     tool_filter = shell_input_file_filter(settings)
 
-    result = tool_filter.func(call, ToolCallContext(input=message))
+    result = await tool_filter.func(call, ToolCallContext(input=message))
 
     assert result is not None
     filtered_call, context = result
@@ -55,13 +66,13 @@ def test_shell_input_file_filter_rewrites_attachment_paths(
     }
 
 
-def test_shell_input_file_filter_preserves_unmapped_arguments(
+async def test_shell_input_file_filter_preserves_unmapped_arguments(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "nested" / "report.pdf"
     source.parent.mkdir()
     source.write_bytes(b"%PDF-1.7")
-    aliases = _input_file_path_aliases(
+    aliases = await _input_file_path_aliases(
         [
             Message(role=MessageRole.USER, content="plain"),
             _message(source),
@@ -93,7 +104,7 @@ def test_shell_input_file_filter_preserves_unmapped_arguments(
     )
 
 
-def test_shell_input_file_aliases_are_relative_to_settings_cwd(
+async def test_shell_input_file_aliases_are_relative_to_settings_cwd(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "nested" / "report.pdf"
@@ -104,7 +115,7 @@ def test_shell_input_file_aliases_are_relative_to_settings_cwd(
         cwd="nested",
     )
 
-    aliases = _input_file_path_aliases(_message(source), settings)
+    aliases = await _input_file_path_aliases(_message(source), settings)
 
     assert aliases[source.name] == "report.pdf"
     assert _rewrite_path_argument(f"./{source.name}", aliases) == (
@@ -114,7 +125,7 @@ def test_shell_input_file_aliases_are_relative_to_settings_cwd(
     assert aliases[str(source.resolve())] == "report.pdf"
 
 
-def test_shell_input_file_filter_uses_per_call_cwd(
+async def test_shell_input_file_filter_uses_per_call_cwd(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "nested" / "report.pdf"
@@ -134,7 +145,7 @@ def test_shell_input_file_filter_uses_per_call_cwd(
         },
     )
 
-    result = _rewrite_shell_input_file_paths(
+    result = await _rewrite_shell_input_file_paths(
         call,
         ToolCallContext(input=_message(source)),
         settings,
@@ -149,7 +160,7 @@ def test_shell_input_file_filter_uses_per_call_cwd(
     }
 
 
-def test_shell_input_file_aliases_skip_files_outside_effective_cwd(
+async def test_shell_input_file_aliases_skip_files_outside_effective_cwd(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "report.pdf"
@@ -158,26 +169,25 @@ def test_shell_input_file_aliases_skip_files_outside_effective_cwd(
     nested.mkdir()
 
     assert (
-        _input_file_path_aliases(
+        await _input_file_path_aliases(
             _message(source),
             ShellToolSettings(workspace_root=str(tmp_path), cwd="nested"),
         )
         == {}
     )
-    assert (
-        _cwd_relative_file_path(nested.resolve(), source.resolve())
-        is None
-    )
+    assert _cwd_relative_file_path(nested.resolve(), source.resolve()) is None
 
 
-def test_effective_shell_cwd_rejects_invalid_values(tmp_path: Path) -> None:
+async def test_effective_shell_cwd_rejects_invalid_values(
+    tmp_path: Path,
+) -> None:
     workspace_root = tmp_path.resolve()
     settings = ShellToolSettings(workspace_root=str(tmp_path))
     source = tmp_path / "report.pdf"
     source.write_bytes(b"%PDF-1.7")
 
     assert (
-        _input_file_path_aliases(
+        await _input_file_path_aliases(
             _message(source),
             settings,
             request_cwd=1,
@@ -206,24 +216,27 @@ def test_effective_shell_cwd_rejects_invalid_values(tmp_path: Path) -> None:
         )
         is None
     )
-    assert _effective_shell_cwd(
-        workspace_root,
-        ShellToolSettings(
-            workspace_root=str(tmp_path),
-            allow_absolute_paths=True,
-        ),
-        str(workspace_root),
-    ) == workspace_root
+    assert (
+        _effective_shell_cwd(
+            workspace_root,
+            ShellToolSettings(
+                workspace_root=str(tmp_path),
+                allow_absolute_paths=True,
+            ),
+            str(workspace_root),
+        )
+        == workspace_root
+    )
 
 
-def test_shell_input_file_rewrite_noops(tmp_path: Path) -> None:
+async def test_shell_input_file_rewrite_noops(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"%PDF-1.7")
     settings = ShellToolSettings(workspace_root=str(tmp_path))
     context = ToolCallContext(input=_message(source))
 
     assert (
-        _rewrite_shell_input_file_paths(
+        await _rewrite_shell_input_file_paths(
             ToolCall(id="call-1", name="shell.pdfinfo", arguments=None),
             context,
             settings,
@@ -231,7 +244,7 @@ def test_shell_input_file_rewrite_noops(tmp_path: Path) -> None:
         is None
     )
     assert (
-        _rewrite_shell_input_file_paths(
+        await _rewrite_shell_input_file_paths(
             ToolCall(
                 id="call-2",
                 name="shell.pdfinfo",
@@ -243,7 +256,7 @@ def test_shell_input_file_rewrite_noops(tmp_path: Path) -> None:
         is None
     )
     assert (
-        _rewrite_shell_input_file_paths(
+        await _rewrite_shell_input_file_paths(
             ToolCall(
                 id="call-3",
                 name="shell.pdfinfo",
@@ -256,7 +269,7 @@ def test_shell_input_file_rewrite_noops(tmp_path: Path) -> None:
     )
 
 
-def test_shell_input_file_aliases_skip_unsafe_or_ambiguous_files(
+async def test_shell_input_file_aliases_skip_unsafe_or_ambiguous_files(
     tmp_path: Path,
 ) -> None:
     first = tmp_path / "first" / "same.pdf"
@@ -274,7 +287,7 @@ def test_shell_input_file_aliases_skip_unsafe_or_ambiguous_files(
         file={"filename": "empty.pdf", "local_path": ""},
     )
 
-    aliases = _input_file_path_aliases(
+    aliases = await _input_file_path_aliases(
         Message(
             role=MessageRole.USER,
             content=[
@@ -293,6 +306,110 @@ def test_shell_input_file_aliases_skip_unsafe_or_ambiguous_files(
     assert outside.name not in aliases
     assert aliases[str(first.resolve())] == "first/same.pdf"
     assert aliases[str(second.resolve())] == "second/same.pdf"
+
+
+async def test_shell_input_file_filter_materializes_base64_attachments(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ids = iter(
+        [
+            SimpleNamespace(hex="fixed"),
+            SimpleNamespace(hex="second"),
+        ]
+    )
+    monkeypatch.setattr(
+        "avalan.tool.shell.input_files.uuid4",
+        lambda: next(ids),
+    )
+    file_data = b64encode(b"%PDF-1.7").decode("ascii")
+    message = Message(
+        role=MessageRole.USER,
+        content=[
+            MessageContentFile(
+                type="file",
+                file={
+                    "file_data": f"data:application/pdf;base64,{file_data}",
+                    "filename": "../report.pdf",
+                    "local_path": str(tmp_path.parent / "report.pdf"),
+                },
+            )
+        ],
+    )
+    settings = ShellToolSettings(workspace_root=str(tmp_path))
+    call = ToolCall(
+        id="call-1",
+        name="shell.pdfinfo",
+        arguments={"path": "report.pdf", "paths": ["./report.pdf"]},
+    )
+
+    result = await _rewrite_shell_input_file_paths(
+        call,
+        ToolCallContext(input=message),
+        settings,
+    )
+
+    assert result is not None
+    filtered_call, _ = result
+    assert filtered_call.arguments == {
+        "path": "avalan-input-files/fixed/report.pdf",
+        "paths": ["avalan-input-files/fixed/report.pdf"],
+    }
+    materialized = tmp_path / "avalan-input-files" / "fixed" / "report.pdf"
+    assert materialized.read_bytes() == b"%PDF-1.7"
+
+    aliases = await _input_file_path_aliases(
+        Message(
+            role=MessageRole.USER,
+            content=MessageContentFile(
+                type="file",
+                file={
+                    "filename": "second.pdf",
+                    "file_data": b64encode(b"second").decode("ascii"),
+                },
+            ),
+        ),
+        settings,
+    )
+
+    assert aliases["second.pdf"] == "avalan-input-files/second/second.pdf"
+    second = tmp_path / "avalan-input-files" / "second" / "second.pdf"
+    assert second.read_bytes() == b"second"
+
+
+async def test_shell_input_file_aliases_skip_unmaterializable_files(
+    tmp_path: Path,
+) -> None:
+    aliases = await _input_file_path_aliases(
+        Message(
+            role=MessageRole.USER,
+            content=[
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "filename": 1,
+                        "file_data": b64encode(b"%PDF-1.7").decode("ascii"),
+                    },
+                ),
+                MessageContentFile(
+                    type="file",
+                    file={"filename": "broken.pdf", "file_data": "data:"},
+                ),
+                MessageContentFile(
+                    type="file",
+                    file={"filename": "bad.pdf", "base64": "not base64!"},
+                ),
+                MessageContentFile(
+                    type="file",
+                    file={"filename": "blank.pdf", "data": " "},
+                ),
+            ],
+        ),
+        ShellToolSettings(workspace_root=str(tmp_path)),
+    )
+
+    assert aliases == {}
+    assert not (tmp_path / "avalan-input-files").exists()
 
 
 def test_input_file_iterators_cover_message_shapes(tmp_path: Path) -> None:

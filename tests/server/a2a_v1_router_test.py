@@ -396,6 +396,34 @@ async def test_chat_request_accepts_nested_a2a_file_payloads() -> None:
 
 
 @pytest.mark.anyio
+async def test_chat_request_drops_a2a_file_local_path_metadata() -> None:
+    a2a_pb2 = pytest.importorskip("a2a.types.a2a_pb2")
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                a2a_pb2.Part(
+                    raw=b"%PDF-1.7",
+                    filename="report.pdf",
+                    media_type="application/pdf",
+                    metadata={"local_path": "/workspace/report.pdf"},
+                )
+            ]
+        )
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+    content = request.messages[0].content
+
+    assert isinstance(content, list)
+    assert isinstance(content[0], ContentFile)
+    assert content[0].file == {
+        "filename": "report.pdf",
+        "mime_type": "application/pdf",
+    }
+
+
+@pytest.mark.anyio
 async def test_chat_request_uses_current_task_history() -> None:
     executor = AvalanA2AAgentExecutor(FastAPI())
     context = _ExecutorContext(
@@ -546,6 +574,12 @@ def test_a2a_helper_edge_cases(monkeypatch) -> None:
     assert a2a_router._content_from_a2a_part({"url": []}) is None
     assert a2a_router._content_from_a2a_part({"data": object()}) is None
     assert a2a_router._file_metadata(object()) == {}
+    assert (
+        a2a_router._first_string(
+            (SimpleNamespace(metadata=_ModelDumpMode()),), "value"
+        )
+        == "mode"
+    )
     assert a2a_router._data_part_text(None) is None
     assert a2a_router._data_part_text(object()) is None
     assert a2a_router._field_value(None, "value") is a2a_router._MISSING

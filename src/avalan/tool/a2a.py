@@ -1,5 +1,8 @@
 from ..compat import override
 from ..entities import (
+    Input,
+    Message,
+    MessageContentFile,
     ToolCall,
     ToolCallContext,
     ToolCallOutcome,
@@ -9,6 +12,8 @@ from ..entities import (
 from . import Tool, ToolSet
 from .builtin_display import project_a2a_call_tool_display
 
+from base64 import b64decode
+from binascii import Error as BinasciiError
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from importlib import import_module
@@ -139,6 +144,7 @@ async def _call_a2a_agent(
         request_id=request_id,
         name=name,
         arguments=arguments,
+        context=context,
         call_params=call_params,
     )
     call_context = _client_call_context(
@@ -240,6 +246,7 @@ def _send_message_request(
     request_id: str,
     name: str,
     arguments: Mapping[str, object],
+    context: ToolCallContext,
     call_params: Mapping[str, object],
 ) -> Any:
     metadata = _request_metadata(name, arguments, call_params)
@@ -251,7 +258,12 @@ def _send_message_request(
         message=a2a_pb2.Message(
             message_id=message_id,
             role=a2a_pb2.Role.ROLE_USER,
-            parts=[a2a_pb2.Part(text=_message_text(name, arguments))],
+            parts=_message_parts(
+                a2a_pb2=a2a_pb2,
+                name=name,
+                arguments=arguments,
+                context=context,
+            ),
         ),
         configuration=a2a_pb2.SendMessageConfiguration(
             accepted_output_modes=["text/plain", "text/markdown"],
@@ -268,6 +280,100 @@ def _message_text(name: str, arguments: Mapping[str, object]) -> str:
     if arguments:
         return dumps(arguments, separators=(",", ":"))
     return name
+
+
+def _message_parts(
+    *,
+    a2a_pb2: Any,
+    name: str,
+    arguments: Mapping[str, object],
+    context: ToolCallContext,
+) -> list[Any]:
+    parts = [a2a_pb2.Part(text=_message_text(name, arguments))]
+    parts.extend(
+        part
+        for part in (
+            _file_part(a2a_pb2, file_content)
+            for file_content in _iter_input_file_content(context.input)
+        )
+        if part is not None
+    )
+    return parts
+
+
+def _file_part(a2a_pb2: Any, content: MessageContentFile) -> Any | None:
+    file = content.file
+    filename = _file_string(file, "filename", "file_name", "name")
+    media_type = _file_string(file, "mime_type", "media_type", "mimeType")
+    file_url = _file_string(file, "file_url", "url", "uri")
+    if file_url is not None:
+        return a2a_pb2.Part(
+            url=file_url,
+            filename=filename or "",
+            media_type=media_type or "",
+            metadata={},
+        )
+
+    file_data = _file_string(file, "file_data", "data", "base64")
+    raw = _decode_file_data(file_data)
+    if raw is None:
+        return None
+    return a2a_pb2.Part(
+        raw=raw,
+        filename=filename or "",
+        media_type=media_type or "",
+        metadata={},
+    )
+
+
+def _file_string(file: Mapping[str, object], *keys: str) -> str | None:
+    for key in keys:
+        value = file.get(key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                return stripped
+    return None
+
+
+def _decode_file_data(value: str | None) -> bytes | None:
+    if value is None:
+        return None
+    payload = value.strip()
+    if not payload:
+        return None
+    if payload.startswith("data:"):
+        _prefix, separator, payload = payload.partition(",")
+        if not separator:
+            return None
+        payload = payload.strip()
+    try:
+        return b64decode(payload, validate=True)
+    except (BinasciiError, ValueError):
+        return None
+
+
+def _iter_input_file_content(
+    input_value: Input | None,
+) -> list[MessageContentFile]:
+    if isinstance(input_value, Message):
+        return _message_file_content(input_value)
+    if not isinstance(input_value, list):
+        return []
+    files: list[MessageContentFile] = []
+    for item in input_value:
+        if isinstance(item, Message):
+            files.extend(_message_file_content(item))
+    return files
+
+
+def _message_file_content(message: Message) -> list[MessageContentFile]:
+    content = message.content
+    if isinstance(content, MessageContentFile):
+        return [content]
+    if not isinstance(content, list):
+        return []
+    return [item for item in content if isinstance(item, MessageContentFile)]
 
 
 def _request_metadata(
@@ -655,9 +761,7 @@ async def _emit_artifact_update(
     )
 
 
-async def _emit_message_response(
-    text: str, context: ToolCallContext
-) -> None:
+async def _emit_message_response(text: str, context: ToolCallContext) -> None:
     if context.stream_event is None:
         return
     await _emit_a2a_stream_event(

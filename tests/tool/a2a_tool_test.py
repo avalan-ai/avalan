@@ -1,3 +1,4 @@
+from base64 import b64encode
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack
 from importlib import import_module
@@ -12,6 +13,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport
 
 from avalan.entities import (
+    Message,
+    MessageContentFile,
+    MessageContentText,
+    MessageRole,
     ToolCall,
     ToolCallContext,
     ToolCallResult,
@@ -24,7 +29,12 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamTerminalOutcome,
 )
-from avalan.server.entities import OrchestratorContext
+from avalan.server.entities import (
+    ChatCompletionRequest,
+    ContentFile,
+    ContentText,
+    OrchestratorContext,
+)
 from avalan.tool import a2a as a2a_module
 from avalan.tool.a2a import A2ACallTool, A2AToolSet
 
@@ -143,6 +153,100 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
         request = self.client.requests[0]
         self.assertEqual(request.message.parts[0].text, "run")
         self.assertEqual(result["content"], [{"type": "text", "text": "ok"}])
+
+    async def test_call_forwards_context_input_files_as_a2a_parts(
+        self,
+    ) -> None:
+        file_data = b64encode(b"%PDF-1.7").decode("ascii")
+        input_message = Message(
+            role=MessageRole.USER,
+            content=[
+                MessageContentText(type="text", text="Read this"),
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "file_data": file_data,
+                        "filename": "report.pdf",
+                        "local_path": "/workspace/report.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                ),
+            ],
+        )
+
+        await self.tool(
+            "http://host/a2a",
+            "run",
+            {"input_string": "Summarize the attached PDF."},
+            context=ToolCallContext(input=input_message),
+        )
+
+        request = self.client.requests[0]
+        parts = request.message.parts
+        self.assertEqual(parts[0].text, "Summarize the attached PDF.")
+        self.assertEqual(parts[1].raw, b"%PDF-1.7")
+        self.assertEqual(parts[1].filename, "report.pdf")
+        self.assertEqual(parts[1].media_type, "application/pdf")
+        self.assertNotIn("local_path", parts[1].metadata)
+
+    async def test_file_part_helpers_cover_urls_and_invalid_payloads(
+        self,
+    ) -> None:
+        single_file = MessageContentFile(
+            type="file",
+            file={
+                "data": "data:application/pdf;base64,JVBERi0xLjc=",
+                "file_name": "single.pdf",
+                "localPath": "/workspace/single.pdf",
+                "mediaType": "application/pdf",
+            },
+        )
+        url_file = MessageContentFile(
+            type="file",
+            file={
+                "name": "remote.pdf",
+                "url": "https://files.example/remote.pdf",
+                "mimeType": "application/pdf",
+            },
+        )
+        invalid_file = MessageContentFile(
+            type="file",
+            file={"file_data": "not base64!"},
+        )
+        text_message = Message(
+            role=MessageRole.USER,
+            content=MessageContentText(type="text", text="plain"),
+        )
+
+        url_part = a2a_module._file_part(a2a_pb2, url_file)
+        raw_part = a2a_module._file_part(a2a_pb2, single_file)
+
+        self.assertIsNotNone(url_part)
+        self.assertEqual(url_part.url, "https://files.example/remote.pdf")
+        self.assertEqual(url_part.filename, "remote.pdf")
+        self.assertEqual(url_part.media_type, "application/pdf")
+        self.assertIsNotNone(raw_part)
+        self.assertEqual(raw_part.raw, b"%PDF-1.7")
+        self.assertEqual(raw_part.filename, "single.pdf")
+        self.assertNotIn("local_path", raw_part.metadata)
+        self.assertIsNone(a2a_module._file_part(a2a_pb2, invalid_file))
+        self.assertIsNone(a2a_module._decode_file_data(None))
+        self.assertIsNone(a2a_module._decode_file_data(" "))
+        self.assertIsNone(a2a_module._decode_file_data("data:broken"))
+        self.assertIsNone(a2a_module._decode_file_data("not base64!"))
+        self.assertEqual(
+            a2a_module._iter_input_file_content(
+                [
+                    text_message,
+                    Message(role=MessageRole.USER, content=single_file),
+                ]
+            ),
+            [single_file],
+        )
+        self.assertEqual(
+            a2a_module._message_file_content(text_message),
+            [],
+        )
 
     async def test_call_serializes_non_text_arguments_and_merges_metadata(
         self,
@@ -594,6 +698,96 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
                 and "TASK_STATE_COMPLETED" in (event.content or "")
                 for event in events
             )
+        )
+
+    async def test_calls_sdk_v1_router_with_forwarded_input_file(self) -> None:
+        try:
+            from avalan.server.a2a import router as a2a_router
+        except ImportError as exc:
+            self.skipTest(f"A2A SDK routes unavailable: {exc}")
+
+        app = FastAPI()
+        app.state.logger = getLogger("test.a2a.tool.file.e2e")
+        orchestrator = _E2EOrchestrator()
+        loader = _E2ELoader(orchestrator)
+        stack = AsyncExitStack()
+        app.state.ctx = OrchestratorContext(
+            participant_id=UUID(int=1),
+            specs_path="agent.toml",
+        )
+        app.state.loader = loader
+        app.state.stack = stack
+        app.state.agent_id = None
+        captured_requests: list[ChatCompletionRequest] = []
+
+        async def fake_orchestrate(
+            request: ChatCompletionRequest, *args: object, **kwargs: object
+        ) -> tuple["_CanonicalResponse", UUID, int]:
+            captured_requests.append(request)
+            return _CanonicalResponse(), uuid4(), 123
+
+        a2a_router.install_a2a_routes(
+            app,
+            prefix="/a2a",
+            name="run",
+            description="Run the test agent.",
+        )
+
+        raw_pdf = b"%PDF-1.7\nfixture"
+        encoded_pdf = b64encode(raw_pdf).decode("ascii")
+        input_message = Message(
+            role=MessageRole.USER,
+            content=[
+                MessageContentText(type="text", text="Caller prompt"),
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "file_data": encoded_pdf,
+                        "filename": "report.pdf",
+                        "local_path": "/workspace/report.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                ),
+            ],
+        )
+
+        async with stack:
+            with patch.object(a2a_router, "orchestrate", fake_orchestrate):
+                tool = A2ACallTool(
+                    client_params={
+                        "transport": ASGITransport(app=app),
+                        "base_url": "http://testserver",
+                    },
+                    call_params={"request_id": "req-1"},
+                )
+                result = await tool(
+                    "/a2a",
+                    "run",
+                    {"input_string": "Summarize the attached PDF."},
+                    context=ToolCallContext(input=input_message),
+                )
+
+        self.assertEqual(result["content"], [{"type": "text", "text": "25"}])
+        self.assertEqual(len(captured_requests), 1)
+        message = captured_requests[0].messages[0]
+        content = message.content
+        self.assertIsInstance(content, list)
+        content = cast(list[object], content)
+        self.assertIsInstance(content[0], ContentText)
+        self.assertEqual(
+            cast(ContentText, content[0]).text,
+            "Summarize the attached PDF.",
+        )
+        self.assertIsInstance(content[1], ContentFile)
+        file_content = cast(ContentFile, content[1])
+        self.assertEqual(file_content.file_data, encoded_pdf)
+        self.assertEqual(file_content.filename, "report.pdf")
+        self.assertEqual(
+            file_content.file,
+            {
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+            },
         )
 
 

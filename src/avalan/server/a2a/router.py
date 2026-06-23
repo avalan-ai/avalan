@@ -688,6 +688,10 @@ def _first_string(sources: tuple[object, ...], *names: str) -> str | None:
         value = _string_field(metadata, *names)
         if value is not None:
             return value
+        json_metadata = _jsonable_value(metadata)
+        value = _string_field(json_metadata, *names)
+        if value is not None:
+            return value
     return None
 
 
