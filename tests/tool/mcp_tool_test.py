@@ -144,11 +144,43 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_without_arguments_sends_empty_arguments(self):
         context = ToolCallContext()
-        await self.tool("http://host/mcp", "run", None, context=context)
+        await self.tool(
+            "http://host/mcp",
+            "run",
+            None,
+            forward_input_files=True,
+            context=context,
+        )
         request = self.client.stream.call_args.kwargs["json"]
         self.assertEqual(request["params"]["arguments"], {})
 
-    async def test_call_forwards_context_input_files_as_mcp_arguments(self):
+    async def test_call_does_not_forward_context_input_files_without_opt_in(
+        self,
+    ):
+        file_data = b64encode(b"%PDF-1.7").decode("ascii")
+        input_message = Message(
+            role=MessageRole.USER,
+            content=MessageContentFile(
+                type="file",
+                file={
+                    "file_data": file_data,
+                    "filename": "private.pdf",
+                    "mime_type": "application/pdf",
+                },
+            ),
+        )
+
+        await self.tool(
+            "http://host/mcp",
+            "search",
+            {"query": "invoice"},
+            context=ToolCallContext(input=input_message),
+        )
+
+        request = self.client.stream.call_args.kwargs["json"]
+        self.assertEqual(request["params"]["arguments"], {"query": "invoice"})
+
+    async def test_call_forwards_context_input_files_when_opted_in(self):
         file_data = b64encode(b"%PDF-1.7").decode("ascii")
         input_message = Message(
             role=MessageRole.USER,
@@ -170,6 +202,7 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             "http://host/mcp",
             "run",
             {"input_string": "Summarize the attached PDF."},
+            forward_input_files=True,
             context=ToolCallContext(input=input_message),
         )
 
@@ -189,7 +222,7 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_call_forwards_url_files_and_skips_invalid_file_parts(self):
+    async def test_call_forwards_url_files_when_opted_in(self):
         input_message = Message(
             role=MessageRole.USER,
             content=[
@@ -212,6 +245,7 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             "http://host/mcp",
             "run",
             {"input_string": "Summarize the attached URL."},
+            forward_input_files=True,
             context=ToolCallContext(input=input_message),
         )
 
@@ -252,6 +286,7 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
                 "input_string": "Read explicit",
                 "files": [{"uri": "https://example.test/file.pdf"}],
             },
+            forward_input_files=True,
             context=ToolCallContext(input=input_message),
         )
 

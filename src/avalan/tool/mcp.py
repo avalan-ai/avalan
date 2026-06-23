@@ -43,6 +43,9 @@ class McpCallTool(Tool):
         uri: Base URI of the MCP server.
         name: Name of the tool to invoke.
         arguments: Arguments to send to the tool.
+        forward_input_files: Whether to include files attached to this run as
+            `input_files` when the remote tool arguments do not already include
+            explicit file arguments.
 
     Returns:
         Responses returned by the MCP tool invocation.
@@ -74,16 +77,19 @@ class McpCallTool(Tool):
         uri: str,
         name: str,
         arguments: dict[str, object] | None,
+        forward_input_files: bool = False,
         *,
         context: ToolCallContext,
     ) -> dict[str, object]:
         assert uri
         assert name
+        assert isinstance(forward_input_files, bool)
 
         return await _call_streamable_http_mcp_tool(
             uri=uri,
             name=name,
             arguments=arguments or {},
+            forward_input_files=forward_input_files,
             context=context,
             client_params=self._client_params,
             call_params=self._call_params,
@@ -111,6 +117,7 @@ async def _call_streamable_http_mcp_tool(
     uri: str,
     name: str,
     arguments: dict[str, object],
+    forward_input_files: bool,
     context: ToolCallContext,
     client_params: Mapping[str, object],
     call_params: Mapping[str, object],
@@ -120,7 +127,11 @@ async def _call_streamable_http_mcp_tool(
 
     request_id = call_params.get("request_id") or str(uuid4())
     progress_token = call_params.get("progress_token") or request_id
-    request_arguments = _arguments_with_context_input_files(arguments, context)
+    request_arguments = (
+        _arguments_with_context_input_files(arguments, context)
+        if forward_input_files
+        else arguments
+    )
     payload: JSONObject = {
         "jsonrpc": "2.0",
         "id": cast(JSONValue, request_id),
