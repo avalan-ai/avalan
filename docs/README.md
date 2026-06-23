@@ -1,16 +1,39 @@
-**avalan**[^1] empowers developers and enterprises to
-effortlessly build, orchestrate, and deploy intelligent
-AI agents—locally or in the cloud—across millions of models through
-an intuitive, unified SDK and CLI. With robust
-multi-backend support ([transformers](https://github.com/huggingface/transformers),
-[vLLM](https://github.com/vllm-project/vllm),
-[mlx-lm](https://github.com/ml-explore/mlx-lm)), first-class
-support of multiple AI protocols (MCP, A2A), plus native
-integrations for OpenRouter, Ollama, OpenAI, LiteLLM, DeepSeek, Gemini, and
-beyond, avalan enables you to select the optimal  engine
-tailored specifically to each use case.
+# Avalan Documentation
+
+Avalan is a Python SDK and CLI for building, orchestrating, and serving AI
+agents and workflows across local and hosted models.
 
 ## User guides
+
+- [Models](MODELS.md) - Choose hosted provider URIs or local backends, tune
+  generation settings, stream responses, and understand where the model layer
+  fits.
+- [Agents](AGENTS.md) - Configure agent TOML, prompts, tools, memory,
+  structured output, multimodal inputs, and serving protocols.
+- [Tools and reasoning](TOOLS.md) - Use built-in tools, custom tools,
+  confirmation, observability, safety boundaries, and reasoning strategies.
+- [Memories](MEMORIES.md) - Configure recent memory, permanent memory,
+  namespaces, chunking, retrieval, and memory tools.
+- [Flows](FLOWS.md) - Author multi-step graph workflows with branching,
+  explicit nodes, review boundaries, and task-backed execution.
+- [Tasks](TASKS.md) - Define durable task contracts, file delivery, queues,
+  storage, schema validation, and repeatable execution.
+
+## Setup and references
+
+- [Install](INSTALL.md) - Platform setup, extras, backend dependencies, and
+  source builds.
+- [CLI reference](CLI.md) - Complete command and flag reference.
+- [Model URI syntax](ai_uri.md) - Engine URI grammar, providers, tokens, and
+  backend selection.
+- [Modalities](MODALITIES.md) - Text, vision, and audio examples.
+- [Runnable examples](examples/README.md) - Agent, model, flow, task, and
+  tool examples.
+- [Tutorials](tutorials/) - Longer walkthroughs and notebooks.
+- [Development](DEVELOPMENT.md) - Release, test, translation, and recording
+  maintenance notes.
+
+## Operations and advanced guides
 
 - [DS4 native backend](DS4.md) - Run DS4-supported DeepSeek V4 Flash GGUF
   files with `--backend ds4`, including CLI examples, URI configuration,
@@ -34,166 +57,3 @@ tailored specifically to each use case.
   flow behavior.
 - [Terminal recording](RECORDING.md) - Capture Avalan CLI sessions as real
   terminal video with colors, live panels, and tool-call updates.
-
-Its versatile multi-modal architecture bridges NLP, vision, and
-audio domains, allowing seamless integration and interaction among
-diverse models within sophisticated workflows. Enhanced by built-in
-memory management and state-of-the-art reasoning
-capabilities—including ReACT tooling,
-adaptive planning, and persistent long-term context—your agents
-continuously learn, evolve, and intelligently respond to changing
-environments.
-
-avalan’s intuitive pipeline design supports advanced branching,
-conditional filtering, and recursive flow-of-flows execution,
-empowering you to create intricate, scalable AI workflows with
-precision and ease. Comprehensive observability ensures complete
-transparency through real-time metrics, detailed event tracing,
-and statistical dashboards, facilitating deep insights,
-optimization, and robust governance.
-
-From solo developers prototyping innovative ideas locally to
-enterprises deploying mission-critical AI systems across
-distributed infrastructures, avalan provides flexibility,
-visibility, and performance to confidently accelerate your
-AI innovation journey.
-
-# Development
-
-## Releasing
-
-You'll need the [github CLI](https://github.com/cli/cli)
-for publishing versions. On MacOS, a simple `brew install gh` will do,
-after which login with `gh auth login`.
-
-Ensure you have the poetry-dynamic-versioning plugin:
-
-```bash
-poetry self add "poetry-dynamic-versioning[plugin]"
-```
-
-Create the branch for the release:
-
-```bash
-git checkout -b release/vX.Y.Z
-```
-
-Patch new version (adjust to `minor` or `major` as appropriate):
-
-```bash
-poetry version patch
-```
-
-Commit the version patch:
-
-```bash
-git add pyproject.toml
-git commit -m "Bumping version to vX.Y.Z"
-```
-
-Push the release branch:
-
-```bash
-git push -u origin release/vX.Y.Z
-```
-
-Create the pull request:
-
-```bash
-gh pr create --fill --base main --head release/vX.Y.Z
-```
-
-Once the pull request is merged, pull changes and release version X.Y.Z:
-
-```bash
-git checkout main
-git pull --rebase
-git tag vX.Y.Z -m "Release vX.Y.Z"
-git push origin --follow-tags
-```
-
-Publish to PyPI with:
-
-```bash
-poetry publish --build
-```
-
-Add the release to Github:
-
-```
-gh release create vX.Y.Z \
-  --title "vX.Y.Z" \
-  --notes-file <(git log --format=%B -n1 vX.Y.Z)
-```
-
-## Running tests
-
-If you want to run the tests with the supported contributor dependency set,
-use:
-
-```bash
-make test
-```
-
-## Translations
-
-If new translated strings are added (via `_()` and/or `_n()`), the gettext template file will need to be updated. Here's how you extract all `_()` and `_n()` references within the `src/` folder to `locale/avalan.pot`:
-
-```bash
-find src/avalan/. -name "*.py" | xargs xgettext \
-    --language=Python \
-    --keyword=_ \
-    --keyword=_n \
-    --package-name 'avalan' \
-    --package-version `cat src/avalan/VERSION.txt` \
-    --output=locale/avalan.pot
-```
-
-If you are translating to a new language (such as `es`), create the folder structure first:
-
-```bash
-mkdir -p locale/es/LC_MESSAGES
-```
-
-Update the existing `es` translation file with changes:
-
-```bash
-msgmerge --update locale/es/LC_MESSAGES/avalan.po locale/avalan.pot
-```
-
-If the `es` translation file does not exist, create it:
-
-```bash
-msginit --locale=es \
-        --input=locale/avalan.pot \
-        --output=locale/es/LC_MESSAGES/avalan.po
-```
-
-Edit the `locale/es/LC_MESSAGES/avalan.po` translation file filling in the needed `msgstr`. When you are done translating, compile it:
-
-```bash
-msgfmt --output-file=locale/es/LC_MESSAGES/avalan.mo \
-       locale/es/LC_MESSAGES/avalan.po
-```
-
-If you are recording CLI usage and wish to share it in documentation, save
-it as a 480p MOV file, say `recording.mov`, and then generate the palette
-before conversion:
-
-```bash
-ffmpeg -i recording.mov \
-    -vf "fps=2,scale=480:-1:flags=lanczos,palettegen" \
-    /tmp/recording_palette.png
-```
-
-Now convert the MOV recording to GIF using the previously generated palette:
-
-```bash
-ffmpeg -i recording.mov \
-    -i /tmp/recording_palette.png \
-    -filter_complex "fps=2,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse" \
-    docs/images/recording.gif
-```
-
-
-[^1]: Autonomous Virtually Assisted Language Agent Network
