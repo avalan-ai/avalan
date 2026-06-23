@@ -123,9 +123,11 @@ class ContainerConformanceTest(TestCase):
                 with self.subTest(surface=surface.value, path=path):
                     raw = _raw_with_path(
                         path,
-                        "container"
-                        if path == "tool.shell.backend"
-                        else {"enabled": True},
+                        (
+                            "container"
+                            if path == "tool.shell.backend"
+                            else {"enabled": True}
+                        ),
                     )
                     diagnostics = container_syntax_diagnostics(surface, raw)
 
