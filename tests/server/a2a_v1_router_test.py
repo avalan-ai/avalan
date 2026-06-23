@@ -1,4 +1,6 @@
 from asyncio import CancelledError
+from base64 import b64encode
+from json import loads
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -20,6 +22,7 @@ from avalan.server.a2a.router import (
     AvalanA2AAgentExecutor,
     install_a2a_routes,
 )
+from avalan.server.entities import ContentFile, ContentImage, ContentText
 
 
 @pytest.fixture
@@ -28,6 +31,7 @@ def anyio_backend() -> str:
 
 
 def test_install_a2a_routes_mounts_v1_sdk_routes() -> None:
+    pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
     app = FastAPI()
     install_a2a_routes(
         app,
@@ -40,11 +44,170 @@ def test_install_a2a_routes_mounts_v1_sdk_routes() -> None:
 
     assert "/.well-known/agent-card.json" in paths
     assert "/a2a" in paths
+    assert "/{tenant}/a2a" in paths
     assert "/a2a/message:stream" in paths
     assert "/.well-known/a2a-agent.json" not in paths
 
 
+def test_a2a_route_rejects_invalid_raw_base64_before_sdk_parse() -> None:
+    pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
+    app = FastAPI()
+    install_a2a_routes(
+        app,
+        prefix="/a2a",
+        name="run",
+        description="Run the test agent.",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/a2a",
+        headers={"A2A-Version": "1.0"},
+        json={
+            "jsonrpc": "2.0",
+            "id": "bad-raw",
+            "method": "SendMessage",
+            "params": {
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_USER",
+                    "parts": [
+                        {
+                            "raw": "not base64!",
+                            "filename": "bad.bin",
+                            "mediaType": "application/octet-stream",
+                        }
+                    ],
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "bad-raw"
+    assert body["error"]["code"] == -32602
+    assert body["error"]["message"] == "Invalid params"
+    assert body["error"]["data"] == "A2A raw file parts must be base64 strings"
+
+
+def test_a2a_tenant_jsonrpc_route_rejects_invalid_raw_base64() -> None:
+    pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
+    app = FastAPI()
+    install_a2a_routes(
+        app,
+        prefix="/a2a",
+        name="run",
+        description="Run the test agent.",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/tenant-a/a2a",
+        headers={"A2A-Version": "1.0"},
+        json={
+            "jsonrpc": "2.0",
+            "id": "tenant-bad-raw",
+            "method": "SendMessage",
+            "params": {
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_USER",
+                    "parts": [
+                        {
+                            "raw": "%%%%",
+                            "filename": "bad.bin",
+                            "mediaType": "application/octet-stream",
+                        }
+                    ],
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "tenant-bad-raw"
+    assert body["error"]["code"] == -32602
+    assert body["error"]["data"] == "A2A raw file parts must be base64 strings"
+
+
+def test_a2a_jsonrpc_route_rejects_empty_part_before_sdk_parse() -> None:
+    pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
+    app = FastAPI()
+    install_a2a_routes(
+        app,
+        prefix="/a2a",
+        name="run",
+        description="Run the test agent.",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/a2a",
+        headers={"A2A-Version": "1.0"},
+        json={
+            "jsonrpc": "2.0",
+            "id": "empty-part",
+            "method": "SendMessage",
+            "params": {
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_USER",
+                    "parts": [{}],
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "empty-part"
+    assert body["error"]["code"] == -32602
+    assert (
+        body["error"]["data"]
+        == "A2A parts must contain exactly one content field"
+    )
+
+
+def test_a2a_tenant_rest_route_rejects_invalid_raw_base64() -> None:
+    pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
+    app = FastAPI()
+    install_a2a_routes(
+        app,
+        prefix="/a2a",
+        name="run",
+        description="Run the test agent.",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/tenant-a/a2a/message:send",
+        headers={"A2A-Version": "1.0"},
+        json={
+            "message": {
+                "messageId": "message-1",
+                "role": "ROLE_USER",
+                "parts": [
+                    {
+                        "raw": "%%%%",
+                        "filename": "bad.bin",
+                        "mediaType": "application/octet-stream",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "A2A raw file parts must be base64 strings"
+    )
+
+
 def test_agent_card_uses_v1_supported_interfaces() -> None:
+    pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
     app = FastAPI()
     install_a2a_routes(
         app,
@@ -69,6 +232,30 @@ def test_agent_card_uses_v1_supported_interfaces() -> None:
         }
     ]
     assert card["skills"][0]["id"] == "run"
+
+
+def test_agent_card_advertises_text_and_file_modes_without_sdk() -> None:
+    card = a2a_router._build_agent_card(
+        a2a_pb2=_FakeA2APb2(),
+        constants=_FakeConstants(),
+        interface_url="/a2a",
+        name="run",
+        description=None,
+    )
+
+    expected = {
+        "text/plain",
+        "image/png",
+        "image/jpeg",
+        "application/json",
+        "application/pdf",
+        "application/octet-stream",
+    }
+
+    assert expected <= set(card.default_input_modes)
+    assert expected <= set(card.skills[0].input_modes)
+    assert card.default_output_modes == ["text/plain"]
+    assert card.skills[0].output_modes == ["text/plain"]
 
 
 def test_typing_override_compat_installs_missing_override(monkeypatch) -> None:
@@ -107,9 +294,477 @@ def test_install_a2a_routes_reports_missing_sdk(monkeypatch) -> None:
 
 
 @pytest.mark.anyio
-async def test_translator_projects_reasoning_tool_and_terminal_states() -> (
-    None
-):
+async def test_chat_request_preserves_text_only_a2a_parts() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                _FakePart(text="hello"),
+                _FakePart(text="world"),
+            ]
+        )
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+
+    assert request.messages[0].content == "hello\nworld"
+
+
+@pytest.mark.anyio
+async def test_chat_request_builds_multimodal_content_from_a2a_parts() -> None:
+    raw_text = b64encode(b"hello").decode("ascii")
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                _FakePart(text="summarize these"),
+                _FakePart(
+                    raw=b"%PDF-1.7",
+                    filename="report.pdf",
+                    mediaType="application/pdf",
+                ),
+                _FakePart(
+                    raw=raw_text,
+                    metadata={
+                        "filename": "note.txt",
+                        "media_type": "text/plain",
+                    },
+                ),
+                _FakePart(
+                    raw=b"\x89PNG\r\n\x1a\n",
+                    filename="inline.png",
+                    mediaType="image/png",
+                ),
+                _FakePart(
+                    url="https://files.example/image.png",
+                    filename="image.png",
+                    media_type="image/png",
+                ),
+                _FakePart(data={"kind": "metadata", "page": 1}),
+            ]
+        )
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+    content = request.messages[0].content
+
+    assert isinstance(content, list)
+    assert isinstance(content[0], ContentText)
+    assert content[0].text == "summarize these"
+    assert isinstance(content[1], ContentFile)
+    assert content[1].file_data == b64encode(b"%PDF-1.7").decode("ascii")
+    assert content[1].filename == "report.pdf"
+    assert content[1].file == {
+        "filename": "report.pdf",
+        "mime_type": "application/pdf",
+    }
+    assert isinstance(content[2], ContentFile)
+    assert content[2].file_data == raw_text
+    assert content[2].file == {
+        "filename": "note.txt",
+        "mime_type": "text/plain",
+    }
+    assert isinstance(content[3], ContentImage)
+    assert content[3].image_url == {
+        "url": "data:image/png;base64,iVBORw0KGgo="
+    }
+    assert isinstance(content[4], ContentImage)
+    assert content[4].image_url == {"url": "https://files.example/image.png"}
+    assert isinstance(content[5], ContentText)
+    assert content[5].text == '{"kind":"metadata","page":1}'
+
+
+@pytest.mark.anyio
+async def test_chat_request_accepts_nested_a2a_file_payloads() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                {"file": {"data": "YWJj", "filename": "raw.bin"}},
+                {"file": {"url": "mcp://resources/1"}},
+            ]
+        )
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+    content = request.messages[0].content
+
+    assert isinstance(content, list)
+    assert content[0].file_data == "YWJj"
+    assert content[0].file == {"filename": "raw.bin"}
+    assert content[1].file_url == "mcp://resources/1"
+
+
+@pytest.mark.anyio
+async def test_chat_request_uses_current_task_history() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=None,
+        current_task=SimpleNamespace(
+            history=[
+                _FakeMessage([_FakePart(text="old")], role="agent"),
+                _FakeMessage(
+                    [
+                        _FakePart(text="latest"),
+                        _FakePart(
+                            url="https://files.example/report.pdf",
+                            filename="report.pdf",
+                            media_type="application/pdf",
+                        ),
+                    ],
+                    role="user",
+                ),
+            ]
+        ),
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+    content = request.messages[0].content
+
+    assert isinstance(content, list)
+    assert content[0].text == "latest"
+    assert content[1].file_url == "https://files.example/report.pdf"
+    assert content[1].file == {
+        "filename": "report.pdf",
+        "mime_type": "application/pdf",
+    }
+
+
+@pytest.mark.anyio
+async def test_chat_request_uses_numeric_a2a_user_role_history() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=None,
+        current_task=SimpleNamespace(
+            history=[
+                _FakeMessage([_FakePart(text="numeric-user")], role=1),
+                _FakeMessage([_FakePart(text="numeric-agent")], role=2),
+            ]
+        ),
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+
+    assert request.messages[0].content == "numeric-user"
+
+
+@pytest.mark.anyio
+async def test_chat_request_uses_status_message_before_history() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=None,
+        current_task=SimpleNamespace(
+            status=SimpleNamespace(
+                message=_FakeMessage([_FakePart(text="status")])
+            ),
+            history=[_FakeMessage([_FakePart(text="history")])],
+        ),
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+
+    assert request.messages[0].content == "status"
+
+
+@pytest.mark.anyio
+async def test_chat_request_uses_non_user_history_when_needed() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=None,
+        current_task=SimpleNamespace(
+            history=[
+                _FakeMessage([_FakePart(text="older")], role="agent"),
+                _FakeMessage([_FakePart(text="newer")], role="agent"),
+            ]
+        ),
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+
+    assert request.messages[0].content == "newer"
+
+
+@pytest.mark.anyio
+async def test_chat_request_ignores_invalid_file_part_and_falls_back() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage([_FakePart(raw=object())]),
+        user_input="fallback",
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+
+    assert request.messages[0].content == "fallback"
+
+
+@pytest.mark.anyio
+async def test_chat_request_rejects_invalid_a2a_oneof_and_raw_base64() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                _FakePart(raw="not base64!"),
+                _FakePart(raw="YWJj", url="https://files.example/a.txt"),
+                _FakePart(text="hello", data={"ignored": True}),
+                {"file": {"data": "not base64!"}},
+                {"file": {"data": "YWJj", "url": "mcp://resources/1"}},
+            ]
+        ),
+        user_input="fallback",
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+
+    assert request.messages[0].content == "fallback"
+
+
+def test_a2a_helper_edge_cases(monkeypatch) -> None:
+    route_without_endpoint = SimpleNamespace()
+    message_without_sequence = SimpleNamespace(parts="not-parts")
+    message_without_role = SimpleNamespace()
+    enum_role_message = SimpleNamespace(role=SimpleNamespace(name="ROLE_USER"))
+    value_role_message = SimpleNamespace(role=SimpleNamespace(value=1))
+    object_role_message = SimpleNamespace(role=SimpleNamespace())
+
+    assert (
+        a2a_router._validated_a2a_route(
+            route_without_endpoint, route_class=object
+        )
+        is route_without_endpoint
+    )
+    assert a2a_router._a2a_message_parts(None) == []
+    assert a2a_router._a2a_message_parts(message_without_sequence) == []
+    assert a2a_router._is_user_a2a_message(message_without_role) is True
+    assert a2a_router._is_user_a2a_message(enum_role_message) is True
+    assert a2a_router._is_user_a2a_message(value_role_message) is True
+    assert a2a_router._is_user_a2a_message(object_role_message) is False
+    assert a2a_router._role_value_is_user(True) is None
+    assert a2a_router._raw_file_data(bytearray(b"abc")) == "YWJj"
+    assert a2a_router._raw_file_data(memoryview(b"abc")) == "YWJj"
+    assert a2a_router._content_from_a2a_part({"text": 7}) is None
+    assert a2a_router._content_from_a2a_part({"raw": " "}) is None
+    assert a2a_router._content_from_a2a_part({"url": []}) is None
+    assert a2a_router._content_from_a2a_part({"data": object()}) is None
+    assert a2a_router._file_metadata(object()) == {}
+    assert a2a_router._data_part_text(None) is None
+    assert a2a_router._data_part_text(object()) is None
+    assert a2a_router._field_value(None, "value") is a2a_router._MISSING
+    assert (
+        a2a_router._field_value({"other": "value"}, "value")
+        is a2a_router._MISSING
+    )
+
+    self_raw = _SelfRaw()
+    assert a2a_router._raw_file_data(self_raw) is None
+    assert (
+        a2a_router._field_value(_CallableField(), "value")
+        is a2a_router._MISSING
+    )
+    assert (
+        a2a_router._field_value(_HasFieldFalse(), "value")
+        is a2a_router._MISSING
+    )
+    assert a2a_router._field_value(_HasFieldRaises(), "value") == "kept"
+    assert (
+        a2a_router._a2a_context_message(
+            SimpleNamespace(message=_FakeMessage([]))
+        )
+        is not None
+    )
+
+    dumped = a2a_router._data_part_text(_ModelDumpFallback())
+    assert dumped == '{"value":"fallback"}'
+    dumped_with_mode = a2a_router._data_part_text(_ModelDumpMode())
+    assert dumped_with_mode == '{"value":"mode"}'
+    assert a2a_router._data_part_text(["a", object(), 1]) == '["a",1]'
+
+    fake_json_format = SimpleNamespace(
+        MessageToDict=lambda value: {"from": "protobuf"}
+    )
+    real_import_module = a2a_router.import_module
+
+    def fake_import_module(name: str):
+        if name == "google.protobuf.json_format":
+            return fake_json_format
+        return real_import_module(name)
+
+    monkeypatch.setattr(a2a_router, "import_module", fake_import_module)
+
+    assert a2a_router._data_part_text(_ProtoLike()) == '{"from":"protobuf"}'
+
+
+@pytest.mark.anyio
+async def test_a2a_json_file_part_validator_edge_cases() -> None:
+    async def endpoint(request: object) -> str:
+        return "ok"
+
+    wrapped = a2a_router._validated_a2a_endpoint(endpoint)
+    wrapped_jsonrpc = a2a_router._validated_a2a_endpoint(
+        endpoint, jsonrpc=True
+    )
+    tenant_request = _BodyRequest(
+        b'{"params":{"message":{"parts":[{"text":"ok"}]}}}',
+        path_params={"tenant": "tenant-a"},
+    )
+
+    assert await wrapped(_BodyRequest(b"")) == "ok"
+    assert await wrapped(_BodyRequest(b"{invalid")) == "ok"
+    assert await wrapped_jsonrpc(tenant_request) == "ok"
+    assert loads(await tenant_request.body())["params"]["tenant"] == "tenant-a"
+    invalid_json_response = (
+        await a2a_router._a2a_jsonrpc_validation_error_response(
+            _BodyRequest(b"{invalid"), "bad"
+        )
+    )
+    assert loads(invalid_json_response.body)["id"] is None
+    assert a2a_router._a2a_jsonrpc_request_id([]) is None
+    assert a2a_router._a2a_jsonrpc_request_id({"id": True}) is None
+
+    request = _BodyRequest(b"{}")
+    a2a_router._inject_a2a_jsonrpc_tenant(request, None)
+    a2a_router._inject_a2a_jsonrpc_tenant(request, [])
+    request.path_params = []
+    a2a_router._inject_a2a_jsonrpc_tenant(request, {})
+    request.path_params = {}
+    a2a_router._inject_a2a_jsonrpc_tenant(request, {"params": {}})
+    request.path_params = {"tenant": ""}
+    a2a_router._inject_a2a_jsonrpc_tenant(request, {"params": {}})
+    request.path_params = {"tenant": "tenant-a"}
+    a2a_router._inject_a2a_jsonrpc_tenant(request, {"params": []})
+    assert a2a_router._a2a_json_part_payloads({"text": "already-part"}) == []
+    assert a2a_router._a2a_json_part_payloads(
+        [{"parts": [{"root": {"text": "ok"}}]}]
+    ) == [{"text": "ok"}]
+    assert a2a_router._a2a_json_part_payloads(
+        [{"parts": [{"data": {"parts": [{"raw": "not base64!"}]}}]}]
+    ) == [{"data": {"parts": [{"raw": "not base64!"}]}}]
+    a2a_router._validate_a2a_json_part_payload({"raw": "-_8"})
+    a2a_router._validate_a2a_json_part_payload({"raw": "YWJjZA"})
+    a2a_router._validate_a2a_json_part_payload({"raw": "YWJj\nZA=="})
+    assert a2a_router._raw_file_data("-_8") == "+/8="
+    assert a2a_router._raw_file_data("YWJj\nZA==") == "YWJjZA=="
+
+    with pytest.raises(a2a_router.HTTPException):
+        a2a_router._validate_a2a_json_part_payload(
+            {
+                "text": "hello",
+                "raw": "aGVsbG8=",
+            }
+        )
+    with pytest.raises(a2a_router.HTTPException):
+        a2a_router._validate_a2a_json_part_payload({"raw": None})
+    with pytest.raises(a2a_router.HTTPException):
+        a2a_router._validate_a2a_json_part_payload({"metadata": {}})
+
+
+@pytest.mark.anyio
+async def test_executor_passes_a2a_file_parts_to_orchestrate(
+    monkeypatch, fake_a2a_imports
+) -> None:
+    app = FastAPI()
+    app.state.logger = MagicMock()
+    app.state.orchestrator = _ExecutorOrchestrator()
+    executor = AvalanA2AAgentExecutor(app)
+    captured_requests = []
+
+    async def fake_orchestrate(request, *args: object, **kwargs: object):
+        captured_requests.append(request)
+        return object(), "response-id", 123
+
+    async def fake_cleanup(*args: object, **kwargs: object) -> None:
+        return None
+
+    def fake_stream_consumer_iterator(*args: object, **kwargs: object):
+        async def iterator():
+            yield _item(
+                0,
+                StreamItemKind.STREAM_COMPLETED,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+
+        return iterator()
+
+    monkeypatch.setattr(a2a_router, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(a2a_router, "cleanup_stream_sources", fake_cleanup)
+    monkeypatch.setattr(
+        a2a_router,
+        "stream_consumer_iterator",
+        fake_stream_consumer_iterator,
+    )
+
+    await executor.execute(
+        _ExecutorContext(
+            message=_FakeMessage(
+                [
+                    _FakePart(text="read"),
+                    _FakePart(
+                        raw=b"content",
+                        filename="file.bin",
+                        media_type="application/octet-stream",
+                    ),
+                ]
+            )
+        ),
+        _FakeEventQueue(),
+    )
+
+    content = captured_requests[0].messages[0].content
+
+    assert isinstance(content, list)
+    assert content[0].text == "read"
+    assert content[1].file_data == b64encode(b"content").decode("ascii")
+    assert content[1].file == {
+        "filename": "file.bin",
+        "mime_type": "application/octet-stream",
+    }
+
+
+@pytest.mark.anyio
+async def test_executor_emits_submitted_task_for_new_a2a_task(
+    monkeypatch, fake_a2a_imports
+) -> None:
+    app = FastAPI()
+    app.state.logger = MagicMock()
+    app.state.orchestrator = _ExecutorOrchestrator()
+    executor = AvalanA2AAgentExecutor(app)
+    event_queue = _FakeEventQueue()
+
+    async def fake_orchestrate(request, *args: object, **kwargs: object):
+        return object(), "response-id", 123
+
+    async def fake_cleanup(*args: object, **kwargs: object) -> None:
+        return None
+
+    def fake_stream_consumer_iterator(*args: object, **kwargs: object):
+        async def iterator():
+            yield _item(
+                0,
+                StreamItemKind.STREAM_COMPLETED,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+
+        return iterator()
+
+    monkeypatch.setattr(a2a_router, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(a2a_router, "cleanup_stream_sources", fake_cleanup)
+    monkeypatch.setattr(
+        a2a_router,
+        "stream_consumer_iterator",
+        fake_stream_consumer_iterator,
+    )
+
+    await executor.execute(
+        _ExecutorContext(current_task=None),
+        event_queue,
+    )
+
+    assert getattr(event_queue.events[0], "id") == "task-1"
+
+
+@pytest.mark.anyio
+async def test_translator_projects_reasoning_tool_and_terminal_states(
+    fake_a2a_imports,
+) -> None:
     updater = _FakeUpdater()
     translator = A2AResponseTranslator(updater)
 
@@ -153,9 +808,30 @@ async def test_translator_projects_reasoning_tool_and_terminal_states() -> (
 
 
 @pytest.mark.anyio
-async def test_translator_handles_projection_cancel_error_and_bad_items() -> (
-    None
-):
+async def test_translator_projects_answer_delta(fake_a2a_imports) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="answer",
+        )
+    )
+
+    assert updater.artifacts[0]["artifact_id"] == "answer"
+    assert updater.artifacts[0]["parts"][0].text == "answer"
+
+
+@pytest.mark.anyio
+async def test_translator_handles_projection_cancel_error_and_bad_items(
+    fake_a2a_imports,
+) -> None:
     cancelled = A2AResponseTranslator(_FakeUpdater())
     await cancelled.process(
         StreamConsumerProjection(
@@ -191,7 +867,10 @@ async def test_translator_handles_projection_cancel_error_and_bad_items() -> (
 
 
 @pytest.mark.anyio
-async def test_executor_cancel_and_exception_paths(monkeypatch) -> None:
+async def test_executor_cancel_and_exception_paths(
+    monkeypatch,
+    fake_a2a_imports,
+) -> None:
     app = FastAPI()
     app.state.logger = MagicMock()
     app.state.orchestrator = _ExecutorOrchestrator()
@@ -212,7 +891,10 @@ async def test_executor_cancel_and_exception_paths(monkeypatch) -> None:
 
 
 @pytest.mark.anyio
-async def test_executor_cleans_response_on_cancellation(monkeypatch) -> None:
+async def test_executor_cleans_response_on_cancellation(
+    monkeypatch,
+    fake_a2a_imports,
+) -> None:
     app = FastAPI()
     app.state.logger = MagicMock()
     app.state.orchestrator = _ExecutorOrchestrator()
@@ -236,7 +918,10 @@ async def test_executor_cleans_response_on_cancellation(monkeypatch) -> None:
 
 
 @pytest.mark.anyio
-async def test_executor_cleans_response_on_stream_error(monkeypatch) -> None:
+async def test_executor_cleans_response_on_stream_error(
+    monkeypatch,
+    fake_a2a_imports,
+) -> None:
     app = FastAPI()
     app.state.logger = MagicMock()
     app.state.orchestrator = _ExecutorOrchestrator()
@@ -257,6 +942,109 @@ async def test_executor_cleans_response_on_stream_error(monkeypatch) -> None:
         await executor.execute(_ExecutorContext(), _FakeEventQueue())
 
     assert cleaned == [False]
+
+
+@pytest.fixture
+def fake_a2a_imports(monkeypatch):
+    real_import_module = a2a_router.import_module
+    fake_pb2 = _FakeA2APb2()
+
+    def fake_import_module(name: str):
+        if name == "a2a.types.a2a_pb2":
+            return fake_pb2
+        if name == "a2a.server.tasks.task_updater":
+            return SimpleNamespace(TaskUpdater=_FakeSdkTaskUpdater)
+        return real_import_module(name)
+
+    monkeypatch.setattr(a2a_router, "import_module", fake_import_module)
+    return fake_pb2
+
+
+class _FakeProtoMessage:
+    def __init__(self, **kwargs: object) -> None:
+        self.__dict__.update(kwargs)
+
+
+class _FakeA2APb2:
+    AgentCapabilities = _FakeProtoMessage
+    AgentCard = _FakeProtoMessage
+    AgentInterface = _FakeProtoMessage
+    AgentSkill = _FakeProtoMessage
+    Part = _FakeProtoMessage
+    Task = _FakeProtoMessage
+    TaskStatus = _FakeProtoMessage
+    TaskState = SimpleNamespace(
+        TASK_STATE_SUBMITTED="submitted",
+        TASK_STATE_WORKING="working",
+    )
+
+
+class _FakeConstants:
+    PROTOCOL_VERSION_1_0 = "1.0"
+    TransportProtocol = SimpleNamespace(JSONRPC="JSONRPC")
+
+
+class _FakePart:
+    def __init__(self, **kwargs: object) -> None:
+        self.__dict__.update(kwargs)
+
+
+class _FakeMessage:
+    def __init__(self, parts: list[object], *, role: object = "user") -> None:
+        self.parts = parts
+        self.role = role
+
+
+class _CallableField:
+    def value(self) -> str:
+        return "callable"
+
+
+class _HasFieldFalse:
+    value = "hidden"
+
+    def HasField(self, name: str) -> bool:
+        return False
+
+
+class _HasFieldRaises:
+    value = "kept"
+
+    def HasField(self, name: str) -> bool:
+        raise ValueError(name)
+
+
+class _ModelDumpFallback:
+    def model_dump(self, **kwargs: object) -> dict[str, object]:
+        if kwargs:
+            raise TypeError("mode unsupported")
+        return {"value": "fallback"}
+
+
+class _ModelDumpMode:
+    def model_dump(self, **kwargs: object) -> dict[str, object]:
+        return {"value": "mode"}
+
+
+class _ProtoLike:
+    DESCRIPTOR = object()
+
+
+class _BodyRequest:
+    def __init__(
+        self, body: bytes, *, path_params: dict[str, str] | None = None
+    ) -> None:
+        self._body = body
+        self.path_params = path_params or {}
+
+    async def body(self) -> bytes:
+        return self._body
+
+
+class _SelfRaw:
+    @property
+    def raw(self) -> "_SelfRaw":
+        return self
 
 
 class _FakeUpdater:
@@ -283,6 +1071,54 @@ class _FakeUpdater:
         self.failed_count += 1
 
 
+class _FakeSdkTaskUpdater(_FakeUpdater):
+    def __init__(
+        self,
+        event_queue: "_FakeEventQueue",
+        *,
+        task_id: str,
+        context_id: str,
+    ) -> None:
+        super().__init__()
+        self._event_queue = event_queue
+        self._task_id = task_id
+        self._context_id = context_id
+
+    async def add_artifact(self, parts, **kwargs: object) -> None:
+        await super().add_artifact(parts, **kwargs)
+        await self._event_queue.enqueue_event(
+            {
+                "kind": "artifact",
+                "parts": parts,
+                **kwargs,
+            }
+        )
+
+    async def update_status(self, state, metadata=None) -> None:
+        await super().update_status(state, metadata=metadata)
+        await self._event_queue.enqueue_event(
+            {
+                "kind": "status",
+                "state": state,
+                "metadata": metadata or {},
+                "task_id": self._task_id,
+                "context_id": self._context_id,
+            }
+        )
+
+    async def complete(self) -> None:
+        await super().complete()
+        await self._event_queue.enqueue_event({"kind": "complete"})
+
+    async def cancel(self) -> None:
+        await super().cancel()
+        await self._event_queue.enqueue_event({"kind": "cancel"})
+
+    async def failed(self) -> None:
+        await super().failed()
+        await self._event_queue.enqueue_event({"kind": "failed"})
+
+
 class _FakeEventQueue:
     def __init__(self) -> None:
         self.events: list[object] = []
@@ -296,13 +1132,26 @@ class _ExecutorOrchestrator:
     sync_messages = AsyncMock()
 
 
+_DEFAULT_CURRENT_TASK = SimpleNamespace()
+
+
 class _ExecutorContext:
     task_id = "task-1"
     context_id = "ctx-1"
-    current_task = SimpleNamespace()
+
+    def __init__(
+        self,
+        *,
+        message: object | None = None,
+        current_task: object | None = _DEFAULT_CURRENT_TASK,
+        user_input: str = "hello",
+    ) -> None:
+        self.message = message
+        self.current_task = current_task
+        self._user_input = user_input
 
     def get_user_input(self) -> str:
-        return "hello"
+        return self._user_input
 
 
 class _CancelledResponse:

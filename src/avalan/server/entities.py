@@ -1,13 +1,34 @@
 from ..entities import MessageRole, OrchestratorSettings, ReasoningEffort
 from ..tool.context import ToolSettingsContext
 
+from base64 import b64decode
+from binascii import Error as BinasciiError
 from dataclasses import dataclass
+from re import fullmatch
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 JSONType = Literal["bool", "float", "int", "object", "string"]
+MCP_FILE_DATA_KEYS = ("data", "base64", "file_data")
+MCP_FILE_URL_KEYS = ("uri", "url", "file_url")
+MCP_FILE_SOURCE_KEYS = MCP_FILE_DATA_KEYS + MCP_FILE_URL_KEYS
+MCP_FILE_MIME_TYPE_KEYS = ("mimeType", "mime_type")
+MCP_FILE_FILENAME_KEYS = (
+    "filename",
+    "fileName",
+    "file_name",
+    "name",
+    "displayName",
+)
+MCP_BASE64_SOURCE_PATTERN = (
+    r"^(?:data:[^,]+,\s*)?"
+    r"(?:(?:[A-Za-z0-9+/]{4})+"
+    r"(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?"
+    r"|[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)$"
+)
+NON_WHITESPACE_PATTERN = r".*\S.*"
 
 
 def _has_non_empty_file_source(value: object) -> bool:
@@ -19,6 +40,120 @@ def _has_non_empty_file_source(value: object) -> bool:
         _, separator, payload = value.rpartition(",")
         return bool(separator and payload.strip())
     return True
+
+
+def _present_file_source_keys(value: dict[Any, Any]) -> list[str]:
+    return [key for key in MCP_FILE_SOURCE_KEYS if key in value]
+
+
+def _present_keys(value: dict[Any, Any], keys: tuple[str, ...]) -> list[str]:
+    return [key for key in keys if key in value]
+
+
+def _validate_base64_file_source(value: str) -> str:
+    source = value.strip()
+    payload = source
+    if payload.startswith("data:"):
+        prefix, separator, payload = payload.rpartition(",")
+        if not separator:
+            raise ValueError("File descriptor data URL must include payload")
+        payload = payload.strip()
+        source = f"{prefix},{payload}"
+    if fullmatch(MCP_BASE64_SOURCE_PATTERN, source) is None:
+        raise ValueError("File descriptor data must be base64")
+    try:
+        b64decode(payload, validate=True)
+    except (BinasciiError, ValueError) as exc:
+        raise ValueError("File descriptor data must be base64") from exc
+    return source
+
+
+def _schema_property(properties: dict[str, Any], key: str) -> dict[str, Any]:
+    property_schema = properties.get(key)
+    if isinstance(property_schema, dict):
+        return dict(property_schema)
+    return {"type": "string"}
+
+
+def _non_empty_string_schema(
+    properties: dict[str, Any], key: str
+) -> dict[str, Any]:
+    property_schema = _schema_property(properties, key)
+    schema: dict[str, Any] = {
+        "type": "string",
+        "minLength": 1,
+        "pattern": NON_WHITESPACE_PATTERN,
+    }
+    for metadata_key in ("description", "title"):
+        if metadata_key in property_schema:
+            schema[metadata_key] = property_schema[metadata_key]
+    return schema
+
+
+def _mcp_file_descriptor_json_schema(schema: dict[str, Any]) -> None:
+    properties = schema.setdefault("properties", {})
+    assert isinstance(properties, dict)
+
+    data_schema = _non_empty_string_schema(properties, "data")
+    data_schema["pattern"] = MCP_BASE64_SOURCE_PATTERN
+    for key in MCP_FILE_DATA_KEYS:
+        properties[key] = dict(data_schema)
+
+    uri_schema = _non_empty_string_schema(properties, "uri")
+    for key in MCP_FILE_URL_KEYS:
+        properties[key] = dict(uri_schema)
+
+    mime_type_schema = _schema_property(properties, "mimeType")
+    properties["mimeType"] = _non_empty_string_schema(properties, "mimeType")
+    properties["mime_type"] = _non_empty_string_schema(
+        {"mime_type": mime_type_schema}, "mime_type"
+    )
+    filename_schema = _schema_property(properties, "filename")
+    for key in MCP_FILE_FILENAME_KEYS:
+        properties[key] = _non_empty_string_schema({key: filename_schema}, key)
+    schema["anyOf"] = [{"required": [key]} for key in MCP_FILE_SOURCE_KEYS]
+    schema["not"] = {
+        "anyOf": [
+            {"required": [left, right]}
+            for index, left in enumerate(MCP_FILE_SOURCE_KEYS)
+            for right in MCP_FILE_SOURCE_KEYS[index + 1 :]
+        ]
+    }
+
+
+def _mcp_tool_request_json_schema(schema: dict[str, Any]) -> None:
+    properties = schema.setdefault("properties", {})
+    assert isinstance(properties, dict)
+    files_schema = _schema_property(properties, "files")
+    for key in ("input_files", "file_descriptors"):
+        properties[key] = dict(files_schema)
+    file_keys = ("files", "input_files", "file_descriptors")
+    schema["anyOf"] = [
+        {
+            "required": ["input_string"],
+            "properties": {
+                "input_string": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": NON_WHITESPACE_PATTERN,
+                }
+            },
+        },
+        *[
+            {
+                "required": [key],
+                "properties": {key: {"type": "array", "minItems": 1}},
+            }
+            for key in file_keys
+        ],
+    ]
+    schema["not"] = {
+        "anyOf": [
+            {"required": [left, right]}
+            for index, left in enumerate(file_keys)
+            for right in file_keys[index + 1 :]
+        ]
+    }
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -298,10 +433,147 @@ class ResponsesRequest(BaseModel):
         return self
 
 
-class MCPToolRequest(BaseModel):
-    input_string: str = Field(
-        ..., description="Input to pass to the orchestrator via MCP"
+class MCPFileDescriptor(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra=_mcp_file_descriptor_json_schema
     )
+
+    file_data: str | None = Field(
+        None,
+        alias="data",
+        description="Base64 file contents. Aliases: data, base64, file_data.",
+    )
+    file_url: str | None = Field(
+        None,
+        alias="uri",
+        description="File URI or URL. Aliases: uri, url, file_url.",
+    )
+    mime_type: str | None = Field(
+        None,
+        alias="mimeType",
+        description="File MIME type. Aliases: mimeType, mime_type.",
+    )
+    filename: str | None = Field(
+        None, description="Optional file name to send with the file."
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_descriptor_input(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            raise ValueError("File descriptor must be an object")
+        source_keys = _present_file_source_keys(value)
+        if len(source_keys) != 1:
+            raise ValueError(
+                "File descriptor requires exactly one file source"
+            )
+        source = value[source_keys[0]]
+        if not _has_non_empty_file_source(source):
+            raise ValueError(
+                "File descriptor source must be a non-empty string"
+            )
+        if source_keys[0] in MCP_FILE_DATA_KEYS:
+            source = _validate_base64_file_source(source)
+        else:
+            source = source.strip()
+        mime_type_keys = _present_keys(value, MCP_FILE_MIME_TYPE_KEYS)
+        if len(mime_type_keys) > 1:
+            raise ValueError("File descriptor must use one MIME type key")
+
+        normalized = dict(value)
+        for key in MCP_FILE_SOURCE_KEYS:
+            normalized.pop(key, None)
+        if source_keys[0] in MCP_FILE_DATA_KEYS:
+            normalized["data"] = source
+        else:
+            normalized["uri"] = source
+
+        if mime_type_keys:
+            mime_type = value[mime_type_keys[0]]
+            if isinstance(mime_type, str):
+                mime_type = mime_type.strip()
+            for key in MCP_FILE_MIME_TYPE_KEYS:
+                normalized.pop(key, None)
+            normalized["mimeType"] = mime_type
+
+        filename_keys = _present_keys(value, MCP_FILE_FILENAME_KEYS)
+        if len(filename_keys) > 1:
+            raise ValueError("File descriptor must use one filename key")
+        if filename_keys:
+            filename = value[filename_keys[0]]
+            if isinstance(filename, str):
+                filename = filename.strip()
+            for key in MCP_FILE_FILENAME_KEYS:
+                normalized.pop(key, None)
+            normalized["filename"] = filename
+        filename = normalized.get("filename")
+        if isinstance(filename, str):
+            normalized["filename"] = filename.strip()
+
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_sources(self) -> "MCPFileDescriptor":
+        has_file_data = _has_non_empty_file_source(self.file_data)
+        has_file_url = _has_non_empty_file_source(self.file_url)
+        if has_file_data == has_file_url:
+            raise ValueError(
+                "File descriptor requires exactly one file source"
+            )
+        if self.mime_type is not None and not self.mime_type.strip():
+            raise ValueError("File descriptor mime_type cannot be empty")
+        if self.filename is not None and not self.filename.strip():
+            raise ValueError("File descriptor filename cannot be empty")
+        return self
+
+    def as_content_file(self) -> dict[str, str]:
+        payload: dict[str, str] = {}
+        if self.file_data is not None:
+            payload["file_data"] = self.file_data
+        if self.file_url is not None:
+            payload["file_url"] = self.file_url
+        if self.mime_type is not None:
+            payload["mime_type"] = self.mime_type
+        if self.filename is not None:
+            payload["filename"] = self.filename
+        return payload
+
+
+class MCPToolRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_mcp_tool_request_json_schema)
+
+    input_string: str | None = Field(
+        None, description="Input to pass to the orchestrator via MCP"
+    )
+    files: list[MCPFileDescriptor] = Field(
+        default_factory=list,
+        description="JSON file descriptors to attach to the input.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_request_input(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        file_keys = _present_keys(
+            value, ("files", "input_files", "file_descriptors")
+        )
+        if len(file_keys) > 1:
+            raise ValueError("MCP request must use one files key")
+        if not file_keys or file_keys[0] == "files":
+            return value
+
+        normalized = dict(value)
+        normalized["files"] = normalized.pop(file_keys[0])
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_input(self) -> "MCPToolRequest":
+        if not self.files and (
+            self.input_string is None or not self.input_string.strip()
+        ):
+            raise ValueError("MCP request requires input_string or files")
+        return self
 
 
 class ChatCompletionChunkChoiceDelta(BaseModel):

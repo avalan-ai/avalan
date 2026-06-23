@@ -9,6 +9,7 @@ from asyncio import (
 from contextlib import suppress
 from json import dumps, loads
 from logging import getLogger
+from re import fullmatch
 from sys import modules
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, cast
@@ -34,8 +35,12 @@ from avalan.model.stream import (
     project_canonical_stream_item,
 )
 from avalan.server.entities import (
+    MCP_BASE64_SOURCE_PATTERN,
+    NON_WHITESPACE_PATTERN,
     ChatCompletionRequest,
     ChatMessage,
+    ContentFile,
+    ContentText,
     MCPToolRequest,
 )
 from avalan.server.routers import mcp as mcp_router
@@ -582,6 +587,195 @@ class MCPUtilityTestCase(TestCase):
             descriptions[0]["inputSchema"],
             MCPToolRequest.model_json_schema(),
         )
+        schema = descriptions[0]["inputSchema"]
+        self.assertIn("files", schema["properties"])
+        self.assertIn("MCPFileDescriptor", schema["$defs"])
+        self.assertIn(
+            {
+                "required": ["input_string"],
+                "properties": {
+                    "input_string": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": NON_WHITESPACE_PATTERN,
+                    }
+                },
+            },
+            schema["anyOf"],
+        )
+        self.assertIn(
+            {
+                "required": ["files"],
+                "properties": {"files": {"type": "array", "minItems": 1}},
+            },
+            schema["anyOf"],
+        )
+        self.assertIn(
+            {
+                "required": ["input_files"],
+                "properties": {
+                    "input_files": {"type": "array", "minItems": 1}
+                },
+            },
+            schema["anyOf"],
+        )
+        self.assertIn(
+            {
+                "required": ["file_descriptors"],
+                "properties": {
+                    "file_descriptors": {
+                        "type": "array",
+                        "minItems": 1,
+                    }
+                },
+            },
+            schema["anyOf"],
+        )
+        self.assertIn("input_files", schema["properties"])
+        self.assertIn("file_descriptors", schema["properties"])
+        self.assertIn("not", schema)
+
+        descriptor_schema = schema["$defs"]["MCPFileDescriptor"]
+        for property_name in (
+            "data",
+            "base64",
+            "file_data",
+            "uri",
+            "url",
+            "file_url",
+            "mimeType",
+            "mime_type",
+            "filename",
+            "fileName",
+            "file_name",
+            "name",
+            "displayName",
+        ):
+            with self.subTest(property_name=property_name):
+                self.assertIn(property_name, descriptor_schema["properties"])
+        for source_name in ("uri", "url", "file_url"):
+            with self.subTest(source_name=source_name):
+                source_schema = descriptor_schema["properties"][source_name]
+                self.assertEqual(source_schema["type"], "string")
+                self.assertEqual(source_schema["minLength"], 1)
+                self.assertEqual(
+                    source_schema["pattern"], NON_WHITESPACE_PATTERN
+                )
+        for metadata_name in (
+            "mimeType",
+            "mime_type",
+            "filename",
+            "fileName",
+            "file_name",
+            "name",
+            "displayName",
+        ):
+            with self.subTest(metadata_name=metadata_name):
+                metadata_schema = descriptor_schema["properties"][
+                    metadata_name
+                ]
+                self.assertEqual(metadata_schema["type"], "string")
+                self.assertEqual(metadata_schema["minLength"], 1)
+                self.assertEqual(
+                    metadata_schema["pattern"], NON_WHITESPACE_PATTERN
+                )
+        for data_name in ("data", "base64", "file_data"):
+            with self.subTest(data_name=data_name):
+                data_schema = descriptor_schema["properties"][data_name]
+                self.assertEqual(data_schema["type"], "string")
+                self.assertEqual(data_schema["minLength"], 1)
+                self.assertEqual(
+                    data_schema["pattern"], MCP_BASE64_SOURCE_PATTERN
+                )
+                self.assertNotIn("contentEncoding", data_schema)
+        self.assertIn({"required": ["data"]}, descriptor_schema["anyOf"])
+        self.assertIn({"required": ["base64"]}, descriptor_schema["anyOf"])
+        self.assertIn({"required": ["uri"]}, descriptor_schema["anyOf"])
+        self.assertIn({"required": ["url"]}, descriptor_schema["anyOf"])
+        self.assertIn("not", descriptor_schema)
+        self.assertIsNotNone(fullmatch(MCP_BASE64_SOURCE_PATTERN, "YWJjZA=="))
+        self.assertIsNotNone(
+            fullmatch(
+                MCP_BASE64_SOURCE_PATTERN,
+                "data:text/plain;base64, YWJj",
+            )
+        )
+        self.assertIsNone(fullmatch(MCP_BASE64_SOURCE_PATTERN, "YWJjZA"))
+        self.assertIsNone(fullmatch(MCP_BASE64_SOURCE_PATTERN, "YWJj="))
+        self.assertIsNone(fullmatch(MCP_BASE64_SOURCE_PATTERN, "notbase64"))
+
+    def test_mcp_tool_request_accepts_file_descriptor_aliases(self) -> None:
+        tool_request = MCPToolRequest.model_validate(
+            {
+                "input_string": "Summarize",
+                "files": [
+                    {
+                        "base64": "YWJj",
+                        "mimeType": "text/plain",
+                        "file_name": "notes.txt",
+                    },
+                    {
+                        "file_url": "https://example.com/report.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(tool_request.input_string, "Summarize")
+        self.assertEqual(len(tool_request.files), 2)
+        self.assertEqual(tool_request.files[0].file_data, "YWJj")
+        self.assertEqual(tool_request.files[0].mime_type, "text/plain")
+        self.assertEqual(tool_request.files[0].filename, "notes.txt")
+        self.assertEqual(
+            tool_request.files[0].as_content_file(),
+            {
+                "file_data": "YWJj",
+                "mime_type": "text/plain",
+                "filename": "notes.txt",
+            },
+        )
+        self.assertEqual(
+            tool_request.files[1].file_url,
+            "https://example.com/report.pdf",
+        )
+        self.assertEqual(tool_request.files[1].mime_type, "application/pdf")
+
+    def test_mcp_tool_request_accepts_input_file_alias(self) -> None:
+        tool_request = MCPToolRequest.model_validate(
+            {
+                "input_string": "Read",
+                "input_files": [{"uri": "file:///tmp/input.txt"}],
+            }
+        )
+
+        self.assertEqual(len(tool_request.files), 1)
+        self.assertEqual(
+            tool_request.files[0].as_content_file(),
+            {"file_url": "file:///tmp/input.txt"},
+        )
+
+    def test_mcp_tool_request_rejects_invalid_file_descriptors(self) -> None:
+        invalid_files: list[object] = [
+            {},
+            {"filename": "empty.txt"},
+            {"data": ""},
+            {"data": "YWJj", "url": "https://example.com/file.txt"},
+            {"data": 7},
+            {"url": []},
+            {"uri": "https://example.com/file.txt", "mimeType": ""},
+            "not-a-descriptor",
+        ]
+
+        for invalid_file in invalid_files:
+            with self.subTest(invalid_file=invalid_file):
+                with self.assertRaises(ValueError):
+                    MCPToolRequest.model_validate(
+                        {
+                            "input_string": "Read",
+                            "files": [invalid_file],
+                        }
+                    )
 
     def test_default_model_id_selects_first_sorted_candidate(self) -> None:
         orchestrator = SimpleNamespace(model_ids={"beta", "alpha"})
@@ -687,6 +881,65 @@ class MCPUtilityTestCase(TestCase):
         self.assertIsInstance(message, ChatMessage)
         self.assertEqual(message.role, "user")
         self.assertEqual(message.content, "ping")
+
+    def test_build_chat_request_includes_file_content_blocks(self) -> None:
+        orchestrator = SimpleNamespace(model_ids={"zeta", "alpha"})
+        tool_request = MCPToolRequest.model_validate(
+            {
+                "input_string": "Summarize",
+                "files": [
+                    {
+                        "data": "YWJj",
+                        "mimeType": "text/plain",
+                        "filename": "notes.txt",
+                    },
+                    {"url": "https://example.com/report.pdf"},
+                ],
+            }
+        )
+
+        chat_request = mcp_router._build_chat_request(
+            tool_request, orchestrator
+        )
+
+        message = chat_request.messages[0]
+        self.assertIsInstance(message.content, list)
+        self.assertEqual(len(message.content), 3)
+        self.assertIsInstance(message.content[0], ContentText)
+        self.assertEqual(message.content[0].text, "Summarize")
+        self.assertIsInstance(message.content[1], ContentFile)
+        self.assertEqual(
+            message.content[1].file,
+            {
+                "file_data": "YWJj",
+                "mime_type": "text/plain",
+                "filename": "notes.txt",
+            },
+        )
+        self.assertIsInstance(message.content[2], ContentFile)
+        self.assertEqual(
+            message.content[2].file,
+            {"file_url": "https://example.com/report.pdf"},
+        )
+
+    def test_build_chat_request_allows_file_only_content(self) -> None:
+        orchestrator = SimpleNamespace(model_ids={"alpha"})
+        tool_request = MCPToolRequest.model_validate(
+            {
+                "input_string": "",
+                "files": [{"base64": "YWJj"}],
+            }
+        )
+
+        chat_request = mcp_router._build_chat_request(
+            tool_request, orchestrator
+        )
+
+        message = chat_request.messages[0]
+        self.assertIsInstance(message.content, list)
+        self.assertEqual(len(message.content), 1)
+        self.assertIsInstance(message.content[0], ContentFile)
+        self.assertEqual(message.content[0].file, {"file_data": "YWJj"})
 
     def test_canonical_reasoning_delta_variants(self) -> None:
         reasoning = CanonicalStreamItem(
@@ -1275,6 +1528,68 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         async for message in mcp_router._iter_jsonrpc_messages(request):
             remaining.append(message)
         self.assertFalse(remaining)
+
+    async def test_consume_call_request_with_json_file_descriptors(
+        self,
+    ) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "id": "call-files",
+            "method": "tools/call",
+            "params": {
+                "name": "run",
+                "arguments": {
+                    "input_string": "Summarize",
+                    "files": [
+                        {
+                            "base64": "YWJj",
+                            "mimeType": "text/plain",
+                            "filename": "notes.txt",
+                        }
+                    ],
+                },
+            },
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        request.app.state.mcp_resource_base_path = "/m"
+
+        request_id, req_model, _ = await mcp_router._consume_call_request(
+            request
+        )
+
+        self.assertEqual(request_id, "call-files")
+        self.assertEqual(req_model.input_string, "Summarize")
+        self.assertEqual(len(req_model.files), 1)
+        self.assertEqual(req_model.files[0].file_data, "YWJj")
+        self.assertEqual(req_model.files[0].mime_type, "text/plain")
+
+    async def test_consume_call_request_rejects_invalid_json_file_descriptor(
+        self,
+    ) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "id": "call-files",
+            "method": "tools/call",
+            "params": {
+                "name": "run",
+                "arguments": {
+                    "input_string": "Summarize",
+                    "files": [
+                        {
+                            "data": "YWJj",
+                            "uri": "https://example.com/file.txt",
+                        }
+                    ],
+                },
+            },
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            await mcp_router._consume_call_request(request)
+        self.assertIn("Invalid MCP arguments", str(exc.exception.detail))
 
     async def test_stream_response_emits_notifications(self) -> None:
         tool_call = ToolCall(id="t1", name="tool", arguments={"a": 1})
@@ -5398,6 +5713,8 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             run_tool["inputSchema"],
             MCPToolRequest.model_json_schema(),
         )
+        self.assertIn("files", run_tool["inputSchema"]["properties"])
+        self.assertIn("MCPFileDescriptor", run_tool["inputSchema"]["$defs"])
         tool_manager.json_schemas.assert_not_called()
 
     async def test_ping_endpoint_returns_empty_result(self) -> None:
@@ -6791,6 +7108,90 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(response, mcp_router.PlainTextResponse)
         args, kwargs = starter.call_args
         self.assertEqual(args[3], "call")
+
+    async def test_create_router_mcp_rpc_tools_call_with_json_file_descriptor(
+        self,
+    ) -> None:
+        router = mcp_router.create_router()
+        endpoint = None
+        for route in router.routes:
+            if getattr(route, "path", None) == "/":
+                endpoint = route.endpoint
+                break
+        self.assertIsNotNone(endpoint)
+
+        request = DummyRequest(
+            (
+                dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "call",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "run",
+                            "arguments": {
+                                "input_string": "Summarize",
+                                "files": [
+                                    {
+                                        "base64": "YWJj",
+                                        "mimeType": "text/plain",
+                                        "filename": "notes.txt",
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                )
+                + mcp_router.RS
+            ).encode("utf-8")
+        )
+        request.app.state.mcp_resource_base_path = "/base"
+        response_object = DummyResponse([])
+        orchestrator = DummyOrchestrator(SimpleNamespace(is_empty=False))
+
+        async def empty_stream(**_: Any) -> AsyncIterator[bytes]:
+            if False:
+                yield b""
+
+        with (
+            patch.object(
+                mcp_router,
+                "orchestrate",
+                AsyncMock(return_value=(response_object, UUID(int=1), 42)),
+            ) as orchestrate_mock,
+            patch.object(
+                mcp_router, "_stream_mcp_response", side_effect=empty_stream
+            ),
+            patch.object(
+                mcp_router, "create_task", side_effect=fake_create_task
+            ),
+        ):
+            response = await endpoint(  # type: ignore[operator]
+                request,
+                logger=getLogger("test.mcp.rpc.call.files"),
+                orchestrator=orchestrator,
+            )
+
+            self.assertIsInstance(response, mcp_router.StreamingResponse)
+            chat_request = orchestrate_mock.await_args.args[0]
+            self.assertIsInstance(chat_request, ChatCompletionRequest)
+            content = chat_request.messages[0].content
+            self.assertIsInstance(content, list)
+            self.assertEqual(len(content), 2)
+            self.assertIsInstance(content[0], ContentText)
+            self.assertEqual(content[0].text, "Summarize")
+            self.assertIsInstance(content[1], ContentFile)
+            self.assertEqual(
+                content[1].file,
+                {
+                    "file_data": "YWJj",
+                    "mime_type": "text/plain",
+                    "filename": "notes.txt",
+                },
+            )
+            body_iterator = cast(AsyncIterator[bytes], response.body_iterator)
+            chunks = [chunk async for chunk in body_iterator]
+            self.assertEqual(chunks, [])
 
     async def test_create_router_mcp_rpc_unsupported_method(self) -> None:
         router = mcp_router.create_router()

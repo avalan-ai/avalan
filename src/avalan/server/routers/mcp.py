@@ -12,6 +12,9 @@ from ...model.stream import (
 from ...server.entities import (
     ChatCompletionRequest,
     ChatMessage,
+    ContentFile,
+    ContentImage,
+    ContentText,
     MCPToolRequest,
 )
 from ...types import JsonObject, JsonScalar, MutableJsonValue
@@ -556,13 +559,22 @@ def _build_chat_request(
     tool_request: MCPToolRequest, orchestrator: Orchestrator
 ) -> ChatCompletionRequest:
     model_id = resolve_model_id(orchestrator)
+    content: str | list[ContentFile | ContentImage | ContentText]
+    if tool_request.files:
+        content = []
+        if tool_request.input_string and tool_request.input_string.strip():
+            content.append(
+                ContentText(type="text", text=tool_request.input_string)
+            )
+        content.extend(
+            ContentFile(type="file", file=file.as_content_file())
+            for file in tool_request.files
+        )
+    else:
+        content = tool_request.input_string or ""
     return ChatCompletionRequest(
         model=model_id,
-        messages=[
-            ChatMessage(
-                role=MessageRole.USER, content=tool_request.input_string
-            )
-        ],
+        messages=[ChatMessage(role=MessageRole.USER, content=content)],
         stream=True,
     )
 
