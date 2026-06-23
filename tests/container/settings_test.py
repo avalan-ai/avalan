@@ -359,6 +359,11 @@ class ContainerSettingsTest(TestCase):
         with self.assertRaises(AssertionError):
             ContainerImagePolicy(reference="alpine:latest")
         with self.assertRaises(AssertionError):
+            ContainerImagePolicy(
+                reference=f"ghcr.io/example/tools@sha256:{'5' * 64}",
+                digest=f"sha256:{'6' * 64}",
+            )
+        with self.assertRaises(AssertionError):
             ContainerMountDeclaration(
                 source=".",
                 target="/workspace",

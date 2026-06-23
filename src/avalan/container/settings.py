@@ -230,7 +230,17 @@ class ContainerImagePolicy:
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.reference, "reference")
-        digest = self.digest or _digest_from_reference(self.reference)
+        reference_digest = _digest_from_reference(self.reference)
+        if self.digest is not None:
+            _assert_digest(self.digest, "digest")
+        if reference_digest is not None:
+            _assert_digest(reference_digest, "reference digest")
+        assert not (
+            reference_digest is not None
+            and self.digest is not None
+            and reference_digest != self.digest
+        ), "image reference digest must match explicit digest"
+        digest = self.digest or reference_digest
         assert digest is not None, "image reference must be digest pinned"
         _assert_digest(digest, "digest")
         _assert_platform(self.platform)
