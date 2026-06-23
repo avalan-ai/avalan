@@ -1,6 +1,10 @@
 from ..agent.orchestrator import Orchestrator
 from ..agent.orchestrator.orchestrators.default import DefaultOrchestrator
 from ..agent.orchestrator.orchestrators.json import JsonOrchestrator, Property
+from ..container import (
+    ContainerSurface,
+    assert_container_syntax_supported,
+)
 from ..entities import (
     EngineUri,
     OrchestratorSettings,
@@ -350,6 +354,7 @@ class OrchestratorLoader:
         assert isinstance(
             config, dict
         ), "Agent configuration must be a mapping"
+        assert_container_syntax_supported(ContainerSurface.AGENT_TOML, config)
         assert "agent" in config, "No agent section in configuration"
         assert "engine" in config, "No engine section defined in configuration"
         assert isinstance(
@@ -395,6 +400,7 @@ class OrchestratorLoader:
             config,
             path=path,
         )
+        assert_container_syntax_supported(ContainerSurface.AGENT_TOML, config)
 
         # Validate settings
 

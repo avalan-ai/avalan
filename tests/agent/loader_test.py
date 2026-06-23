@@ -640,6 +640,46 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(tool_settings.shell.max_head_lines, 7)
             await stack.aclose()
 
+    async def test_container_toml_sections_are_rejected(self) -> None:
+        cases = (
+            ('\n[tool.container]\nbackend = "auto"\n', "tool.container"),
+            (
+                '\n[tool.shell]\nbackend = "container"\n',
+                "tool.shell.backend",
+            ),
+            (
+                '\n[tool.shell.container]\nprofile = "workspace-readonly"\n',
+                "tool.shell.container",
+            ),
+        )
+
+        for config, path in cases:
+            with self.subTest(path=path):
+                with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+                    tmp.write(_minimal_agent_toml() + config)
+                    tmp.flush()
+                    stack = AsyncExitStack()
+                    loader = OrchestratorLoader(
+                        hub=MagicMock(spec=HuggingfaceHub),
+                        logger=MagicMock(spec=Logger),
+                        participant_id=uuid4(),
+                        stack=stack,
+                    )
+
+                    with self.assertRaisesRegex(AssertionError, path):
+                        await loader.from_file(tmp.name, agent_id=uuid4())
+                    await stack.aclose()
+
+    def test_validate_agent_config_rejects_container_syntax(self) -> None:
+        with self.assertRaisesRegex(AssertionError, "tool.container"):
+            OrchestratorLoader.validate_agent_config(
+                {
+                    "agent": {"role": "assistant"},
+                    "engine": {"uri": "ai://local/model"},
+                    "tool": {"container": {"backend": "auto"}},
+                }
+            )
+
     async def test_shell_section_rejects_non_mapping(self):
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
             tmp.write(_minimal_agent_toml() + '\n[tool]\nshell = "yes"\n')

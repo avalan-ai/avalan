@@ -2061,6 +2061,55 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private.py", str(result.issues))
 
+    def test_rejects_container_syntax_until_flow_phase(self) -> None:
+        cases = (
+            (
+                """
+                [flow]
+                name = "container_runtime"
+                entrypoint = "start"
+                output_node = "start"
+
+                [runtime.container]
+                profile = "workspace-readonly"
+
+                [nodes.start]
+                type = "echo"
+                """,
+                "runtime.container",
+            ),
+            (
+                """
+                [flow]
+                name = "node_container"
+                entrypoint = "start"
+                output_node = "start"
+
+                [nodes.start]
+                type = "echo"
+
+                [nodes.start.runtime.container]
+                profile = "workspace-readonly"
+                """,
+                "nodes.start.runtime.container",
+            ),
+        )
+
+        for source, path in cases:
+            with self.subTest(path=path):
+                result = loads_flow_definition_result(source)
+
+                self.assertFalse(result.ok)
+                self.assertEqual(len(result.issues), 1)
+                self.assertEqual(
+                    (result.issues[0].code, result.issues[0].path),
+                    ("container.unsupported_syntax", path),
+                )
+                self.assertEqual(
+                    result.issues[0].category.value,
+                    "unsupported",
+                )
+
     def test_rejects_unsupported_fields_and_values(self) -> None:
         result = loads_flow_definition_result("""
             [flow]
