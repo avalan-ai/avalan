@@ -187,9 +187,7 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(parts[1].raw, b"%PDF-1.7")
         self.assertEqual(parts[1].filename, "report.pdf")
         self.assertEqual(parts[1].media_type, "application/pdf")
-        self.assertEqual(
-            parts[1].metadata["local_path"], "/workspace/report.pdf"
-        )
+        self.assertNotIn("local_path", parts[1].metadata)
 
     async def test_file_part_helpers_cover_urls_and_invalid_payloads(
         self,
@@ -230,9 +228,7 @@ class A2ACallToolTestCase(IsolatedAsyncioTestCase):
         self.assertIsNotNone(raw_part)
         self.assertEqual(raw_part.raw, b"%PDF-1.7")
         self.assertEqual(raw_part.filename, "single.pdf")
-        self.assertEqual(
-            raw_part.metadata["local_path"], "/workspace/single.pdf"
-        )
+        self.assertNotIn("local_path", raw_part.metadata)
         self.assertIsNone(a2a_module._file_part(a2a_pb2, invalid_file))
         self.assertIsNone(a2a_module._decode_file_data(None))
         self.assertIsNone(a2a_module._decode_file_data(" "))
@@ -791,7 +787,6 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
             {
                 "filename": "report.pdf",
                 "mime_type": "application/pdf",
-                "local_path": "/workspace/report.pdf",
             },
         )
 

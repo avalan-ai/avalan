@@ -7,6 +7,7 @@ from ...filesystem import remove_file as _remove_file
 from ...filesystem import remove_tree as _remove_tree
 from ...filesystem import resolve_path as _resolve_path
 from ...filesystem import stat_path as _stat_path
+from ...filesystem import write_bytes as _write_bytes
 from ...types import assert_non_negative_int as _assert_non_negative_int
 
 from collections.abc import AsyncIterator
@@ -146,6 +147,12 @@ async def remove_tree(path: str | Path) -> None:
 async def remove_file(path: str | Path) -> None:
     assert isinstance(path, str | Path), "path must be a string or path"
     await _remove_file(path)
+
+
+async def write_bytes(path: str | Path, data: bytes) -> int:
+    assert isinstance(path, str | Path), "path must be a string or path"
+    assert isinstance(data, bytes), "data must be bytes"
+    return await _write_bytes(path, data)
 
 
 async def ensure_file_size_at_most(

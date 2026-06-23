@@ -651,9 +651,6 @@ def _file_metadata(*sources: object) -> dict[str, Any]:
     media_type = _media_type(*sources)
     if media_type is not None:
         metadata["mime_type"] = media_type
-    local_path = _local_path(*sources)
-    if local_path is not None:
-        metadata["local_path"] = local_path
     return metadata
 
 
@@ -676,10 +673,6 @@ def _media_type(*sources: object) -> str | None:
         "mime_type",
         "mimeType",
     )
-
-
-def _local_path(*sources: object) -> str | None:
-    return _first_string(sources, "local_path", "localPath")
 
 
 def _is_image_media_type(media_type: str | None) -> bool:

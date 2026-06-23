@@ -305,14 +305,13 @@ def _file_part(a2a_pb2: Any, content: MessageContentFile) -> Any | None:
     file = content.file
     filename = _file_string(file, "filename", "file_name", "name")
     media_type = _file_string(file, "mime_type", "media_type", "mimeType")
-    metadata = _file_part_metadata(file)
     file_url = _file_string(file, "file_url", "url", "uri")
     if file_url is not None:
         return a2a_pb2.Part(
             url=file_url,
             filename=filename or "",
             media_type=media_type or "",
-            metadata=metadata,
+            metadata={},
         )
 
     file_data = _file_string(file, "file_data", "data", "base64")
@@ -323,16 +322,8 @@ def _file_part(a2a_pb2: Any, content: MessageContentFile) -> Any | None:
         raw=raw,
         filename=filename or "",
         media_type=media_type or "",
-        metadata=metadata,
+        metadata={},
     )
-
-
-def _file_part_metadata(file: Mapping[str, object]) -> dict[str, str]:
-    metadata: dict[str, str] = {}
-    local_path = _file_string(file, "local_path", "localPath")
-    if local_path is not None:
-        metadata["local_path"] = local_path
-    return metadata
 
 
 def _file_string(file: Mapping[str, object], *keys: str) -> str | None:

@@ -7,28 +7,35 @@ from ...entities import (
     ToolFilter,
     ToolValue,
 )
+from .filesystem import make_directory as _make_directory
+from .filesystem import write_bytes as _write_bytes
 from .settings import ShellToolSettings
 
+from base64 import b64decode
+from binascii import Error as BinasciiError
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from os.path import relpath
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
+
+_MATERIALIZED_INPUT_FILES_DIR = "avalan-input-files"
 
 
 def shell_input_file_filter(settings: ShellToolSettings) -> ToolFilter:
     """Return a shell filter resolving attached input file names."""
     assert isinstance(settings, ShellToolSettings)
 
-    def filter_call(
+    async def filter_call(
         call: ToolCall, context: ToolCallContext
     ) -> tuple[ToolCall, ToolCallContext] | None:
-        return _rewrite_shell_input_file_paths(call, context, settings)
+        return await _rewrite_shell_input_file_paths(call, context, settings)
 
     return ToolFilter(func=filter_call, namespace="shell")
 
 
-def _rewrite_shell_input_file_paths(
+async def _rewrite_shell_input_file_paths(
     call: ToolCall,
     context: ToolCallContext,
     settings: ShellToolSettings,
@@ -36,7 +43,7 @@ def _rewrite_shell_input_file_paths(
     arguments = call.arguments
     if not isinstance(arguments, dict):
         return None
-    aliases = _input_file_path_aliases(
+    aliases = await _input_file_path_aliases(
         context.input,
         settings,
         request_cwd=arguments.get("cwd"),
@@ -100,7 +107,7 @@ def _rewrite_paths_argument(
     return rewritten, True
 
 
-def _input_file_path_aliases(
+async def _input_file_path_aliases(
     input_value: Input | None,
     settings: ShellToolSettings,
     *,
@@ -117,14 +124,15 @@ def _input_file_path_aliases(
     aliases: dict[str, str] = {}
     conflicts: set[str] = set()
     for file_content in _iter_input_file_content(input_value):
-        filename = file_content.file.get("filename")
-        local_path = file_content.file.get("local_path")
-        if not isinstance(filename, str) or not filename:
+        filename = _input_file_filename(file_content)
+        if filename is None:
             continue
-        if not isinstance(local_path, str) or not local_path:
-            continue
-        source_path = Path(local_path).resolve()
-        if not _is_relative_to(source_path, workspace_root):
+        source_path = await _input_file_path(
+            file_content,
+            workspace_root,
+            filename,
+        )
+        if source_path is None:
             continue
         relative_path = _cwd_relative_file_path(effective_cwd, source_path)
         if relative_path is None:
@@ -137,6 +145,86 @@ def _input_file_path_aliases(
                 relative_path,
             )
     return aliases
+
+
+def _input_file_filename(
+    file_content: MessageContentFile,
+) -> str | None:
+    filename = file_content.file.get("filename")
+    if not isinstance(filename, str):
+        return None
+    filename = Path(filename.strip()).name
+    if not filename or filename in {".", ".."}:
+        return None
+    return filename
+
+
+async def _input_file_path(
+    file_content: MessageContentFile,
+    workspace_root: Path,
+    filename: str,
+) -> Path | None:
+    local_path = file_content.file.get("local_path")
+    if isinstance(local_path, str) and local_path:
+        source_path = Path(local_path).resolve()
+        if _is_relative_to(source_path, workspace_root):
+            return source_path
+    return await _materialize_input_file(
+        file_content,
+        workspace_root,
+        filename,
+    )
+
+
+async def _materialize_input_file(
+    file_content: MessageContentFile,
+    workspace_root: Path,
+    filename: str,
+) -> Path | None:
+    raw = _decode_input_file_data(file_content)
+    if raw is None:
+        return None
+    materialized_root = workspace_root / _MATERIALIZED_INPUT_FILES_DIR
+    try:
+        await _make_directory(materialized_root)
+    except FileExistsError:
+        pass
+    target_dir = materialized_root / uuid4().hex
+    await _make_directory(target_dir)
+    target_path = target_dir / _safe_materialized_filename(filename)
+    await _write_bytes(target_path, raw)
+    return target_path.resolve()
+
+
+def _decode_input_file_data(
+    file_content: MessageContentFile,
+) -> bytes | None:
+    value = _input_file_data(file_content)
+    if value is None:
+        return None
+    payload = value.strip()
+    if payload.startswith("data:"):
+        _prefix, separator, payload = payload.partition(",")
+        if not separator:
+            return None
+        payload = payload.strip()
+    try:
+        return b64decode(payload, validate=True)
+    except (BinasciiError, ValueError):
+        return None
+
+
+def _input_file_data(file_content: MessageContentFile) -> str | None:
+    for key in ("file_data", "data", "base64"):
+        value = file_content.file.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _safe_materialized_filename(filename: str) -> str:
+    safe = filename.lstrip(".")
+    return safe or "input"
 
 
 def _effective_shell_cwd(

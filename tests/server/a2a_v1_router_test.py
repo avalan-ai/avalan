@@ -396,7 +396,7 @@ async def test_chat_request_accepts_nested_a2a_file_payloads() -> None:
 
 
 @pytest.mark.anyio
-async def test_chat_request_preserves_a2a_file_local_path_metadata() -> None:
+async def test_chat_request_drops_a2a_file_local_path_metadata() -> None:
     a2a_pb2 = pytest.importorskip("a2a.types.a2a_pb2")
     executor = AvalanA2AAgentExecutor(FastAPI())
     context = _ExecutorContext(
@@ -420,7 +420,6 @@ async def test_chat_request_preserves_a2a_file_local_path_metadata() -> None:
     assert content[0].file == {
         "filename": "report.pdf",
         "mime_type": "application/pdf",
-        "local_path": "/workspace/report.pdf",
     }
 
 

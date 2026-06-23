@@ -1254,7 +1254,14 @@ class ToolFilterResult:
 class ToolFilter:
     func: Callable[
         [ToolCall, ToolCallContext],
-        tuple[ToolCall, ToolCallContext] | ToolFilterResult | None,
+        (
+            tuple[ToolCall, ToolCallContext]
+            | ToolFilterResult
+            | Awaitable[
+                tuple[ToolCall, ToolCallContext] | ToolFilterResult | None
+            ]
+            | None
+        ),
     ]
     namespace: str | None = None
 
@@ -1304,7 +1311,16 @@ class ToolManagerSettings:
         list[
             Callable[
                 [ToolCall, ToolCallContext],
-                tuple[ToolCall, ToolCallContext] | ToolFilterResult | None,
+                (
+                    tuple[ToolCall, ToolCallContext]
+                    | ToolFilterResult
+                    | Awaitable[
+                        tuple[ToolCall, ToolCallContext]
+                        | ToolFilterResult
+                        | None
+                    ]
+                    | None
+                ),
             ]
             | ToolFilter
         ]
