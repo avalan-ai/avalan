@@ -44,6 +44,9 @@ from .conformance import (
     resolve_container_backend as resolve_container_backend,
 )
 from .settings import (
+    CONTAINER_SETTINGS_PRECEDENCE as CONTAINER_SETTINGS_PRECEDENCE,
+)
+from .settings import (
     ContainerAuditEvent as ContainerAuditEvent,
 )
 from .settings import (
@@ -54,6 +57,9 @@ from .settings import (
 )
 from .settings import (
     ContainerAuditPolicy as ContainerAuditPolicy,
+)
+from .settings import (
+    ContainerAuthorityCaps as ContainerAuthorityCaps,
 )
 from .settings import (
     ContainerAuthorizationDecision as ContainerAuthorizationDecision,
@@ -72,6 +78,9 @@ from .settings import (
 )
 from .settings import (
     ContainerCleanupPolicy as ContainerCleanupPolicy,
+)
+from .settings import (
+    ContainerCleanupPolicyOverride as ContainerCleanupPolicyOverride,
 )
 from .settings import (
     ContainerCommandMode as ContainerCommandMode,
@@ -122,6 +131,9 @@ from .settings import (
     ContainerOutputPolicy as ContainerOutputPolicy,
 )
 from .settings import (
+    ContainerOutputPolicyOverride as ContainerOutputPolicyOverride,
+)
+from .settings import (
     ContainerPoolingMode as ContainerPoolingMode,
 )
 from .settings import (
@@ -153,6 +165,12 @@ from .settings import (
 )
 from .settings import (
     ContainerSettings as ContainerSettings,
+)
+from .settings import (
+    ContainerSettingsOverride as ContainerSettingsOverride,
+)
+from .settings import (
+    ContainerSettingsPrecedence as ContainerSettingsPrecedence,
 )
 from .settings import (
     ContainerSettingsSource as ContainerSettingsSource,

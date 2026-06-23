@@ -43,6 +43,29 @@ class ContainerTrustLevel(StrEnum):
     MODEL = "model"
 
 
+class ContainerSettingsPrecedence(StrEnum):
+    SERVER_OPERATOR = "server_operator"
+    WORKER = "worker"
+    SDK = "sdk"
+    CLI = "cli"
+    AGENT_TOML = "agent_toml"
+    FLOW_TOML = "flow_toml"
+    TASK_TOML = "task_toml"
+    REQUEST = "request"
+
+
+CONTAINER_SETTINGS_PRECEDENCE = (
+    ContainerSettingsPrecedence.SERVER_OPERATOR,
+    ContainerSettingsPrecedence.WORKER,
+    ContainerSettingsPrecedence.SDK,
+    ContainerSettingsPrecedence.CLI,
+    ContainerSettingsPrecedence.AGENT_TOML,
+    ContainerSettingsPrecedence.FLOW_TOML,
+    ContainerSettingsPrecedence.TASK_TOML,
+    ContainerSettingsPrecedence.REQUEST,
+)
+
+
 class ContainerPullPolicy(StrEnum):
     NEVER = "never"
     IF_MISSING = "if_missing"
@@ -957,14 +980,19 @@ class ContainerProfileSelection:
             source.trust_level is not ContainerTrustLevel.MODEL
         ), "model output cannot select container runtime profiles"
         _assert_fields(raw, {"profile", "required", "scope"}, "selection")
+        scope = _optional_str_or_default(
+            raw,
+            "scope",
+            ContainerExecutionScope.SHELL_CONTAINER_EXECUTION.value,
+        )
+        _assert_scope_allowed_for_source(
+            source,
+            _enum_value(scope, ContainerExecutionScope, "scope"),
+        )
         return cls(
             profile=_optional_str(raw, "profile"),
             required=_optional_bool_or_default(raw, "required", False),
-            scope=_optional_str_or_default(
-                raw,
-                "scope",
-                ContainerExecutionScope.SHELL_CONTAINER_EXECUTION.value,
-            ),
+            scope=scope,
         )
 
 
@@ -1169,6 +1197,17 @@ class ContainerEffectiveSettings:
             "allowed_profiles": list(self.allowed_profiles),
         }
 
+    def canonical_policy_input(self) -> dict[str, object]:
+        serialized = self.to_dict()
+        serialized.pop("source")
+        serialized["allowed_profiles"] = sorted(self.allowed_profiles)
+        profile = serialized["profile"]
+        if profile is not None:
+            serialized["profile"] = _canonical_profile_policy(
+                _mapping(profile, "profile")
+            )
+        return serialized
+
     @classmethod
     def from_dict(
         cls,
@@ -1205,6 +1244,351 @@ class ContainerEffectiveSettings:
                 raw.get("allowed_profiles", ()),
                 "allowed_profiles",
             ),
+        )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerOutputPolicyOverride:
+    max_stdout_bytes: int | None = None
+    max_stderr_bytes: int | None = None
+    max_artifact_bytes: int | None = None
+    allow_artifacts: bool | None = None
+
+    def __post_init__(self) -> None:
+        _assert_optional_positive_int(
+            self.max_stdout_bytes,
+            "max_stdout_bytes",
+        )
+        _assert_optional_positive_int(
+            self.max_stderr_bytes,
+            "max_stderr_bytes",
+        )
+        _assert_optional_non_negative_int(
+            self.max_artifact_bytes,
+            "max_artifact_bytes",
+        )
+        if self.allow_artifacts is not None:
+            _assert_bool(self.allow_artifacts, "allow_artifacts")
+
+    def to_dict(self) -> dict[str, int | bool | None]:
+        return {
+            "max_stdout_bytes": self.max_stdout_bytes,
+            "max_stderr_bytes": self.max_stderr_bytes,
+            "max_artifact_bytes": self.max_artifact_bytes,
+            "allow_artifacts": self.allow_artifacts,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        raw: Mapping[str, object],
+    ) -> "ContainerOutputPolicyOverride":
+        _assert_fields(
+            raw,
+            {
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+                "max_artifact_bytes",
+                "allow_artifacts",
+            },
+            "output",
+        )
+        return cls(
+            max_stdout_bytes=_optional_int(raw, "max_stdout_bytes"),
+            max_stderr_bytes=_optional_int(raw, "max_stderr_bytes"),
+            max_artifact_bytes=_optional_int(raw, "max_artifact_bytes"),
+            allow_artifacts=_optional_bool(raw, "allow_artifacts"),
+        )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerCleanupPolicyOverride:
+    mode: ContainerCleanupMode | str | None = None
+    grace_seconds: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode is not None:
+            object.__setattr__(
+                self,
+                "mode",
+                _enum_value(self.mode, ContainerCleanupMode, "mode"),
+            )
+        _assert_optional_positive_int(self.grace_seconds, "grace_seconds")
+
+    def to_dict(self) -> dict[str, int | str | None]:
+        mode = cast(ContainerCleanupMode | None, self.mode)
+        return {
+            "mode": mode.value if mode else None,
+            "grace_seconds": self.grace_seconds,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        raw: Mapping[str, object],
+    ) -> "ContainerCleanupPolicyOverride":
+        _assert_fields(raw, {"mode", "grace_seconds"}, "cleanup")
+        return cls(
+            mode=_optional_str(raw, "mode"),
+            grace_seconds=_optional_int(raw, "grace_seconds"),
+        )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerSettingsOverride:
+    source: ContainerSettingsSource
+    layer: ContainerSettingsPrecedence | str
+    profile: str | None = None
+    required: bool | None = None
+    scope: ContainerExecutionScope | str | None = None
+    backend: ContainerBackend | str | None = None
+    image: ContainerImagePolicy | None = None
+    workspace: ContainerWorkspaceMapping | None = None
+    mounts: Sequence[ContainerMountDeclaration] | None = None
+    environment: ContainerEnvironmentPolicy | None = None
+    secrets: Sequence[ContainerSecretReference] | None = None
+    network: ContainerNetworkPolicy | None = None
+    devices: ContainerDevicePolicy | None = None
+    resources: ContainerResourceLimits | None = None
+    output: ContainerOutputPolicyOverride | None = None
+    cleanup: ContainerCleanupPolicyOverride | None = None
+    audit: ContainerAuditPolicy | None = None
+    escalation: ContainerEscalationPolicy | None = None
+    command_mode: ContainerCommandMode | str | None = None
+    read_only_rootfs: bool | None = None
+    user: str | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.source, ContainerSettingsSource)
+        assert (
+            self.source.trust_level is not ContainerTrustLevel.MODEL
+        ), "model output cannot provide container settings overrides"
+        layer = _enum_value(
+            self.layer,
+            ContainerSettingsPrecedence,
+            "layer",
+        )
+        if self.profile is not None:
+            _assert_profile_name(self.profile, "profile")
+        if self.required is not None:
+            _assert_bool(self.required, "required")
+        if self.scope is not None:
+            scope = _enum_value(
+                self.scope,
+                ContainerExecutionScope,
+                "scope",
+            )
+            _assert_scope_allowed_for_source(self.source, scope)
+            object.__setattr__(self, "scope", scope)
+        if self.backend is not None:
+            object.__setattr__(
+                self,
+                "backend",
+                _enum_value(self.backend, ContainerBackend, "backend"),
+            )
+        if self.command_mode is not None:
+            object.__setattr__(
+                self,
+                "command_mode",
+                _enum_value(
+                    self.command_mode,
+                    ContainerCommandMode,
+                    "command_mode",
+                ),
+            )
+        if self.read_only_rootfs is not None:
+            _assert_bool(self.read_only_rootfs, "read_only_rootfs")
+        if self.user is not None:
+            _assert_non_empty_string(self.user, "user")
+            assert self.user != "0" and not self.user.startswith(
+                "0:"
+            ), "root user is unsafe"
+        _assert_override_types(self)
+        if not self.source.can_define_runtime_authority:
+            assert layer is _settings_precedence_for_source(
+                self.source
+            ), "untrusted override layer must match its source"
+            assert not _override_has_trusted_only_fields(
+                self
+            ), "untrusted sources can only select or narrow profiles"
+        object.__setattr__(self, "layer", layer)
+        if self.mounts is not None:
+            object.__setattr__(self, "mounts", tuple(self.mounts))
+        if self.secrets is not None:
+            object.__setattr__(self, "secrets", tuple(self.secrets))
+
+    def to_dict(self) -> dict[str, object]:
+        layer = cast(ContainerSettingsPrecedence, self.layer)
+        backend = cast(ContainerBackend | None, self.backend)
+        scope = cast(ContainerExecutionScope | None, self.scope)
+        command_mode = cast(ContainerCommandMode | None, self.command_mode)
+        return {
+            "layer": layer.value,
+            "profile": self.profile,
+            "required": self.required,
+            "scope": scope.value if scope else None,
+            "backend": backend.value if backend else None,
+            "image": self.image.to_dict() if self.image else None,
+            "workspace": self.workspace.to_dict() if self.workspace else None,
+            "mounts": (
+                None
+                if self.mounts is None
+                else [mount.to_dict() for mount in self.mounts]
+            ),
+            "environment": (
+                self.environment.to_dict() if self.environment else None
+            ),
+            "secrets": (
+                None
+                if self.secrets is None
+                else [secret.to_dict() for secret in self.secrets]
+            ),
+            "network": self.network.to_dict() if self.network else None,
+            "devices": self.devices.to_dict() if self.devices else None,
+            "resources": self.resources.to_dict() if self.resources else None,
+            "output": self.output.to_dict() if self.output else None,
+            "cleanup": self.cleanup.to_dict() if self.cleanup else None,
+            "audit": self.audit.to_dict() if self.audit else None,
+            "escalation": (
+                self.escalation.to_dict() if self.escalation else None
+            ),
+            "command_mode": command_mode.value if command_mode else None,
+            "read_only_rootfs": self.read_only_rootfs,
+            "user": self.user,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        raw: Mapping[str, object],
+        *,
+        source: ContainerSettingsSource,
+        layer: ContainerSettingsPrecedence | str | None = None,
+    ) -> "ContainerSettingsOverride":
+        assert isinstance(source, ContainerSettingsSource)
+        _assert_fields(raw, _OVERRIDE_FIELDS, "override")
+        inferred_layer = (
+            layer
+            if layer is not None
+            else _settings_precedence_for_source(source)
+        )
+        raw_layer = _optional_str(raw, "layer")
+        if raw_layer is not None:
+            assert _enum_value(
+                raw_layer,
+                ContainerSettingsPrecedence,
+                "layer",
+            ) is _enum_value(
+                inferred_layer,
+                ContainerSettingsPrecedence,
+                "layer",
+            ), "override layer must be provided by the trusted loader"
+        return cls(
+            source=source,
+            layer=inferred_layer,
+            profile=_optional_str(raw, "profile"),
+            required=_optional_bool(raw, "required"),
+            scope=_optional_str(raw, "scope"),
+            backend=_optional_str(raw, "backend"),
+            image=_optional_image(raw),
+            workspace=_optional_workspace(raw),
+            mounts=_optional_mounts(raw),
+            environment=_optional_environment(raw),
+            secrets=_optional_secrets(raw),
+            network=_optional_network(raw),
+            devices=_optional_devices(raw),
+            resources=_optional_resources(raw),
+            output=_optional_output_override(raw),
+            cleanup=_optional_cleanup_override(raw),
+            audit=_optional_audit(raw),
+            escalation=_optional_escalation(raw),
+            command_mode=_optional_str(raw, "command_mode"),
+            read_only_rootfs=_optional_bool(raw, "read_only_rootfs"),
+            user=_optional_str(raw, "user"),
+        )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerAuthorityCaps:
+    settings: ContainerSettings
+    layer: ContainerSettingsPrecedence | str = (
+        ContainerSettingsPrecedence.SERVER_OPERATOR
+    )
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.settings, ContainerSettings)
+        object.__setattr__(
+            self,
+            "layer",
+            _enum_value(
+                self.layer,
+                ContainerSettingsPrecedence,
+                "layer",
+            ),
+        )
+
+    def merge(
+        self,
+        overrides: Sequence[ContainerSettingsOverride] = (),
+    ) -> ContainerEffectiveSettings:
+        ordered = _ordered_overrides(overrides)
+        backend = cast(ContainerBackend, self.settings.backend)
+        profile_name = self.settings.default_profile
+        required = False
+        scope = ContainerExecutionScope.SHELL_CONTAINER_EXECUTION
+        for override in ordered:
+            if override.backend is not None:
+                backend = _narrow_backend(backend, override)
+            if override.profile is not None:
+                assert (
+                    override.profile in self.settings.allowed_profiles
+                ), "selected profile must be allowed"
+                if not override.source.can_define_runtime_authority:
+                    assert (
+                        profile_name is not None
+                    ), "untrusted profile selection requires a trusted cap"
+                    _assert_profile_no_wider(
+                        self.settings.profiles[profile_name],
+                        self.settings.profiles[override.profile],
+                    )
+                profile_name = override.profile
+            if override.required is not None:
+                required = required or override.required
+            if override.scope is not None:
+                scope = cast(ContainerExecutionScope, override.scope)
+        if backend is ContainerBackend.NONE:
+            assert (
+                profile_name is None
+            ), "disabled container settings cannot select a profile"
+            return ContainerEffectiveSettings(
+                backend=backend,
+                required=required,
+                scope=scope,
+                source=self.settings.source,
+                policy_version=self.settings.policy_version,
+                profile_registry_id=self.settings.profile_registry_id,
+            )
+        assert profile_name is not None, "container profile is required"
+        assert (
+            profile_name in self.settings.allowed_profiles
+        ), "selected profile must be allowed"
+        profile = self.settings.profiles[profile_name]
+        for override in ordered:
+            profile = _narrow_profile(profile, override)
+        return ContainerEffectiveSettings(
+            backend=backend,
+            required=required,
+            scope=scope,
+            source=self.settings.source,
+            policy_version=self.settings.policy_version,
+            profile_registry_id=self.settings.profile_registry_id,
+            profile_name=profile.name,
+            profile=profile,
+            allowed_profiles=self.settings.allowed_profiles,
         )
 
 
@@ -1607,6 +1991,767 @@ _EFFECTIVE_SETTINGS_FIELDS = {
     "profile",
     "allowed_profiles",
 }
+_OVERRIDE_FIELDS = {
+    "layer",
+    "profile",
+    "required",
+    "scope",
+    "backend",
+    "image",
+    "workspace",
+    "mounts",
+    "environment",
+    "secrets",
+    "network",
+    "devices",
+    "resources",
+    "output",
+    "cleanup",
+    "audit",
+    "escalation",
+    "command_mode",
+    "read_only_rootfs",
+    "user",
+}
+_TRUSTED_ONLY_OVERRIDE_FIELDS = (
+    "backend",
+    "image",
+    "workspace",
+    "command_mode",
+    "read_only_rootfs",
+    "user",
+)
+_PRECEDENCE_RANK = {
+    layer: index for index, layer in enumerate(CONTAINER_SETTINGS_PRECEDENCE)
+}
+_ESCALATION_RANK = {
+    ContainerEscalationMode.DENY: 0,
+    ContainerEscalationMode.REQUIRE_REVIEW: 1,
+    ContainerEscalationMode.PREAUTHORIZED: 2,
+}
+
+
+def _canonical_profile_policy(
+    profile: Mapping[str, object],
+) -> dict[str, object]:
+    canonical = dict(profile)
+    canonical["mounts"] = sorted(
+        (
+            dict(_mapping(mount, "mount"))
+            for mount in _sequence(canonical.get("mounts", ()), "mounts")
+        ),
+        key=lambda mount: (
+            mount.get("target"),
+            mount.get("source"),
+            mount.get("mount_type"),
+            mount.get("access"),
+        ),
+    )
+    canonical["secrets"] = sorted(
+        (
+            dict(_mapping(secret, "secret"))
+            for secret in _sequence(canonical.get("secrets", ()), "secrets")
+        ),
+        key=lambda secret: (
+            secret.get("name"),
+            secret.get("env_name"),
+            secret.get("mount_path"),
+        ),
+    )
+    canonical["environment"] = _canonical_environment_policy(
+        _mapping(canonical.get("environment", {}), "environment")
+    )
+    canonical["network"] = _canonical_network_policy(
+        _mapping(canonical.get("network", {}), "network")
+    )
+    canonical["devices"] = _canonical_device_policy(
+        _mapping(canonical.get("devices", {}), "devices")
+    )
+    return canonical
+
+
+def _canonical_environment_policy(
+    environment: Mapping[str, object],
+) -> dict[str, object]:
+    canonical = dict(environment)
+    canonical["variables"] = dict(
+        sorted(
+            _string_mapping(
+                canonical.get("variables", {}),
+                "variables",
+            ).items()
+        )
+    )
+    canonical["allowlist"] = sorted(
+        _string_tuple(canonical.get("allowlist", ()), "allowlist")
+    )
+    return canonical
+
+
+def _canonical_network_policy(
+    network: Mapping[str, object],
+) -> dict[str, object]:
+    canonical = dict(network)
+    canonical["egress_allowlist"] = sorted(
+        _string_tuple(
+            canonical.get("egress_allowlist", ()),
+            "egress_allowlist",
+        )
+    )
+    return canonical
+
+
+def _canonical_device_policy(
+    devices: Mapping[str, object],
+) -> dict[str, object]:
+    canonical = dict(devices)
+    canonical["devices"] = sorted(
+        _string_tuple(canonical.get("devices", ()), "devices")
+    )
+    return canonical
+
+
+def _settings_precedence_for_source(
+    source: ContainerSettingsSource,
+) -> ContainerSettingsPrecedence:
+    surface = cast(ContainerSurface, source.surface)
+    trust_level = cast(ContainerTrustLevel, source.trust_level)
+    if trust_level is ContainerTrustLevel.UNTRUSTED_REQUEST:
+        return ContainerSettingsPrecedence.REQUEST
+    if surface is ContainerSurface.SDK:
+        return ContainerSettingsPrecedence.SDK
+    if surface is ContainerSurface.CLI:
+        return ContainerSettingsPrecedence.CLI
+    if surface is ContainerSurface.AGENT_TOML:
+        return ContainerSettingsPrecedence.AGENT_TOML
+    if surface is ContainerSurface.FLOW_TOML:
+        return ContainerSettingsPrecedence.FLOW_TOML
+    if surface is ContainerSurface.TASK_TOML:
+        return ContainerSettingsPrecedence.TASK_TOML
+    return ContainerSettingsPrecedence.SERVER_OPERATOR
+
+
+def _assert_scope_allowed_for_source(
+    source: ContainerSettingsSource,
+    scope: ContainerExecutionScope,
+) -> None:
+    if source.can_define_runtime_authority:
+        return
+    assert (
+        scope is ContainerExecutionScope.SHELL_CONTAINER_EXECUTION
+    ), "untrusted sources cannot raise container execution scope"
+
+
+def _ordered_overrides(
+    overrides: Sequence[ContainerSettingsOverride],
+) -> tuple[ContainerSettingsOverride, ...]:
+    for override in overrides:
+        assert isinstance(override, ContainerSettingsOverride)
+    return tuple(
+        sorted(
+            overrides,
+            key=lambda override: _PRECEDENCE_RANK[
+                cast(ContainerSettingsPrecedence, override.layer)
+            ],
+        )
+    )
+
+
+def _narrow_backend(
+    backend: ContainerBackend,
+    override: ContainerSettingsOverride,
+) -> ContainerBackend:
+    requested = cast(ContainerBackend, override.backend)
+    assert (
+        override.source.can_define_runtime_authority
+    ), "backend selection requires trusted authority"
+    assert requested in {
+        backend,
+        ContainerBackend.NONE,
+    }, "backend override cannot widen authority caps"
+    return requested
+
+
+def _assert_profile_no_wider(
+    caps: ContainerProfile,
+    requested: ContainerProfile,
+) -> None:
+    _narrow_image(caps.image, requested.image)
+    _narrow_workspace(caps.workspace, requested.workspace)
+    _narrow_mounts(caps.mounts, requested.mounts)
+    _narrow_environment(caps.environment, requested.environment)
+    _narrow_secrets(caps.secrets, requested.secrets)
+    _narrow_network(caps.network, requested.network)
+    _narrow_devices(caps.devices, requested.devices)
+    _assert_resources_no_wider(caps.resources, requested.resources)
+    _narrow_output(
+        caps.output,
+        ContainerOutputPolicyOverride(
+            max_stdout_bytes=requested.output.max_stdout_bytes,
+            max_stderr_bytes=requested.output.max_stderr_bytes,
+            max_artifact_bytes=requested.output.max_artifact_bytes,
+            allow_artifacts=requested.output.allow_artifacts,
+        ),
+    )
+    _narrow_cleanup(
+        caps.cleanup,
+        ContainerCleanupPolicyOverride(
+            mode=requested.cleanup.mode,
+            grace_seconds=requested.cleanup.grace_seconds,
+        ),
+    )
+    _narrow_audit(caps.audit, requested.audit)
+    _narrow_escalation(caps.escalation, requested.escalation)
+    _narrow_command_mode(caps.command_mode, requested.command_mode)
+    _narrow_read_only_rootfs(caps.read_only_rootfs, requested.read_only_rootfs)
+    _narrow_user(caps.user, requested.user)
+    assert (
+        requested.pooling.mode is caps.pooling.mode
+    ), "pooling policy cannot widen"
+
+
+def _narrow_profile(
+    profile: ContainerProfile,
+    override: ContainerSettingsOverride,
+) -> ContainerProfile:
+    image = _narrow_image(profile.image, override.image)
+    workspace = _narrow_workspace(profile.workspace, override.workspace)
+    mounts = _narrow_mounts(profile.mounts, override.mounts)
+    environment = _narrow_environment(
+        profile.environment,
+        override.environment,
+    )
+    secrets = _narrow_secrets(profile.secrets, override.secrets)
+    network = _narrow_network(profile.network, override.network)
+    devices = _narrow_devices(profile.devices, override.devices)
+    resources = _narrow_resources(profile.resources, override.resources)
+    output = _narrow_output(profile.output, override.output)
+    cleanup = _narrow_cleanup(profile.cleanup, override.cleanup)
+    audit = _narrow_audit(profile.audit, override.audit)
+    escalation = _narrow_escalation(
+        profile.escalation,
+        override.escalation,
+    )
+    command_mode = _narrow_command_mode(
+        profile.command_mode,
+        override.command_mode,
+    )
+    read_only_rootfs = _narrow_read_only_rootfs(
+        profile.read_only_rootfs,
+        override.read_only_rootfs,
+    )
+    user = _narrow_user(profile.user, override.user)
+    return ContainerProfile(
+        name=profile.name,
+        image=image,
+        workspace=workspace,
+        mounts=mounts,
+        environment=environment,
+        secrets=secrets,
+        network=network,
+        devices=devices,
+        resources=resources,
+        output=output,
+        cleanup=cleanup,
+        pooling=profile.pooling,
+        audit=audit,
+        escalation=escalation,
+        command_mode=command_mode,
+        read_only_rootfs=read_only_rootfs,
+        user=user,
+    )
+
+
+def _narrow_image(
+    caps: ContainerImagePolicy,
+    requested: ContainerImagePolicy | None,
+) -> ContainerImagePolicy:
+    if requested is None:
+        return caps
+    assert (
+        requested.to_dict() == caps.to_dict()
+    ), "image override cannot change trusted image policy"
+    return caps
+
+
+def _narrow_workspace(
+    caps: ContainerWorkspaceMapping,
+    requested: ContainerWorkspaceMapping | None,
+) -> ContainerWorkspaceMapping:
+    if requested is None:
+        return caps
+    assert (
+        requested.to_dict() == caps.to_dict()
+    ), "workspace override cannot change trusted path mapping"
+    return caps
+
+
+def _narrow_mounts(
+    caps: Sequence[ContainerMountDeclaration],
+    requested: Sequence[ContainerMountDeclaration] | None,
+) -> tuple[ContainerMountDeclaration, ...]:
+    if requested is None:
+        return tuple(caps)
+    caps_by_target = _mounts_by_target(caps)
+    narrowed: list[ContainerMountDeclaration] = []
+    seen: set[str] = set()
+    for mount in requested:
+        assert mount.target not in seen, "mount overrides must be unique"
+        seen.add(mount.target)
+        assert mount.target in caps_by_target, "mount override must be allowed"
+        narrowed.append(_narrow_mount(caps_by_target[mount.target], mount))
+    return tuple(narrowed)
+
+
+def _narrow_mount(
+    caps: ContainerMountDeclaration,
+    requested: ContainerMountDeclaration,
+) -> ContainerMountDeclaration:
+    caps_type = cast(ContainerMountType, caps.mount_type)
+    requested_type = cast(ContainerMountType, requested.mount_type)
+    caps_access = cast(ContainerMountAccess, caps.access)
+    requested_access = cast(ContainerMountAccess, requested.access)
+    assert requested_type is caps_type, "mount type cannot change"
+    assert requested.source == caps.source, "mount source cannot change"
+    assert not (
+        caps_access is ContainerMountAccess.READ
+        and requested_access is ContainerMountAccess.WRITE
+    ), "mount access cannot widen"
+    return requested
+
+
+def _mounts_by_target(
+    mounts: Sequence[ContainerMountDeclaration],
+) -> dict[str, ContainerMountDeclaration]:
+    result: dict[str, ContainerMountDeclaration] = {}
+    for mount in mounts:
+        assert mount.target not in result, "mount caps must be unique"
+        result[mount.target] = mount
+    return result
+
+
+def _narrow_environment(
+    caps: ContainerEnvironmentPolicy,
+    requested: ContainerEnvironmentPolicy | None,
+) -> ContainerEnvironmentPolicy:
+    if requested is None:
+        return caps
+    for name, value in requested.variables.items():
+        assert name in caps.variables, "environment variable must be allowed"
+        assert (
+            value == caps.variables[name]
+        ), "environment variable value cannot change"
+    for name in requested.allowlist:
+        assert name in caps.allowlist, "environment allowlist cannot widen"
+    return requested
+
+
+def _narrow_secrets(
+    caps: Sequence[ContainerSecretReference],
+    requested: Sequence[ContainerSecretReference] | None,
+) -> tuple[ContainerSecretReference, ...]:
+    if requested is None:
+        return tuple(caps)
+    caps_by_name = _secrets_by_name(caps)
+    narrowed: list[ContainerSecretReference] = []
+    seen: set[str] = set()
+    for secret in requested:
+        assert secret.name not in seen, "secret overrides must be unique"
+        seen.add(secret.name)
+        assert secret.name in caps_by_name, "secret override must be allowed"
+        assert (
+            secret.to_dict() == caps_by_name[secret.name].to_dict()
+        ), "secret delivery cannot change"
+        narrowed.append(secret)
+    return tuple(narrowed)
+
+
+def _secrets_by_name(
+    secrets: Sequence[ContainerSecretReference],
+) -> dict[str, ContainerSecretReference]:
+    result: dict[str, ContainerSecretReference] = {}
+    for secret in secrets:
+        assert secret.name not in result, "secret caps must be unique"
+        result[secret.name] = secret
+    return result
+
+
+def _narrow_network(
+    caps: ContainerNetworkPolicy,
+    requested: ContainerNetworkPolicy | None,
+) -> ContainerNetworkPolicy:
+    if requested is None:
+        return caps
+    caps_mode = cast(ContainerNetworkMode, caps.mode)
+    requested_mode = cast(ContainerNetworkMode, requested.mode)
+    if requested_mode is ContainerNetworkMode.NONE:
+        return requested
+    if caps_mode is ContainerNetworkMode.NONE:
+        assert False, "network override cannot enable network"
+    if requested_mode is ContainerNetworkMode.LOOPBACK:
+        assert requested_mode is caps_mode or caps_mode is (
+            ContainerNetworkMode.ALLOWLIST
+        ), "network mode cannot widen"
+        return requested
+    assert (
+        caps_mode is ContainerNetworkMode.ALLOWLIST
+    ), "network allowlist cannot widen mode"
+    for host in requested.egress_allowlist:
+        assert host in caps.egress_allowlist, "network allowlist cannot widen"
+    return requested
+
+
+def _narrow_devices(
+    caps: ContainerDevicePolicy,
+    requested: ContainerDevicePolicy | None,
+) -> ContainerDevicePolicy:
+    if requested is None:
+        return caps
+    caps_devices = set(cast(tuple[ContainerDeviceClass, ...], caps.devices))
+    for device in requested.devices:
+        assert device in caps_devices, "device override must be allowed"
+    return requested
+
+
+def _narrow_resources(
+    caps: ContainerResourceLimits,
+    requested: ContainerResourceLimits | None,
+) -> ContainerResourceLimits:
+    if requested is None:
+        return caps
+    return ContainerResourceLimits(
+        cpu_count=_narrow_optional_limit(caps.cpu_count, requested.cpu_count),
+        memory_bytes=_narrow_optional_limit(
+            caps.memory_bytes,
+            requested.memory_bytes,
+        ),
+        pids=_narrow_optional_limit(caps.pids, requested.pids),
+        timeout_seconds=_narrow_optional_limit(
+            caps.timeout_seconds,
+            requested.timeout_seconds,
+        ),
+    )
+
+
+def _assert_resources_no_wider(
+    caps: ContainerResourceLimits,
+    requested: ContainerResourceLimits,
+) -> None:
+    _assert_optional_limit_no_wider(caps.cpu_count, requested.cpu_count)
+    _assert_optional_limit_no_wider(
+        caps.memory_bytes,
+        requested.memory_bytes,
+    )
+    _assert_optional_limit_no_wider(caps.pids, requested.pids)
+    _assert_optional_limit_no_wider(
+        caps.timeout_seconds,
+        requested.timeout_seconds,
+    )
+
+
+def _narrow_optional_limit(
+    caps: int | None,
+    requested: int | None,
+) -> int | None:
+    if requested is None:
+        return caps
+    assert caps is None or requested <= caps, "resource limit cannot widen"
+    return requested
+
+
+def _assert_optional_limit_no_wider(
+    caps: int | None,
+    requested: int | None,
+) -> None:
+    if caps is None:
+        return
+    assert (
+        requested is not None and requested <= caps
+    ), "resource limit cannot widen"
+
+
+def _narrow_output(
+    caps: ContainerOutputPolicy,
+    requested: ContainerOutputPolicyOverride | None,
+) -> ContainerOutputPolicy:
+    if requested is None:
+        return caps
+    max_stdout_bytes = _narrow_required_limit(
+        caps.max_stdout_bytes,
+        requested.max_stdout_bytes,
+        "max_stdout_bytes",
+    )
+    max_stderr_bytes = _narrow_required_limit(
+        caps.max_stderr_bytes,
+        requested.max_stderr_bytes,
+        "max_stderr_bytes",
+    )
+    allow_artifacts = (
+        caps.allow_artifacts
+        if requested.allow_artifacts is None
+        else requested.allow_artifacts
+    )
+    assert (
+        not allow_artifacts or caps.allow_artifacts
+    ), "artifact output cannot be enabled by override"
+    max_artifact_bytes = _narrow_artifact_limit(caps, requested)
+    if not allow_artifacts:
+        max_artifact_bytes = 0
+    return ContainerOutputPolicy(
+        max_stdout_bytes=max_stdout_bytes,
+        max_stderr_bytes=max_stderr_bytes,
+        max_artifact_bytes=max_artifact_bytes,
+        allow_artifacts=allow_artifacts,
+    )
+
+
+def _narrow_required_limit(
+    caps: int,
+    requested: int | None,
+    field_name: str,
+) -> int:
+    if requested is None:
+        return caps
+    assert requested <= caps, f"{field_name} cannot widen"
+    return requested
+
+
+def _narrow_artifact_limit(
+    caps: ContainerOutputPolicy,
+    requested: ContainerOutputPolicyOverride,
+) -> int:
+    if requested.max_artifact_bytes is None:
+        return caps.max_artifact_bytes
+    assert (
+        requested.max_artifact_bytes <= caps.max_artifact_bytes
+    ), "max_artifact_bytes cannot widen"
+    return requested.max_artifact_bytes
+
+
+def _narrow_cleanup(
+    caps: ContainerCleanupPolicy,
+    requested: ContainerCleanupPolicyOverride | None,
+) -> ContainerCleanupPolicy:
+    if requested is None:
+        return caps
+    caps_mode = cast(ContainerCleanupMode, caps.mode)
+    requested_mode = (
+        caps_mode
+        if requested.mode is None
+        else cast(ContainerCleanupMode, requested.mode)
+    )
+    assert requested_mode is caps_mode, "cleanup mode cannot change"
+    grace_seconds = _narrow_required_limit(
+        caps.grace_seconds,
+        requested.grace_seconds,
+        "grace_seconds",
+    )
+    return ContainerCleanupPolicy(
+        mode=requested_mode,
+        grace_seconds=grace_seconds,
+    )
+
+
+def _narrow_audit(
+    caps: ContainerAuditPolicy,
+    requested: ContainerAuditPolicy | None,
+) -> ContainerAuditPolicy:
+    if requested is None:
+        return caps
+    assert requested.mode is caps.mode, "audit policy cannot be reduced"
+    return requested
+
+
+def _narrow_escalation(
+    caps: ContainerEscalationPolicy,
+    requested: ContainerEscalationPolicy | None,
+) -> ContainerEscalationPolicy:
+    if requested is None:
+        return caps
+    caps_mode = cast(ContainerEscalationMode, caps.mode)
+    requested_mode = cast(ContainerEscalationMode, requested.mode)
+    assert (
+        _ESCALATION_RANK[requested_mode] <= _ESCALATION_RANK[caps_mode]
+    ), "escalation policy cannot widen"
+    return requested
+
+
+def _narrow_command_mode(
+    caps: ContainerCommandMode | str,
+    requested: ContainerCommandMode | str | None,
+) -> ContainerCommandMode:
+    caps_mode = cast(ContainerCommandMode, caps)
+    if requested is None:
+        return caps_mode
+    requested_mode = cast(ContainerCommandMode, requested)
+    assert requested_mode is caps_mode, "command mode cannot change"
+    return caps_mode
+
+
+def _narrow_read_only_rootfs(caps: bool, requested: bool | None) -> bool:
+    if requested is None:
+        return caps
+    assert requested and caps, "root filesystem cannot be made writable"
+    return caps
+
+
+def _narrow_user(caps: str, requested: str | None) -> str:
+    if requested is None:
+        return caps
+    assert requested == caps, "user cannot change"
+    return caps
+
+
+def _assert_override_types(override: ContainerSettingsOverride) -> None:
+    if override.image is not None:
+        assert isinstance(override.image, ContainerImagePolicy)
+    if override.workspace is not None:
+        assert isinstance(override.workspace, ContainerWorkspaceMapping)
+    if override.mounts is not None:
+        for mount in override.mounts:
+            assert isinstance(mount, ContainerMountDeclaration)
+    if override.environment is not None:
+        assert isinstance(override.environment, ContainerEnvironmentPolicy)
+    if override.secrets is not None:
+        for secret in override.secrets:
+            assert isinstance(secret, ContainerSecretReference)
+    if override.network is not None:
+        assert isinstance(override.network, ContainerNetworkPolicy)
+    if override.devices is not None:
+        assert isinstance(override.devices, ContainerDevicePolicy)
+    if override.resources is not None:
+        assert isinstance(override.resources, ContainerResourceLimits)
+    if override.output is not None:
+        assert isinstance(override.output, ContainerOutputPolicyOverride)
+    if override.cleanup is not None:
+        assert isinstance(override.cleanup, ContainerCleanupPolicyOverride)
+    if override.audit is not None:
+        assert isinstance(override.audit, ContainerAuditPolicy)
+    if override.escalation is not None:
+        assert isinstance(override.escalation, ContainerEscalationPolicy)
+
+
+def _override_has_trusted_only_fields(
+    override: ContainerSettingsOverride,
+) -> bool:
+    return any(
+        getattr(override, field_name) is not None
+        for field_name in _TRUSTED_ONLY_OVERRIDE_FIELDS
+    )
+
+
+def _optional_image(
+    raw: Mapping[str, object],
+) -> ContainerImagePolicy | None:
+    value = raw.get("image")
+    if value is None:
+        return None
+    return ContainerImagePolicy.from_dict(_mapping(value, "image"))
+
+
+def _optional_workspace(
+    raw: Mapping[str, object],
+) -> ContainerWorkspaceMapping | None:
+    value = raw.get("workspace")
+    if value is None:
+        return None
+    return ContainerWorkspaceMapping.from_dict(_mapping(value, "workspace"))
+
+
+def _optional_mounts(
+    raw: Mapping[str, object],
+) -> tuple[ContainerMountDeclaration, ...] | None:
+    value = raw.get("mounts")
+    if value is None:
+        return None
+    return tuple(
+        ContainerMountDeclaration.from_dict(_mapping(item, "mount"))
+        for item in _sequence(value, "mounts")
+    )
+
+
+def _optional_environment(
+    raw: Mapping[str, object],
+) -> ContainerEnvironmentPolicy | None:
+    value = raw.get("environment")
+    if value is None:
+        return None
+    return ContainerEnvironmentPolicy.from_dict(_mapping(value, "environment"))
+
+
+def _optional_secrets(
+    raw: Mapping[str, object],
+) -> tuple[ContainerSecretReference, ...] | None:
+    value = raw.get("secrets")
+    if value is None:
+        return None
+    return tuple(
+        ContainerSecretReference.from_dict(_mapping(item, "secret"))
+        for item in _sequence(value, "secrets")
+    )
+
+
+def _optional_network(
+    raw: Mapping[str, object],
+) -> ContainerNetworkPolicy | None:
+    value = raw.get("network")
+    if value is None:
+        return None
+    return ContainerNetworkPolicy.from_dict(_mapping(value, "network"))
+
+
+def _optional_devices(
+    raw: Mapping[str, object],
+) -> ContainerDevicePolicy | None:
+    value = raw.get("devices")
+    if value is None:
+        return None
+    return ContainerDevicePolicy.from_dict(_mapping(value, "devices"))
+
+
+def _optional_resources(
+    raw: Mapping[str, object],
+) -> ContainerResourceLimits | None:
+    value = raw.get("resources")
+    if value is None:
+        return None
+    return ContainerResourceLimits.from_dict(_mapping(value, "resources"))
+
+
+def _optional_output_override(
+    raw: Mapping[str, object],
+) -> ContainerOutputPolicyOverride | None:
+    value = raw.get("output")
+    if value is None:
+        return None
+    return ContainerOutputPolicyOverride.from_dict(_mapping(value, "output"))
+
+
+def _optional_cleanup_override(
+    raw: Mapping[str, object],
+) -> ContainerCleanupPolicyOverride | None:
+    value = raw.get("cleanup")
+    if value is None:
+        return None
+    return ContainerCleanupPolicyOverride.from_dict(_mapping(value, "cleanup"))
+
+
+def _optional_audit(
+    raw: Mapping[str, object],
+) -> ContainerAuditPolicy | None:
+    value = raw.get("audit")
+    if value is None:
+        return None
+    return ContainerAuditPolicy.from_dict(_mapping(value, "audit"))
+
+
+def _optional_escalation(
+    raw: Mapping[str, object],
+) -> ContainerEscalationPolicy | None:
+    value = raw.get("escalation")
+    if value is None:
+        return None
+    return ContainerEscalationPolicy.from_dict(_mapping(value, "escalation"))
 
 
 def _assert_fields(
@@ -1695,6 +2840,16 @@ def _optional_int_or_default(
     if value is None:
         return default
     return value
+
+
+def _assert_optional_non_negative_int(
+    value: object | None,
+    field_name: str,
+) -> None:
+    if value is None:
+        return
+    assert isinstance(value, int) and not isinstance(value, bool)
+    assert value >= 0, f"{field_name} must not be negative"
 
 
 def _mapping(value: object, field_name: str) -> Mapping[str, object]:
