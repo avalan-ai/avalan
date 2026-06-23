@@ -1,16 +1,68 @@
 # Installation
 
-## MacOS
+Avalan supports Python 3.11 through 3.14.
+
+## Installation options
+
+Pip extras are additive, so install the smallest capability set you need.
+Homebrew and Ubuntu packages install the same dependency profile as
+`avalan[agent,server,tool,vendors]`.
+
+```bash
+python3 -m pip install -U avalan
+python3 -m pip install -U "avalan[agent,server,tool,vendors]"
+python3 -m pip install -U "avalan[agent,task,task-pdf-images,vendors]"
+```
+
+The first command is the lean SDK and CLI install. The second is the common
+agent, serving, tool, and hosted-vendor profile used by the main examples. The
+third adds task contracts and PDF-to-image conversion for flow-backed task
+examples.
+
+Add hardware or backend extras when needed:
+
+- `mlx` or `apple` - Apple Silicon acceleration via MLX / MLX-LM.
+- `nvidia` - Linux and NVIDIA quantization support.
+- `vllm` - reserved for the vLLM backend.
+- `quantization` - 4-bit and 8-bit model loading.
+- `ds4` - native DS4 inference for DS4-supported DeepSeek V4 Flash GGUFs
+  through [pyds4](https://github.com/avalan-ai/pyds4). Production targets are
+  macOS arm64 with Metal and Linux with CUDA; CPU mode is only a
+  debug/reference path.
+
+Task-specific extras include `task` for structured validation,
+`task-pdf-images` for PDF rasterization, `task-documents` for document
+conversion, `task-pgsql` for durable stores and workers, `task-prometheus` for
+metrics, and `task-otel` for traces.
+
+> [!NOTE]
+> The `vllm` extra is intentionally empty while vLLM depends on vulnerable
+> `diskcache` releases without an upstream fix. Install vLLM separately if you
+> accept that dependency. `markitdown` document conversion in the `memory`
+> extra is currently limited to Python 3.11 through 3.13 by upstream
+> dependencies. The pinned `torchvision` release used by the `vision` extra
+> also excludes Python 3.14.1, and the `memory` extra omits `psycopg-binary`
+> on Python 3.14 until compatible wheels are published.
+
+### macOS
 
 Install avalan using [Homebrew](https://brew.sh):
 
 ```bash
-brew install avalan
+brew install avalan-ai/avalan/avalan
 ```
 
-## Ubuntu
+### Ubuntu
 
-Update package index and install python prerequisites:
+Install avalan from the PPA:
+
+```bash
+sudo add-apt-repository -y ppa:avalan-ai/avalan
+sudo apt update
+sudo apt install -y avalan
+```
+
+To use Poetry in a local Ubuntu test project, install Python prerequisites:
 
 ```bash
 sudo apt update -y
@@ -34,10 +86,14 @@ poetry init --no-interaction --python=">=3.11,<3.15"
 poetry add "avalan[all]" --no-cache
 ```
 
-## DS4 native backend
+### DS4 native backend
 
-Avalan's `ds4` extra installs the `pyds4` bridge used by the native DS4
-backend:
+DS4 is available as a local text-generation backend for DS4-supported
+DeepSeek V4 Flash GGUF files via [pyds4](https://github.com/avalan-ai/pyds4).
+It is not a generic GGUF backend. DS4 opens the GGUF directly from the
+filesystem and does not require `HF_TOKEN`.
+
+Avalan's `ds4` extra installs the `pyds4` bridge used by the native backend:
 
 ```bash
 python3 -m pip install -U "avalan[ds4]"
@@ -66,6 +122,63 @@ python3 -m pip install -U "avalan[ds4]"
 
 Use `PYDS4_BACKEND=cuda` for Linux CUDA builds. Local CPU builds are possible
 with `PYDS4_BACKEND=cpu`, but keep them limited to diagnostics.
+
+Use `--ds4-native-backend cuda` on Linux CUDA builds. CPU mode is only a
+debug/reference path. Use `ai://local//absolute/path.gguf` for absolute paths,
+or a normal `ai://local/relative/path.gguf` URI for paths relative to the
+current directory.
+
+```bash
+export DS4_MODEL=/path/to/ds4flash.gguf
+
+printf '%s\n' 'Write a short greeting.' \
+    | avalan model run "ai://local/${DS4_MODEL}?backend=ds4" \
+        --ds4-ctx 4096 \
+        --ds4-native-backend metal \
+        --max-new-tokens 64 \
+        --temperature 0
+```
+
+See [DS4.md](DS4.md) for CLI examples and current limitations.
+
+#### DS4 tool use
+
+DS4-backed agents can use normal Avalan tools. Basic output shows the answer
+text and hides DSML/protocol/tool-call markup from the final answer while
+preserving tool results; with `--display-tools`, it also shows tool lifecycle
+details and results:
+
+```bash
+printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
+  | avalan agent run \
+      --engine-uri "ai://local/${DS4_MODEL}" \
+      --backend ds4 \
+      --ds4-ctx 4096 \
+      --ds4-native-backend metal \
+      --tool "math.calculator" \
+      --memory-recent \
+      --run-max-new-tokens 8192 \
+      --run-temperature 0 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats \
+      --display-events \
+      --display-tools
+```
+
+Internally, native DS4 tool calls use DSML: Avalan renders tool schemas,
+parses completed DSML tool blocks, streams argument deltas, and preserves
+exact raw DSML replay metadata for session alignment.
+
+### Source build tips
+
+On macOS, ensure the Xcode command line tools are present and install the build
+dependencies before compiling extras that rely on `sentencepiece`:
+
+```bash
+xcode-select --install
+brew install cmake pkg-config protobuf sentencepiece
+```
 
 ## Task PostgreSQL migrations
 
