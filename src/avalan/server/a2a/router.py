@@ -651,6 +651,9 @@ def _file_metadata(*sources: object) -> dict[str, Any]:
     media_type = _media_type(*sources)
     if media_type is not None:
         metadata["mime_type"] = media_type
+    local_path = _local_path(*sources)
+    if local_path is not None:
+        metadata["local_path"] = local_path
     return metadata
 
 
@@ -675,6 +678,10 @@ def _media_type(*sources: object) -> str | None:
     )
 
 
+def _local_path(*sources: object) -> str | None:
+    return _first_string(sources, "local_path", "localPath")
+
+
 def _is_image_media_type(media_type: str | None) -> bool:
     return media_type is not None and media_type.lower().startswith("image/")
 
@@ -686,6 +693,10 @@ def _first_string(sources: tuple[object, ...], *names: str) -> str | None:
             return value
         metadata = _field_value(source, "metadata")
         value = _string_field(metadata, *names)
+        if value is not None:
+            return value
+        json_metadata = _jsonable_value(metadata)
+        value = _string_field(json_metadata, *names)
         if value is not None:
             return value
     return None

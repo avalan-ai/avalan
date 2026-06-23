@@ -44,14 +44,14 @@ def _rewrite_shell_input_file_paths(
     if not aliases:
         return None
 
-    rewritten = dict(arguments)
+    rewritten: dict[str, ToolValue] = dict(arguments)
     changed = False
     path_value, path_changed = _rewrite_path_argument(
         rewritten.get("path"),
         aliases,
     )
     if path_changed:
-        rewritten["path"] = path_value
+        rewritten["path"] = cast(ToolValue, path_value)
         changed = True
 
     paths_value, paths_changed = _rewrite_paths_argument(
@@ -59,15 +59,12 @@ def _rewrite_shell_input_file_paths(
         aliases,
     )
     if paths_changed:
-        rewritten["paths"] = paths_value
+        rewritten["paths"] = cast(ToolValue, paths_value)
         changed = True
 
     if not changed:
         return None
-    return (
-        replace(call, arguments=cast(dict[str, ToolValue], rewritten)),
-        context,
-    )
+    return (replace(call, arguments=rewritten), context)
 
 
 def _rewrite_path_argument(

@@ -1973,6 +1973,62 @@ and `--a2a-description` when running `avalan agent serve`.
 > [!TIP]
 > Use `--protocol a2a` (optionally combined with other `--protocol` flags) to expose just the A2A interface for your served agent.
 
+##### Example: Forward a PDF to an A2A-served agent
+
+Start a PDF-reading agent that exposes only its A2A endpoint. The shell media
+tools are enabled explicitly because the agent will inspect the attached PDF
+with Poppler-backed tools.
+
+```sh
+source .env.sh
+
+poetry run avalan agent serve \
+    --protocol a2a \
+    --host 127.0.0.1 \
+    --port 9017 \
+    --a2a-prefix /a2a \
+    --a2a-name run \
+    --a2a-description "Extract facts from an attached PDF using PDF tools." \
+    --engine-uri "ai://env:AZURE_OPENAI_API_KEY@openai/gpt-5-mini?azure_api_version=preview" \
+    --engine-base-url "https://vdocintel-staging-openai.openai.azure.com/openai/v1/" \
+    --tool "shell.pdfinfo" \
+    --tool "shell.pdftotext" \
+    --tool "shell.pdftoppm" \
+    --tool-shell-allow-media-tools \
+    --tool-shell-workspace-root "." \
+    --tool-shell-cwd "." \
+    --memory-recent \
+    --run-max-new-tokens 2048 \
+    --name "PDF Reader" \
+    --role 'You are a concise PDF-reading agent. For every PDF question, use `shell.pdfinfo` on the attached PDF filename, then use `shell.pdftotext` on the same PDF path, and answer only from the extracted text.' \
+    -vvv
+```
+
+In another terminal, run a caller agent with `a2a.call` and attach the local PDF
+with `--input-file`. The A2A tool forwards the caller's native input files as
+A2A file parts, so the remote agent receives the prompt and the PDF.
+
+```sh
+source .env.sh
+
+echo "Use the attached PDF. Return the invoice number and total." | poetry run \
+    avalan agent run \
+      --engine-uri "ai://env:AZURE_OPENAI_API_KEY@openai/gpt-5-mini?azure_api_version=preview" \
+      --engine-base-url "https://vdocintel-staging-openai.openai.azure.com/openai/v1/" \
+      --tool "a2a.call" \
+      --maximum-tool-cycles 2 \
+      --input-file docs/examples/playground/invoice.pdf \
+      --memory-recent \
+      --run-max-new-tokens 8192 \
+      --reasoning-effort minimal \
+      --name "A2A File Caller" \
+      --instructions 'You must call `a2a.call` with uri `http://127.0.0.1:9017/a2a`, name `run`, and arguments `{"input_string":"Use the attached PDF. Return the invoice number and total."}`. The attached input file is already part of this run; do not put file bytes in the tool arguments. After the tool returns, answer only with the remote agent result.' \
+      --role 'You are a tool integration test agent. Use the `a2a.call` tool exactly as instructed for PDF extraction.' \
+      --developer 'Do not invent tool arguments. The A2A endpoint is `http://127.0.0.1:9017/a2a` and the A2A tool name is run.' \
+      --system 'Call `a2a.call` before answering. Do not inspect or summarize the attached PDF yourself.' \
+      --theme basic
+```
+
 #### Embedding in existing FastAPI apps
 
 If you already run a FastAPI service, reuse the same OpenAI, MCP, or A2A endpoints without spawning a standalone server. Call `avalan.server.register_agent_endpoints` during startup to attach the routers and lifecycle management to your application:
