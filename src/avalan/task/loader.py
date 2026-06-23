@@ -1,3 +1,8 @@
+from ..container import (
+    ContainerDiagnostic,
+    ContainerSurface,
+    container_syntax_diagnostics,
+)
 from ..filesystem import (
     DEFAULT_TEXT_ENCODING,
     assert_text_encoding,
@@ -47,6 +52,7 @@ _REQUIRED_SECTIONS = ("task", "input", "output", "execution")
 class TaskLoadIssueCategory(StrEnum):
     PARSE = "parse"
     STRUCTURE = "structure"
+    UNSUPPORTED = "unsupported"
     VALUE = "value"
 
 
@@ -202,6 +208,9 @@ async def _build_definition(
     source_path: str | Path | None,
 ) -> TaskLoadResult:
     issues: list[TaskLoadIssue] = []
+    issues.extend(_container_issues(raw))
+    if issues:
+        return TaskLoadResult(definition=None, issues=tuple(issues))
     sections = _sections(raw, issues)
 
     for section in _REQUIRED_SECTIONS:
@@ -258,6 +267,30 @@ async def _build_definition(
         issues.append(_schema_resolution_issue(error))
         return TaskLoadResult(definition=None, issues=tuple(issues))
     return TaskLoadResult(definition=definition)
+
+
+def _container_issues(
+    raw: Mapping[str, object],
+) -> tuple[TaskLoadIssue, ...]:
+    return tuple(
+        _issue_from_container_diagnostic(diagnostic)
+        for diagnostic in container_syntax_diagnostics(
+            ContainerSurface.TASK_TOML,
+            raw,
+        )
+    )
+
+
+def _issue_from_container_diagnostic(
+    diagnostic: ContainerDiagnostic,
+) -> TaskLoadIssue:
+    return _issue(
+        code=diagnostic.code.value,
+        path=diagnostic.path,
+        message=diagnostic.message,
+        hint=diagnostic.hint,
+        category=TaskLoadIssueCategory.UNSUPPORTED,
+    )
 
 
 def _sections(

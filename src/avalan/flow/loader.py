@@ -1,3 +1,8 @@
+from ..container import (
+    ContainerDiagnostic,
+    ContainerSurface,
+    container_syntax_diagnostics,
+)
 from ..filesystem import (
     DEFAULT_TEXT_ENCODING,
     assert_text_encoding,
@@ -559,6 +564,13 @@ async def _build_result(
     encoding: str,
 ) -> FlowLoadResult:
     issues: list[FlowLoadIssue] = []
+    issues.extend(_container_issues(raw))
+    if issues:
+        return FlowLoadResult(
+            definition=None,
+            issues=tuple(issues),
+            authoring_graph="graph" in raw,
+        )
     _validate_top_level_sections(raw, issues)
     flow_raw = _section(raw, "flow", issues, required=True)
     nodes_raw = _section(raw, "nodes", issues, required=True)
@@ -1395,6 +1407,30 @@ def _node_definitions(
             )
         )
     return tuple(nodes)
+
+
+def _container_issues(
+    raw: Mapping[str, object],
+) -> tuple[FlowLoadIssue, ...]:
+    return tuple(
+        _issue_from_container_diagnostic(diagnostic)
+        for diagnostic in container_syntax_diagnostics(
+            ContainerSurface.FLOW_TOML,
+            raw,
+        )
+    )
+
+
+def _issue_from_container_diagnostic(
+    diagnostic: ContainerDiagnostic,
+) -> FlowLoadIssue:
+    return _issue(
+        code=diagnostic.code.value,
+        path=diagnostic.path,
+        message=diagnostic.message,
+        hint=diagnostic.hint,
+        category=FlowLoadIssueCategory.UNSUPPORTED,
+    )
 
 
 def _node_mappings(

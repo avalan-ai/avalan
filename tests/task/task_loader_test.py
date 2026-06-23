@@ -533,6 +533,35 @@ class TaskDefinitionLoaderTest(TestCase):
         self.assertEqual(result.issues[0].code, "task.invalid_section")
         self.assertEqual(result.issues[0].path, "task")
 
+    def test_execution_container_section_is_rejected_until_task_phase(
+        self,
+    ) -> None:
+        result = loads_task_definition_result("""
+            [task]
+            name = "container_task"
+            version = "1"
+
+            [input]
+            type = "string"
+
+            [output]
+            type = "text"
+
+            [execution]
+            type = "agent"
+            ref = "agents/a.toml"
+
+            [execution.container]
+            profile = "workspace-readonly"
+            required = true
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(len(result.issues), 1)
+        self.assertEqual(result.issues[0].code, "container.unsupported_syntax")
+        self.assertEqual(result.issues[0].path, "execution.container")
+        self.assertEqual(result.issues[0].category.value, "unsupported")
+
     def test_non_string_required_values_return_type_issues(self) -> None:
         result = loads_task_definition_result("""
             [task]
