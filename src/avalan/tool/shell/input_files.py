@@ -7,6 +7,7 @@ from ...entities import (
     ToolFilter,
     ToolValue,
 )
+from ..input_files import message_file_content
 from .filesystem import make_directory as _make_directory
 from .filesystem import write_bytes as _write_bytes
 from .settings import ShellToolSettings
@@ -188,7 +189,8 @@ async def _materialize_input_file(
     try:
         await _make_directory(materialized_root)
     except FileExistsError:
-        # The shared materialization root may already exist from prior/concurrent requests.
+        # The shared materialization root may already exist from prior or
+        # concurrent requests.
         pass
     target_dir = materialized_root / uuid4().hex
     await _make_directory(target_dir)
@@ -284,15 +286,7 @@ def _iter_input_file_content(
 def _iter_message_file_content(
     message: Message,
 ) -> Iterator[MessageContentFile]:
-    content = message.content
-    if isinstance(content, MessageContentFile):
-        yield content
-        return
-    if not isinstance(content, list):
-        return
-    for item in content:
-        if isinstance(item, MessageContentFile):
-            yield item
+    yield from message_file_content(message)
 
 
 def _add_alias(

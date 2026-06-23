@@ -11,6 +11,11 @@ from ..entities import (
 )
 from . import Tool, ToolSet
 from .builtin_display import project_a2a_call_tool_display
+from .input_files import (
+    input_file_string,
+    iter_input_file_content,
+    message_file_content,
+)
 
 from base64 import b64decode
 from binascii import Error as BinasciiError
@@ -327,13 +332,7 @@ def _file_part(a2a_pb2: Any, content: MessageContentFile) -> Any | None:
 
 
 def _file_string(file: Mapping[str, object], *keys: str) -> str | None:
-    for key in keys:
-        value = file.get(key)
-        if isinstance(value, str):
-            stripped = value.strip()
-            if stripped:
-                return stripped
-    return None
+    return input_file_string(file, *keys)
 
 
 def _decode_file_data(value: str | None) -> bytes | None:
@@ -356,24 +355,11 @@ def _decode_file_data(value: str | None) -> bytes | None:
 def _iter_input_file_content(
     input_value: Input | None,
 ) -> list[MessageContentFile]:
-    if isinstance(input_value, Message):
-        return _message_file_content(input_value)
-    if not isinstance(input_value, list):
-        return []
-    files: list[MessageContentFile] = []
-    for item in input_value:
-        if isinstance(item, Message):
-            files.extend(_message_file_content(item))
-    return files
+    return list(iter_input_file_content(input_value))
 
 
 def _message_file_content(message: Message) -> list[MessageContentFile]:
-    content = message.content
-    if isinstance(content, MessageContentFile):
-        return [content]
-    if not isinstance(content, list):
-        return []
-    return [item for item in content if isinstance(item, MessageContentFile)]
+    return list(message_file_content(message))
 
 
 def _request_metadata(

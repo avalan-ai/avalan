@@ -315,9 +315,9 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
         spec = _direct_spec(
             executable=python_executable,
-            argv=(python_executable, "-c", script),
+            argv=(python_executable, "-u", "-c", script),
             display_argv=("python", "-c", "<inline>"),
-            timeout_seconds=0.05,
+            timeout_seconds=0.5,
             max_stdout_bytes=1024,
             max_stderr_bytes=1024,
         )
