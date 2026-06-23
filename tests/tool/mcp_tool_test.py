@@ -1,4 +1,5 @@
 import sys
+from base64 import b64encode
 from logging import getLogger
 from types import ModuleType
 from typing import Any
@@ -10,6 +11,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport
 
 from avalan.entities import (
+    Message,
+    MessageContentFile,
+    MessageContentText,
+    MessageRole,
     ToolCall,
     ToolCallContext,
     ToolExecutionStreamEvent,
@@ -119,10 +124,11 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             },
         )
         self.AsyncClient.assert_called_once_with(
+            timeout=None,
             headers={
                 "Accept": "application/json, text/event-stream",
                 "Content-Type": "application/json",
-            }
+            },
         )
         self.client.stream.assert_called_once()
         _, uri = self.client.stream.call_args.args
@@ -142,6 +148,122 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
         request = self.client.stream.call_args.kwargs["json"]
         self.assertEqual(request["params"]["arguments"], {})
 
+    async def test_call_forwards_context_input_files_as_mcp_arguments(self):
+        file_data = b64encode(b"%PDF-1.7").decode("ascii")
+        input_message = Message(
+            role=MessageRole.USER,
+            content=[
+                MessageContentText(type="text", text="Read this"),
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "file_data": file_data,
+                        "filename": "report.pdf",
+                        "local_path": "/workspace/report.pdf",
+                        "mime_type": "application/pdf",
+                    },
+                ),
+            ],
+        )
+
+        await self.tool(
+            "http://host/mcp",
+            "run",
+            {"input_string": "Summarize the attached PDF."},
+            context=ToolCallContext(input=input_message),
+        )
+
+        request = self.client.stream.call_args.kwargs["json"]
+        arguments = request["params"]["arguments"]
+        self.assertEqual(
+            arguments["input_string"], "Summarize the attached PDF."
+        )
+        self.assertEqual(
+            arguments["input_files"],
+            [
+                {
+                    "data": file_data,
+                    "filename": "report.pdf",
+                    "mimeType": "application/pdf",
+                }
+            ],
+        )
+
+    async def test_call_forwards_url_files_and_skips_invalid_file_parts(self):
+        input_message = Message(
+            role=MessageRole.USER,
+            content=[
+                MessageContentFile(
+                    type="file",
+                    file={
+                        "url": "https://example.test/report.pdf",
+                        "name": "report.pdf",
+                        "mimeType": "application/pdf",
+                    },
+                ),
+                MessageContentFile(
+                    type="file",
+                    file={"filename": "missing-source.pdf"},
+                ),
+            ],
+        )
+
+        await self.tool(
+            "http://host/mcp",
+            "run",
+            {"input_string": "Summarize the attached URL."},
+            context=ToolCallContext(input=input_message),
+        )
+
+        request = self.client.stream.call_args.kwargs["json"]
+        arguments = request["params"]["arguments"]
+        self.assertEqual(
+            arguments["input_string"], "Summarize the attached URL."
+        )
+        self.assertEqual(
+            arguments["input_files"],
+            [
+                {
+                    "uri": "https://example.test/report.pdf",
+                    "filename": "report.pdf",
+                    "mimeType": "application/pdf",
+                }
+            ],
+        )
+
+    async def test_call_preserves_explicit_file_arguments(self):
+        file_data = b64encode(b"ignored").decode("ascii")
+        input_message = Message(
+            role=MessageRole.USER,
+            content=MessageContentFile(
+                type="file",
+                file={
+                    "file_data": file_data,
+                    "filename": "ignored.pdf",
+                    "mime_type": "application/pdf",
+                },
+            ),
+        )
+
+        await self.tool(
+            "http://host/mcp",
+            "run",
+            {
+                "input_string": "Read explicit",
+                "files": [{"uri": "https://example.test/file.pdf"}],
+            },
+            context=ToolCallContext(input=input_message),
+        )
+
+        request = self.client.stream.call_args.kwargs["json"]
+        self.assertEqual(
+            request["params"]["arguments"],
+            {
+                "input_string": "Read explicit",
+                "files": [{"uri": "https://example.test/file.pdf"}],
+            },
+        )
+
     async def test_passes_client_params_and_preserves_headers(self):
         tool = McpCallTool(
             client_params={"headers": {"Authorization": "Bearer token"}},
@@ -150,11 +272,12 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
         context = ToolCallContext()
         await tool("http://host/mcp", "run", None, context=context)
         self.AsyncClient.assert_called_once_with(
+            timeout=None,
             headers={
                 "Authorization": "Bearer token",
                 "Accept": "application/json, text/event-stream",
                 "Content-Type": "application/json",
-            }
+            },
         )
 
     async def test_streams_mcp_notifications_to_tool_context(self):

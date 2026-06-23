@@ -1,5 +1,6 @@
 from ..compat import override
 from ..entities import (
+    MessageContentFile,
     ToolCall,
     ToolCallContext,
     ToolCallOutcome,
@@ -8,6 +9,7 @@ from ..entities import (
 )
 from . import Tool, ToolSet
 from .builtin_display import project_mcp_call_tool_display
+from .input_files import input_file_string, iter_input_file_content
 
 from collections.abc import AsyncIterator, Mapping
 from contextlib import AsyncExitStack
@@ -18,6 +20,7 @@ from uuid import uuid4
 
 JSONValue = dict[str, object] | list[object] | str | int | float | bool | None
 JSONObject = dict[str, JSONValue]
+_MCP_FILE_ARGUMENT_KEYS = {"files", "input_files", "file_descriptors"}
 
 
 class _MCPHTTPResponse(Protocol):
@@ -117,13 +120,14 @@ async def _call_streamable_http_mcp_tool(
 
     request_id = call_params.get("request_id") or str(uuid4())
     progress_token = call_params.get("progress_token") or request_id
+    request_arguments = _arguments_with_context_input_files(arguments, context)
     payload: JSONObject = {
         "jsonrpc": "2.0",
         "id": cast(JSONValue, request_id),
         "method": "tools/call",
         "params": {
             "name": name,
-            "arguments": cast(JSONValue, arguments),
+            "arguments": cast(JSONValue, request_arguments),
             "progressToken": cast(JSONValue, progress_token),
             "_meta": {"progressToken": cast(JSONValue, progress_token)},
         },
@@ -151,6 +155,60 @@ async def _call_streamable_http_mcp_tool(
     raise RuntimeError("MCP response ended without a result")
 
 
+def _arguments_with_context_input_files(
+    arguments: dict[str, object], context: ToolCallContext
+) -> dict[str, object]:
+    if any(key in arguments for key in _MCP_FILE_ARGUMENT_KEYS):
+        return arguments
+
+    input_files = _context_input_file_descriptors(context)
+    if not input_files:
+        return arguments
+
+    request_arguments = dict(arguments)
+    request_arguments["input_files"] = input_files
+    return request_arguments
+
+
+def _context_input_file_descriptors(
+    context: ToolCallContext,
+) -> list[JSONObject]:
+    return [
+        descriptor
+        for descriptor in (
+            _mcp_file_descriptor(file_content)
+            for file_content in iter_input_file_content(context.input)
+        )
+        if descriptor is not None
+    ]
+
+
+def _mcp_file_descriptor(
+    content: MessageContentFile,
+) -> JSONObject | None:
+    file = content.file
+    filename = input_file_string(
+        file, "filename", "fileName", "file_name", "name", "displayName"
+    )
+    media_type = input_file_string(file, "mime_type", "media_type", "mimeType")
+    file_url = input_file_string(file, "file_url", "url", "uri")
+
+    descriptor: JSONObject = {}
+    if file_url is not None:
+        descriptor["uri"] = file_url
+    else:
+        file_data = input_file_string(file, "file_data", "data", "base64")
+        if file_data is None:
+            return None
+        descriptor["data"] = file_data
+
+    if media_type is not None:
+        descriptor["mimeType"] = media_type
+    if filename is not None:
+        descriptor["filename"] = filename
+    return descriptor
+
+
 def _client_options(client_params: Mapping[str, object]) -> dict[str, object]:
     options = dict(client_params)
     raw_headers = options.pop("headers", None)
@@ -161,6 +219,7 @@ def _client_options(client_params: Mapping[str, object]) -> dict[str, object]:
     )
     headers.setdefault("Accept", "application/json, text/event-stream")
     headers.setdefault("Content-Type", "application/json")
+    options.setdefault("timeout", None)
     options["headers"] = headers
     return options
 
