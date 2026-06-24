@@ -5,6 +5,7 @@ from avalan.container import (
     ContainerEffectiveSettings,
     ContainerExecutionScope,
     ContainerProfile,
+    ContainerRuntimeEnvelopeKind,
     ContainerSettingsSource,
     ContainerSurface,
     ContainerToolRuntimeSettings,
@@ -15,6 +16,7 @@ from avalan.server.container_policy import (
     RemoteContainerRequestError,
     RemoteContainerRequestPolicy,
     remote_container_policy_from_runtime_settings,
+    server_runtime_envelope_status_from_runtime_settings,
     validate_remote_container_arguments,
 )
 
@@ -104,11 +106,79 @@ class RemoteContainerRequestPolicyTestCase(TestCase):
         self.assertEqual(request.arguments, {1: {"name": "safe"}})
         self.assertIsNone(request.profile)
 
+    def test_server_runtime_envelope_status_uses_trusted_settings(
+        self,
+    ) -> None:
+        status = server_runtime_envelope_status_from_runtime_settings(
+            _runtime_settings(
+                "workspace-readonly",
+                scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+            ),
+            server_name="api",
+            request_id="server-1",
+        )
+
+        assert status.plan is not None
+        self.assertFalse(status.ok)
+        self.assertEqual(
+            status.plan.envelope_kind,
+            ContainerRuntimeEnvelopeKind.SERVER,
+        )
+        self.assertEqual(
+            status.plan.envelope_plan.profile_name,
+            "workspace-readonly",
+        )
+        self.assertEqual(
+            status.plan.run_plan.request.request_id,
+            "server-1",
+        )
+        self.assertEqual(
+            status.diagnostics[0]["code"],
+            "server.runtime_envelope_unavailable",
+        )
+
+    def test_server_runtime_envelope_status_accepts_available_runtime(
+        self,
+    ) -> None:
+        status = server_runtime_envelope_status_from_runtime_settings(
+            _runtime_settings(
+                "workspace-readonly",
+                scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+            ),
+            envelope_runtime_available=True,
+        )
+
+        assert status.plan is not None
+        self.assertTrue(status.ok)
+        self.assertEqual(status.diagnostics, ())
+
+    def test_server_runtime_envelope_status_ignores_shell_settings(
+        self,
+    ) -> None:
+        status = server_runtime_envelope_status_from_runtime_settings(
+            _runtime_settings("workspace-readonly")
+        )
+
+        self.assertIsNone(status.plan)
+        self.assertTrue(status.ok)
+
+    def test_remote_runtime_envelope_authority_still_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            RemoteContainerRequestError,
+            "runtime authority",
+        ):
+            validate_remote_container_arguments(
+                {"runtime_envelope": {"profile": "workspace-readonly"}}
+            )
+
 
 def _runtime_settings(
     *profiles: str,
     trusted: bool = True,
     selected: bool = True,
+    scope: ContainerExecutionScope = (
+        ContainerExecutionScope.SHELL_CONTAINER_EXECUTION
+    ),
 ) -> ContainerToolRuntimeSettings:
     trust_level = (
         ContainerTrustLevel.TRUSTED_OPERATOR
@@ -123,7 +193,7 @@ def _runtime_settings(
         effective_settings=ContainerEffectiveSettings(
             backend=ContainerBackend.DOCKER,
             required=False,
-            scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+            scope=scope,
             source=source,
             policy_version="phase14",
             profile_registry_id="server",

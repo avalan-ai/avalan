@@ -188,6 +188,26 @@ class TaskContainerAttemptResult:
     output_artifacts_recorded: bool = False
 
 
+class TaskWorkerRuntimeEnvelopeRunner(Protocol):
+    trusted_runtime_envelope_runner: bool
+
+    def __call__(
+        self,
+        definition: TaskDefinition,
+        *,
+        run: TaskRun,
+        attempt: TaskAttempt,
+        plans: TaskContainerPlans,
+        input_mounts: tuple[dict[str, object], ...],
+    ) -> Awaitable[TaskContainerAttemptResult]: ...
+
+
+def is_trusted_task_worker_runtime_envelope_runner(
+    runner: object,
+) -> bool:
+    return getattr(runner, "trusted_runtime_envelope_runner", False) is True
+
+
 async def build_task_executable_input_files(
     definition: TaskDefinition,
     input_value: object,
@@ -716,6 +736,9 @@ class DirectTaskRunner:
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
         container_backend: ContainerAsyncBackend | None = None,
+        worker_runtime_envelope_runner: (
+            TaskWorkerRuntimeEnvelopeRunner | None
+        ) = None,
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
@@ -744,6 +767,12 @@ class DirectTaskRunner:
         if container_backend is not None:
             assert isinstance(container_backend, ContainerAsyncBackend)
         self._container_backend = container_backend
+        if worker_runtime_envelope_runner is not None:
+            assert callable(worker_runtime_envelope_runner)
+            assert is_trusted_task_worker_runtime_envelope_runner(
+                worker_runtime_envelope_runner
+            ), "worker runtime envelope runner must be trusted"
+        self._worker_runtime_envelope_runner = worker_runtime_envelope_runner
         self._clock = clock or _utc_now
         self._sleep = sleep or asyncio_sleep
 
@@ -1266,6 +1295,31 @@ class DirectTaskRunner:
             status="verified",
         )
         if plans.worker_envelope is not None:
+            if self._worker_runtime_envelope_runner is not None:
+                worker_envelope_result = (
+                    await self._worker_runtime_envelope_runner(
+                        definition,
+                        run=run,
+                        attempt=attempt,
+                        plans=plans,
+                        input_mounts=input_mounts,
+                    )
+                )
+                assert isinstance(
+                    worker_envelope_result,
+                    TaskContainerAttemptResult,
+                )
+                await self._record_container_event(
+                    definition,
+                    run=run,
+                    attempt=attempt,
+                    sanitizer=sanitizer,
+                    event_type="container_worker_envelope_completed",
+                    plans=plans,
+                    input_mounts=input_mounts,
+                    status="completed",
+                )
+                return worker_envelope_result
             raise TaskValidationError(
                 (
                     _container_issue(

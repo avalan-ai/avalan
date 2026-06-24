@@ -20,7 +20,10 @@ from avalan.container import (
     disabled_required_container_settings,
 )
 from avalan.server import agents_server
-from avalan.server.container_policy import RemoteContainerRequestPolicy
+from avalan.server.container_policy import (
+    RemoteContainerRequestPolicy,
+    ServerRuntimeEnvelopeStatus,
+)
 from avalan.tool.context import ToolSettingsContext
 
 
@@ -158,7 +161,10 @@ async def test_agents_server_lifespan_exposes_remote_policy() -> None:
     server_instance = MagicMock(name="server_instance")
     captured_lifespan: dict[str, object] = {}
     hub = MagicMock(name="hub")
-    tool_settings = _tool_settings_with_profiles("workspace-readonly")
+    tool_settings = _tool_settings_with_profiles(
+        "workspace-readonly",
+        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+    )
 
     def build_fastapi(*args, **kwargs):
         app = SimpleNamespace(
@@ -216,6 +222,17 @@ async def test_agents_server_lifespan_exposes_remote_policy() -> None:
                 policy = app.state.remote_container_policy
                 assert isinstance(policy, RemoteContainerRequestPolicy)
                 assert policy.exposed_profiles == ("workspace-readonly",)
+                status = app.state.server_runtime_envelope_status
+                assert isinstance(status, ServerRuntimeEnvelopeStatus)
+                assert status.plan is not None
+                assert (
+                    status.plan.envelope_plan.profile_name
+                    == "workspace-readonly"
+                )
+                assert (
+                    status.diagnostics[0]["code"]
+                    == "server.runtime_envelope_unavailable"
+                )
 
 
 @pytest.mark.anyio
@@ -239,7 +256,8 @@ async def test_agents_server_lifespan_clears_untrusted_remote_policy() -> None:
             state=SimpleNamespace(
                 remote_container_policy=RemoteContainerRequestPolicy(
                     exposed_profiles=("adhoc",)
-                )
+                ),
+                server_runtime_envelope_status=object(),
             ),
             include_router=MagicMock(),
             add_middleware=MagicMock(),
@@ -292,6 +310,7 @@ async def test_agents_server_lifespan_clears_untrusted_remote_policy() -> None:
 
             async with lifespan(app):
                 assert not hasattr(app.state, "remote_container_policy")
+                assert not hasattr(app.state, "server_runtime_envelope_status")
 
 
 @pytest.mark.anyio
@@ -440,13 +459,18 @@ async def test_agents_server_lifespan_sets_a2a_description() -> None:
                 )
 
 
-def _tool_settings_with_profiles(*profiles: str) -> ToolSettingsContext:
+def _tool_settings_with_profiles(
+    *profiles: str,
+    scope: ContainerExecutionScope = (
+        ContainerExecutionScope.SHELL_CONTAINER_EXECUTION
+    ),
+) -> ToolSettingsContext:
     return ToolSettingsContext(
         container=ContainerToolRuntimeSettings(
             effective_settings=ContainerEffectiveSettings(
                 backend=ContainerBackend.DOCKER,
                 required=False,
-                scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+                scope=scope,
                 source=ContainerSettingsSource(
                     surface=ContainerSurface.SERVER,
                     trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,

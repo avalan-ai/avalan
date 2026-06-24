@@ -11,6 +11,11 @@ from uuid import uuid4
 from async_helpers import run_async
 
 from avalan.agent.loader import OrchestratorLoader
+from avalan.container import (
+    ContainerRuntimeEnvelopeKind,
+    ContainerSurface,
+    trusted_container_source,
+)
 from avalan.entities import (
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
@@ -695,38 +700,48 @@ profile = "workspace-readonly"
             self.assertIsNone(tool_settings.extra)
             await stack.aclose()
 
-    async def test_runtime_container_is_rejected_until_enforced(
+    async def test_runtime_container_requires_envelope_aware_loader(
         self,
     ) -> None:
         image = "ghcr.io/example/tools@sha256:" + "4" * 64
-        with self.assertRaisesRegex(
-            AssertionError,
-            "runtime.container is not supported",
-        ):
-            OrchestratorLoader.validate_agent_config(
-                {
+        OrchestratorLoader.validate_agent_config(
+            {
+                "agent": {"role": "assistant"},
+                "engine": {"uri": "ai://local/model"},
+                "tool": {
+                    "container": {
+                        "backend": "docker",
+                        "profiles": {"runtime": {"image": image}},
+                    },
+                },
+                "runtime": {"container": {"profile": "runtime"}},
+            }
+        )
+        self.assertIsNone(
+            OrchestratorLoader._agent_runtime_envelope_plan(
+                config={
                     "agent": {"role": "assistant"},
                     "engine": {"uri": "ai://local/model"},
-                    "tool": {
-                        "container": {
-                            "backend": "docker",
-                            "profiles": {"runtime": {"image": image}},
-                        },
-                    },
-                    "runtime": {"container": {"profile": "runtime"}},
-                }
+                },
+                tool_section={},
+                source=trusted_container_source(ContainerSurface.AGENT_TOML),
+                path="agents/example.toml",
+                agent_id=uuid4(),
             )
+        )
 
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
             tmp.write(_minimal_agent_toml() + f"""
 [tool.container]
 backend = "docker"
+default_profile = "runtime"
 
 [tool.container.profiles.runtime]
 image = "{image}"
 
 [runtime.container]
 profile = "runtime"
+required = true
 """)
             tmp.flush()
             stack = AsyncExitStack()
@@ -739,10 +754,147 @@ profile = "runtime"
 
             with self.assertRaisesRegex(
                 AssertionError,
-                "runtime.container is not supported",
+                "runtime.container requires an envelope-aware agent loader",
             ):
                 await loader.from_file(tmp.name, agent_id=uuid4())
             await stack.aclose()
+
+    def test_validate_agent_config_rejects_unknown_runtime_profile(
+        self,
+    ) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "4" * 64
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "selected profile must be allowed",
+        ):
+            OrchestratorLoader.validate_agent_config(
+                {
+                    "agent": {"role": "assistant"},
+                    "engine": {"uri": "ai://local/model"},
+                    "tool": {
+                        "container": {
+                            "backend": "docker",
+                            "profiles": {"runtime": {"image": image}},
+                        },
+                    },
+                    "runtime": {"container": {"profile": "missing"}},
+                }
+            )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "runtime.container requires tool.container",
+        ):
+            OrchestratorLoader.validate_agent_config(
+                {
+                    "agent": {"role": "assistant"},
+                    "engine": {"uri": "ai://local/model"},
+                    "runtime": {"container": {"profile": "runtime"}},
+                }
+            )
+
+    async def test_runtime_container_delegates_to_agent_envelope_loader(
+        self,
+    ) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "4" * 64
+
+        class FakeAgentEnvelopeLoader:
+            trusted_runtime_envelope_runner = True
+
+            def __init__(self) -> None:
+                self.plan = None
+                self.kwargs = None
+
+            async def load_agent_runtime_envelope(self, plan, **kwargs):
+                self.plan = plan
+                self.kwargs = kwargs
+                return "enveloped"
+
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + f"""
+[tool.container]
+backend = "docker"
+default_profile = "runtime"
+
+[tool.container.profiles.runtime]
+image = "{image}"
+
+[tool.shell]
+backend = "container"
+
+[runtime.container]
+profile = "runtime"
+readiness_timeout_seconds = 12
+""")
+            tmp.flush()
+            stack = AsyncExitStack()
+            envelope_loader = FakeAgentEnvelopeLoader()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+                runtime_envelope_loader=envelope_loader,
+            )
+            agent_id = uuid4()
+
+            result = await loader.from_file(
+                tmp.name,
+                agent_id=agent_id,
+                tool_settings=ToolSettingsContext(extra={"caller": "ok"}),
+            )
+
+            self.assertEqual(result, "enveloped")
+            assert envelope_loader.plan is not None
+            assert envelope_loader.kwargs is not None
+            passed_tool_settings = envelope_loader.kwargs["tool_settings"]
+            assert isinstance(passed_tool_settings, ToolSettingsContext)
+            self.assertEqual(passed_tool_settings.extra, {"caller": "ok"})
+            assert passed_tool_settings.container is not None
+            assert (
+                passed_tool_settings.container.effective_settings is not None
+            )
+            self.assertEqual(
+                passed_tool_settings.container.effective_settings.profile_name,
+                "runtime",
+            )
+            self.assertEqual(
+                envelope_loader.plan.envelope_kind,
+                ContainerRuntimeEnvelopeKind.WHOLE_AGENT,
+            )
+            self.assertEqual(
+                envelope_loader.plan.envelope_plan.profile_name,
+                "runtime",
+            )
+            self.assertEqual(
+                envelope_loader.plan.envelope_plan.readiness_timeout_seconds,
+                12,
+            )
+            self.assertEqual(
+                envelope_loader.plan.run_plan.request.request_id,
+                str(agent_id),
+            )
+            await stack.aclose()
+
+    async def test_runtime_container_loader_must_be_trusted(self) -> None:
+        class UntrustedAgentEnvelopeLoader:
+            async def load_agent_runtime_envelope(self, plan, **kwargs):
+                return "not-used"
+
+        stack = AsyncExitStack()
+        with self.assertRaisesRegex(
+            AssertionError,
+            "runtime envelope loader must be trusted",
+        ):
+            OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+                runtime_envelope_loader=UntrustedAgentEnvelopeLoader(),
+            )
+        await stack.aclose()
 
     async def test_runtime_section_without_container_is_accepted(self) -> None:
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
@@ -888,7 +1040,7 @@ profile = "workspace-readonly"
 [runtime.container]
 profile = "workspace-readonly"
 """,
-                "runtime.container is not supported",
+                "runtime.container requires tool.container",
             ),
             (
                 f"""
@@ -902,7 +1054,7 @@ image = "{image}"
 [runtime.container]
 profile = "missing"
 """,
-                "runtime.container is not supported",
+                "selected profile must be allowed",
             ),
         )
 

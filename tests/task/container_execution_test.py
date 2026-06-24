@@ -13,6 +13,7 @@ from avalan.container import (
     ContainerBackend,
     ContainerBackendCapabilities,
     ContainerBackendOperation,
+    ContainerDurablePlanMetadata,
     ContainerEffectiveSettings,
     ContainerExecutionScope,
     ContainerFakeBackend,
@@ -97,10 +98,12 @@ from avalan.task.container import (
     task_container_output_contract,
     task_container_plans,
     task_container_request_metadata,
+    task_container_run_metadata,
     verify_task_container_request,
 )
 from avalan.task.event import task_event_category
 from avalan.task.idempotency import TaskIdempotencyIdentity
+from avalan.task.runner import TaskContainerAttemptResult
 from avalan.task.state import TaskAttemptState
 from avalan.task.store import TaskStoreConflictError
 from avalan.task.stores import InMemoryTaskStore
@@ -1611,6 +1614,221 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
             "worker_envelope_plan_fingerprint",
             events[0].payload,
         )
+
+    async def test_worker_envelope_delegates_to_trusted_runner(self) -> None:
+        store = InMemoryTaskStore()
+        target = RecordingTarget()
+        backend = _backend()
+
+        class FakeWorkerEnvelopeRunner:
+            trusted_runtime_envelope_runner = True
+
+            def __init__(self) -> None:
+                self.plans: TaskContainerPlans | None = None
+                self.input_mounts: tuple[dict[str, object], ...] | None = None
+
+            async def __call__(
+                self,
+                definition: TaskDefinition,
+                *,
+                run,
+                attempt,
+                plans: TaskContainerPlans,
+                input_mounts: tuple[dict[str, object], ...],
+            ) -> TaskContainerAttemptResult:
+                self.plans = plans
+                self.input_mounts = input_mounts
+                return TaskContainerAttemptResult(output="from-envelope")
+
+        envelope_runner = FakeWorkerEnvelopeRunner()
+        runner = DirectTaskRunner(
+            store,
+            target=target,
+            hmac_provider=StaticHmacProvider(),
+            container_backend=backend,
+            worker_runtime_envelope_runner=envelope_runner,
+        )
+
+        result = await runner.run(
+            _definition(
+                container=_container_settings(
+                    attempt=None,
+                    worker_envelope=_effective_settings(),
+                )
+            ),
+            input_value="hello",
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "from-envelope")
+        self.assertEqual(target.contexts, [])
+        self.assertNotIn(ContainerBackendOperation.CREATE, backend.operations)
+        assert envelope_runner.plans is not None
+        assert envelope_runner.plans.worker_envelope is not None
+        self.assertEqual(
+            envelope_runner.plans.worker_envelope.envelope_plan.profile_name,
+            "strict",
+        )
+        events = await store.list_events(result.run.run_id)
+        self.assertEqual(
+            tuple(event.event_type for event in events),
+            (
+                "container_plan_verified",
+                "container_worker_envelope_completed",
+            ),
+        )
+
+    async def test_queued_worker_envelope_delegates_to_trusted_runner(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        clock = Clock()
+        queue = SingleItemQueue(store, clock)
+        target = RecordingTarget()
+
+        class FakeWorkerEnvelopeRunner:
+            trusted_runtime_envelope_runner = True
+
+            def __init__(self) -> None:
+                self.plans: TaskContainerPlans | None = None
+                self.input_mounts: tuple[dict[str, object], ...] | None = None
+
+            async def __call__(
+                self,
+                definition: TaskDefinition,
+                *,
+                run,
+                attempt,
+                plans: TaskContainerPlans,
+                input_mounts: tuple[dict[str, object], ...],
+            ) -> TaskContainerAttemptResult:
+                _ = definition
+                _ = run
+                _ = attempt
+                self.plans = plans
+                self.input_mounts = input_mounts
+                return TaskContainerAttemptResult(output="from-worker")
+
+        client = TaskClient(
+            store,
+            target=target,
+            queue=queue,
+            hmac_provider=StaticHmacProvider(),
+            container_backend=_backend(),
+        )
+        definition = _definition(
+            run=TaskRunPolicy.queued("tasks"),
+            container=_container_settings(
+                attempt=None,
+                worker_envelope=_effective_settings(),
+            ),
+        )
+        submission = await client.enqueue(definition)
+        envelope_runner = FakeWorkerEnvelopeRunner()
+        worker = TaskWorker(
+            store,
+            queue,
+            target=target,
+            queue_name="tasks",
+            hmac_provider=StaticHmacProvider(),
+            container_backend=_backend(),
+            worker_runtime_envelope_runner=envelope_runner,
+            clock=lambda: clock.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertEqual(result.output, "from-worker")
+        assert queue.completed is not None
+        self.assertEqual(queue.completed.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(target.contexts, [])
+        assert envelope_runner.plans is not None
+        assert envelope_runner.plans.worker_envelope is not None
+        self.assertEqual(
+            envelope_runner.plans.worker_envelope.envelope_plan.profile_name,
+            "strict",
+        )
+        events = await store.list_events(submission.run.run_id)
+        self.assertEqual(
+            tuple(event.event_type for event in events),
+            (
+                "container_plan_verified",
+                "container_worker_envelope_completed",
+            ),
+        )
+
+    async def test_worker_envelope_runner_must_be_trusted(self) -> None:
+        class UntrustedWorkerEnvelopeRunner:
+            async def __call__(self, *args, **kwargs):
+                return TaskContainerAttemptResult(output=None)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "worker runtime envelope runner must be trusted",
+        ):
+            DirectTaskRunner(
+                InMemoryTaskStore(),
+                target=RecordingTarget(),
+                hmac_provider=StaticHmacProvider(),
+                worker_runtime_envelope_runner=UntrustedWorkerEnvelopeRunner(),
+            )
+
+        worker_store = InMemoryTaskStore()
+        with self.assertRaisesRegex(
+            AssertionError,
+            "worker runtime envelope runner must be trusted",
+        ):
+            TaskWorker(
+                worker_store,
+                SingleItemQueue(worker_store, Clock()),
+                target=RecordingTarget(),
+                queue_name="tasks",
+                hmac_provider=StaticHmacProvider(),
+                worker_runtime_envelope_runner=UntrustedWorkerEnvelopeRunner(),
+            )
+
+    async def test_worker_envelope_metadata_survives_restart(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        definition = _definition(
+            container=_container_settings(
+                attempt=None,
+                worker_envelope=_effective_settings(),
+            )
+        )
+        definition_id = await spec_hash(definition)
+        await store.register_definition(
+            definition,
+            definition_hash=definition_id,
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(
+                definition_id=definition_id,
+                metadata=task_container_run_metadata(definition, None),
+            )
+        )
+        attempt = await store.create_attempt(run.run_id)
+
+        plans = verify_task_container_request(
+            definition,
+            run=run,
+            attempt=attempt,
+        )
+
+        assert plans.worker_envelope is not None
+        raw = run.request.metadata[TASK_CONTAINER_METADATA_KEY]
+        assert isinstance(raw, Mapping)
+        request_spec = raw[TASK_CONTAINER_WORKER_ENVELOPE_KEY]
+        assert isinstance(request_spec, Mapping)
+        self.assertEqual(
+            request_spec["plan_fingerprint"],
+            plans.worker_envelope.plan_fingerprint,
+        )
+        metadata = plans.to_metadata()[TASK_CONTAINER_WORKER_ENVELOPE_KEY]
+        assert isinstance(metadata, Mapping)
+        durable = ContainerDurablePlanMetadata.from_dict(metadata)
+        durable.assert_matches(plans.worker_envelope)
 
     async def test_queued_worker_container_backend_guards(self) -> None:
         cases = (

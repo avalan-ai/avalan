@@ -5,7 +5,10 @@ from ..event.manager import EventManagerMode
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.context import ToolSettingsContext
 from ..utils import logger_replace
-from .container_policy import remote_container_policy_from_runtime_settings
+from .container_policy import (
+    remote_container_policy_from_runtime_settings,
+    server_runtime_envelope_status_from_runtime_settings,
+)
 from .entities import OrchestratorContext
 from .routers import mcp as mcp_router
 
@@ -126,6 +129,7 @@ def _create_lifespan(
             app.state.logger = logger
             app.state.agent_id = agent_id
             _configure_remote_container_policy(app, tool_settings)
+            _configure_server_runtime_envelope(app, tool_settings)
             if "a2a" in selected_protocols:
                 app.state.a2a_tool_name = a2a_tool_name or "run"
                 if a2a_tool_description:
@@ -154,6 +158,23 @@ def _configure_remote_container_policy(
             delattr(app.state, "remote_container_policy")
         return
     app.state.remote_container_policy = policy
+
+
+def _configure_server_runtime_envelope(
+    app: FastAPI,
+    tool_settings: ToolSettingsContext | None,
+) -> None:
+    container_runtime = (
+        None if tool_settings is None else tool_settings.container
+    )
+    status = server_runtime_envelope_status_from_runtime_settings(
+        container_runtime
+    )
+    if status.plan is None:
+        if hasattr(app.state, "server_runtime_envelope_status"):
+            delattr(app.state, "server_runtime_envelope_status")
+        return
+    app.state.server_runtime_envelope_status = status
 
 
 def _configure_cors(

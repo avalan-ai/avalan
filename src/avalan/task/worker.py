@@ -54,6 +54,7 @@ from .queue import (
 )
 from .runner import (
     TaskContainerAttemptResult,
+    TaskWorkerRuntimeEnvelopeRunner,
     _container_issue,
     _container_validation_issue,
     _error_summary_with_attempt_policy,
@@ -64,6 +65,7 @@ from .runner import (
     _sanitize_output_artifact,
     _snapshot_value,
     _task_error_with_attempt_counts,
+    is_trusted_task_worker_runtime_envelope_runner,
     task_execution_file_entries_from_value,
     task_input_file_groups_from_materialized,
 )
@@ -184,6 +186,9 @@ class TaskWorker:
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
         container_backend: ContainerAsyncBackend | None = None,
+        worker_runtime_envelope_runner: (
+            TaskWorkerRuntimeEnvelopeRunner | None
+        ) = None,
         shutdown: TaskWorkerShutdown | None = None,
         heartbeat_seconds: float | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -213,6 +218,12 @@ class TaskWorker:
         if container_backend is not None:
             assert isinstance(container_backend, ContainerAsyncBackend)
         self._container_backend = container_backend
+        if worker_runtime_envelope_runner is not None:
+            assert callable(worker_runtime_envelope_runner)
+            assert is_trusted_task_worker_runtime_envelope_runner(
+                worker_runtime_envelope_runner
+            ), "worker runtime envelope runner must be trusted"
+        self._worker_runtime_envelope_runner = worker_runtime_envelope_runner
         if heartbeat_seconds is not None:
             assert isinstance(heartbeat_seconds, int | float)
             assert not isinstance(heartbeat_seconds, bool)
@@ -872,6 +883,31 @@ class TaskWorker:
             status="verified",
         )
         if plans.worker_envelope is not None:
+            if self._worker_runtime_envelope_runner is not None:
+                worker_envelope_result = (
+                    await self._worker_runtime_envelope_runner(
+                        definition,
+                        run=run,
+                        attempt=attempt,
+                        plans=plans,
+                        input_mounts=input_mounts,
+                    )
+                )
+                assert isinstance(
+                    worker_envelope_result,
+                    TaskContainerAttemptResult,
+                )
+                await self._record_container_event(
+                    definition,
+                    run=run,
+                    attempt=attempt,
+                    sanitizer=sanitizer,
+                    event_type="container_worker_envelope_completed",
+                    plans=plans,
+                    input_mounts=input_mounts,
+                    status="completed",
+                )
+                return worker_envelope_result
             raise TaskValidationError(
                 (
                     _container_issue(

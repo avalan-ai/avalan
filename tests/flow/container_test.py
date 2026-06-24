@@ -70,6 +70,7 @@ from avalan.flow import (
     FlowOutputDefinition,
     FlowOutputType,
     FlowPlanCompileResult,
+    FlowPlanExecutionResult,
     FlowPlanNodeRunner,
     FlowRetryBackoffStrategy,
     FlowRetryPlan,
@@ -817,6 +818,126 @@ class FlowContainerPlanTestCase(IsolatedAsyncioTestCase):
             result.diagnostics[0].code,
             "flow.execution.container_runtime_envelope_unavailable",
         )
+
+    async def test_runtime_envelope_runner_receives_resume_state(
+        self,
+    ) -> None:
+        settings = _settings(
+            profiles={"flow": _profile("flow")},
+            default_profile="flow",
+        )
+        compiled = await compile_flow_definition(
+            _definition(
+                container=settings,
+                runtime_envelope=FlowRuntimeEnvelopeDefinition(
+                    container=ContainerProfileSelection(
+                        profile="flow",
+                        required=True,
+                        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                    ),
+                ),
+            )
+        )
+        assert compiled.plan is not None
+        resume_trace = FlowExecutionTrace.from_plan(compiled.plan)
+        resume_outputs = {"work": {"value": "previous"}}
+        resume_decisions = {"work": {"approved": True}}
+
+        class FakeRuntimeEnvelopeRunner:
+            trusted_runtime_envelope_runner = True
+
+            def __init__(self) -> None:
+                self.plan: FlowExecutionPlan | None = None
+                self.resume_trace: FlowExecutionTrace | None = None
+                self.resume_node_outputs: (
+                    Mapping[str, Mapping[str, object]] | None
+                ) = None
+                self.resume_decisions: (
+                    Mapping[str, Mapping[str, object]] | None
+                ) = None
+
+            async def run_flow_runtime_envelope(
+                self,
+                plan: FlowExecutionPlan,
+                *,
+                inputs: Mapping[str, object],
+                cancellation_checker: object | None,
+                event_listener: object | None,
+                stream_session: object | None,
+                concurrency_limit: int,
+                resume_trace: FlowExecutionTrace | None,
+                resume_node_outputs: Mapping[str, Mapping[str, object]],
+                resume_decisions: Mapping[str, Mapping[str, object]],
+            ) -> FlowPlanExecutionResult:
+                self.plan = plan
+                self.resume_trace = resume_trace
+                self.resume_node_outputs = resume_node_outputs
+                self.resume_decisions = resume_decisions
+                return FlowPlanExecutionResult(
+                    trace=resume_trace or FlowExecutionTrace.from_plan(plan),
+                    node_outputs=resume_node_outputs,
+                )
+
+        runner = FakeRuntimeEnvelopeRunner()
+
+        result = await execute_flow_plan(
+            compiled.plan,
+            _constant_runner("should not run"),
+            resume_trace=resume_trace,
+            resume_node_outputs=resume_outputs,
+            resume_decisions=resume_decisions,
+            runtime_envelope_runner=runner,
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertIs(runner.plan, compiled.plan)
+        self.assertIs(runner.resume_trace, resume_trace)
+        self.assertEqual(runner.resume_node_outputs, resume_outputs)
+        self.assertEqual(runner.resume_decisions, resume_decisions)
+        self.assertEqual(result.node_outputs, resume_outputs)
+
+    async def test_runtime_envelope_runner_must_be_trusted(self) -> None:
+        settings = _settings(
+            profiles={"flow": _profile("flow")},
+            default_profile="flow",
+        )
+        compiled = await compile_flow_definition(
+            _definition(
+                container=settings,
+                runtime_envelope=FlowRuntimeEnvelopeDefinition(
+                    container=ContainerProfileSelection(
+                        profile="flow",
+                        required=True,
+                        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                    ),
+                ),
+            )
+        )
+        assert compiled.plan is not None
+
+        class UntrustedRuntimeEnvelopeRunner:
+            async def run_flow_runtime_envelope(self, *args, **kwargs):
+                return FlowPlanExecutionResult(
+                    trace=FlowExecutionTrace.from_plan(compiled.plan),
+                )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "runtime envelope runner must be trusted",
+        ):
+            await execute_flow_plan(
+                compiled.plan,
+                _constant_runner("should not run"),
+                runtime_envelope_runner=UntrustedRuntimeEnvelopeRunner(),
+            )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "runtime envelope runner must be trusted",
+        ):
+            FlowExecutor(
+                runtime_envelope_runner=UntrustedRuntimeEnvelopeRunner()
+            )
 
     async def test_node_widening_is_rejected(self) -> None:
         defaults = _settings(

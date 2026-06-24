@@ -73,6 +73,30 @@ FlowPlanNodeRunner: TypeAlias = Callable[
 FlowStreamListener: TypeAlias = FlowStreamSink
 
 
+class FlowRuntimeEnvelopeRunner(Protocol):
+    trusted_runtime_envelope_runner: bool
+
+    async def run_flow_runtime_envelope(
+        self,
+        plan: FlowExecutionPlan,
+        *,
+        inputs: Mapping[str, object],
+        cancellation_checker: CancellationChecker | None,
+        event_listener: FlowStreamListener | None,
+        stream_session: FlowStreamSession | None,
+        concurrency_limit: int,
+        resume_trace: FlowExecutionTrace | None,
+        resume_node_outputs: Mapping[str, Mapping[str, object]],
+        resume_decisions: Mapping[str, Mapping[str, object]],
+    ) -> "FlowPlanExecutionResult": ...
+
+
+def is_trusted_flow_runtime_envelope_runner(
+    runner: object,
+) -> bool:
+    return getattr(runner, "trusted_runtime_envelope_runner", False) is True
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _FlowExecutionOptions:
     cancellation_checker: CancellationChecker | None = None
@@ -387,9 +411,18 @@ async def execute_flow_plan(
     resume_trace: FlowExecutionTrace | None = None,
     resume_node_outputs: Mapping[str, Mapping[str, object]] | None = None,
     resume_decisions: Mapping[str, Mapping[str, object]] | None = None,
+    runtime_envelope_runner: FlowRuntimeEnvelopeRunner | None = None,
 ) -> FlowPlanExecutionResult:
     assert isinstance(plan, FlowExecutionPlan)
     assert callable(runner)
+    if runtime_envelope_runner is not None:
+        assert hasattr(
+            runtime_envelope_runner,
+            "run_flow_runtime_envelope",
+        )
+        assert is_trusted_flow_runtime_envelope_runner(
+            runtime_envelope_runner
+        ), "runtime envelope runner must be trusted"
     if event_listener is not None:
         assert callable(event_listener)
     if stream_session is not None:
@@ -409,6 +442,24 @@ async def execute_flow_plan(
     assert concurrency_limit > 0
     flow_run_id = _flow_event_id(plan)
     if plan.runtime_envelope is not None:
+        if runtime_envelope_runner is not None:
+            return await runtime_envelope_runner.run_flow_runtime_envelope(
+                plan,
+                inputs=_freeze_mapping(inputs or {}),
+                cancellation_checker=cancellation_checker,
+                event_listener=event_listener,
+                stream_session=stream_session,
+                concurrency_limit=concurrency_limit,
+                resume_trace=resume_trace,
+                resume_node_outputs={
+                    node: _freeze_mapping(outputs)
+                    for node, outputs in (resume_node_outputs or {}).items()
+                },
+                resume_decisions={
+                    node: _freeze_mapping(payload)
+                    for node, payload in (resume_decisions or {}).items()
+                },
+            )
         return FlowPlanExecutionResult(
             trace=resume_trace or FlowExecutionTrace.from_plan(plan),
             diagnostics=(_runtime_envelope_unavailable_diagnostic(),),

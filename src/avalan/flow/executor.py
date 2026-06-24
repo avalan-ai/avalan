@@ -25,9 +25,11 @@ from .registry import FlowNodeRegistry
 from .runtime import (
     FlowPlanExecutionResult,
     FlowPlanNodeRunner,
+    FlowRuntimeEnvelopeRunner,
     FlowStreamListener,
     execute_flow_plan,
     flow_node_registry_runner,
+    is_trusted_flow_runtime_envelope_runner,
 )
 from .state import FlowExecutionTrace
 from .store import FlowExecutionRecord, FlowStateStore
@@ -139,6 +141,7 @@ class FlowExecutor:
         *,
         registry: FlowNodeRegistry | None = None,
         runner: FlowPlanNodeRunner | None = None,
+        runtime_envelope_runner: FlowRuntimeEnvelopeRunner | None = None,
         cancellation_checker: FlowCancellationChecker | None = None,
         event_listener: FlowStreamListener | None = None,
         concurrency_limit: int = 1,
@@ -147,6 +150,14 @@ class FlowExecutor:
             assert isinstance(registry, FlowNodeRegistry)
         if runner is not None:
             assert callable(runner)
+        if runtime_envelope_runner is not None:
+            assert hasattr(
+                runtime_envelope_runner,
+                "run_flow_runtime_envelope",
+            )
+            assert is_trusted_flow_runtime_envelope_runner(
+                runtime_envelope_runner
+            ), "runtime envelope runner must be trusted"
         if cancellation_checker is not None:
             assert callable(cancellation_checker)
         if event_listener is not None:
@@ -156,6 +167,7 @@ class FlowExecutor:
         assert concurrency_limit > 0
         self._registry = registry
         self._runner = runner
+        self._runtime_envelope_runner = runtime_envelope_runner
         self._cancellation_checker = cancellation_checker
         self._event_listener = event_listener
         self._concurrency_limit = concurrency_limit
@@ -181,7 +193,12 @@ class FlowExecutor:
                 diagnostics=plan_result.diagnostics,
             )
         assert plan_result.plan is not None
-        direct_diagnostics = _direct_execution_diagnostics(plan_result.plan)
+        direct_diagnostics = _direct_execution_diagnostics(
+            plan_result.plan,
+            runtime_envelope_available=(
+                self._runtime_envelope_runner is not None
+            ),
+        )
         if direct_diagnostics:
             return FlowExecutorRunResult(
                 plan=plan_result.plan,
@@ -196,6 +213,7 @@ class FlowExecutor:
             ),
             event_listener=event_listener or self._event_listener,
             concurrency_limit=self._concurrency_limit_value(concurrency_limit),
+            runtime_envelope_runner=self._runtime_envelope_runner,
         )
         return FlowExecutorRunResult(plan=plan_result.plan, result=result)
 
@@ -229,7 +247,12 @@ class FlowExecutor:
                 diagnostics=plan_result.diagnostics,
             )
         assert plan_result.plan is not None
-        direct_diagnostics = _direct_execution_diagnostics(plan_result.plan)
+        direct_diagnostics = _direct_execution_diagnostics(
+            plan_result.plan,
+            runtime_envelope_available=(
+                self._runtime_envelope_runner is not None
+            ),
+        )
         if direct_diagnostics:
             return FlowExecutorRunResult(
                 plan=plan_result.plan,
@@ -248,6 +271,7 @@ class FlowExecutor:
             resume_trace=resume_trace,
             resume_node_outputs=resume_node_outputs,
             resume_decisions=decisions,
+            runtime_envelope_runner=self._runtime_envelope_runner,
         )
         return FlowExecutorRunResult(plan=plan_result.plan, result=result)
 
@@ -423,9 +447,12 @@ def _resume_state(
 
 def _direct_execution_diagnostics(
     plan: FlowExecutionPlan,
+    *,
+    runtime_envelope_available: bool = False,
 ) -> tuple[FlowDiagnostic, ...]:
     assert isinstance(plan, FlowExecutionPlan)
-    if plan.runtime_envelope is not None:
+    assert isinstance(runtime_envelope_available, bool)
+    if plan.runtime_envelope is not None and not runtime_envelope_available:
         return (
             FlowDiagnostic(
                 code="flow.execution.container_runtime_envelope_unavailable",
