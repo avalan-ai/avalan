@@ -1,3 +1,8 @@
+from ..container import (
+    ContainerProfileSelection,
+    ContainerSettings,
+    ContainerSettingsOverride,
+)
 from .condition import FlowCondition
 
 from collections.abc import Mapping
@@ -186,6 +191,18 @@ def _assert_optional_number(value: object, field_name: str) -> None:
         ), f"{field_name} must be a number"
 
 
+def _assert_optional_positive_int(
+    value: int | None,
+    field_name: str,
+) -> None:
+    if value is not None:
+        assert isinstance(value, int) and not isinstance(
+            value,
+            bool,
+        ), f"{field_name} must be an integer"
+        assert value > 0, f"{field_name} must be positive"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FlowInputDefinition:
     name: str
@@ -372,6 +389,19 @@ class FlowLoopPolicy:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class FlowRuntimeEnvelopeDefinition:
+    container: ContainerProfileSelection
+    readiness_timeout_seconds: int = 30
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.container, ContainerProfileSelection)
+        _assert_optional_positive_int(
+            self.readiness_timeout_seconds,
+            "readiness_timeout_seconds",
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FlowNodeMetadata:
     kind: FlowNodeKind | None = None
     supports_ref: bool = False
@@ -433,6 +463,7 @@ class FlowNodeDefinition:
     retry_policy: FlowRetryPolicy | None = None
     timeout_policy: FlowTimeoutPolicy | None = None
     loop_policy: FlowLoopPolicy | None = None
+    container: ContainerSettingsOverride | None = None
     mappings: tuple[FlowInputMapping, ...] = ()
     config: FlowMetadata = field(default_factory=_empty_mapping)
 
@@ -453,6 +484,8 @@ class FlowNodeDefinition:
             assert isinstance(self.timeout_policy, FlowTimeoutPolicy)
         if self.loop_policy is not None:
             assert isinstance(self.loop_policy, FlowLoopPolicy)
+        if self.container is not None:
+            assert isinstance(self.container, ContainerSettingsOverride)
         _assert_mapping_tuple(self.mappings, "mappings")
         object.__setattr__(self, "config", _freeze_mapping(self.config))
 
@@ -500,6 +533,8 @@ class FlowDefinition:
     entry_behavior: FlowEntryBehavior | None = None
     output_behavior: FlowOutputBehavior | None = None
     runtime_limits: FlowMetadata = field(default_factory=_empty_mapping)
+    container: ContainerSettings | None = None
+    runtime_envelope: FlowRuntimeEnvelopeDefinition | None = None
     privacy_policy: FlowMetadata = field(default_factory=_empty_mapping)
     observability_policy: FlowMetadata = field(default_factory=_empty_mapping)
     tags: tuple[str, ...] = ()
@@ -537,6 +572,13 @@ class FlowDefinition:
         object.__setattr__(
             self, "runtime_limits", _freeze_mapping(self.runtime_limits)
         )
+        if self.container is not None:
+            assert isinstance(self.container, ContainerSettings)
+        if self.runtime_envelope is not None:
+            assert isinstance(
+                self.runtime_envelope,
+                FlowRuntimeEnvelopeDefinition,
+            )
         object.__setattr__(
             self, "privacy_policy", _freeze_mapping(self.privacy_policy)
         )
@@ -570,8 +612,11 @@ class FlowDefinition:
             or self.entry_behavior is not None
             or self.output_behavior is not None
             or self.runtime_limits
+            or self.container is not None
+            or self.runtime_envelope is not None
             or self.privacy_policy
             or self.observability_policy
             or self.tags
             or self.ownership
+            or any(node.container is not None for node in self.nodes)
         )

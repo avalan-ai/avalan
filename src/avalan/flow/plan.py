@@ -1,3 +1,14 @@
+from ..container import (
+    ContainerAuthorityCaps,
+    ContainerEffectiveSettings,
+    ContainerExecutionScope,
+    ContainerNormalizedRuntimeEnvelopePlan,
+    ContainerPlanRequest,
+    ContainerPlanRequestKind,
+    ContainerRuntimeEnvelopeKind,
+    ContainerSettings,
+    normalize_runtime_envelope_plan,
+)
 from .condition import (
     FlowCondition,
     FlowConditionOperator,
@@ -37,7 +48,9 @@ from .selector import FlowSelector, parse_flow_selector
 from .validator import validate_flow_definition
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from hashlib import sha256
+from json import dumps
 from types import MappingProxyType
 
 
@@ -244,6 +257,7 @@ class FlowNodePlan:
     retry: FlowRetryPlan | None = None
     timeout: FlowTimeoutPlan | None = None
     loop: FlowLoopPlan | None = None
+    container: ContainerEffectiveSettings | None = None
     config: Mapping[str, object] = field(default_factory=_empty_mapping)
     metadata: Mapping[str, object] = field(default_factory=_empty_mapping)
 
@@ -269,6 +283,8 @@ class FlowNodePlan:
             assert isinstance(self.timeout, FlowTimeoutPlan)
         if self.loop is not None:
             assert isinstance(self.loop, FlowLoopPlan)
+        if self.container is not None:
+            assert isinstance(self.container, ContainerEffectiveSettings)
         object.__setattr__(self, "config", _freeze_mapping(self.config))
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
 
@@ -313,6 +329,8 @@ class FlowExecutionPlan:
     output_selectors: Mapping[str, FlowSelector]
     nodes: tuple[FlowNodePlan, ...]
     edges: tuple[FlowEdgePlan, ...] = ()
+    container: ContainerEffectiveSettings | None = None
+    runtime_envelope: ContainerNormalizedRuntimeEnvelopePlan | None = None
 
     def __post_init__(self) -> None:
         _assert_string(self.name, "name")
@@ -334,6 +352,13 @@ class FlowExecutionPlan:
             assert isinstance(node, FlowNodePlan)
         for edge in self.edges:
             assert isinstance(edge, FlowEdgePlan)
+        if self.container is not None:
+            assert isinstance(self.container, ContainerEffectiveSettings)
+        if self.runtime_envelope is not None:
+            assert isinstance(
+                self.runtime_envelope,
+                ContainerNormalizedRuntimeEnvelopePlan,
+            )
 
     @property
     def node_map(self) -> Mapping[str, FlowNodePlan]:
@@ -410,10 +435,36 @@ async def compile_flow_definition(
         )
     assert definition.entry_behavior is not None
     assert definition.output_behavior is not None
+    try:
+        container_defaults = _compile_container_defaults(definition)
+        runtime_envelope = _compile_runtime_envelope(
+            definition,
+            container_defaults,
+        )
+    except FlowNodeConfigurationError as error:
+        return FlowPlanCompileResult(
+            diagnostics=(
+                FlowDiagnostic(
+                    code=error.code,
+                    category=FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+                    severity=FlowDiagnosticSeverity.ERROR,
+                    path=error.path,
+                    message=error.message,
+                    hint=error.hint,
+                ),
+            )
+        )
     nodes: list[FlowNodePlan] = []
     try:
         for node in definition.nodes:
-            nodes.append(await _compile_node(definition, node, node_registry))
+            nodes.append(
+                await _compile_node(
+                    definition,
+                    node,
+                    node_registry,
+                    container_defaults=container_defaults,
+                )
+            )
     except FlowNodeConfigurationError as error:
         return FlowPlanCompileResult(
             diagnostics=(
@@ -446,6 +497,8 @@ async def compile_flow_definition(
                 _compile_edge(index, edge)
                 for index, edge in enumerate(definition.edges)
             ),
+            container=container_defaults,
+            runtime_envelope=runtime_envelope,
         )
     )
 
@@ -454,6 +507,8 @@ async def _compile_node(
     definition: FlowDefinition,
     node: FlowNodeDefinition,
     registry: FlowNodeRegistry,
+    *,
+    container_defaults: ContainerEffectiveSettings | None,
 ) -> FlowNodePlan:
     metadata = registry.metadata(node.type)
     assert metadata is not None
@@ -471,6 +526,12 @@ async def _compile_node(
         retry=_compile_retry(node.retry_policy),
         timeout=_compile_timeout(node.timeout_policy),
         loop=_compile_loop(node.loop_policy),
+        container=_compile_node_container(
+            definition,
+            node,
+            registry,
+            container_defaults,
+        ),
         config=node.config,
         metadata=await _compile_node_metadata(
             definition,
@@ -479,6 +540,551 @@ async def _compile_node(
             metadata.metadata,
         ),
     )
+
+
+def _compile_container_defaults(
+    definition: FlowDefinition,
+) -> ContainerEffectiveSettings | None:
+    if definition.container is None:
+        return None
+    try:
+        return _with_flow_node_scope(
+            ContainerAuthorityCaps(settings=definition.container).merge()
+        )
+    except AssertionError as error:
+        raise _container_configuration_error(
+            path="runtime.container",
+            message="Flow container defaults are invalid.",
+            hint=_assertion_hint(error),
+        ) from None
+
+
+def _compile_runtime_envelope(
+    definition: FlowDefinition,
+    container_defaults: ContainerEffectiveSettings | None,
+) -> ContainerNormalizedRuntimeEnvelopePlan | None:
+    envelope = definition.runtime_envelope
+    if envelope is None:
+        return None
+    if definition.container is None:
+        raise _container_configuration_error(
+            path="runtime.container.envelope",
+            message="Flow runtime envelope selection has no trusted defaults.",
+            hint=(
+                "Define runtime.container settings before selecting an "
+                "envelope."
+            ),
+        )
+    try:
+        effective = definition.container.select_profile(envelope.container)
+        request = ContainerPlanRequest(
+            request_kind=ContainerPlanRequestKind.RUNTIME_ENVELOPE,
+            logical_name=definition.name,
+            command="flow-runtime",
+            argv=("flow-runtime", definition.name),
+            scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+        )
+        return normalize_runtime_envelope_plan(
+            effective,
+            request,
+            envelope_kind=ContainerRuntimeEnvelopeKind.FLOW_RUNTIME,
+            readiness_timeout_seconds=envelope.readiness_timeout_seconds,
+        )
+    except AssertionError as error:
+        raise _container_configuration_error(
+            path="runtime.container.envelope",
+            message="Flow runtime envelope selection is invalid.",
+            hint=_assertion_hint(error),
+        ) from None
+
+
+def _compile_node_container(
+    definition: FlowDefinition,
+    node: FlowNodeDefinition,
+    registry: FlowNodeRegistry,
+    container_defaults: ContainerEffectiveSettings | None,
+) -> ContainerEffectiveSettings | None:
+    inherited = _registry_tool_container(registry, node)
+    if node.container is None:
+        try:
+            effective = _node_container_cap(
+                inherited,
+                container_defaults,
+            )
+            if effective is not None:
+                effective = _with_flow_node_scope(effective)
+                _validate_node_container_deadline(node, effective)
+        except AssertionError as error:
+            raise _container_configuration_error(
+                path=f"nodes.{node.name}.runtime.container",
+                message=(
+                    "Node container policy is wider than trusted defaults."
+                ),
+                hint=_assertion_hint(error),
+            ) from None
+        return effective
+    if inherited is not None:
+        try:
+            cap = _node_container_cap(inherited, container_defaults)
+            assert cap is not None
+            effective = ContainerAuthorityCaps(
+                settings=_settings_from_effective(cap)
+            ).merge((node.container,))
+            effective = _with_flow_node_scope(effective)
+            _validate_node_container_deadline(node, effective)
+            return effective
+        except AssertionError as error:
+            raise _container_configuration_error(
+                path=f"nodes.{node.name}.runtime.container",
+                message=(
+                    "Node container policy is wider than trusted defaults."
+                ),
+                hint=_assertion_hint(error),
+            ) from None
+    if definition.container is None:
+        raise _container_configuration_error(
+            path=f"nodes.{node.name}.runtime.container",
+            message="Node container policy has no trusted flow defaults.",
+            hint=(
+                "Define runtime.container defaults before node-level "
+                "narrowing."
+            ),
+        )
+    try:
+        effective = ContainerAuthorityCaps(
+            settings=definition.container
+        ).merge((node.container,))
+        effective = _with_flow_node_scope(effective)
+        _validate_node_container_deadline(node, effective)
+        return effective
+    except AssertionError as error:
+        raise _container_configuration_error(
+            path=f"nodes.{node.name}.runtime.container",
+            message="Node container policy is wider than trusted defaults.",
+            hint=_assertion_hint(error),
+        ) from None
+
+
+def _node_container_cap(
+    inherited: ContainerEffectiveSettings | None,
+    container_defaults: ContainerEffectiveSettings | None,
+) -> ContainerEffectiveSettings | None:
+    if inherited is None:
+        return container_defaults
+    if container_defaults is not None:
+        _assert_effective_no_wider(container_defaults, inherited)
+    return inherited
+
+
+def _registry_tool_container(
+    registry: FlowNodeRegistry,
+    node: FlowNodeDefinition,
+) -> ContainerEffectiveSettings | None:
+    if not registry.supports_tool_resolution(node.type):
+        return None
+    container = registry.tool_container_settings(node.type)
+    if container is not None:
+        assert isinstance(container, ContainerEffectiveSettings)
+    return container
+
+
+def _settings_from_effective(
+    effective: ContainerEffectiveSettings,
+) -> ContainerSettings:
+    profile_name = effective.profile_name
+    profile = effective.profile
+    profiles = {}
+    if profile_name is not None:
+        assert profile is not None
+        profiles[profile_name] = profile
+    return ContainerSettings(
+        source=effective.source,
+        backend=effective.backend,
+        default_profile=profile_name,
+        allowed_profiles=() if profile_name is None else (profile_name,),
+        profiles=profiles,
+        profile_registry_id=effective.profile_registry_id,
+        policy_version=effective.policy_version,
+    )
+
+
+def _assert_effective_no_wider(
+    caps: ContainerEffectiveSettings,
+    requested: ContainerEffectiveSettings,
+) -> None:
+    assert _enum_value(caps.backend) == _enum_value(
+        requested.backend
+    ), "tool backend cannot widen flow container defaults"
+    assert (
+        requested.required or not caps.required
+    ), "tool required flag cannot weaken flow container defaults"
+    if caps.profile is None:
+        assert (
+            requested.profile is None
+        ), "tool profile cannot widen disabled flow container defaults"
+        return
+    assert requested.profile is not None, "tool profile cannot remove caps"
+    _assert_profile_mapping_no_wider(
+        caps.profile.to_dict(),
+        requested.profile.to_dict(),
+    )
+
+
+def _assert_profile_mapping_no_wider(
+    caps: Mapping[str, object],
+    requested: Mapping[str, object],
+) -> None:
+    _assert_mapping_equal(
+        _mapping(caps.get("image", {})),
+        _mapping(requested.get("image", {})),
+        "tool image cannot widen flow container defaults",
+    )
+    _assert_mapping_equal(
+        _mapping(caps.get("workspace", {})),
+        _mapping(requested.get("workspace", {})),
+        "tool workspace cannot widen flow container defaults",
+    )
+    _assert_mounts_no_wider(
+        _sequence_mapping(caps.get("mounts", ())),
+        _sequence_mapping(requested.get("mounts", ())),
+    )
+    _assert_environment_no_wider(
+        _mapping(caps.get("environment", {})),
+        _mapping(requested.get("environment", {})),
+    )
+    _assert_sequences_no_wider(
+        _sequence_mapping(caps.get("secrets", ())),
+        _sequence_mapping(requested.get("secrets", ())),
+        key="name",
+        message="tool secrets cannot widen flow container defaults",
+    )
+    _assert_network_no_wider(
+        _mapping(caps.get("network", {})),
+        _mapping(requested.get("network", {})),
+    )
+    _assert_devices_no_wider(
+        _mapping(caps.get("devices", {})),
+        _mapping(requested.get("devices", {})),
+    )
+    _assert_resources_no_wider(
+        _mapping(caps.get("resources", {})),
+        _mapping(requested.get("resources", {})),
+    )
+    _assert_output_no_wider(
+        _mapping(caps.get("output", {})),
+        _mapping(requested.get("output", {})),
+    )
+    _assert_cleanup_no_wider(
+        _mapping(caps.get("cleanup", {})),
+        _mapping(requested.get("cleanup", {})),
+    )
+    _assert_mapping_equal(
+        _mapping(caps.get("pooling", {})),
+        _mapping(requested.get("pooling", {})),
+        "tool pooling policy cannot widen flow container defaults",
+    )
+    _assert_mapping_equal(
+        _mapping(caps.get("audit", {})),
+        _mapping(requested.get("audit", {})),
+        "tool audit policy cannot widen flow container defaults",
+    )
+    assert _enum_value(caps.get("command_mode")) == _enum_value(
+        requested.get("command_mode")
+    ), "tool command mode cannot widen flow container defaults"
+    assert caps.get("user") == requested.get(
+        "user"
+    ), "tool user cannot widen flow container defaults"
+    assert not (
+        caps.get("read_only_rootfs") is True
+        and requested.get("read_only_rootfs") is not True
+    ), "tool root filesystem cannot widen flow container defaults"
+    _assert_escalation_no_wider(
+        _mapping(caps.get("escalation", {})),
+        _mapping(requested.get("escalation", {})),
+    )
+
+
+def _assert_mounts_no_wider(
+    caps: tuple[Mapping[str, object], ...],
+    requested: tuple[Mapping[str, object], ...],
+) -> None:
+    caps_by_target = _mapping_by_key(caps, "target")
+    for mount in requested:
+        target = _string_value(mount.get("target"))
+        assert (
+            target in caps_by_target
+        ), "tool mounts cannot widen flow container defaults"
+        cap = caps_by_target[target]
+        assert mount.get("source") == cap.get(
+            "source"
+        ), "tool mount source cannot widen flow container defaults"
+        assert mount.get("mount_type") == cap.get(
+            "mount_type"
+        ), "tool mount type cannot widen flow container defaults"
+        if cap.get("access") == "read":
+            assert (
+                mount.get("access") == "read"
+            ), "tool mount access cannot widen flow container defaults"
+
+
+def _assert_environment_no_wider(
+    caps: Mapping[str, object],
+    requested: Mapping[str, object],
+) -> None:
+    cap_vars = _mapping(caps.get("variables", {}))
+    requested_vars = _mapping(requested.get("variables", {}))
+    for name, value in requested_vars.items():
+        assert (
+            name in cap_vars and cap_vars[name] == value
+        ), "tool environment cannot widen flow container defaults"
+    cap_allowlist = set(_string_tuple(caps.get("allowlist", ())))
+    for name in _string_tuple(requested.get("allowlist", ())):
+        assert (
+            name in cap_allowlist
+        ), "tool environment allowlist cannot widen flow container defaults"
+    assert not (
+        caps.get("inherit_host") is False
+        and requested.get("inherit_host") is True
+    ), "tool environment cannot inherit host variables"
+
+
+def _assert_network_no_wider(
+    caps: Mapping[str, object],
+    requested: Mapping[str, object],
+) -> None:
+    cap_mode = _string_value(caps.get("mode", "none"))
+    requested_mode = _string_value(requested.get("mode", "none"))
+    ranks = {"none": 0, "loopback": 1, "allowlist": 2, "full": 3}
+    assert (
+        ranks[requested_mode] <= ranks[cap_mode]
+    ), "tool network cannot widen flow container defaults"
+    if cap_mode == "allowlist":
+        cap_allowlist = set(_string_tuple(caps.get("egress_allowlist", ())))
+        for host in _string_tuple(requested.get("egress_allowlist", ())):
+            assert (
+                host in cap_allowlist
+            ), "tool network allowlist cannot widen flow container defaults"
+
+
+def _assert_devices_no_wider(
+    caps: Mapping[str, object],
+    requested: Mapping[str, object],
+) -> None:
+    cap_devices = set(_string_tuple(caps.get("devices", ())))
+    for device in _string_tuple(requested.get("devices", ())):
+        assert (
+            device in cap_devices
+        ), "tool devices cannot widen flow container defaults"
+
+
+def _assert_resources_no_wider(
+    caps: Mapping[str, object],
+    requested: Mapping[str, object],
+) -> None:
+    for key in ("cpu_count", "memory_bytes", "pids", "timeout_seconds"):
+        _assert_limit_no_wider(caps.get(key), requested.get(key), key)
+
+
+def _assert_output_no_wider(
+    caps: Mapping[str, object],
+    requested: Mapping[str, object],
+) -> None:
+    for key in ("max_stdout_bytes", "max_stderr_bytes", "max_artifact_bytes"):
+        _assert_limit_no_wider(caps.get(key), requested.get(key), key)
+    assert not (
+        caps.get("allow_artifacts") is False
+        and requested.get("allow_artifacts") is True
+    ), "tool artifact output cannot widen flow container defaults"
+
+
+def _assert_cleanup_no_wider(
+    caps: Mapping[str, object],
+    requested: Mapping[str, object],
+) -> None:
+    assert caps.get("mode") == requested.get(
+        "mode"
+    ), "tool cleanup mode cannot widen flow container defaults"
+    _assert_limit_no_wider(
+        caps.get("grace_seconds"),
+        requested.get("grace_seconds"),
+        "grace_seconds",
+    )
+
+
+def _assert_escalation_no_wider(
+    caps: Mapping[str, object],
+    requested: Mapping[str, object],
+) -> None:
+    ranks = {"deny": 0, "require_review": 1, "preauthorized": 2}
+    cap_mode = _string_value(caps.get("mode", "deny"))
+    requested_mode = _string_value(requested.get("mode", "deny"))
+    assert (
+        ranks[requested_mode] <= ranks[cap_mode]
+    ), "tool escalation policy cannot widen flow container defaults"
+
+
+def _assert_sequences_no_wider(
+    caps: tuple[Mapping[str, object], ...],
+    requested: tuple[Mapping[str, object], ...],
+    *,
+    key: str,
+    message: str,
+) -> None:
+    caps_by_key = _mapping_by_key(caps, key)
+    for item in requested:
+        item_key = _string_value(item.get(key))
+        assert (
+            item_key in caps_by_key and item == caps_by_key[item_key]
+        ), message
+
+
+def _assert_mapping_equal(
+    caps: Mapping[str, object],
+    requested: Mapping[str, object],
+    message: str,
+) -> None:
+    assert dict(requested) == dict(caps), message
+
+
+def _assert_limit_no_wider(
+    caps: object,
+    requested: object,
+    field_name: str,
+) -> None:
+    if caps is None:
+        return
+    assert isinstance(caps, int) and not isinstance(caps, bool)
+    assert isinstance(requested, int) and not isinstance(requested, bool)
+    assert requested <= caps, f"tool {field_name} cannot widen flow defaults"
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    assert isinstance(value, Mapping)
+    return value
+
+
+def _sequence_mapping(value: object) -> tuple[Mapping[str, object], ...]:
+    assert isinstance(value, list | tuple)
+    result: list[Mapping[str, object]] = []
+    for item in value:
+        assert isinstance(item, Mapping)
+        result.append(item)
+    return tuple(result)
+
+
+def _mapping_by_key(
+    values: tuple[Mapping[str, object], ...],
+    key: str,
+) -> dict[str, Mapping[str, object]]:
+    result: dict[str, Mapping[str, object]] = {}
+    for value in values:
+        key_value = _string_value(value.get(key))
+        assert key_value not in result
+        result[key_value] = value
+    return result
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    assert isinstance(value, list | tuple)
+    result: list[str] = []
+    for item in value:
+        result.append(_string_value(item))
+    return tuple(result)
+
+
+def _string_value(value: object) -> str:
+    assert isinstance(value, str) and value.strip()
+    return value
+
+
+def _enum_value(value: object) -> str:
+    if hasattr(value, "value"):
+        enum_value = getattr(value, "value")
+        assert isinstance(enum_value, str)
+        return enum_value
+    return _string_value(value)
+
+
+def _with_flow_node_scope(
+    effective: ContainerEffectiveSettings,
+) -> ContainerEffectiveSettings:
+    assert isinstance(effective, ContainerEffectiveSettings)
+    return replace(
+        effective,
+        scope=ContainerExecutionScope.DURABLE_WORKFLOW,
+    )
+
+
+def _validate_node_container_deadline(
+    node: FlowNodeDefinition,
+    effective: ContainerEffectiveSettings,
+) -> None:
+    if node.timeout_policy is None:
+        return
+    if node.timeout_policy.per_attempt_seconds is None:
+        return
+    if effective.profile is None:
+        return
+    timeout_seconds = effective.profile.resources.timeout_seconds
+    if timeout_seconds is None:
+        return
+    assert (
+        timeout_seconds <= node.timeout_policy.per_attempt_seconds
+    ), "container timeout cannot exceed node timeout"
+
+
+def _container_configuration_error(
+    *,
+    path: str,
+    message: str,
+    hint: str,
+) -> FlowNodeConfigurationError:
+    return FlowNodeConfigurationError(
+        code="flow.container_policy_invalid",
+        path=path,
+        message=message,
+        hint=hint,
+    )
+
+
+def _assertion_hint(error: AssertionError) -> str:
+    text = str(error).strip()
+    if text:
+        return text
+    return "Use only trusted container defaults and narrower node settings."
+
+
+def flow_node_container_fingerprint(
+    plan: FlowExecutionPlan,
+    node: FlowNodePlan,
+) -> str:
+    assert isinstance(plan, FlowExecutionPlan)
+    assert isinstance(node, FlowNodePlan)
+    payload = {
+        "flow": plan.name,
+        "version": plan.version,
+        "revision": plan.revision,
+        "node": node.name,
+        "type": node.type,
+        "ref": node.ref,
+        "config": _json_fingerprint_value(node.config),
+    }
+    encoded = dumps(payload, sort_keys=True, separators=(",", ":"))
+    return sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _json_fingerprint_value(value: object) -> object:
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    if isinstance(value, Mapping):
+        return {
+            key: _json_fingerprint_value(item)
+            for key, item in sorted(value.items())
+            if isinstance(key, str)
+        }
+    if isinstance(value, list | tuple):
+        return [_json_fingerprint_value(item) for item in value]
+    return {"type": type(value).__name__}
 
 
 async def _compile_node_metadata(

@@ -13,6 +13,7 @@ from avalan.container import (
     container_syntax_diagnostics,
     resolve_container_backend,
 )
+from avalan.container.conformance import _path_values
 
 
 class ContainerConformanceTest(TestCase):
@@ -97,14 +98,14 @@ class ContainerConformanceTest(TestCase):
 
     def test_unsupported_container_sections_are_diagnosed(self) -> None:
         diagnostics = container_syntax_diagnostics(
-            ContainerSurface.FLOW_TOML,
-            {"runtime": {"container": {"profile": "workspace-readonly"}}},
+            ContainerSurface.TASK_TOML,
+            {"execution": {"container": {"profile": "workspace-readonly"}}},
         )
 
         self.assertEqual(
             [diagnostic.path for diagnostic in diagnostics],
             [
-                "runtime.container",
+                "execution.container",
             ],
         )
         self.assertTrue(
@@ -161,11 +162,7 @@ class ContainerConformanceTest(TestCase):
             },
         )
 
-        self.assertEqual(len(diagnostics), 1)
-        self.assertEqual(
-            diagnostics[0].path,
-            "nodes.search.runtime.container",
-        )
+        self.assertEqual(diagnostics, ())
 
     def test_missing_and_non_mapping_paths_do_not_match(self) -> None:
         self.assertEqual(
@@ -194,6 +191,32 @@ class ContainerConformanceTest(TestCase):
             (),
         )
 
+    def test_wildcard_path_values_skip_non_mapping_branches(self) -> None:
+        matches = _path_values(
+            {
+                "nodes": {
+                    "search": {
+                        "runtime": {
+                            "container": {"profile": "workspace-readonly"}
+                        }
+                    },
+                    "note": "not-a-table",
+                    1: {"runtime": {"container": {"profile": "ignored"}}},
+                }
+            },
+            "nodes.*.runtime.container",
+        )
+
+        self.assertEqual(
+            matches,
+            (
+                (
+                    "nodes.search.runtime.container",
+                    {"profile": "workspace-readonly"},
+                ),
+            ),
+        )
+
     def test_string_surface_names_are_supported(self) -> None:
         diagnostics = container_syntax_diagnostics(
             "server",
@@ -211,10 +234,10 @@ class ContainerConformanceTest(TestCase):
             {"tool": {"container": {"backend": "auto"}}},
         )
 
-        with self.assertRaisesRegex(AssertionError, "runtime.container"):
+        with self.assertRaisesRegex(AssertionError, "execution.container"):
             assert_container_syntax_supported(
-                ContainerSurface.FLOW_TOML,
-                {"runtime": {"container": {"profile": "p"}}},
+                ContainerSurface.TASK_TOML,
+                {"execution": {"container": {"profile": "p"}}},
             )
 
     def test_required_backend_never_falls_back_to_host_execution(self) -> None:

@@ -63,6 +63,9 @@ from .definition import FlowOutputType as FlowOutputType
 from .definition import FlowRetryBackoffStrategy as FlowRetryBackoffStrategy
 from .definition import FlowRetryPolicy as FlowRetryPolicy
 from .definition import FlowRouteMatchPolicy as FlowRouteMatchPolicy
+from .definition import (
+    FlowRuntimeEnvelopeDefinition as FlowRuntimeEnvelopeDefinition,
+)
 from .definition import FlowTimeoutPolicy as FlowTimeoutPolicy
 from .diagnostics import FlowDiagnostic as FlowDiagnostic
 from .diagnostics import FlowDiagnosticCategory as FlowDiagnosticCategory
@@ -184,6 +187,9 @@ from .plan import FlowPlanCompileResult as FlowPlanCompileResult
 from .plan import FlowRetryPlan as FlowRetryPlan
 from .plan import FlowTimeoutPlan as FlowTimeoutPlan
 from .plan import compile_flow_definition as compile_flow_definition
+from .plan import (
+    flow_node_container_fingerprint as flow_node_container_fingerprint,
+)
 from .registry import FLOW_INPUT_KEY as FLOW_INPUT_KEY
 from .registry import FLOW_TOOL_NODE_TYPE as FLOW_TOOL_NODE_TYPE
 from .registry import (
