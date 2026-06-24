@@ -79,7 +79,7 @@ async def main() -> None:
 
     with OpenAIModel("gpt-5-mini", settings) as model:
         async for item in await model(
-            "Give me two five about Leo Messi.",
+            "Give me five facts about Leo Messi.",
             settings=GenerationSettings(use_async_generator=True),
         ):
             if (
