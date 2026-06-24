@@ -48,6 +48,7 @@ from avalan.tool.shell import ShellToolSet, ShellToolSettings
 _DIGEST = "a" * 64
 _DIGEST_ALT = "b" * 64
 _IMAGE = f"ghcr.io/example/shell-tools@sha256:{_DIGEST}"
+_APPLE_SHARED_WORKSPACE = "/tmp/avalan-apple-workspace"
 _LIVE_E2E = environ.get("AVALAN_CONTAINER_APPLE_E2E") == "1"
 _LIVE_E2E_IMAGE = environ.get("AVALAN_CONTAINER_APPLE_E2E_IMAGE")
 
@@ -771,7 +772,7 @@ class AppleContainerBackendTest(TestCase):
     def test_resolve_image_reports_all_policy_restrictions(self) -> None:
         backend = AppleContainerBackend(_FakeRunner())
         workspace_mount = ContainerMountDeclaration(
-            source=".",
+            source=_APPLE_SHARED_WORKSPACE,
             target="/workspace",
             mount_type=ContainerMountType.WORKSPACE,
             access=ContainerMountAccess.READ,
@@ -796,7 +797,7 @@ class AppleContainerBackendTest(TestCase):
                             mount_type=ContainerMountType.WORKSPACE,
                         ),
                         ContainerMountDeclaration(
-                            source=".",
+                            source=_APPLE_SHARED_WORKSPACE,
                             target="/scratch",
                             mount_type=ContainerMountType.SCRATCH,
                             access=ContainerMountAccess.WRITE,
@@ -1479,7 +1480,7 @@ def _run_plan(
         mounts=mounts
         or (
             ContainerMountDeclaration(
-                source=".",
+                source=_APPLE_SHARED_WORKSPACE,
                 target="/workspace",
                 mount_type=ContainerMountType.WORKSPACE,
                 access=ContainerMountAccess.READ,
