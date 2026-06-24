@@ -101,6 +101,7 @@ class ContainerNetworkMode(StrEnum):
     NONE = "none"
     LOOPBACK = "loopback"
     ALLOWLIST = "allowlist"
+    FULL = "full"
 
 
 class ContainerDeviceClass(StrEnum):
@@ -2399,15 +2400,30 @@ def _narrow_network(
     if caps_mode is ContainerNetworkMode.NONE:
         assert False, "network override cannot enable network"
     if requested_mode is ContainerNetworkMode.LOOPBACK:
-        assert requested_mode is caps_mode or caps_mode is (
-            ContainerNetworkMode.ALLOWLIST
-        ), "network mode cannot widen"
+        assert caps_mode in {
+            ContainerNetworkMode.LOOPBACK,
+            ContainerNetworkMode.ALLOWLIST,
+            ContainerNetworkMode.FULL,
+        }, "network mode cannot widen"
+        return requested
+    if requested_mode is ContainerNetworkMode.FULL:
+        assert (
+            caps_mode is ContainerNetworkMode.FULL
+        ), "network full cannot widen mode"
+        assert not requested.egress_allowlist, "network full cannot use egress"
         return requested
     assert (
-        caps_mode is ContainerNetworkMode.ALLOWLIST
-    ), "network allowlist cannot widen mode"
-    for host in requested.egress_allowlist:
-        assert host in caps.egress_allowlist, "network allowlist cannot widen"
+        requested_mode is ContainerNetworkMode.ALLOWLIST
+    ), "network mode is unsupported"
+    assert caps_mode in {
+        ContainerNetworkMode.ALLOWLIST,
+        ContainerNetworkMode.FULL,
+    }, "network allowlist cannot widen mode"
+    if caps_mode is ContainerNetworkMode.ALLOWLIST:
+        for host in requested.egress_allowlist:
+            assert (
+                host in caps.egress_allowlist
+            ), "network allowlist cannot widen"
     return requested
 
 

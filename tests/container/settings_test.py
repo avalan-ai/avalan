@@ -595,6 +595,64 @@ class ContainerSettingsTest(TestCase):
             ContainerEscalationMode.DENY,
         )
 
+    def test_network_full_override_requires_full_network_cap(self) -> None:
+        rich = _rich_profile()
+        settings = ContainerSettings(
+            source=_trusted_source(ContainerSurface.SERVER),
+            backend=ContainerBackend.DOCKER,
+            default_profile=rich.name,
+            allowed_profiles=(rich.name,),
+            profiles={rich.name: rich},
+            profile_registry_id="unit-registry",
+            policy_version="phase1",
+        )
+        request_source = _untrusted_source(
+            ContainerSurface.SERVER,
+            ContainerTrustLevel.UNTRUSTED_REQUEST,
+        )
+        full_override = ContainerSettingsOverride.from_dict(
+            {"network": {"mode": "full"}},
+            source=request_source,
+        )
+
+        with self.assertRaises(AssertionError):
+            ContainerAuthorityCaps(settings=settings).merge((full_override,))
+
+        full_profile_dict = rich.to_dict()
+        full_profile_dict["network"] = {
+            "mode": "full",
+            "egress_allowlist": [],
+        }
+        full_profile = ContainerProfile.from_dict(full_profile_dict)
+        full_settings = ContainerSettings(
+            source=_trusted_source(ContainerSurface.SERVER),
+            backend=ContainerBackend.DOCKER,
+            default_profile=full_profile.name,
+            allowed_profiles=(full_profile.name,),
+            profiles={full_profile.name: full_profile},
+            profile_registry_id="unit-registry",
+            policy_version="phase1",
+        )
+        full_caps = ContainerAuthorityCaps(settings=full_settings)
+        allowlist_override = ContainerSettingsOverride.from_dict(
+            {
+                "network": {
+                    "mode": "allowlist",
+                    "egress_allowlist": ["api.example.test"],
+                },
+            },
+            source=request_source,
+        )
+
+        self.assertEqual(
+            full_caps.merge((full_override,)).profile.network.mode,
+            ContainerNetworkMode.FULL,
+        )
+        self.assertEqual(
+            full_caps.merge((allowlist_override,)).profile.network.mode,
+            ContainerNetworkMode.ALLOWLIST,
+        )
+
     def test_precedence_and_finite_resource_narrowing_are_deterministic(
         self,
     ) -> None:
