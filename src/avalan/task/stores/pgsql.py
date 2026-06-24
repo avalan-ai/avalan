@@ -30,6 +30,7 @@ from ..definition import (
     RetryBackoff,
     RunMode,
     TaskArtifactPolicy,
+    TaskContainerExecutionSettings,
     TaskDefinition,
     TaskExecutionTarget,
     TaskInputContract,
@@ -2038,6 +2039,7 @@ def _definition_to_payload(definition: TaskDefinition) -> dict[str, object]:
             "storage": definition.artifact.storage,
             "store_bytes": definition.artifact.store_bytes,
         },
+        "container": definition.container.to_dict(),
         "execution": {
             "ref": definition.execution.ref,
             "type": definition.execution.type.value,
@@ -2120,6 +2122,7 @@ def _definition_from_payload(payload: Mapping[str, object]) -> TaskDefinition:
     retry = _mapping(payload["retry"])
     privacy = _mapping(payload["privacy"])
     artifact = _mapping(payload["artifact"])
+    container = _mapping(payload.get("container", {}))
     limits = _mapping(payload["limits"])
     observability = _mapping(payload["observability"])
     return TaskDefinition(
@@ -2228,6 +2231,11 @@ def _definition_from_payload(payload: Mapping[str, object]) -> TaskDefinition:
                 bool,
                 observability.get("capture_events", True),
             ),
+        ),
+        container=(
+            TaskContainerExecutionSettings()
+            if not container
+            else TaskContainerExecutionSettings.from_dict(container)
         ),
     )
 

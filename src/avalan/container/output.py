@@ -325,6 +325,7 @@ class ContainerOutputArtifact:
     size_bytes: int
     media_type: str
     digest: str
+    content: bytes | None = None
     quarantined: bool = False
 
     def __post_init__(self) -> None:
@@ -341,6 +342,9 @@ class ContainerOutputArtifact:
         assert self.size_bytes >= 0, "size_bytes must not be negative"
         _assert_non_empty_string(self.media_type, "media_type")
         _assert_digest(self.digest)
+        if self.content is not None:
+            assert isinstance(self.content, bytes)
+            assert len(self.content) == self.size_bytes
         _assert_bool(self.quarantined, "quarantined")
         object.__setattr__(self, "artifact_type", artifact_type)
 

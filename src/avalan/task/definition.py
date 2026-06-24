@@ -1,3 +1,4 @@
+from ..container import ContainerEffectiveSettings
 from ..types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
@@ -620,6 +621,87 @@ class TaskObservabilityPolicy:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class TaskContainerExecutionSettings:
+    attempt: ContainerEffectiveSettings | None = None
+    worker_envelope: ContainerEffectiveSettings | None = None
+    readiness_timeout_seconds: int = 30
+
+    def __post_init__(self) -> None:
+        if self.attempt is not None:
+            assert isinstance(self.attempt, ContainerEffectiveSettings)
+        if self.worker_envelope is not None:
+            assert isinstance(
+                self.worker_envelope,
+                ContainerEffectiveSettings,
+            )
+        assert isinstance(self.readiness_timeout_seconds, int)
+        assert not isinstance(self.readiness_timeout_seconds, bool)
+        assert (
+            self.readiness_timeout_seconds > 0
+        ), "readiness_timeout_seconds must be positive"
+
+    @property
+    def enabled(self) -> bool:
+        return bool(
+            (self.attempt is not None and self.attempt.enabled)
+            or (
+                self.worker_envelope is not None
+                and self.worker_envelope.enabled
+            )
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "attempt": (
+                self.attempt.to_dict() if self.attempt is not None else None
+            ),
+            "worker_envelope": (
+                self.worker_envelope.to_dict()
+                if self.worker_envelope is not None
+                else None
+            ),
+            "readiness_timeout_seconds": self.readiness_timeout_seconds,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        raw: Mapping[str, object],
+    ) -> "TaskContainerExecutionSettings":
+        assert isinstance(raw, Mapping), "container settings must be a mapping"
+        for field_name in (
+            "attempt",
+            "worker_envelope",
+            "readiness_timeout_seconds",
+        ):
+            assert (
+                field_name in raw
+            ), "container settings are missing a required field"
+        attempt = raw["attempt"]
+        worker_envelope = raw["worker_envelope"]
+        readiness_timeout_seconds = raw["readiness_timeout_seconds"]
+        assert isinstance(readiness_timeout_seconds, int)
+        assert not isinstance(readiness_timeout_seconds, bool)
+        return cls(
+            attempt=(
+                None
+                if attempt is None
+                else ContainerEffectiveSettings.from_dict(
+                    _mapping_value(attempt, "attempt")
+                )
+            ),
+            worker_envelope=(
+                None
+                if worker_envelope is None
+                else ContainerEffectiveSettings.from_dict(
+                    _mapping_value(worker_envelope, "worker_envelope")
+                )
+            ),
+            readiness_timeout_seconds=readiness_timeout_seconds,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TaskDefinition:
     task: TaskMetadata
     input: TaskInputContract
@@ -633,6 +715,9 @@ class TaskDefinition:
     limits: TaskLimitsPolicy = field(default_factory=TaskLimitsPolicy)
     observability: TaskObservabilityPolicy = field(
         default_factory=TaskObservabilityPolicy
+    )
+    container: TaskContainerExecutionSettings = field(
+        default_factory=TaskContainerExecutionSettings
     )
 
     def __post_init__(self) -> None:
@@ -651,3 +736,9 @@ class TaskDefinition:
         assert isinstance(self.artifact, TaskArtifactPolicy)
         assert isinstance(self.limits, TaskLimitsPolicy)
         assert isinstance(self.observability, TaskObservabilityPolicy)
+        assert isinstance(self.container, TaskContainerExecutionSettings)
+
+
+def _mapping_value(value: object, field_name: str) -> Mapping[str, object]:
+    assert isinstance(value, Mapping), f"{field_name} must be a mapping"
+    return value

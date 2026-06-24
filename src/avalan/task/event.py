@@ -230,6 +230,8 @@ def task_event_category(event_type: str) -> TaskEventCategory:
         return TaskEventCategory.MODEL
     if event_type.startswith("memory_"):
         return TaskEventCategory.MEMORY
+    if event_type.startswith("container_"):
+        return TaskEventCategory.UNKNOWN
     if event_type in _USAGE_EVENT_TYPES:
         return TaskEventCategory.USAGE
     if (

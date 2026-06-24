@@ -102,6 +102,9 @@ from .definition import PrivacyAction as PrivacyAction
 from .definition import RetryBackoff as RetryBackoff
 from .definition import RunMode as RunMode
 from .definition import TaskArtifactPolicy as TaskArtifactPolicy
+from .definition import (
+    TaskContainerExecutionSettings as TaskContainerExecutionSettings,
+)
 from .definition import TaskDefinition as TaskDefinition
 from .definition import TaskExecutionTarget as TaskExecutionTarget
 from .definition import TaskInputContract as TaskInputContract

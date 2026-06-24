@@ -11,6 +11,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from avalan.task import (
+    ArtifactStore,
     ArtifactStoreError,
     ArtifactStorePolicyError,
     HmacProvider,
@@ -446,6 +447,18 @@ class FailingArtifactAppendStore(InMemoryTaskStore):
         raise RuntimeError("private artifact metadata failure")
 
 
+class MountSourceFailingStore:
+    def _existing_path_for_ref(self, ref: TaskArtifactRef) -> Path:
+        _ = ref
+        raise ArtifactStoreError("private local path failure")
+
+
+class MountSourceNonPathStore:
+    def _existing_path_for_ref(self, ref: TaskArtifactRef) -> str:
+        _ = ref
+        return "private-local-path"
+
+
 class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
     async def test_non_file_input_returns_no_materialized_files(self) -> None:
         files = await materialize_task_input_files(
@@ -489,6 +502,26 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             ["input.invalid_type"],
         )
         self.assertNotIn("private scalar path", str(error.exception))
+
+    async def test_artifact_mount_source_fails_closed(self) -> None:
+        ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="artifact-1",
+        )
+
+        self.assertIsNone(
+            task_materialization._artifact_mount_source(  # noqa: SLF001
+                cast(ArtifactStore, MountSourceFailingStore()),
+                ref,
+            )
+        )
+        self.assertIsNone(
+            task_materialization._artifact_mount_source(  # noqa: SLF001
+                cast(ArtifactStore, MountSourceNonPathStore()),
+                ref,
+            )
+        )
 
     async def test_provider_reference_input_skips_byte_materialization(
         self,
