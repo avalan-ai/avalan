@@ -8,7 +8,8 @@ PYTEST_ARGS += --cov=src/ --cov-report=xml
 endif
 
 ifneq ($(filter coverage,$(TEST_ARGS)),)
-PYTEST_ARGS += --cov-fail-under=100
+# coverage.py treats fail-under=100 as exact; enforce reported 100.00%.
+PYTEST_ARGS += --cov-fail-under=99.995 --cov-precision=2
 endif
 
 ifneq ($(filter-out $(REAL_TARGETS),$(MAKECMDGOALS)),)
