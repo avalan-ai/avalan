@@ -11,6 +11,7 @@ from avalan.container import (
     ContainerAuthorizationDecisionType,
     ContainerBackend,
     ContainerBackendCapabilities,
+    ContainerBackendSupportLevel,
     ContainerCleanupMode,
     ContainerCleanupPolicy,
     ContainerCleanupPolicyOverride,
@@ -32,6 +33,7 @@ from avalan.container import (
     ContainerNetworkPolicy,
     ContainerOutputPolicy,
     ContainerOutputPolicyOverride,
+    ContainerPlatformBehavior,
     ContainerPoolingMode,
     ContainerPoolingPolicy,
     ContainerProfile,
@@ -207,6 +209,8 @@ class ContainerSettingsTest(TestCase):
             host_os="darwin",
             guest_os="linux",
             architecture="arm64",
+            runtime_name="Docker Desktop Linux VM",
+            support_level="supported",
             platform_emulation=True,
             rootless=True,
             user_namespace=True,
@@ -217,10 +221,25 @@ class ContainerSettingsTest(TestCase):
             resource_limits=True,
             device_classes=("cpu",),
             per_container_vm_isolation=True,
+            vm_backed=True,
+            remote_engine=True,
             windows_process_isolation=True,
             windows_hyperv_isolation=True,
             streaming_attach=True,
             stats=True,
+            lifecycle_normalization=True,
+            platform_behavior=ContainerPlatformBehavior(
+                file_io="shared VM file I/O",
+                networking="VM networking",
+                architecture_emulation="amd64 emulation available",
+                resources="VM resource ceiling",
+                signals="signals cross VM boundary",
+                path_syntax="POSIX host paths",
+                drive_letters="not applicable",
+                case_behavior="host dependent",
+            ),
+            shared_mount_prefixes=("/Users/",),
+            parity_requirements=("none",),
         )
         command = ContainerCommandPlan(
             tool_name="shell.rg",
@@ -265,12 +284,39 @@ class ContainerSettingsTest(TestCase):
         )
 
         self.assertEqual(capabilities.to_dict()["backend"], "docker")
+        self.assertEqual(
+            capabilities.support_level,
+            ContainerBackendSupportLevel.SUPPORTED,
+        )
+        self.assertEqual(
+            capabilities.to_dict()["runtime_name"],
+            "Docker Desktop Linux VM",
+        )
+        self.assertEqual(
+            capabilities.to_dict()["support_level"],
+            "supported",
+        )
         self.assertTrue(capabilities.to_dict()["platform_emulation"])
         self.assertTrue(
             capabilities.to_dict()["per_container_vm_isolation"],
         )
+        self.assertTrue(capabilities.to_dict()["vm_backed"])
+        self.assertTrue(capabilities.to_dict()["remote_engine"])
         self.assertTrue(capabilities.to_dict()["windows_process_isolation"])
         self.assertTrue(capabilities.to_dict()["windows_hyperv_isolation"])
+        behavior_dict = capabilities.to_dict()["platform_behavior"]
+        assert isinstance(behavior_dict, dict)
+        self.assertEqual(
+            behavior_dict,
+            ContainerPlatformBehavior.from_dict(behavior_dict).to_dict(),
+        )
+        self.assertEqual(
+            capabilities.to_dict()["shared_mount_prefixes"],
+            ["/Users/"],
+        )
+        self.assertEqual(
+            capabilities.to_dict()["parity_requirements"], ["none"]
+        )
         self.assertEqual(run_plan.to_dict()["command"], command.to_dict())
         self.assertEqual(envelope.to_dict()["scope"], "runtime_envelope")
         self.assertEqual(decision.to_dict()["decision"], "allow")
@@ -385,6 +431,19 @@ class ContainerSettingsTest(TestCase):
             ContainerOutputPolicy.from_dict({"max_stderr_bytes": 0})
         with self.assertRaises(AssertionError):
             ContainerCleanupPolicy.from_dict({"grace_seconds": 0})
+        with self.assertRaises(AssertionError):
+            ContainerPlatformBehavior(
+                file_io="",
+                networking="networking",
+                architecture_emulation="emulation",
+                resources="resources",
+                signals="signals",
+                path_syntax="paths",
+                drive_letters="drives",
+                case_behavior="case",
+            )
+        with self.assertRaises(AssertionError):
+            ContainerPlatformBehavior.from_dict({"file_io": "only"})
         with self.assertRaises(AssertionError):
             ContainerProfile(
                 name="root-profile",
