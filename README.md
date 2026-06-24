@@ -71,7 +71,7 @@ from asyncio import run
 from os import environ
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.vendor.openai import OpenAIModel
-from avalan.model.stream import CanonicalStreamItem, StreamItemKind
+from avalan.model.stream import StreamItemKind
 
 async def main() -> None:
     api_key = environ["OPENAI_API_KEY"]
