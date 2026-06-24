@@ -1,6 +1,24 @@
+from ..container import (
+    ContainerAsyncBackend,
+    ContainerOutputDecisionType,
+    ContainerResultStatus,
+    run_container_managed_lifecycle,
+)
 from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactPurpose, TaskArtifactState
 from .attempt import TaskAttemptPolicy
+from .container import (
+    TaskContainerPlans,
+    TaskContainerVerificationError,
+    task_container_event_payload,
+    task_container_input_mount_manifest,
+    task_container_lifecycle_run_plan,
+    task_container_output_artifacts,
+    task_container_output_contract,
+    task_container_unsupported_input_mount_path,
+    task_container_user_metadata,
+    verify_task_container_request,
+)
 from .context import (
     TaskInputFile,
     TaskTargetContext,
@@ -10,6 +28,7 @@ from .converters import FileConverter
 from .converters.registry import default_file_converters
 from .definition import ObservabilitySinkType, TaskDefinition, TaskInputType
 from .error import TaskError, classify_task_error
+from .event import TaskEventCategory, freeze_task_event_value
 from .observability import (
     ObservabilitySink,
     TaskEventPipeline,
@@ -34,10 +53,14 @@ from .queue import (
     TaskQueueRetry,
 )
 from .runner import (
+    TaskContainerAttemptResult,
+    _container_issue,
+    _container_validation_issue,
     _error_summary_with_attempt_policy,
     _output_artifact_retention,
     _output_artifacts_from_output,
     _output_summary_value,
+    _raise_for_container_backend_selection,
     _sanitize_output_artifact,
     _snapshot_value,
     _task_error_with_attempt_counts,
@@ -72,6 +95,7 @@ from asyncio import (
     TimeoutError,
     create_task,
     gather,
+    shield,
     sleep,
     wait,
     wait_for,
@@ -159,6 +183,7 @@ class TaskWorker:
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
+        container_backend: ContainerAsyncBackend | None = None,
         shutdown: TaskWorkerShutdown | None = None,
         heartbeat_seconds: float | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -185,6 +210,9 @@ class TaskWorker:
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
         self._observability_sink = observability_sink
+        if container_backend is not None:
+            assert isinstance(container_backend, ContainerAsyncBackend)
+        self._container_backend = container_backend
         if heartbeat_seconds is not None:
             assert isinstance(heartbeat_seconds, int | float)
             assert not isinstance(heartbeat_seconds, bool)
@@ -306,12 +334,40 @@ class TaskWorker:
                 usage_observations_from_response(response)
             ),
         )
+        files = await self._input_files(definition, run, attempt)
+        input_mounts = task_container_input_mount_manifest(
+            files,
+            allowed_roots=tuple(Path(root) for root in self._execution_roots),
+        )
+        container_result = await self._run_task_container(
+            definition,
+            run=run,
+            attempt=attempt,
+            input_mounts=input_mounts,
+            sanitizer=sanitizer,
+        )
+        if container_result is not None:
+            output = container_result.output
+            await self._check_cancelled(run.run_id)
+            await usage_tracker.observe(output)
+            issues = validate_task_output(definition, output)
+            if issues:
+                raise TaskValidationError(issues)
+            if not container_result.output_artifacts_recorded:
+                await self._record_output_artifacts(
+                    definition,
+                    output,
+                    run=run,
+                    attempt=attempt,
+                    sanitizer=sanitizer,
+                )
+            return output
         context = TaskTargetContext(
             definition=definition,
             execution=attempt.context,
             input_value=self._executable_input_value(definition, run),
-            files=await self._input_files(definition, run, attempt),
-            metadata=run.request.metadata,
+            files=files,
+            metadata=task_container_user_metadata(run.request.metadata),
             cancellation_checker=lambda: self._check_cancelled(run.run_id),
             event_listener=self._event_pipeline(
                 definition,
@@ -782,6 +838,263 @@ class TaskWorker:
         )
         if issues:
             raise TaskValidationError(issues)
+
+    async def _run_task_container(
+        self,
+        definition: TaskDefinition,
+        *,
+        run: TaskRun,
+        attempt: TaskAttempt,
+        input_mounts: tuple[dict[str, object], ...],
+        sanitizer: PrivacySanitizer,
+    ) -> TaskContainerAttemptResult | None:
+        try:
+            plans = verify_task_container_request(
+                definition,
+                run=run,
+                attempt=attempt,
+                input_mounts=input_mounts,
+            )
+        except TaskContainerVerificationError as error:
+            raise TaskValidationError(
+                (_container_validation_issue(error),)
+            ) from error
+        if not plans.enabled:
+            return None
+        await self._record_container_event(
+            definition,
+            run=run,
+            attempt=attempt,
+            sanitizer=sanitizer,
+            event_type="container_plan_verified",
+            plans=plans,
+            input_mounts=input_mounts,
+            status="verified",
+        )
+        if plans.worker_envelope is not None:
+            raise TaskValidationError(
+                (
+                    _container_issue(
+                        code="container.worker_envelope_unsupported",
+                        path="container.worker_envelope",
+                        message=(
+                            "Task worker runtime envelopes require an "
+                            "envelope-aware task runtime."
+                        ),
+                        hint=(
+                            "Route this task to a trusted envelope-aware "
+                            "worker or remove the worker envelope policy."
+                        ),
+                    ),
+                )
+            )
+        if plans.attempt is None:
+            return None
+        if self._container_backend is None:
+            raise TaskValidationError(
+                (
+                    _container_issue(
+                        code="container.backend_unavailable",
+                        path="container.backend",
+                        message=(
+                            "Task container execution requires an injected "
+                            "container backend."
+                        ),
+                        hint=(
+                            "Run this task with a trusted container-capable "
+                            "worker."
+                        ),
+                    ),
+                )
+            )
+        run_plan = task_container_lifecycle_run_plan(
+            plans,
+            input_mounts=input_mounts,
+        )
+        assert run_plan is not None
+        await self._check_cancelled(run.run_id)
+        unsupported_input_mount_path = (
+            task_container_unsupported_input_mount_path(input_mounts)
+        )
+        if unsupported_input_mount_path is not None:
+            raise TaskValidationError(
+                (
+                    _container_issue(
+                        code="container.input_mount_unsupported",
+                        path=unsupported_input_mount_path,
+                        message=(
+                            "Task-attempt container inputs must be "
+                            "artifact-backed scoped mounts."
+                        ),
+                        hint=(
+                            "Materialize task inputs to task artifacts before "
+                            "running them in a required container."
+                        ),
+                    ),
+                )
+            )
+        output_contract = task_container_output_contract(definition, plans)
+        if output_contract is None:
+            raise TaskValidationError(
+                (
+                    _container_issue(
+                        code="container.task_execution_unsupported",
+                        path="container.output",
+                        message=(
+                            "This task output contract cannot be completed "
+                            "through the task-attempt container runtime."
+                        ),
+                        hint=(
+                            "Use a file or artifact output contract with "
+                            "container artifact output enabled, or run "
+                            "without a required task-attempt container."
+                        ),
+                    ),
+                )
+            )
+        if not output_contract.enabled:
+            raise TaskValidationError(
+                (
+                    _container_issue(
+                        code="container.output_unsupported",
+                        path="container.output",
+                        message=(
+                            "Task-attempt container output artifacts are "
+                            "disabled by the trusted container profile."
+                        ),
+                        hint=(
+                            "Enable artifact output in the trusted profile "
+                            "or use an output contract that does not require "
+                            "container artifact collection."
+                        ),
+                    ),
+                )
+            )
+        probe = await self._container_backend.probe()
+        _raise_for_container_backend_selection(run_plan, probe)
+        lifecycle_task = create_task(
+            run_container_managed_lifecycle(
+                self._container_backend,
+                run_plan,
+                output_contract=output_contract,
+                shutdown_requested=self._shutdown_requested(),
+            )
+        )
+        try:
+            while not lifecycle_task.done():
+                try:
+                    await wait_for(shield(lifecycle_task), timeout=0.1)
+                except TimeoutError:
+                    await self._check_cancelled(run.run_id)
+                    continue
+            result = await lifecycle_task
+        finally:
+            if not lifecycle_task.done():
+                await _cancel_task(cast(AsyncTask[object], lifecycle_task))
+        status = cast(ContainerResultStatus, result.execution.status)
+        await self._record_container_event(
+            definition,
+            run=run,
+            attempt=attempt,
+            sanitizer=sanitizer,
+            event_type="container_lifecycle_completed",
+            plans=plans,
+            input_mounts=input_mounts,
+            status=status.value,
+        )
+        if result.execution.status is not ContainerResultStatus.COMPLETED:
+            raise TaskValidationError(
+                (
+                    _container_issue(
+                        code="container.execution_failed",
+                        path="container.result",
+                        message=(
+                            "Container lifecycle did not complete"
+                            " successfully."
+                        ),
+                        hint=(
+                            "Inspect sanitized container events and retry"
+                            " safely."
+                        ),
+                    ),
+                )
+            )
+        if (
+            result.output is None
+            or result.output.decision is not ContainerOutputDecisionType.ACCEPT
+            or not result.output.artifacts
+        ):
+            raise TaskValidationError(
+                (
+                    _container_issue(
+                        code="container.output_unsupported",
+                        path="container.output",
+                        message=(
+                            "Task-attempt container execution did not return "
+                            "accepted task output artifacts."
+                        ),
+                        hint=(
+                            "Configure the container backend to copy accepted "
+                            "task artifacts for this output contract."
+                        ),
+                    ),
+                )
+            )
+        try:
+            output = await task_container_output_artifacts(
+                definition,
+                tuple(result.output.artifacts),
+                run_id=run.run_id,
+                attempt_id=attempt.attempt_id,
+                artifact_store=self._artifact_store,
+            )
+        except TaskContainerVerificationError as error:
+            raise TaskValidationError(
+                (_container_validation_issue(error),)
+            ) from error
+        await self._record_output_artifacts(
+            definition,
+            output,
+            run=run,
+            attempt=attempt,
+            sanitizer=sanitizer,
+        )
+        return TaskContainerAttemptResult(
+            output=output,
+            output_artifacts_recorded=True,
+        )
+
+    async def _record_container_event(
+        self,
+        definition: TaskDefinition,
+        *,
+        run: TaskRun,
+        attempt: TaskAttempt,
+        sanitizer: PrivacySanitizer,
+        event_type: str,
+        plans: TaskContainerPlans,
+        input_mounts: tuple[dict[str, object], ...],
+        status: str,
+    ) -> None:
+        if not definition.observability.capture_events:
+            return
+        payload = freeze_task_event_value(
+            sanitizer.sanitize_event(
+                event_type,
+                task_container_event_payload(
+                    status=status,
+                    plans=plans,
+                    input_mounts=input_mounts,
+                ),
+            ),
+        )
+        await self._store.append_event(
+            run.run_id,
+            event_type=event_type,
+            category=TaskEventCategory.UNKNOWN,
+            payload=payload,
+            attempt_id=attempt.attempt_id,
+        )
 
     def _sanitizer(self, definition: TaskDefinition) -> PrivacySanitizer:
         return PrivacySanitizer(

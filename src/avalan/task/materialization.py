@@ -405,6 +405,22 @@ def _provider_reference_file_metadata(
     return freeze_snapshot_metadata(value)
 
 
+def _artifact_mount_source(
+    artifact_store: ArtifactStore,
+    ref: TaskArtifactRef,
+) -> str | None:
+    path_for_ref = getattr(artifact_store, "_existing_path_for_ref", None)
+    if not callable(path_for_ref):
+        return None
+    try:
+        path = path_for_ref(ref)
+    except (ArtifactStoreError, OSError, RuntimeError, ValueError):
+        return None
+    if not isinstance(path, Path):
+        return None
+    return str(path)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _InputFileDescriptor:
     descriptor: TaskFileDescriptor
@@ -809,6 +825,14 @@ async def _materialize_validated_file(
         digest,
         hmac_provider=hmac_provider,
     )
+    ref_metadata = {
+        **dict(ref.metadata),
+        "identity": identity,
+        "source_kind": descriptor.source_kind.value,
+    }
+    mount_source = _artifact_mount_source(artifact_store, ref)
+    if mount_source is not None:
+        ref_metadata["container_mount_source"] = mount_source
     ref = TaskArtifactRef(
         artifact_id=ref.artifact_id,
         store=ref.store,
@@ -818,13 +842,7 @@ async def _materialize_validated_file(
             ref.size_bytes if ref.size_bytes is not None else stream.size_bytes
         ),
         sha256=digest,
-        metadata=freeze_snapshot_metadata(
-            {
-                **dict(ref.metadata),
-                "identity": identity,
-                "source_kind": descriptor.source_kind.value,
-            }
-        ),
+        metadata=freeze_snapshot_metadata(ref_metadata),
     )
     if task_store is not None:
         try:

@@ -1,5 +1,6 @@
 from ..filesystem import read_text
 from ..types import LooseJsonValue
+from .container import task_container_canonical_value
 from .definition import (
     FrozenMetadata,
     ObservabilitySinkType,
@@ -74,6 +75,7 @@ async def canonical_definition(
             ),
             "store_bytes": definition.artifact.store_bytes,
         },
+        "container": task_container_canonical_value(definition),
         "execution": {
             "provider_instructions_sha256": (
                 await _provider_instructions_digest(

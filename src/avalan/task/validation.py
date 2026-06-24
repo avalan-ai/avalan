@@ -14,6 +14,7 @@ from .converters import (
 from .definition import (
     PrivacyAction,
     TaskArtifactPolicy,
+    TaskContainerExecutionSettings,
     TaskDefinition,
     TaskExecutionTarget,
     TaskInputContract,
@@ -119,6 +120,18 @@ TASK_VALIDATION_ISSUE_CODES = (
         {
             "artifact.bytes_unsupported",
             "artifact.retention_required",
+            "container.backend_required",
+            "container.backend_unavailable",
+            "container.execution_failed",
+            "container.input_mount_unsupported",
+            "container.output_unsupported",
+            "container.plan_mismatch",
+            "container.plan_missing",
+            "container.plan_unexpected",
+            "container.profile_unknown",
+            "container.task_execution_unsupported",
+            "container.worker_envelope_unsupported",
+            "container.worker_capability_mismatch",
             "dependency.jsonschema_missing",
             "dependency.task_documents_missing",
             "execution.path_escape",
@@ -278,6 +291,7 @@ def validate_task_definition(
     issues.extend(_validate_limits_policy(definition.retry))
     issues.extend(_validate_limits_policy(definition.artifact))
     issues.extend(_validate_limits_policy(definition.limits))
+    issues.extend(_validate_container_policy(definition.container))
     return tuple(issues)
 
 
@@ -2223,6 +2237,48 @@ def _validate_limits_policy(
                         f"limits.{field_name}",
                     ),
                 )
+    return tuple(issues)
+
+
+def _validate_container_policy(
+    policy: TaskContainerExecutionSettings,
+) -> tuple[TaskValidationIssue, ...]:
+    assert isinstance(policy, TaskContainerExecutionSettings)
+    issues: list[TaskValidationIssue] = []
+    for field_name, settings in (
+        ("container.attempt", policy.attempt),
+        ("container.worker_envelope", policy.worker_envelope),
+    ):
+        if settings is None:
+            continue
+        if settings.required and not settings.enabled:
+            issues.append(
+                _issue(
+                    code="container.backend_required",
+                    path=f"{field_name}.backend",
+                    message=(
+                        "Task container execution is required but no "
+                        "container backend is enabled."
+                    ),
+                    hint=(
+                        "Select a trusted enabled container profile or make "
+                        "container execution optional."
+                    ),
+                    category=TaskValidationCategory.UNSUPPORTED,
+                )
+            )
+        if settings.enabled and settings.profile_name is None:
+            issues.append(
+                _issue(
+                    code="container.profile_unknown",
+                    path=f"{field_name}.profile_name",
+                    message=(
+                        "Task container execution has no selected profile."
+                    ),
+                    hint="Select a trusted allowed container profile.",
+                    category=TaskValidationCategory.VALUE,
+                )
+            )
     return tuple(issues)
 
 

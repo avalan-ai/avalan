@@ -1,3 +1,4 @@
+from ..container import ContainerAsyncBackend
 from ..types import (
     assert_non_empty_string,
     assert_optional_non_negative_int,
@@ -11,6 +12,10 @@ from .artifact import (
     TaskArtifactRetention,
 )
 from .canonical import spec_hash
+from .container import (
+    task_container_input_mount_manifest,
+    task_container_run_metadata,
+)
 from .context import TaskInputFile
 from .converters import FileConverter
 from .definition import PrivacyAction, RunMode, TaskDefinition, TaskInputType
@@ -241,6 +246,7 @@ class TaskClient:
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
+        container_backend: ContainerAsyncBackend | None = None,
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
@@ -266,6 +272,9 @@ class TaskClient:
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
         self._observability_sink = observability_sink
+        if container_backend is not None:
+            assert isinstance(container_backend, ContainerAsyncBackend)
+        self._container_backend = container_backend
         self._clock = clock or _utc_now
         self._sleep = sleep or asyncio_sleep
 
@@ -652,7 +661,18 @@ class TaskClient:
                         idempotency.identity_key if idempotency else None
                     ),
                     queue=selected_queue_name,
-                    metadata=freeze_snapshot_metadata(metadata),
+                    metadata=freeze_snapshot_metadata(
+                        task_container_run_metadata(
+                            definition,
+                            metadata,
+                            input_mounts=task_container_input_mount_manifest(
+                                queued_files,
+                                allowed_roots=tuple(
+                                    Path(root) for root in self._input_roots
+                                ),
+                            ),
+                        )
+                    ),
                 ),
                 queue_name=selected_queue_name,
                 priority=definition.run.priority or 0,
@@ -838,6 +858,7 @@ class TaskClient:
             metrics_event_observer=self._metrics_event_observer,
             trace_event_observer=self._trace_event_observer,
             observability_sink=self._observability_sink,
+            container_backend=self._container_backend,
             clock=self._clock,
             sleep=self._sleep,
             input_roots=self._input_roots,

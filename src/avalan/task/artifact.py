@@ -383,6 +383,8 @@ def validate_artifact_transition(
 def task_output_artifact_from_value(
     value: object,
 ) -> TaskOutputArtifact | None:
+    if isinstance(value, TaskOutputArtifact):
+        return value
     if isinstance(value, TaskArtifactRef):
         return TaskOutputArtifact(ref=value)
     if isinstance(value, TaskArtifactRecord):
