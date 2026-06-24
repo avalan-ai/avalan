@@ -34,6 +34,7 @@ from avalan.model.stream import (
     StreamValidationError,
     project_canonical_stream_item,
 )
+from avalan.server.container_policy import RemoteContainerRequestPolicy
 from avalan.server.entities import (
     MCP_BASE64_SOURCE_PATTERN,
     NON_WHITESPACE_PATTERN,
@@ -6263,6 +6264,147 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(request_id, "call-progress")
         self.assertEqual(progress, "tok-1")
         self.assertEqual(tool_request.input_string, "hi")
+
+    async def test_consume_call_request_allows_exposed_container_profile(
+        self,
+    ) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "id": "call-container-profile",
+            "method": "tools/call",
+            "params": {
+                "name": "run",
+                "arguments": {
+                    "input_string": "hi",
+                    "container": {"profile": "workspace-readonly"},
+                },
+            },
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        request.app.state.remote_container_policy = (
+            RemoteContainerRequestPolicy(
+                exposed_profiles=("workspace-readonly",)
+            )
+        )
+        original_validate = mcp_router.MCPToolRequest.model_validate
+
+        with patch.object(
+            mcp_router.MCPToolRequest,
+            "model_validate",
+            side_effect=original_validate,
+        ) as validate:
+            (
+                request_id,
+                tool_request,
+                _,
+            ) = await mcp_router._consume_call_request(request)
+
+        self.assertEqual(request_id, "call-container-profile")
+        self.assertEqual(tool_request.input_string, "hi")
+        self.assertEqual(
+            request.state.mcp_container_profile,
+            "workspace-readonly",
+        )
+        validate.assert_called_once()
+        validated_arguments = validate.call_args.args[0]
+        self.assertNotIn("container", validated_arguments)
+
+    async def test_consume_call_request_rejects_unexposed_container_profile(
+        self,
+    ) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "run",
+                "arguments": {
+                    "input_string": "hi",
+                    "container": {"profile": "workspace-rich"},
+                },
+            },
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+        request.app.state.remote_container_policy = (
+            RemoteContainerRequestPolicy(
+                exposed_profiles=("workspace-readonly",)
+            )
+        )
+
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            await mcp_router._consume_call_request(request)
+
+        self.assertIn("is not exposed", str(exc.exception.detail))
+
+    async def test_consume_call_request_rejects_profile_without_policy(
+        self,
+    ) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "run",
+                "arguments": {
+                    "input_string": "hi",
+                    "container_profile": "workspace-readonly",
+                },
+            },
+        }
+        body = (dumps(message) + mcp_router.RS).encode("utf-8")
+        request = DummyRequest(body)
+
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            await mcp_router._consume_call_request(request)
+
+        self.assertIn("is not exposed", str(exc.exception.detail))
+
+    async def test_consume_call_request_rejects_container_widening_attempts(
+        self,
+    ) -> None:
+        cases: dict[str, dict[str, Any]] = {
+            "container image": {
+                "container": {
+                    "profile": "workspace-readonly",
+                    "image": "alpine:latest",
+                }
+            },
+            "image": {"image": "alpine:latest"},
+            "mounts": {"mounts": [{"source": "/", "target": "/host"}]},
+            "secrets": {"secrets": [{"name": "prod-token"}]},
+            "network": {"network": {"mode": "full"}},
+            "devices": {"devices": ["gpu"]},
+            "resources": {"resources": {"cpu_count": 8}},
+            "backend flags": {"backend_flags": ["--privileged"]},
+            "nested container": {
+                "metadata": {"container": {"image": "alpine:latest"}}
+            },
+        }
+        for name, payload in cases.items():
+            with self.subTest(name=name):
+                message = {
+                    "jsonrpc": "2.0",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "run",
+                        "arguments": {"input_string": "hi", **payload},
+                    },
+                }
+                body = (dumps(message) + mcp_router.RS).encode("utf-8")
+                request = DummyRequest(body)
+                request.app.state.remote_container_policy = (
+                    RemoteContainerRequestPolicy(
+                        exposed_profiles=("workspace-readonly",)
+                    )
+                )
+
+                with self.assertRaises(mcp_router.HTTPException) as exc:
+                    await mcp_router._consume_call_request(request)
+
+                self.assertRegex(
+                    str(exc.exception.detail),
+                    "container (envelope|runtime authority)",
+                )
 
     async def test_consume_call_request_validation_error(self) -> None:
         message = {

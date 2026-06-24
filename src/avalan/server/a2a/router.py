@@ -9,6 +9,16 @@ from ...model.stream import (
     StreamValidationError,
     canonical_item_from_consumer_projection,
 )
+from ..authority import (
+    REMOTE_CONTAINER_PROFILE_SELECTOR_KEYS,
+    remote_runtime_authority_key,
+)
+from ..container_policy import (
+    RemoteContainerRequestError,
+    RemoteContainerRequestPolicy,
+    remote_container_policy_from_state,
+    validate_remote_container_arguments,
+)
 from ..entities import (
     ChatCompletionRequest,
     ChatMessage,
@@ -50,6 +60,33 @@ A2A_FILE_MODES = [
 ]
 A2A_OUTPUT_MODES = ["text/plain"]
 _MISSING = object()
+_A2A_CONTENT_KEYS = frozenset({"data", "raw", "text", "url"})
+_A2A_FILE_CONTENT_KEYS = frozenset(
+    {
+        "base64",
+        "bytes",
+        "data",
+        "file_data",
+        "file_url",
+        "raw",
+        "uri",
+        "url",
+    }
+)
+_A2A_FILE_METADATA_KEYS = frozenset(
+    {
+        "displayName",
+        "display_name",
+        "fileName",
+        "file_name",
+        "filename",
+        "mediaType",
+        "media_type",
+        "mimeType",
+        "mime_type",
+        "name",
+    }
+)
 
 
 def install_a2a_routes(
@@ -237,6 +274,14 @@ async def _validate_a2a_json_file_parts(request: Any) -> object | None:
         payload: object = loads(body)
     except ValueError:
         return None
+    try:
+        _reject_a2a_remote_runtime_authority(
+            payload,
+            path="a2a",
+            policy=_a2a_request_container_policy(request),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     for part_payload in _a2a_json_part_payloads(payload):
         _validate_a2a_json_part_payload(part_payload)
     return payload
@@ -325,31 +370,23 @@ def _validate_a2a_json_part_payload(
             status_code=400,
             detail="A2A parts must contain exactly one content field",
         )
-    if "raw" in payload:
-        _validate_a2a_json_raw_part(payload["raw"])
+    raw_source = _a2a_raw_source(payload)
+    if raw_source is not _MISSING:
+        _validate_a2a_json_raw_part(raw_source)
 
 
 def _a2a_json_part_content_fields(
     payload: Mapping[object, object],
 ) -> list[str]:
-    return [
-        field for field in ("text", "raw", "url", "data") if field in payload
-    ]
+    return _a2a_part_content_fields(payload)
 
 
 def _validate_a2a_json_raw_part(value: object) -> None:
-    if not isinstance(value, str) or not value.strip():
+    if _raw_file_data(value) is None:
         raise HTTPException(
             status_code=400,
             detail="A2A raw file parts must be base64 strings",
         )
-    try:
-        _decode_a2a_base64(value)
-    except (BinasciiError, ValueError) as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="A2A raw file parts must be base64 strings",
-        ) from exc
 
 
 def _decode_a2a_base64(value: str) -> bytes:
@@ -360,6 +397,205 @@ def _decode_a2a_base64(value: str) -> bytes:
         altchars=b"-_",
         validate=True,
     )
+
+
+def _reject_a2a_remote_runtime_authority(
+    value: object,
+    *,
+    path: str,
+    policy: RemoteContainerRequestPolicy | None = None,
+    part_payload: bool = False,
+) -> None:
+    if part_payload:
+        _reject_a2a_part_remote_runtime_authority(
+            value,
+            path=path,
+            policy=policy,
+        )
+        return
+
+    fields = _a2a_authority_fields(value)
+    if fields is not None:
+        for raw_key, item in fields.items():
+            key = str(raw_key)
+            item_path = f"{path}.{key}"
+            if key == "parts" and _is_sequence(item):
+                for index, part in enumerate(cast(Sequence[object], item)):
+                    _reject_a2a_remote_runtime_authority(
+                        _a2a_part_payload(part),
+                        path=f"{item_path}[{index}]",
+                        policy=policy,
+                        part_payload=True,
+                    )
+                continue
+            if _is_allowed_a2a_profile_selector(key, item, policy):
+                continue
+            if remote_runtime_authority_key(key):
+                raise ValueError(_a2a_authority_error(item_path, key))
+            _reject_a2a_remote_runtime_authority(
+                item,
+                path=item_path,
+                policy=policy,
+            )
+        return
+
+    if _is_sequence(value):
+        for index, item in enumerate(cast(Sequence[object], value)):
+            _reject_a2a_remote_runtime_authority(
+                item,
+                path=f"{path}[{index}]",
+                policy=policy,
+            )
+
+
+def _reject_a2a_part_remote_runtime_authority(
+    value: object,
+    *,
+    path: str,
+    policy: RemoteContainerRequestPolicy | None = None,
+) -> None:
+    fields = _a2a_authority_fields(value)
+    if fields is None:
+        return
+
+    for raw_key, item in fields.items():
+        key = str(raw_key)
+        item_path = f"{path}.{key}"
+        if key in _A2A_CONTENT_KEYS:
+            _reject_a2a_remote_runtime_authority(
+                item,
+                path=item_path,
+                policy=policy,
+            )
+            continue
+        if key == "file":
+            _reject_a2a_file_remote_runtime_authority(
+                item,
+                path=item_path,
+                policy=policy,
+            )
+            continue
+        if key == "metadata":
+            _reject_a2a_remote_runtime_authority(
+                item,
+                path=item_path,
+                policy=policy,
+            )
+            continue
+        if _is_allowed_a2a_profile_selector(key, item, policy):
+            continue
+        if remote_runtime_authority_key(key):
+            raise ValueError(_a2a_authority_error(item_path, key))
+        _reject_a2a_remote_runtime_authority(
+            item,
+            path=item_path,
+            policy=policy,
+        )
+
+
+def _reject_a2a_file_remote_runtime_authority(
+    value: object,
+    *,
+    path: str,
+    policy: RemoteContainerRequestPolicy | None = None,
+) -> None:
+    fields = _a2a_authority_fields(value)
+    if fields is None:
+        return
+
+    for raw_key, item in fields.items():
+        key = str(raw_key)
+        item_path = f"{path}.{key}"
+        if key in _A2A_FILE_CONTENT_KEYS:
+            _reject_a2a_remote_runtime_authority(
+                item,
+                path=item_path,
+                policy=policy,
+            )
+            continue
+        if (
+            key in _A2A_FILE_METADATA_KEYS
+            and not _a2a_metadata_value_needs_scan(item)
+        ):
+            continue
+        if key == "metadata":
+            _reject_a2a_remote_runtime_authority(
+                item,
+                path=item_path,
+                policy=policy,
+            )
+            continue
+        if _is_allowed_a2a_profile_selector(key, item, policy):
+            continue
+        if remote_runtime_authority_key(key):
+            raise ValueError(_a2a_authority_error(item_path, key))
+        _reject_a2a_remote_runtime_authority(
+            item,
+            path=item_path,
+            policy=policy,
+        )
+
+
+def _a2a_authority_fields(
+    value: object,
+) -> Mapping[object, object] | None:
+    if isinstance(value, Mapping):
+        return value
+
+    jsonable = _jsonable_value(value)
+    if isinstance(jsonable, Mapping):
+        return cast(Mapping[object, object], jsonable)
+
+    try:
+        fields = vars(value)
+    except TypeError:
+        return None
+    return {
+        key: item
+        for key, item in fields.items()
+        if isinstance(key, str) and not key.startswith("_")
+    }
+
+
+def _a2a_metadata_value_needs_scan(value: object) -> bool:
+    return isinstance(value, Mapping) or _is_sequence(value)
+
+
+def _a2a_authority_error(path: str, key: str) -> str:
+    return (
+        "Remote A2A requests cannot provide runtime authority field "
+        f"'{key}' at {path}"
+    )
+
+
+def _is_allowed_a2a_profile_selector(
+    key: str,
+    value: object,
+    policy: RemoteContainerRequestPolicy | None,
+) -> bool:
+    if key not in REMOTE_CONTAINER_PROFILE_SELECTOR_KEYS:
+        return False
+    if key == "container" and not (
+        isinstance(value, Mapping) and set(value) == {"profile"}
+    ):
+        return False
+    if key != "container" and not isinstance(value, str):
+        return False
+    try:
+        validate_remote_container_arguments({key: value}, policy=policy)
+    except RemoteContainerRequestError as exc:
+        raise ValueError(str(exc)) from exc
+    return True
+
+
+def _a2a_request_container_policy(
+    request: object,
+) -> RemoteContainerRequestPolicy | None:
+    app = getattr(request, "app", None)
+    state = getattr(app, "state", None)
+    if state is None:
+        return None
+    return remote_container_policy_from_state(state)
 
 
 def _ensure_typing_override() -> None:
@@ -873,6 +1109,11 @@ class AvalanA2AAgentExecutor:
     async def _chat_request(
         self, context: Any, orchestrator: Orchestrator
     ) -> ChatCompletionRequest:
+        _reject_a2a_remote_runtime_authority(
+            context,
+            path="a2a.context",
+            policy=remote_container_policy_from_state(self._app.state),
+        )
         return ChatCompletionRequest(
             model=resolve_model_id(orchestrator),
             messages=[

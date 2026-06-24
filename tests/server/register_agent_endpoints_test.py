@@ -8,7 +8,19 @@ from uuid import UUID
 
 import pytest
 
+from avalan.container import (
+    ContainerBackend,
+    ContainerEffectiveSettings,
+    ContainerExecutionScope,
+    ContainerProfile,
+    ContainerSettingsSource,
+    ContainerSurface,
+    ContainerToolRuntimeSettings,
+    ContainerTrustLevel,
+)
 from avalan.server import register_agent_endpoints
+from avalan.server.container_policy import RemoteContainerRequestPolicy
+from avalan.tool.context import ToolSettingsContext
 
 MODULE = register_agent_endpoints.__module__
 SERVER_MODULE = sys.modules[MODULE]
@@ -31,6 +43,7 @@ async def test_register_agent_endpoints_wraps_existing_lifespan() -> None:
     resource_store_instance = MagicMock(name="resource_store")
     hub = MagicMock(name="hub")
     generated_participant_id = UUID(int=5)
+    tool_settings = ToolSettingsContext(extra={"fixture": "tools"})
     existing_events: list[str] = []
 
     @asynccontextmanager
@@ -69,7 +82,7 @@ async def test_register_agent_endpoints_wraps_existing_lifespan() -> None:
             logger=logger,
             specs_path="agent.yaml",
             settings=None,
-            tool_settings="tools",
+            tool_settings=tool_settings,
             mcp_prefix="/mcp",
             openai_prefix="/openai",
             mcp_name="run",
@@ -82,7 +95,7 @@ async def test_register_agent_endpoints_wraps_existing_lifespan() -> None:
             ctx = app.state.ctx
             assert ctx.specs_path == "agent.yaml"
             assert ctx.settings is None
-            assert ctx.tool_settings == "tools"
+            assert ctx.tool_settings is tool_settings
             loader = app.state.loader
             assert loader is loader_instance
             loader_cls.assert_called_once()
@@ -101,6 +114,51 @@ async def test_register_agent_endpoints_wraps_existing_lifespan() -> None:
 
     assert existing_events == ["enter", "exit"]
     resource_store_cls.assert_called_once_with()
+
+
+@pytest.mark.anyio
+async def test_register_agent_endpoints_exposes_remote_policy() -> None:
+    logger = MagicMock(spec=Logger)
+    resource_store_instance = MagicMock(name="resource_store")
+    hub = MagicMock(name="hub")
+    app = SimpleNamespace(
+        state=SimpleNamespace(),
+        include_router=MagicMock(),
+        add_middleware=MagicMock(),
+        router=SimpleNamespace(lifespan_context=None),
+    )
+    tool_settings = _tool_settings_with_profiles(
+        "workspace-readonly",
+    )
+
+    with (
+        patch.object(
+            SERVER_MODULE.mcp_router,
+            "MCPResourceStore",
+            return_value=resource_store_instance,
+        ),
+        patch.dict(sys.modules, {"avalan.server.a2a": _fake_a2a_module()}),
+        patch.object(SERVER_MODULE, "OrchestratorLoader"),
+        patch.dict(os.environ, {}, clear=True),
+    ):
+        register_agent_endpoints(
+            app,
+            hub=hub,
+            logger=logger,
+            specs_path="agent.yaml",
+            settings=None,
+            tool_settings=tool_settings,
+            mcp_prefix="/mcp",
+            openai_prefix="/openai",
+            mcp_name="run",
+        )
+
+        assert app.router.lifespan_context is not None
+
+        async with app.router.lifespan_context(app):
+            policy = app.state.remote_container_policy
+            assert isinstance(policy, RemoteContainerRequestPolicy)
+            assert policy.exposed_profiles == ("workspace-readonly",)
 
 
 def test_register_agent_endpoints_normalizes_protocols() -> None:
@@ -165,3 +223,34 @@ def test_register_agent_endpoints_normalizes_protocols() -> None:
         app.include_router.assert_any_call(
             modules["avalan.server.routers.flow"].router, prefix="/flows"
         )
+
+
+def _tool_settings_with_profiles(*profiles: str) -> ToolSettingsContext:
+    return ToolSettingsContext(
+        container=ContainerToolRuntimeSettings(
+            effective_settings=ContainerEffectiveSettings(
+                backend=ContainerBackend.DOCKER,
+                required=False,
+                scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+                source=ContainerSettingsSource(
+                    surface=ContainerSurface.SERVER,
+                    trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,
+                ),
+                policy_version="phase14",
+                profile_registry_id="server",
+                profile_name=profiles[0] if profiles else None,
+                profile=(_readonly_profile(profiles[0]) if profiles else None),
+                allowed_profiles=profiles,
+            )
+        )
+    )
+
+
+def _readonly_profile(name: str) -> ContainerProfile:
+    return ContainerProfile.minimal_readonly(
+        name=name,
+        image_reference=(
+            "registry.example/workspace@sha256:"
+            "1111111111111111111111111111111111111111111111111111111111111111"
+        ),
+    )

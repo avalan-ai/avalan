@@ -9,6 +9,7 @@ from ...model.stream import (
 from ...server.entities import ResponsesRequest
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
+from ..remote_container import validate_remote_container_profile_selection
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
 from .streaming import (
@@ -219,7 +220,11 @@ class _ResponsesSSEProjectionAdapter:
 router = APIRouter(tags=["responses"])
 
 
-@router.post("/responses", response_model=None)
+@router.post(
+    "/responses",
+    response_model=None,
+    dependencies=[Depends(validate_remote_container_profile_selection)],
+)
 async def create_response(
     request: ResponsesRequest,
     logger: Logger = Depends(di_get_logger),

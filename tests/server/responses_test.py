@@ -19,6 +19,7 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamTerminalOutcome,
 )
+from avalan.server.container_policy import RemoteContainerRequestPolicy
 
 
 async def _canonical_answer_gen(
@@ -236,6 +237,71 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
                 "total_tokens": 4,
             },
         )
+
+    async def test_response_endpoint_rejects_remote_runtime_authority(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        resp = client.post(
+            "/responses",
+            json={
+                "input": "hi",
+                "container": {
+                    "profiles": {
+                        "unsafe": {
+                            "image": "registry.example/untrusted:latest"
+                        }
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("runtime authority", resp.text)
+        self.assertIsNone(orchestrator.last_messages)
+
+    async def test_response_endpoint_rejects_unexposed_container_profile(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        resp = client.post(
+            "/responses",
+            json={
+                "input": "hi",
+                "container": {"profile": "workspace-readonly"},
+            },
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("is not exposed", resp.text)
+        self.assertIsNone(orchestrator.last_messages)
+
+    async def test_response_endpoint_allows_exposed_container_profile(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.state.remote_container_policy = RemoteContainerRequestPolicy(
+            exposed_profiles=("workspace-readonly",)
+        )
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        resp = client.post(
+            "/responses",
+            json={
+                "input": "hi",
+                "container": {"profile": "workspace-readonly"},
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNotNone(orchestrator.last_messages)
 
     async def test_repeated_requests_without_ui_listener_do_not_retain_events(
         self,
