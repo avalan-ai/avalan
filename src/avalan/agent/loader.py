@@ -2,12 +2,18 @@ from ..agent.orchestrator import Orchestrator
 from ..agent.orchestrator.orchestrators.default import DefaultOrchestrator
 from ..agent.orchestrator.orchestrators.json import JsonOrchestrator, Property
 from ..container import (
+    ContainerExecutionScope,
+    ContainerNormalizedRuntimeEnvelopePlan,
+    ContainerPlanRequest,
+    ContainerPlanRequestKind,
     ContainerProfileSelection,
+    ContainerRuntimeEnvelopeKind,
     ContainerSettings,
     ContainerSettingsSource,
     ContainerSurface,
     ContainerToolRuntimeSettings,
     container_selection_from_mapping,
+    normalize_runtime_envelope_plan,
     trusted_container_settings_from_mapping,
     trusted_container_source,
 )
@@ -57,12 +63,13 @@ from ..tool.shell import (
 from ..tool.shell.input_files import shell_input_file_filter
 
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from importlib import import_module
 from logging import DEBUG, INFO, Logger
 from os import R_OK, access
 from os.path import exists
 from tomllib import loads as toml_loads
-from typing import TYPE_CHECKING, Any, Callable, Mapping, cast
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, cast
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
@@ -124,6 +131,34 @@ class OrchestratorLoader:
     _participant_id: UUID
     _stack: AsyncExitStack
 
+    @dataclass(frozen=True, slots=True, kw_only=True)
+    class _RuntimeEnvelopeSelection:
+        container: ContainerProfileSelection
+        readiness_timeout_seconds: int = 30
+
+    class AgentRuntimeEnvelopeLoader(Protocol):
+        """Load an agent through a trusted runtime envelope."""
+
+        trusted_runtime_envelope_runner: bool
+
+        async def load_agent_runtime_envelope(
+            self,
+            plan: ContainerNormalizedRuntimeEnvelopePlan,
+            *,
+            path: str,
+            agent_id: UUID,
+            disable_memory: bool,
+            uri: str | None,
+            tool_settings: ToolSettingsContext | None,
+            event_manager_mode: EventManagerMode,
+        ) -> Orchestrator: ...
+
+    @staticmethod
+    def _is_trusted_runtime_envelope_loader(loader: object) -> bool:
+        return (
+            getattr(loader, "trusted_runtime_envelope_runner", False) is True
+        )
+
     def __init__(
         self,
         *,
@@ -131,11 +166,21 @@ class OrchestratorLoader:
         logger: Logger,
         participant_id: UUID,
         stack: AsyncExitStack,
+        runtime_envelope_loader: AgentRuntimeEnvelopeLoader | None = None,
     ) -> None:
         self._hub = hub
         self._logger = logger
         self._participant_id = participant_id
         self._stack = stack
+        if runtime_envelope_loader is not None:
+            assert hasattr(
+                runtime_envelope_loader,
+                "load_agent_runtime_envelope",
+            )
+            assert self._is_trusted_runtime_envelope_loader(
+                runtime_envelope_loader
+            ), "runtime envelope loader must be trusted"
+        self._runtime_envelope_loader = runtime_envelope_loader
 
     @staticmethod
     def _sentence_transformer_model_type() -> type[Any]:
@@ -389,12 +434,19 @@ class OrchestratorLoader:
         tool_section = config.get("tool", {})
         assert isinstance(tool_section, dict), "Tool section must be a mapping"
         source = trusted_container_source(ContainerSurface.AGENT_TOML)
-        cls._container_settings_from_tool_section(
+        container_settings = cls._container_settings_from_tool_section(
             tool_section,
             source,
         )
         cls._container_runtime_settings_from_config(config, tool_section)
-        cls._runtime_container_selection_from_config(config)
+        runtime_envelope = cls._runtime_container_selection_from_config(
+            config, source
+        )
+        if runtime_envelope is not None:
+            assert (
+                container_settings is not None
+            ), "runtime.container requires tool.container trusted settings"
+            container_settings.select_profile(runtime_envelope.container)
 
     @classmethod
     def _container_runtime_settings_from_config(
@@ -494,7 +546,8 @@ class OrchestratorLoader:
     @staticmethod
     def _runtime_container_selection_from_config(
         config: Mapping[str, object],
-    ) -> ContainerProfileSelection | None:
+        source: ContainerSettingsSource,
+    ) -> _RuntimeEnvelopeSelection | None:
         runtime_config = config.get("runtime")
         if runtime_config is None:
             return None
@@ -509,9 +562,69 @@ class OrchestratorLoader:
             container_config,
             dict,
         ), "runtime.container section must be a mapping"
-        assert False, (
-            "runtime.container is not supported until runtime envelope "
-            "execution is implemented"
+        selection_config = dict(container_config)
+        readiness_timeout_seconds = selection_config.pop(
+            "readiness_timeout_seconds",
+            30,
+        )
+        assert isinstance(readiness_timeout_seconds, int)
+        assert not isinstance(readiness_timeout_seconds, bool)
+        assert readiness_timeout_seconds > 0
+        if "required" in selection_config:
+            assert (
+                selection_config["required"] is True
+            ), "runtime.container requires required=true"
+        selection_config["required"] = True
+        return OrchestratorLoader._RuntimeEnvelopeSelection(
+            container=container_selection_from_mapping(
+                selection_config,
+                source=source,
+                scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+            ),
+            readiness_timeout_seconds=readiness_timeout_seconds,
+        )
+
+    @staticmethod
+    def _agent_runtime_envelope_plan(
+        *,
+        config: Mapping[str, object],
+        tool_section: Mapping[str, object],
+        source: ContainerSettingsSource,
+        path: str,
+        agent_id: UUID,
+    ) -> ContainerNormalizedRuntimeEnvelopePlan | None:
+        envelope = OrchestratorLoader._runtime_container_selection_from_config(
+            config,
+            source,
+        )
+        if envelope is None:
+            return None
+        container_settings = (
+            OrchestratorLoader._container_settings_from_tool_section(
+                tool_section,
+                source,
+            )
+        )
+        assert (
+            container_settings is not None
+        ), "runtime.container requires tool.container trusted settings"
+        agent_section = config.get("agent", {})
+        assert isinstance(agent_section, Mapping)
+        logical_name = str(agent_section.get("name") or agent_id)
+        effective = container_settings.select_profile(envelope.container)
+        return normalize_runtime_envelope_plan(
+            effective,
+            ContainerPlanRequest(
+                request_kind=ContainerPlanRequestKind.AGENT_SESSION,
+                logical_name=logical_name,
+                command="avalan-agent",
+                argv=("avalan", "agent", "run", path),
+                cwd="/workspace",
+                scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                request_id=str(agent_id),
+            ),
+            envelope_kind=ContainerRuntimeEnvelopeKind.WHOLE_AGENT,
+            readiness_timeout_seconds=envelope.readiness_timeout_seconds,
         )
 
     async def from_file(
@@ -582,7 +695,10 @@ class OrchestratorLoader:
             config,
             tool_section,
         )
-        self._runtime_container_selection_from_config(config)
+        runtime_envelope = self._runtime_container_selection_from_config(
+            config,
+            container_source,
+        )
 
         enable_tools_config = tool_section.get("enable")
         enable_tools: list[str] | None = None
@@ -799,6 +915,32 @@ class OrchestratorLoader:
             container=container_runtime,
             extra=extra,
         )
+
+        if runtime_envelope is not None:
+            runtime_envelope_plan = self._agent_runtime_envelope_plan(
+                config=config,
+                tool_section=tool_section,
+                source=container_source,
+                path=path,
+                agent_id=agent_id,
+            )
+            assert runtime_envelope_plan is not None
+            assert (
+                self._runtime_envelope_loader is not None
+            ), "runtime.container requires an envelope-aware agent loader"
+            return (
+                await (
+                    self._runtime_envelope_loader.load_agent_runtime_envelope(
+                        runtime_envelope_plan,
+                        path=path,
+                        agent_id=agent_id,
+                        disable_memory=disable_memory,
+                        uri=uri,
+                        tool_settings=tool_settings,
+                        event_manager_mode=event_manager_mode,
+                    )
+                )
+            )
 
         tool_format = None
         tool_format_str = tool_section.get("format")

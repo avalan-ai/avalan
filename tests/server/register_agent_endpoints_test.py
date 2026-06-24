@@ -19,7 +19,10 @@ from avalan.container import (
     ContainerTrustLevel,
 )
 from avalan.server import register_agent_endpoints
-from avalan.server.container_policy import RemoteContainerRequestPolicy
+from avalan.server.container_policy import (
+    RemoteContainerRequestPolicy,
+    ServerRuntimeEnvelopeStatus,
+)
 from avalan.tool.context import ToolSettingsContext
 
 MODULE = register_agent_endpoints.__module__
@@ -129,6 +132,7 @@ async def test_register_agent_endpoints_exposes_remote_policy() -> None:
     )
     tool_settings = _tool_settings_with_profiles(
         "workspace-readonly",
+        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
     )
 
     with (
@@ -159,6 +163,12 @@ async def test_register_agent_endpoints_exposes_remote_policy() -> None:
             policy = app.state.remote_container_policy
             assert isinstance(policy, RemoteContainerRequestPolicy)
             assert policy.exposed_profiles == ("workspace-readonly",)
+            status = app.state.server_runtime_envelope_status
+            assert isinstance(status, ServerRuntimeEnvelopeStatus)
+            assert status.plan is not None
+            assert (
+                status.plan.envelope_plan.profile_name == "workspace-readonly"
+            )
 
 
 def test_register_agent_endpoints_normalizes_protocols() -> None:
@@ -225,13 +235,18 @@ def test_register_agent_endpoints_normalizes_protocols() -> None:
         )
 
 
-def _tool_settings_with_profiles(*profiles: str) -> ToolSettingsContext:
+def _tool_settings_with_profiles(
+    *profiles: str,
+    scope: ContainerExecutionScope = (
+        ContainerExecutionScope.SHELL_CONTAINER_EXECUTION
+    ),
+) -> ToolSettingsContext:
     return ToolSettingsContext(
         container=ContainerToolRuntimeSettings(
             effective_settings=ContainerEffectiveSettings(
                 backend=ContainerBackend.DOCKER,
                 required=False,
-                scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+                scope=scope,
                 source=ContainerSettingsSource(
                     surface=ContainerSurface.SERVER,
                     trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,

@@ -1,4 +1,13 @@
-from ..container import ContainerToolRuntimeSettings
+from ..container import (
+    ContainerExecutionScope,
+    ContainerNormalizedRuntimeEnvelopePlan,
+    ContainerPlanRequest,
+    ContainerPlanRequestKind,
+    ContainerRuntimeEnvelopeKind,
+    ContainerSurface,
+    ContainerToolRuntimeSettings,
+    normalize_runtime_envelope_plan,
+)
 from .authority import remote_runtime_authority_key
 
 from collections.abc import Mapping, Sequence
@@ -39,6 +48,29 @@ class RemoteContainerRequest:
 
     arguments: dict[str, object]
     profile: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ServerRuntimeEnvelopeStatus:
+    """Represent trusted server runtime envelope planning diagnostics."""
+
+    plan: ContainerNormalizedRuntimeEnvelopePlan | None = None
+    diagnostics: tuple[dict[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.plan is not None:
+            assert isinstance(
+                self.plan,
+                ContainerNormalizedRuntimeEnvelopePlan,
+            )
+        for diagnostic in self.diagnostics:
+            assert isinstance(diagnostic, dict)
+        object.__setattr__(self, "diagnostics", tuple(self.diagnostics))
+
+    @property
+    def ok(self) -> bool:
+        """Return whether the trusted server envelope is available."""
+        return not self.diagnostics
 
 
 _SAFE_CONTAINER_PROFILE_KEYS = ("container_profile", "containerProfile")
@@ -96,6 +128,66 @@ def remote_container_policy_from_runtime_settings(
         return None
     return RemoteContainerRequestPolicy(
         exposed_profiles=(effective_settings.profile_name,)
+    )
+
+
+def server_runtime_envelope_status_from_runtime_settings(
+    runtime_settings: ContainerToolRuntimeSettings | None,
+    *,
+    server_name: str = "server",
+    request_id: str = "server",
+    envelope_runtime_available: bool = False,
+    readiness_timeout_seconds: int = 30,
+) -> ServerRuntimeEnvelopeStatus:
+    """Return trusted server runtime envelope plan and diagnostics."""
+    assert isinstance(server_name, str) and server_name.strip()
+    assert isinstance(request_id, str) and request_id.strip()
+    assert isinstance(envelope_runtime_available, bool)
+    effective_settings = (
+        None
+        if runtime_settings is None
+        else runtime_settings.effective_settings
+    )
+    if effective_settings is None or not effective_settings.enabled:
+        return ServerRuntimeEnvelopeStatus()
+    if (
+        effective_settings.scope
+        is not ContainerExecutionScope.RUNTIME_ENVELOPE
+        or effective_settings.source.surface is not ContainerSurface.SERVER
+    ):
+        return ServerRuntimeEnvelopeStatus()
+    plan = normalize_runtime_envelope_plan(
+        effective_settings,
+        ContainerPlanRequest(
+            request_kind=ContainerPlanRequestKind.SERVER,
+            logical_name=server_name,
+            command="avalan-server",
+            argv=("avalan", "server"),
+            cwd="/workspace",
+            scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+            request_id=request_id,
+        ),
+        envelope_kind=ContainerRuntimeEnvelopeKind.SERVER,
+        readiness_timeout_seconds=readiness_timeout_seconds,
+    )
+    if envelope_runtime_available:
+        return ServerRuntimeEnvelopeStatus(plan=plan)
+    return ServerRuntimeEnvelopeStatus(
+        plan=plan,
+        diagnostics=(
+            {
+                "code": "server.runtime_envelope_unavailable",
+                "path": "runtime.container.envelope",
+                "message": (
+                    "Server runtime envelope execution is not available "
+                    "inside this server process."
+                ),
+                "hint": (
+                    "Start the server through a trusted envelope-aware "
+                    "operator runtime."
+                ),
+            },
+        ),
     )
 
 

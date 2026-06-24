@@ -4,6 +4,17 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from avalan.agent import Specification
+from avalan.container import (
+    ContainerBackend,
+    ContainerEffectiveSettings,
+    ContainerExecutionScope,
+    ContainerProfile,
+    ContainerRuntimeEnvelopeKind,
+    ContainerSettingsSource,
+    ContainerSurface,
+    ContainerToolRuntimeSettings,
+    ContainerTrustLevel,
+)
 from avalan.entities import (
     Backend,
     EngineUri,
@@ -19,7 +30,10 @@ from avalan.event.manager import EventManager
 from avalan.model import manager as model_manager
 from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.hubs.huggingface import HuggingfaceHub
-from avalan.model.manager import ModelManager
+from avalan.model.manager import (
+    ModelManager,
+    ModelRuntimeEnvelopeUnavailableError,
+)
 
 
 class ModelManagerExtraTestCase(TestCase):
@@ -116,6 +130,137 @@ class ModelManagerExtraTestCase(TestCase):
             uri, get_mock.return_value, Modality.TEXT_GENERATION
         )
         self.assertEqual(result, "model")
+
+    def test_model_backend_runtime_envelope_fails_closed(self):
+        manager = ModelManager(
+            self.hub,
+            self.logger,
+            container_runtime=_container_runtime_settings(),
+        )
+        uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="local-model",
+            params={},
+        )
+
+        with self.assertRaises(ModelRuntimeEnvelopeUnavailableError) as raised:
+            manager.load_engine(uri, TransformerEngineSettings())
+
+        plan = raised.exception.plan
+        self.assertEqual(
+            plan.envelope_kind,
+            ContainerRuntimeEnvelopeKind.MODEL_BACKEND,
+        )
+        self.assertEqual(plan.envelope_plan.profile_name, "model-runtime")
+        self.assertEqual(
+            raised.exception.diagnostic["code"],
+            "model.runtime_envelope_unavailable",
+        )
+
+    def test_model_backend_runtime_envelope_loader_composes_local_model(self):
+        class FakeModelEnvelopeLoader:
+            trusted_runtime_envelope_runner = True
+
+            def __init__(self) -> None:
+                self.plan = None
+
+            def load_model_backend_envelope(self, plan, **kwargs):
+                self.plan = plan
+                return "enveloped-model"
+
+        loader = FakeModelEnvelopeLoader()
+        manager = ModelManager(
+            self.hub,
+            self.logger,
+            container_runtime=_container_runtime_settings(),
+            model_backend_envelope_loader=loader,
+        )
+        uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="local-model",
+            params={},
+        )
+
+        result = manager.load_engine(uri, TransformerEngineSettings())
+
+        self.assertEqual(result, "enveloped-model")
+        assert loader.plan is not None
+        self.assertEqual(
+            loader.plan.envelope_kind,
+            ContainerRuntimeEnvelopeKind.MODEL_BACKEND,
+        )
+
+    def test_model_backend_runtime_envelope_loader_must_be_trusted(self):
+        class UntrustedModelEnvelopeLoader:
+            def load_model_backend_envelope(self, plan, **kwargs):
+                return "not-used"
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "model backend envelope loader must be trusted",
+        ):
+            ModelManager(
+                self.hub,
+                self.logger,
+                model_backend_envelope_loader=UntrustedModelEnvelopeLoader(),
+            )
+
+    def test_model_backend_runtime_envelope_requires_model_scope(self):
+        manager = ModelManager(
+            self.hub,
+            self.logger,
+            container_runtime=_container_runtime_settings(
+                surface=ContainerSurface.SERVER,
+                scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+            ),
+        )
+        uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="local-model",
+            params={},
+        )
+
+        plan = manager.model_backend_runtime_envelope_plan(
+            uri,
+            TransformerEngineSettings(),
+        )
+
+        self.assertIsNone(plan)
+
+    def test_model_backend_runtime_envelope_skips_remote_models(self):
+        manager = ModelManager(
+            self.hub,
+            self.logger,
+            container_runtime=_container_runtime_settings(),
+        )
+        uri = EngineUri(
+            host="openai",
+            port=None,
+            user=None,
+            password=None,
+            vendor="openai",
+            model_id="gpt",
+            params={},
+        )
+
+        plan = manager.model_backend_runtime_envelope_plan(
+            uri,
+            TransformerEngineSettings(),
+        )
+
+        self.assertIsNone(plan)
 
     def test_load_backend_from_uri(self):
         manager = ModelManager(self.hub, self.logger)
@@ -560,3 +705,34 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(result)
         self.assertFalse(pending.cancelled())
         self.assertIsNone(manager._pending_exit_task)
+
+
+def _container_runtime_settings(
+    *,
+    surface: ContainerSurface = ContainerSurface.MODEL_BACKEND,
+    scope: ContainerExecutionScope = ContainerExecutionScope.RUNTIME_ENVELOPE,
+) -> ContainerToolRuntimeSettings:
+    source = ContainerSettingsSource(
+        surface=surface,
+        trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,
+    )
+    profile = ContainerProfile.minimal_readonly(
+        name="model-runtime",
+        image_reference=(
+            "registry.example/model@sha256:"
+            "1111111111111111111111111111111111111111111111111111111111111111"
+        ),
+    )
+    return ContainerToolRuntimeSettings(
+        effective_settings=ContainerEffectiveSettings(
+            backend=ContainerBackend.DOCKER,
+            required=True,
+            scope=scope,
+            source=source,
+            policy_version="phase15",
+            profile_registry_id="model",
+            profile_name=profile.name,
+            profile=profile,
+            allowed_profiles=(profile.name,),
+        )
+    )

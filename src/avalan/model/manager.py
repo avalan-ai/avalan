@@ -1,3 +1,13 @@
+from ..container import (
+    ContainerExecutionScope,
+    ContainerNormalizedRuntimeEnvelopePlan,
+    ContainerPlanRequest,
+    ContainerPlanRequestKind,
+    ContainerRuntimeEnvelopeKind,
+    ContainerSurface,
+    ContainerToolRuntimeSettings,
+    normalize_runtime_envelope_plan,
+)
 from ..entities import (
     AttentionImplementation,
     Backend,
@@ -30,6 +40,7 @@ from typing import (
     Any,
     Literal,
     Mapping,
+    Protocol,
     TypeAlias,
     cast,
     get_args,
@@ -65,6 +76,43 @@ _DS4_CONFIG_KEY_ALIASES = {
     "seed": "seed",
 }
 _DS4_NORMALIZED_CONFIG_KEYS = frozenset(_DS4_CONFIG_KEY_ALIASES.values())
+
+
+class ModelRuntimeEnvelopeUnavailableError(RuntimeError):
+    def __init__(self, plan: ContainerNormalizedRuntimeEnvelopePlan) -> None:
+        self.plan = plan
+        super().__init__(
+            "Model backend runtime envelope execution is not available in "
+            "this model manager."
+        )
+
+    @property
+    def diagnostic(self) -> dict[str, str]:
+        return {
+            "code": "model.runtime_envelope_unavailable",
+            "path": "model.container.envelope",
+            "message": (
+                "Model backend runtime envelope execution is not available "
+                "in this model manager."
+            ),
+            "hint": (
+                "Load this model through a trusted envelope-aware model "
+                "runtime."
+            ),
+        }
+
+
+class ModelBackendRuntimeEnvelopeLoader(Protocol):
+    trusted_runtime_envelope_runner: bool
+
+    def load_model_backend_envelope(
+        self,
+        plan: ContainerNormalizedRuntimeEnvelopePlan,
+        *,
+        engine_uri: EngineUri,
+        engine_settings: TransformerEngineSettings,
+        modality: Modality,
+    ) -> ModelType: ...
 
 
 def _is_ds4_backend(backend: Backend | str) -> bool:
@@ -193,12 +241,33 @@ class ModelManager:
         logger: Logger,
         secrets: KeyringSecrets | None = None,
         event_manager: EventManager | None = None,
+        container_runtime: ContainerToolRuntimeSettings | None = None,
+        model_backend_envelope_loader: (
+            ModelBackendRuntimeEnvelopeLoader | None
+        ) = None,
     ):
         self._hub, self._logger = hub, logger
         self._stack = AsyncExitStack()
         self._secrets = secrets or KeyringSecrets()
         self._event_manager = event_manager
         self._pending_exit_task = None
+        if container_runtime is not None:
+            assert isinstance(container_runtime, ContainerToolRuntimeSettings)
+        if model_backend_envelope_loader is not None:
+            assert hasattr(
+                model_backend_envelope_loader,
+                "load_model_backend_envelope",
+            )
+            assert (
+                getattr(
+                    model_backend_envelope_loader,
+                    "trusted_runtime_envelope_runner",
+                    False,
+                )
+                is True
+            ), "model backend envelope loader must be trusted"
+        self._container_runtime = container_runtime
+        self._model_backend_envelope_loader = model_backend_envelope_loader
 
     def __enter__(self) -> "ModelManager":
         return self
@@ -464,6 +533,20 @@ class ModelManager:
         engine_settings: TransformerEngineSettings,
         modality: Modality = Modality.TEXT_GENERATION,
     ) -> ModelType:
+        envelope_plan = self.model_backend_runtime_envelope_plan(
+            engine_uri,
+            engine_settings,
+            modality,
+        )
+        if envelope_plan is not None:
+            if self._model_backend_envelope_loader is None:
+                raise ModelRuntimeEnvelopeUnavailableError(envelope_plan)
+            return self._model_backend_envelope_loader.load_model_backend_envelope(  # noqa: E501
+                envelope_plan,
+                engine_uri=engine_uri,
+                engine_settings=engine_settings,
+                modality=modality,
+            )
         if modality is Modality.EMBEDDING:
             from ..model.nlp.sentence import SentenceTransformerModel
 
@@ -483,6 +566,46 @@ class ModelManager:
             )
         self._stack.enter_context(model)
         return model
+
+    def model_backend_runtime_envelope_plan(
+        self,
+        engine_uri: EngineUri,
+        engine_settings: TransformerEngineSettings,
+        modality: Modality = Modality.TEXT_GENERATION,
+    ) -> ContainerNormalizedRuntimeEnvelopePlan | None:
+        assert isinstance(engine_uri, EngineUri)
+        assert isinstance(engine_settings, TransformerEngineSettings)
+        if not isinstance(modality, Modality):
+            return None
+        if not engine_uri.is_local:
+            return None
+        runtime = self._container_runtime
+        effective_settings = (
+            None if runtime is None else runtime.effective_settings
+        )
+        if effective_settings is None or not effective_settings.enabled:
+            return None
+        if (
+            effective_settings.scope
+            is not ContainerExecutionScope.RUNTIME_ENVELOPE
+            or effective_settings.source.surface
+            is not ContainerSurface.MODEL_BACKEND
+        ):
+            return None
+        model_id = engine_uri.model_id or "model"
+        return normalize_runtime_envelope_plan(
+            effective_settings,
+            ContainerPlanRequest(
+                request_kind=ContainerPlanRequestKind.RUNTIME_ENVELOPE,
+                logical_name=model_id,
+                command="avalan-model",
+                argv=("avalan", "model", "run", modality.value, model_id),
+                cwd="/workspace",
+                scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                request_id=model_id,
+            ),
+            envelope_kind=ContainerRuntimeEnvelopeKind.MODEL_BACKEND,
+        )
 
     @staticmethod
     def parse_uri(uri: str) -> EngineUri:
