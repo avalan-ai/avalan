@@ -11,6 +11,7 @@ from asyncio import (
 )
 from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
+from hashlib import sha256
 from io import StringIO
 from json import dumps, loads
 from logging import getLogger
@@ -10401,6 +10402,38 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(messages[-1].content, "")
+
+    async def test_large_tool_result_is_truncated_for_model_context(self):
+        limit = OrchestratorResponse._MAXIMUM_MODEL_TOOL_OUTPUT_CHARS
+        output = "a" * (limit + 5_000)
+        call = ToolCall(id="call1", name="shell.cat", arguments={})
+        result = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=output,
+        )
+
+        messages = OrchestratorResponse._tool_observation_messages(
+            result,
+            json_output=False,
+        )
+
+        tool_message = messages[-1]
+        payload = loads(str(tool_message.content))
+        self.assertTrue(payload["truncated"])
+        self.assertEqual(payload["original_output_chars"], limit + 5_000)
+        self.assertEqual(
+            payload["output_sha256"],
+            sha256(output.encode()).hexdigest(),
+        )
+        self.assertLess(len(payload["output"]), len(output))
+        self.assertIn("truncated 5000 characters", payload["output"])
+        self.assertIsNot(tool_message.tool_call_result, result)
+        assert tool_message.tool_call_result is not None
+        self.assertEqual(tool_message.tool_call_result.result, payload)
+        self.assertEqual(result.result, output)
 
     async def test_unanchored_diagnostic_uses_recovery_message(self):
         diagnostic = ToolCallDiagnostic(

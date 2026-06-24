@@ -3088,6 +3088,151 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         self.assertIn("tool event tool_process: search", diagnostic_text)
         self.assertIn("tokens", diagnostic_text)
 
+    async def test_token_generation_basic_non_interactive_reports_no_answer(
+        self,
+    ) -> None:
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+                async def gen() -> AsyncIterator[CanonicalStreamItem]:
+                    yield CanonicalStreamItem(
+                        stream_session_id="stream",
+                        run_id="run",
+                        turn_id="turn",
+                        sequence=0,
+                        kind=StreamItemKind.STREAM_STARTED,
+                        channel=StreamChannel.CONTROL,
+                    )
+                    yield CanonicalStreamItem(
+                        stream_session_id="stream",
+                        run_id="run",
+                        turn_id="turn",
+                        sequence=1,
+                        kind=StreamItemKind.STREAM_COMPLETED,
+                        channel=StreamChannel.CONTROL,
+                        usage={},
+                        terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                    )
+
+                return gen()
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        diagnostic_console = MagicMock()
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+
+        with patch(
+            "avalan.cli.stream_coordinator.Console",
+            return_value=diagnostic_console,
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=0,
+                refresh_per_second=2,
+                display_config=self._display_config(
+                    display_tools=True,
+                    display_tools_events=0,
+                    interactive=False,
+                ),
+            )
+
+        console.print.assert_not_called()
+        diagnostic_text = "\n".join(
+            str(args[0])
+            for args, _kwargs in diagnostic_console.print.call_args_list
+        )
+        self.assertIn("No final answer emitted.", diagnostic_text)
+
+    async def test_token_generation_basic_non_interactive_reports_error(
+        self,
+    ) -> None:
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+                async def gen() -> AsyncIterator[CanonicalStreamItem]:
+                    yield CanonicalStreamItem(
+                        stream_session_id="stream",
+                        run_id="run",
+                        turn_id="turn",
+                        sequence=0,
+                        kind=StreamItemKind.STREAM_STARTED,
+                        channel=StreamChannel.CONTROL,
+                    )
+                    yield CanonicalStreamItem(
+                        stream_session_id="stream",
+                        run_id="run",
+                        turn_id="turn",
+                        sequence=1,
+                        kind=StreamItemKind.STREAM_ERRORED,
+                        channel=StreamChannel.CONTROL,
+                        data={"error": {"message": "response failed"}},
+                        terminal_outcome=StreamTerminalOutcome.ERRORED,
+                    )
+
+                return gen()
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        diagnostic_console = MagicMock()
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+
+        with patch(
+            "avalan.cli.stream_coordinator.Console",
+            return_value=diagnostic_console,
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=0,
+                refresh_per_second=2,
+                display_config=self._display_config(
+                    display_tools=True,
+                    display_tools_events=0,
+                    interactive=False,
+                ),
+            )
+
+        console.print.assert_not_called()
+        diagnostic_text = "\n".join(
+            str(args[0])
+            for args, _kwargs in diagnostic_console.print.call_args_list
+        )
+        self.assertIn("Model stream error:", diagnostic_text)
+        self.assertIn("response failed", diagnostic_text)
+
     async def test_token_generation_basic_non_interactive_stdout_is_plain(
         self,
     ) -> None:

@@ -3414,6 +3414,31 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 policy=policy,
             )
 
+    async def test_sed_selector_count_diagnostic_includes_limit(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "input.txt").write_text("abc\n", encoding="utf-8")
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    workspace_root=str(root),
+                    max_filter_selectors=1,
+                )
+            )
+
+            await self._assert_denied(
+                _request(
+                    tool_name="shell.sed",
+                    command="sed",
+                    options={"line_ranges": ("1", "2")},
+                    paths=(_path("input.txt"),),
+                ),
+                ShellExecutionErrorCode.UNSAFE_FILTER,
+                policy=policy,
+                message="sed selector count is too large (2 > 1)",
+            )
+
     async def test_filter_validator_boundary_branches(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

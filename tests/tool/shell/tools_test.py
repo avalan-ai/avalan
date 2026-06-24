@@ -261,6 +261,22 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self.assertEqual(policy.requests[0].paths, ())
         self.assertEqual(len(executor.specs), 1)
 
+    async def test_ls_builds_empty_cwd_request_as_default(self) -> None:
+        policy = _FakePolicy(_spec("ls"))
+        executor = _FakeExecutor(_result("ls"))
+        tool = LsTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=_RecordingFormatter(),
+        )
+
+        await tool(cwd="", context=ToolCallContext())
+
+        self.assertEqual(len(policy.requests), 1)
+        self.assertIsNone(policy.requests[0].cwd)
+        self.assertEqual(len(executor.specs), 1)
+
     async def test_cat_builds_text_file_request(self) -> None:
         spec = _spec("cat")
         policy = _FakePolicy(spec)

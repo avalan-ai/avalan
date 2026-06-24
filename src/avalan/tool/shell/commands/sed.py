@@ -60,13 +60,14 @@ def _sed_selectors(
             ShellExecutionErrorCode.INVALID_OPTION,
             "sed requires at least one selector",
         )
-    if (
-        len(line_ranges) + len(patterns) + int(has_line_window)
-        > settings.max_filter_selectors
-    ):
+    selector_count = len(line_ranges) + len(patterns) + int(has_line_window)
+    if selector_count > settings.max_filter_selectors:
         raise policy_denied(
             ShellExecutionErrorCode.UNSAFE_FILTER,
-            "sed selector count is too large",
+            (
+                "sed selector count is too large "
+                f"({selector_count} > {settings.max_filter_selectors})"
+            ),
         )
     selectors: list[str] = []
     total_selector_bytes = 0

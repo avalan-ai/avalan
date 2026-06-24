@@ -66,6 +66,7 @@ from asyncio import (
 )
 from base64 import b64encode
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from hashlib import sha256
 from inspect import Signature, isawaitable, signature
 from json import JSONDecodeError, dumps, loads
 from queue import Full, Queue
@@ -115,6 +116,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     )
     DEFAULT_MAXIMUM_TOOL_CYCLES = DEFAULT_MAXIMUM_TOOL_CYCLES
     _MAXIMUM_CONSECUTIVE_NON_EXECUTED_CYCLES = 2
+    _MAXIMUM_MODEL_TOOL_OUTPUT_CHARS = 12_000
     _MAXIMUM_STAGING_QUEUE_ITEMS = 4096
     _CANCELLATION_POLL_INTERVAL_SECONDS = 0.01
 
@@ -2619,33 +2621,87 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 json_output=json_output,
             )
 
+        model_outcome = cls._model_facing_outcome(outcome)
         return [
             Message(
                 role=MessageRole.ASSISTANT,
                 tool_calls=[
                     MessageToolCall(
-                        id=str(outcome.call.id),
-                        name=outcome.name,
-                        arguments=cast(Any, outcome.arguments),
+                        id=str(model_outcome.call.id),
+                        name=model_outcome.name,
+                        arguments=cast(Any, model_outcome.arguments),
                     )
                 ],
             ),
             Message(
                 role=MessageRole.TOOL,
-                name=outcome.name,
-                arguments=outcome.arguments,
+                name=model_outcome.name,
+                arguments=model_outcome.arguments,
                 content=cls._outcome_content(
-                    outcome,
+                    model_outcome,
                     json_output=json_output,
                 ),
                 tool_call_result=(
-                    outcome if isinstance(outcome, ToolCallResult) else None
+                    model_outcome
+                    if isinstance(model_outcome, ToolCallResult)
+                    else None
                 ),
                 tool_call_error=(
-                    outcome if isinstance(outcome, ToolCallError) else None
+                    model_outcome
+                    if isinstance(model_outcome, ToolCallError)
+                    else None
                 ),
             ),
         ]
+
+    @classmethod
+    def _model_facing_outcome(
+        cls, outcome: ToolCallOutcome
+    ) -> ToolCallOutcome:
+        if not isinstance(outcome, ToolCallResult):
+            return outcome
+
+        output = cls._model_tool_output_text(outcome.result)
+        if len(output) <= cls._MAXIMUM_MODEL_TOOL_OUTPUT_CHARS:
+            return outcome
+
+        return replace(
+            outcome,
+            result=cls._truncated_model_tool_output(output),
+        )
+
+    @classmethod
+    def _model_tool_output_text(cls, result: Any) -> str:
+        if result is None:
+            return ""
+        if isinstance(result, str):
+            return result
+        return cls._json_content(result)
+
+    @classmethod
+    def _truncated_model_tool_output(
+        cls,
+        output: str,
+    ) -> dict[str, object]:
+        limit = cls._MAXIMUM_MODEL_TOOL_OUTPUT_CHARS
+        marker = (
+            f"\n\n[truncated {len(output) - limit} characters "
+            "from tool output]\n\n"
+        )
+        head_chars = limit // 2
+        tail_chars = limit - head_chars
+        excerpt = output[:head_chars] + marker + output[-tail_chars:]
+        return {
+            "truncated": True,
+            "message": (
+                "Tool output was truncated for model context. Re-run the "
+                "tool with narrower arguments to inspect omitted content."
+            ),
+            "original_output_chars": len(output),
+            "retained_output_chars": len(excerpt),
+            "output_sha256": sha256(output.encode()).hexdigest(),
+            "output": excerpt,
+        }
 
     @classmethod
     def _diagnostic_messages(

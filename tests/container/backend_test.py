@@ -113,8 +113,11 @@ class ContainerBackendTest(TestCase):
             apple.support_level,
             ContainerBackendSupportLevel.OPT_IN,
         )
-        self.assertFalse(apple.capabilities.lifecycle_normalization)
-        self.assertIn(
+        self.assertTrue(apple.capabilities.lifecycle_normalization)
+        self.assertTrue(apple.capabilities.resource_limits)
+        self.assertFalse(apple.capabilities.streaming_attach)
+        self.assertFalse(apple.capabilities.stats)
+        self.assertNotIn(
             "streaming attach parity",
             apple.capabilities.parity_requirements,
         )
@@ -677,6 +680,17 @@ class ContainerBackendTest(TestCase):
             auto_enabled=False,
             rootful_authorized=True,
         )
+        no_lifecycle_normalization = select_container_backend(
+            _run_plan(),
+            (
+                _probe(
+                    _capabilities(
+                        lifecycle_normalization=False,
+                    )
+                ),
+            ),
+            auto_enabled=False,
+        )
         windows_platform_mismatch = select_container_backend(
             _run_plan(backend=ContainerBackend.WINDOWS_DOCKER),
             (
@@ -796,6 +810,14 @@ class ContainerBackendTest(TestCase):
                 for diagnostic in wsl2_unc_traversal_bad.diagnostics
             },
         )
+        self.assertFalse(no_lifecycle_normalization.ok)
+        self.assertIn(
+            "lifecycle normalization is not supported",
+            {
+                diagnostic.message
+                for diagnostic in no_lifecycle_normalization.diagnostics
+            },
+        )
         self.assertFalse(windows_platform_mismatch.ok)
         self.assertIn(
             "guest OS linux is not supported",
@@ -812,7 +834,7 @@ class ContainerBackendTest(TestCase):
                 for diagnostic in apple_without_opt_in.diagnostics
             },
         )
-        self.assertFalse(apple_with_opt_in.ok)
+        self.assertTrue(apple_with_opt_in.ok)
         self.assertNotIn(
             "backend requires explicit operator opt-in",
             {
@@ -820,13 +842,7 @@ class ContainerBackendTest(TestCase):
                 for diagnostic in apple_with_opt_in.diagnostics
             },
         )
-        self.assertIn(
-            "lifecycle normalization is not supported",
-            {
-                diagnostic.message
-                for diagnostic in apple_with_opt_in.diagnostics
-            },
-        )
+        self.assertFalse(apple_with_opt_in.diagnostics)
 
     def test_vm_shared_prefix_normalization_edge_branches(self) -> None:
         mismatch = (
@@ -971,7 +987,6 @@ class ContainerBackendTest(TestCase):
         )
         self.assertIn("image pull is not supported", messages)
         self.assertIn("image build is not supported", messages)
-        self.assertIn("streaming attach is not supported", messages)
 
     def test_successful_fake_lifecycle_streams_stats_outputs_and_cleanup(
         self,
@@ -1625,6 +1640,7 @@ def _capabilities(
     ),
     resource_limits: bool = True,
     streaming_attach: bool = True,
+    lifecycle_normalization: bool = True,
     vm_backed: bool = False,
     shared_mount_prefixes: tuple[str, ...] = (),
 ) -> ContainerBackendCapabilities:
@@ -1646,6 +1662,7 @@ def _capabilities(
         vm_backed=vm_backed,
         streaming_attach=streaming_attach,
         stats=True,
+        lifecycle_normalization=lifecycle_normalization,
         shared_mount_prefixes=shared_mount_prefixes,
     )
 

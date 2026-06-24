@@ -20,6 +20,12 @@ from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
 from avalan.cli.commands import agent as agent_cmds
 from avalan.cli.display import CliStreamDisplayConfig
+from avalan.container import (
+    ContainerBackend,
+    ContainerFakeBackend,
+    ContainerFakeBackendScript,
+    container_backend_capability_profile,
+)
 from avalan.entities import (
     EngineMessage,
     EngineUri,
@@ -58,6 +64,27 @@ from avalan.tool.graph_settings import GraphToolSettings
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.tool.parser import ToolCallParser
 from avalan.tool.shell import ShellToolSettings
+
+
+def _apple_container_backend_class() -> type[ContainerFakeBackend]:
+    def __init__(self: ContainerFakeBackend) -> None:
+        ContainerFakeBackend.__init__(
+            self,
+            ContainerFakeBackendScript(
+                capabilities=container_backend_capability_profile(
+                    "apple-container-macos-linux"
+                ).capabilities,
+            ),
+        )
+
+    return cast(
+        type[ContainerFakeBackend],
+        type(
+            "AppleContainerBackend",
+            (ContainerFakeBackend,),
+            {"__init__": __init__},
+        ),
+    )
 
 
 class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
@@ -484,16 +511,12 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
 
         gos.assert_called_once()
         self.assertIsNone(gos.call_args.kwargs["tools"])
-        gts.assert_has_calls(
-            [
-                call(args, prefix="browser", settings_cls=BrowserToolSettings),
-                call(
-                    args, prefix="database", settings_cls=DatabaseToolSettings
-                ),
-                call(args, prefix="graph", settings_cls=GraphToolSettings),
-                call(args, prefix="shell", settings_cls=ShellToolSettings),
-            ]
-        )
+        gts.assert_has_calls([
+            call(args, prefix="browser", settings_cls=BrowserToolSettings),
+            call(args, prefix="database", settings_cls=DatabaseToolSettings),
+            call(args, prefix="graph", settings_cls=GraphToolSettings),
+            call(args, prefix="shell", settings_cls=ShellToolSettings),
+        ])
         asrv.assert_called_once_with(
             hub=hub,
             name="name",
@@ -1290,6 +1313,83 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         assert effective.profile is not None
         self.assertEqual(effective.profile.resources.cpu_count, 1)
         self.assertEqual(effective.profile.resources.memory_bytes, 268435456)
+
+    def test_agent_tool_settings_wires_apple_container_backend(self):
+        args = Namespace(
+            tool_shell_backend="container",
+            tool_container_backend="apple-container",
+            tool_container_profile="workspace-readonly",
+            tool_container_image="ghcr.io/example/tools@sha256:" + "2" * 64,
+            tool_container_workspace_root=".",
+            tool_container_pull_policy="never",
+            tool_container_platform="linux/arm64",
+            tool_container_cpu_count=1,
+            tool_container_memory_bytes=268435456,
+            tool_container_pids=64,
+            tool_container_timeout_seconds=30,
+            tool_container_network_mode="none",
+            tool_container_review_mode="deny",
+            tool_shell_container_profile="workspace-readonly",
+            tool_shell_container_required=True,
+        )
+        module = SimpleNamespace(
+            AppleContainerBackend=_apple_container_backend_class()
+        )
+
+        with patch.object(
+            agent_cmds,
+            "import_module",
+            return_value=module,
+        ):
+            settings = agent_cmds._agent_tool_settings(args)
+
+        self.assertIsNotNone(settings.container)
+        assert settings.container is not None
+        self.assertIsInstance(
+            settings.container.backend,
+            ContainerFakeBackend,
+        )
+        self.assertEqual(
+            settings.container.opt_in_backends,
+            (ContainerBackend.APPLE_CONTAINER,),
+        )
+
+    def test_agent_tool_settings_missing_apple_backend_fails_closed(self):
+        args = Namespace(
+            tool_shell_backend="container",
+            tool_container_backend="apple-container",
+            tool_container_profile="workspace-readonly",
+            tool_container_image="ghcr.io/example/tools@sha256:" + "2" * 64,
+            tool_container_workspace_root=".",
+            tool_container_pull_policy="never",
+            tool_container_platform="linux/arm64",
+            tool_container_cpu_count=1,
+            tool_container_memory_bytes=268435456,
+            tool_container_pids=64,
+            tool_container_timeout_seconds=30,
+            tool_container_network_mode="none",
+            tool_container_review_mode="deny",
+            tool_shell_container_profile="workspace-readonly",
+            tool_shell_container_required=True,
+        )
+
+        def missing_module(_module_name: str) -> object:
+            raise ModuleNotFoundError(_module_name)
+
+        with patch.object(
+            agent_cmds,
+            "import_module",
+            side_effect=missing_module,
+        ):
+            settings = agent_cmds._agent_tool_settings(args)
+
+        self.assertIsNotNone(settings.container)
+        assert settings.container is not None
+        self.assertIsNone(settings.container.backend)
+        self.assertEqual(
+            settings.container.opt_in_backends,
+            (ContainerBackend.APPLE_CONTAINER,),
+        )
 
     def test_agent_tool_settings_rejects_shell_container_without_backend(
         self,

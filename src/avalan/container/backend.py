@@ -172,9 +172,9 @@ class ContainerBackendRuntimeRequirements:
             _assert_non_empty_string(self.marker, "marker")
         assert isinstance(
             self.environment_variables, Sequence
-        ) and not isinstance(
-            self.environment_variables, str | bytes
-        ), "environment_variables must be a sequence"
+        ) and not isinstance(self.environment_variables, str | bytes), (
+            "environment_variables must be a sequence"
+        )
         environment_variables = tuple(self.environment_variables)
         for variable in environment_variables:
             _assert_non_empty_string(variable, "environment_variables")
@@ -219,9 +219,9 @@ class ContainerBackendProbeResult:
         if self.capabilities is not None:
             assert isinstance(self.capabilities, ContainerBackendCapabilities)
         if self.available:
-            assert (
-                self.capabilities is not None
-            ), "available backend probes require capabilities"
+            assert self.capabilities is not None, (
+                "available backend probes require capabilities"
+            )
         _assert_diagnostics(self.diagnostics)
         assert isinstance(
             self.runtime_requirements,
@@ -1561,28 +1561,29 @@ _CONTAINER_BACKEND_CAPABILITY_PROFILES = (
         pull=True,
         network_modes=(ContainerNetworkMode.NONE,),
         mount_types=(ContainerMountType.WORKSPACE, ContainerMountType.OUTPUT),
-        resource_limits=False,
+        resource_limits=True,
         device_classes=_CPU_DEVICE_CLASSES,
         per_container_vm_isolation=True,
         vm_backed=True,
         streaming_attach=False,
         stats=False,
-        lifecycle_normalization=False,
+        lifecycle_normalization=True,
         platform_behavior=_platform_behavior(
             file_io="Apple Containerization VM file sharing",
-            networking="Apple container VM networking, opt-in until proven",
+            networking="Apple container VM networking disabled for none mode",
             architecture_emulation="Apple silicon linux/arm64 baseline only",
-            resources="resource controls require parity validation",
-            signals="signal behavior requires parity validation",
+            resources=(
+                "Apple container CPU, memory, PID, and lifecycle timeout"
+                " controls"
+            ),
+            signals="Apple container lifecycle commands",
             path_syntax="macOS POSIX paths from shared locations",
             drive_letters="not applicable",
             case_behavior="host volume case behavior may differ from guest",
         ),
         shared_mount_prefixes=("/Users/", "/Volumes/", "/private/", "/tmp/"),
         parity_requirements=(
-            "streaming attach parity",
             "mount behavior parity",
-            "cleanup certainty",
             "startup and file I/O performance budgets",
         ),
         environment_variable="AVALAN_CONTAINER_APPLE_E2E",
@@ -1771,9 +1772,9 @@ class ContainerFakeBackendScript:
         )
         for chunk in self.build_progress_chunks:
             assert isinstance(chunk, ContainerBackendStreamChunk)
-            assert (
-                chunk.stream is ContainerBackendStream.PROGRESS
-            ), "build progress chunks must use progress stream"
+            assert chunk.stream is ContainerBackendStream.PROGRESS, (
+                "build progress chunks must use progress stream"
+            )
         object.__setattr__(
             self,
             "build_progress_chunks",
@@ -1783,9 +1784,9 @@ class ContainerFakeBackendScript:
             assert isinstance(chunk, ContainerBackendStreamChunk)
         _assert_bool(self.stream_incremental, "stream_incremental")
         assert isinstance(self.stream_delay_seconds, int | float)
-        assert (
-            self.stream_delay_seconds >= 0
-        ), "stream_delay_seconds must not be negative"
+        assert self.stream_delay_seconds >= 0, (
+            "stream_delay_seconds must not be negative"
+        )
         for stat in self.stats_samples:
             assert isinstance(stat, ContainerBackendStats)
         if self.output_result is not None:
@@ -2346,10 +2347,6 @@ def _capability_diagnostics(
         diagnostics.append(
             _capability_mismatch(backend, "resource limits are not supported")
         )
-    if not capabilities.streaming_attach:
-        diagnostics.append(
-            _capability_mismatch(backend, "streaming attach is not supported")
-        )
     return tuple(diagnostics)
 
 
@@ -2643,14 +2640,12 @@ def container_build_cache_key(plan: ContainerRunPlan) -> str:
     context_key = (
         "legacy"
         if context is None
-        else ":".join(
-            (
-                context.context_path,
-                context.dockerfile_path,
-                context.dockerignore_path,
-                context.context_digest,
-            )
-        )
+        else ":".join((
+            context.context_path,
+            context.dockerfile_path,
+            context.dockerignore_path,
+            context.context_digest,
+        ))
     )
     build_policy = cast(ContainerBuildPolicy, plan.image.build_policy)
     assert plan.image.digest is not None
@@ -2745,7 +2740,7 @@ def _enum_value(
         return value
     _assert_non_empty_string(value, field_name)
     assert isinstance(value, str)
-    assert value in {
-        member.value for member in enum_type
-    }, f"{field_name} contains unsupported value"
+    assert value in {member.value for member in enum_type}, (
+        f"{field_name} contains unsupported value"
+    )
     return enum_type(value)

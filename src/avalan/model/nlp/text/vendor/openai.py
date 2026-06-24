@@ -68,6 +68,7 @@ class OpenAIStream(TextGenerationVendorStream):
     }
     _ERROR_EVENTS = {"response.error", "response.failed", "error"}
     _CANCELLED_EVENTS = {"response.cancelled", "response.canceled"}
+    _INCOMPLETE_EVENTS = {"response.incomplete"}
     _stream: AsyncIterator[Any]
     _canonical_tool_calls: dict[str, dict[str, str | bool | None]]
     _tool_call_ids_by_item_id: dict[str, str]
@@ -181,11 +182,10 @@ class OpenAIStream(TextGenerationVendorStream):
             raise ValueError("response event type must be a string")
         event_type = event_type_value
         provider_payload = self._provider_payload(event)
+        response = OpenAIClient._response_field(event, "response")
         error = OpenAIClient._response_field(
             event, "error"
-        ) or OpenAIClient._response_field(
-            OpenAIClient._response_field(event, "response"), "error"
-        )
+        ) or OpenAIClient._response_field(response, "error")
 
         if event_type in self._CANCELLED_EVENTS:
             return (
@@ -197,13 +197,24 @@ class OpenAIStream(TextGenerationVendorStream):
                 ),
             )
         if event_type in self._ERROR_EVENTS or error is not None:
+            data = (
+                self._response_failure_data(response)
+                if error is None and event_type == "response.failed"
+                else self._response_error_data(error or event)
+            )
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.STREAM_ERRORED,
-                    data=self._response_error_data(error or event),
+                    data=data,
                     provider_payload=provider_payload,
                     provider_event_type=event_type,
                 ),
+            )
+        if event_type in self._INCOMPLETE_EVENTS or (
+            self._response_is_incomplete(response)
+        ):
+            return self._incomplete_events(
+                event, provider_payload, event_type
             )
         if event_type == "response.completed":
             return self._completion_events(event, provider_payload, event_type)
@@ -282,6 +293,35 @@ class OpenAIStream(TextGenerationVendorStream):
         if event_type == "response.output_item.done":
             return self._tool_done_events(event, provider_payload, event_type)
         return ()
+
+    def _incomplete_events(
+        self,
+        event: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        response = OpenAIClient._response_field(event, "response")
+        usage = OpenAIClient._response_field(response, "usage")
+        result: list[StreamProviderEvent] = []
+        if usage is not None:
+            self._usage = usage
+            result.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    usage=cast(LooseJsonValue, usage),
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                )
+            )
+        result.append(
+            StreamProviderEvent(
+                kind=StreamItemKind.STREAM_ERRORED,
+                data=self._response_incomplete_data(response or event),
+                provider_payload=provider_payload,
+                provider_event_type=event_type,
+            )
+        )
+        return tuple(result)
 
     def _completion_events(
         self,
@@ -757,6 +797,55 @@ class OpenAIStream(TextGenerationVendorStream):
         if isinstance(message, str):
             return {"error": {"message": message}}
         return {"error": {"message": str(error)}}
+
+    @staticmethod
+    def _response_failure_data(response: object) -> LooseJsonValue:
+        message = OpenAIClient._response_field(response, "message")
+        error: dict[str, LooseJsonValue] = {
+            "code": "response_failed",
+            "message": (
+                message
+                if isinstance(message, str) and message
+                else "response failed"
+            ),
+        }
+        status = OpenAIClient._response_field(response, "status")
+        if isinstance(status, str) and status:
+            error["status"] = status
+        response_id = OpenAIClient._response_field(response, "id")
+        if isinstance(response_id, str) and response_id:
+            error["response_id"] = response_id
+        return {"error": error}
+
+    @staticmethod
+    def _response_is_incomplete(response: object) -> bool:
+        status = OpenAIClient._response_field(response, "status")
+        return status == "incomplete" or (
+            OpenAIClient._response_field(response, "incomplete_details")
+            is not None
+        )
+
+    @staticmethod
+    def _response_incomplete_data(response: object) -> LooseJsonValue:
+        details = OpenAIClient._response_field(
+            response, "incomplete_details"
+        )
+        reason = OpenAIClient._response_field(details, "reason")
+        message = "response incomplete"
+        error: dict[str, LooseJsonValue] = {
+            "code": "response_incomplete",
+            "message": message,
+        }
+        if isinstance(reason, str) and reason:
+            error["reason"] = reason
+            error["message"] = f"{message}: {reason}"
+        status = OpenAIClient._response_field(response, "status")
+        if isinstance(status, str) and status:
+            error["status"] = status
+        response_id = OpenAIClient._response_field(response, "id")
+        if isinstance(response_id, str) and response_id:
+            error["response_id"] = response_id
+        return {"error": error}
 
     @staticmethod
     def _provider_payload(event: object) -> LooseJsonValue | None:
