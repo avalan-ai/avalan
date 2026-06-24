@@ -211,6 +211,39 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(events[0].metadata["backend"], "container")
 
+    async def test_container_runtime_enables_trusted_auto_backend(
+        self,
+    ) -> None:
+        backend = _RecordingContainerFakeBackend(
+            ContainerFakeBackendScript(
+                capabilities=_capabilities(),
+                stream_chunks=(
+                    ContainerBackendStreamChunk(
+                        stream=ContainerBackendStream.STDOUT,
+                        content=b"match\n",
+                        sequence=0,
+                    ),
+                ),
+            )
+        )
+        toolset = CodeToolSet(
+            namespace="code",
+            container_runtime=ContainerToolRuntimeSettings(
+                effective_settings=_auto_effective_settings(required=True),
+                backend=backend,
+            ),
+        )
+
+        result = await _ast_grep_tool(toolset)(
+            "call($A)",
+            context=ToolCallContext(),
+            lang="py",
+        )
+
+        self.assertEqual(result, "match\n")
+        self.assertIn(ContainerBackendOperation.CREATE, backend.operations)
+        self.assertEqual(len(backend.plans), 1)
+
     async def test_container_runtime_forwards_apple_opt_in(self) -> None:
         without_opt_in = AstGrepTool(
             container_settings=_apple_effective_settings(required=True),
@@ -620,6 +653,27 @@ def _apple_effective_settings(
     )
     return ContainerEffectiveSettings(
         backend=ContainerBackend.APPLE_CONTAINER,
+        required=required,
+        scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+        source=_source(),
+        policy_version="phase19",
+        profile_registry_id="code",
+        profile_name=profile.name,
+        profile=profile,
+        allowed_profiles=(profile.name,),
+    )
+
+
+def _auto_effective_settings(
+    *,
+    required: bool = False,
+) -> ContainerEffectiveSettings:
+    profile = ContainerProfile.minimal_readonly(
+        name="auto-code-search-readonly",
+        image_reference=_IMAGE,
+    )
+    return ContainerEffectiveSettings(
+        backend=ContainerBackend.AUTO,
         required=required,
         scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
         source=_source(),

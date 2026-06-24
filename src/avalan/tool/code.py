@@ -173,6 +173,11 @@ class AstGrepTool(Tool):
         self.__name__ = "search.ast.grep"
         self._container_settings = container_settings
         self._container_backend = container_backend
+        self._container_auto_enabled = (
+            container_settings is not None
+            and container_settings.backend is ContainerBackend.AUTO
+            and container_settings.source.can_define_runtime_authority
+        )
         self._container_opt_in_backends = opt_in_backends
 
     def tool_display_projector(
@@ -259,6 +264,7 @@ class AstGrepTool(Tool):
         selection = await _select_container_backend(
             plan,
             self._container_backend,
+            auto_enabled=self._container_auto_enabled,
             opt_in_backends=self._container_opt_in_backends,
         )
         if not selection.ok:
@@ -432,13 +438,14 @@ async def _select_container_backend(
     plan: ContainerNormalizedRunPlan,
     backend: ContainerAsyncBackend,
     *,
+    auto_enabled: bool,
     opt_in_backends: Sequence[ContainerBackend | str] = (),
 ) -> ContainerBackendSelection:
     probe = await backend.probe()
     return select_container_backend(
         plan.run_plan,
         (probe,),
-        auto_enabled=False,
+        auto_enabled=auto_enabled,
         rootful_authorized=False,
         opt_in_backends=opt_in_backends,
     )

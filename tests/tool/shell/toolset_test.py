@@ -253,6 +253,56 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(output, ShellFormattedResult)
         self.assertEqual(output.execution_result.backend, "container")
 
+    async def test_container_runtime_enables_trusted_auto_backend(
+        self,
+    ) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            backend="container",
+            workspace_root=str(fixture_root),
+        )
+        backend = ContainerFakeBackend(
+            ContainerFakeBackendScript(
+                capabilities=ContainerBackendCapabilities(
+                    backend=ContainerBackend.DOCKER,
+                    host_os="linux",
+                    guest_os="linux",
+                    architecture="amd64",
+                    rootless=True,
+                    mount_types=(ContainerMountType.WORKSPACE,),
+                    streaming_attach=True,
+                ),
+                stream_chunks=(),
+            )
+        )
+        runtime = trusted_container_runtime_from_mapping(
+            {
+                "backend": "auto",
+                "default_profile": "workspace-readonly",
+                "profiles": {
+                    "workspace-readonly": {
+                        "image": _IMAGE,
+                        "workspace_root": str(fixture_root),
+                    }
+                },
+            },
+            source=trusted_container_source("sdk"),
+        )
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            container_runtime=ContainerToolRuntimeSettings(
+                effective_settings=runtime.effective_settings,
+                backend=backend,
+            ),
+        )
+
+        output = await _call_cat(_tool_by_name(toolset, "cat"))
+
+        self.assertIn(f"status: {ShellExecutionStatus.COMPLETED}", output)
+        self.assertIsInstance(output, ShellFormattedResult)
+        self.assertEqual(output.execution_result.backend, "container")
+
     async def test_container_runtime_does_not_override_local_backend(
         self,
     ) -> None:
