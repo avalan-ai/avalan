@@ -773,6 +773,50 @@ class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
 
 
 class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
+    def _agent_init_args(self, **overrides: object) -> Namespace:
+        values = {
+            "name": "N",
+            "role": "R",
+            "task": "T",
+            "instructions": None,
+            "goal_instructions": "I",
+            "memory_recent": True,
+            "memory_permanent_message": "",
+            "memory_permanent": None,
+            "memory_engine_model_id": None,
+            "memory_engine_max_tokens": 500,
+            "memory_engine_overlap": 125,
+            "memory_engine_window": 250,
+            "engine_uri": "uri",
+            "run_max_new_tokens": 10,
+            "run_skip_special_tokens": True,
+            "run_temperature": None,
+            "run_top_k": None,
+            "run_top_p": None,
+            "run_use_cache": None,
+            "run_cache_strategy": None,
+            "tool": None,
+            "backend": "transformers",
+            "no_repl": False,
+            "quiet": False,
+            "tool_container_backend": None,
+            "tool_container_profile": None,
+            "tool_container_image": None,
+            "tool_container_workspace_root": None,
+            "tool_container_pull_policy": None,
+            "tool_container_platform": None,
+            "tool_container_cpu_count": None,
+            "tool_container_memory_bytes": None,
+            "tool_container_pids": None,
+            "tool_container_timeout_seconds": None,
+            "tool_container_network_mode": None,
+            "tool_container_review_mode": None,
+            "tool_shell_container_profile": None,
+            "tool_shell_container_required": None,
+        }
+        values.update(overrides)
+        return Namespace(**values)
+
     async def test_agent_init(self):
         args = Namespace(
             name=None,
@@ -1212,6 +1256,236 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(agent_cmds._is_simple_string_sequence(("rg", 1)))
         self.assertFalse(agent_cmds._is_simple_string_mapping(("rg",)))
         self.assertFalse(agent_cmds._is_simple_string_mapping({"rg": 1}))
+
+    def test_agent_tool_settings_builds_container_runtime_from_cli(self):
+        args = Namespace(
+            tool_shell_backend="container",
+            tool_container_backend="docker",
+            tool_container_profile="workspace-readonly",
+            tool_container_image="ghcr.io/example/tools@sha256:" + "2" * 64,
+            tool_container_workspace_root=".",
+            tool_container_pull_policy="never",
+            tool_container_platform="linux/amd64",
+            tool_container_cpu_count=1,
+            tool_container_memory_bytes=268435456,
+            tool_container_pids=64,
+            tool_container_timeout_seconds=30,
+            tool_container_network_mode="none",
+            tool_container_review_mode="deny",
+            tool_shell_container_profile="workspace-readonly",
+            tool_shell_container_required=True,
+        )
+
+        settings = agent_cmds._agent_tool_settings(args)
+
+        self.assertIsInstance(settings.shell, ShellToolSettings)
+        self.assertEqual(settings.shell.backend, "container")
+        self.assertIsNotNone(settings.container)
+        assert settings.container is not None
+        effective = settings.container.effective_settings
+        self.assertIsNotNone(effective)
+        assert effective is not None
+        self.assertTrue(effective.required)
+        self.assertEqual(effective.profile_name, "workspace-readonly")
+        assert effective.profile is not None
+        self.assertEqual(effective.profile.resources.cpu_count, 1)
+        self.assertEqual(effective.profile.resources.memory_bytes, 268435456)
+
+    def test_agent_tool_settings_rejects_shell_container_without_backend(
+        self,
+    ):
+        args = Namespace(
+            tool_shell_backend="local",
+            tool_container_backend="docker",
+            tool_container_profile="workspace-readonly",
+            tool_container_image="ghcr.io/example/tools@sha256:" + "2" * 64,
+            tool_container_workspace_root=".",
+            tool_container_pull_policy="never",
+            tool_container_platform="linux/amd64",
+            tool_container_cpu_count=1,
+            tool_container_memory_bytes=268435456,
+            tool_container_pids=64,
+            tool_container_timeout_seconds=30,
+            tool_container_network_mode="none",
+            tool_container_review_mode="deny",
+            tool_shell_container_profile="workspace-readonly",
+            tool_shell_container_required=True,
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "tool.shell.container requires tool.shell backend container",
+        ):
+            agent_cmds._agent_tool_settings(args)
+
+    async def test_agent_init_container_settings_output(self):
+        image = "ghcr.io/example/tools@sha256:" + "3" * 64
+        args = self._agent_init_args(
+            goal_instructions=None,
+            tool=["shell.cat"],
+            tool_shell_backend="container",
+            tool_container_backend="docker",
+            tool_container_profile="workspace-readonly",
+            tool_container_image=image,
+            tool_container_workspace_root=".",
+            tool_container_pull_policy="never",
+            tool_container_platform="linux/amd64",
+            tool_container_cpu_count=1,
+            tool_container_memory_bytes=None,
+            tool_container_pids=None,
+            tool_container_timeout_seconds=None,
+            tool_container_network_mode="none",
+            tool_container_review_mode="deny",
+            tool_shell_container_profile="workspace-readonly",
+            tool_shell_container_required=True,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T"]),
+            patch.object(agent_cmds.Prompt, "ask", side_effect=["N", "uri"]),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        parsed = tomllib.loads(output)
+        self.assertEqual(parsed["tool"]["shell"]["backend"], "container")
+        self.assertEqual(parsed["tool"]["container"]["backend"], "docker")
+        self.assertEqual(
+            parsed["tool"]["container"]["profiles"]["workspace-readonly"][
+                "image"
+            ],
+            image,
+        )
+        self.assertEqual(
+            parsed["tool"]["container"]["profiles"]["workspace-readonly"][
+                "resources"
+            ]["cpu_count"],
+            1,
+        )
+        self.assertEqual(
+            parsed["tool"]["shell"]["container"],
+            {"profile": "workspace-readonly", "required": True},
+        )
+
+    async def test_agent_init_container_backend_requires_image(self):
+        args = self._agent_init_args(
+            tool_container_backend="docker",
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        env = MagicMock()
+        template = MagicMock()
+        env.get_template.return_value = template
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "Environment", return_value=env),
+            self.assertRaisesRegex(
+                AssertionError,
+                "container image is required",
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        template.render.assert_not_called()
+
+    async def test_agent_init_shell_container_profile_requires_backend(self):
+        args = self._agent_init_args(
+            tool_container_backend="docker",
+            tool_container_image="ghcr.io/example/tools@sha256:" + "3" * 64,
+            tool_shell_container_profile="workspace-readonly",
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        env = MagicMock()
+        template = MagicMock()
+        env.get_template.return_value = template
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "Environment", return_value=env),
+            self.assertRaisesRegex(
+                AssertionError,
+                "tool.shell.container requires tool.shell backend container",
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        template.render.assert_not_called()
+
+    async def test_agent_init_shell_container_requires_image(self):
+        args = self._agent_init_args(
+            tool_shell_backend="container",
+            tool_container_backend="docker",
+            tool_shell_container_required=True,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        env = MagicMock()
+        template = MagicMock()
+        env.get_template.return_value = template
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "Environment", return_value=env),
+            self.assertRaisesRegex(
+                AssertionError,
+                "container image is required",
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        template.render.assert_not_called()
+
+    async def test_agent_init_container_profile_requires_backend(self):
+        args = self._agent_init_args(
+            tool_container_profile="workspace-readonly",
+            tool_container_cpu_count=1,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        env = MagicMock()
+        template = MagicMock()
+        env.get_template.return_value = template
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "Environment", return_value=env),
+            self.assertRaisesRegex(
+                AssertionError,
+                "container backend is required",
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        template.render.assert_not_called()
+
+    async def test_agent_init_container_backend_none_renders_no_profile(
+        self,
+    ):
+        args = self._agent_init_args(
+            tool_container_backend="none",
+            tool_container_profile="ignored",
+            tool_container_cpu_count=1,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        parsed = tomllib.loads(output)
+        self.assertEqual(parsed["tool"]["container"], {"backend": "none"})
+        self.assertNotIn("[tool.container.profiles", output)
 
 
 class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):

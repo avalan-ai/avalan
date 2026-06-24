@@ -2,8 +2,14 @@ from ..agent.orchestrator import Orchestrator
 from ..agent.orchestrator.orchestrators.default import DefaultOrchestrator
 from ..agent.orchestrator.orchestrators.json import JsonOrchestrator, Property
 from ..container import (
+    ContainerProfileSelection,
+    ContainerSettings,
+    ContainerSettingsSource,
     ContainerSurface,
-    assert_container_syntax_supported,
+    ContainerToolRuntimeSettings,
+    container_selection_from_mapping,
+    trusted_container_settings_from_mapping,
+    trusted_container_source,
 )
 from ..entities import (
     EngineUri,
@@ -56,7 +62,7 @@ from logging import DEBUG, INFO, Logger
 from os import R_OK, access
 from os.path import exists
 from tomllib import loads as toml_loads
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, Mapping, cast
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
@@ -354,7 +360,6 @@ class OrchestratorLoader:
         assert isinstance(
             config, dict
         ), "Agent configuration must be a mapping"
-        assert_container_syntax_supported(ContainerSurface.AGENT_TOML, config)
         assert "agent" in config, "No agent section in configuration"
         assert "engine" in config, "No engine section defined in configuration"
         assert isinstance(
@@ -367,12 +372,146 @@ class OrchestratorLoader:
             "uri" in config["engine"]
         ), "No uri defined in engine section of configuration"
         cls._validate_engine_file_delivery_profile(config["engine"])
+        cls._validate_agent_container_config(config)
         agent_config = config["agent"]
         cls._validate_agent_section(agent_config)
         orchestrator_type = agent_config.get("type")
         assert orchestrator_type is None or orchestrator_type in ["json"], (
             f"Unknown type {agent_config['type']} in agent section "
             + "of configuration"
+        )
+
+    @classmethod
+    def _validate_agent_container_config(
+        cls,
+        config: Mapping[str, object],
+    ) -> None:
+        tool_section = config.get("tool", {})
+        assert isinstance(tool_section, dict), "Tool section must be a mapping"
+        source = trusted_container_source(ContainerSurface.AGENT_TOML)
+        cls._container_settings_from_tool_section(
+            tool_section,
+            source,
+        )
+        cls._container_runtime_settings_from_config(config, tool_section)
+        cls._runtime_container_selection_from_config(config)
+
+    @classmethod
+    def _container_runtime_settings_from_config(
+        cls,
+        config: Mapping[str, object],
+        tool_section: Mapping[str, object],
+    ) -> ContainerToolRuntimeSettings | None:
+        source = trusted_container_source(ContainerSurface.AGENT_TOML)
+        shell_selection = cls._shell_container_selection_from_tool_section(
+            tool_section,
+            source,
+        )
+        container_settings = cls._container_settings_from_tool_section(
+            tool_section,
+            source,
+            shell_selection=shell_selection,
+        )
+        if container_settings is None or shell_selection is None:
+            return None
+        return ContainerToolRuntimeSettings(
+            effective_settings=container_settings.select_profile(
+                shell_selection
+            )
+        )
+
+    @staticmethod
+    def _container_settings_from_tool_section(
+        tool_section: Mapping[str, object],
+        source: ContainerSettingsSource,
+        *,
+        shell_selection: ContainerProfileSelection | None = None,
+    ) -> ContainerSettings | None:
+        container_config = tool_section.get("container")
+        if container_config is None:
+            assert (
+                shell_selection is None or shell_selection.profile is None
+            ), "required container profile unavailable"
+            return None
+        assert isinstance(
+            container_config,
+            dict,
+        ), "tool.container section must be a mapping"
+        return trusted_container_settings_from_mapping(
+            container_config,
+            source=source,
+        )
+
+    @classmethod
+    def _shell_container_selection_from_tool_section(
+        cls,
+        tool_section: Mapping[str, object],
+        source: ContainerSettingsSource,
+    ) -> ContainerProfileSelection | None:
+        shell_config = tool_section.get("shell")
+        if shell_config is None:
+            return None
+        assert isinstance(
+            shell_config,
+            dict,
+        ), "tool.shell section must be a mapping"
+        shell_container_config = shell_config.get("container")
+        if shell_container_config is not None:
+            return cls._shell_container_selection_from_config(
+                shell_config,
+                shell_container_config,
+                source,
+            )
+        if shell_config.get("backend") == "container":
+            return ContainerProfileSelection(required=True)
+        return None
+
+    @staticmethod
+    def _shell_container_selection_from_config(
+        shell_config: Mapping[str, object],
+        shell_container_config: object,
+        source: ContainerSettingsSource,
+    ) -> ContainerProfileSelection:
+        assert isinstance(
+            shell_container_config,
+            dict,
+        ), "tool.shell.container section must be a mapping"
+        assert isinstance(source, ContainerSettingsSource)
+        assert (
+            shell_config.get("backend") == "container"
+        ), "tool.shell.container requires tool.shell backend container"
+        selection_config = dict(shell_container_config)
+        if "required" in selection_config:
+            assert (
+                selection_config["required"] is True
+            ), "tool.shell backend container requires required=true"
+        selection_config["required"] = True
+        return container_selection_from_mapping(
+            selection_config,
+            source=source,
+        )
+
+    @staticmethod
+    def _runtime_container_selection_from_config(
+        config: Mapping[str, object],
+    ) -> ContainerProfileSelection | None:
+        runtime_config = config.get("runtime")
+        if runtime_config is None:
+            return None
+        assert isinstance(
+            runtime_config,
+            dict,
+        ), "runtime section must be a mapping"
+        container_config = runtime_config.get("container")
+        if container_config is None:
+            return None
+        assert isinstance(
+            container_config,
+            dict,
+        ), "runtime.container section must be a mapping"
+        assert False, (
+            "runtime.container is not supported until runtime envelope "
+            "execution is implemented"
         )
 
     async def from_file(
@@ -400,8 +539,6 @@ class OrchestratorLoader:
             config,
             path=path,
         )
-        assert_container_syntax_supported(ContainerSurface.AGENT_TOML, config)
-
         # Validate settings
 
         assert "agent" in config, "No agent section in configuration"
@@ -434,6 +571,18 @@ class OrchestratorLoader:
             assert isinstance(
                 tool_section, dict
             ), "Tool section must be a mapping"
+        container_source = trusted_container_source(
+            ContainerSurface.AGENT_TOML
+        )
+        self._container_settings_from_tool_section(
+            tool_section,
+            container_source,
+        )
+        container_runtime = self._container_runtime_settings_from_config(
+            config,
+            tool_section,
+        )
+        self._runtime_container_selection_from_config(config)
 
         enable_tools_config = tool_section.get("enable")
         enable_tools: list[str] | None = None
@@ -612,17 +761,32 @@ class OrchestratorLoader:
 
         shell_settings = None
         if "shell" in tool_section:
-            shell_config = tool_section["shell"]
+            shell_section = tool_section["shell"]
             assert isinstance(
-                shell_config, dict
+                shell_section, dict
             ), "tool.shell section must be a mapping"
+            shell_config = dict(shell_section)
+            shell_container_config = shell_config.pop("container", None)
+            if shell_container_config is not None:
+                shell_settings_source = trusted_container_source(
+                    ContainerSurface.AGENT_TOML
+                )
+                shell_config["container"] = (
+                    self._shell_container_selection_from_config(
+                        shell_config,
+                        shell_container_config,
+                        shell_settings_source,
+                    )
+                )
             shell_settings = ShellToolSettings(**shell_config)
 
+        extra: dict[str, object] | None
         if tool_settings:
             browser_settings = tool_settings.browser or browser_settings
             database_settings = tool_settings.database or database_settings
             graph_settings = tool_settings.graph or graph_settings
             shell_settings = tool_settings.shell or shell_settings
+            container_runtime = tool_settings.container or container_runtime
             extra = tool_settings.extra
         else:
             extra = None
@@ -632,6 +796,7 @@ class OrchestratorLoader:
             database=database_settings,
             graph=graph_settings,
             shell=shell_settings,
+            container=container_runtime,
             extra=extra,
         )
 
@@ -771,6 +936,7 @@ class OrchestratorLoader:
         database_settings = tool_settings.database if tool_settings else None
         graph_settings = tool_settings.graph if tool_settings else None
         shell_settings = tool_settings.shell if tool_settings else None
+        container_runtime = tool_settings.container if tool_settings else None
         enabled_tools = normalize_shell_enabled_tools(settings.tools)
 
         _l(
@@ -821,6 +987,7 @@ class OrchestratorLoader:
             available_toolsets.append(
                 ShellToolSet(
                     settings=active_shell_settings,
+                    container_runtime=container_runtime,
                     namespace="shell",
                 )
             )

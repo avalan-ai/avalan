@@ -2,6 +2,7 @@ from dataclasses import fields
 from types import MappingProxyType
 from unittest import TestCase, main
 
+from avalan.container import ContainerProfileSelection
 from avalan.tool.shell.registry import SHELL_COMMAND_IDS
 from avalan.tool.shell.settings import ShellToolSettings
 
@@ -91,8 +92,24 @@ class ShellToolSettingsTest(TestCase):
         self.assertNotIn("environment_allowlist", scalar_fields)
         self.assertNotIn("executable_paths", scalar_fields)
         self.assertNotIn("executable_search_paths", scalar_fields)
+        self.assertNotIn("container", scalar_fields)
         self.assertNotIn("allow_write", scalar_fields)
         self.assertNotIn("allow_shell", scalar_fields)
+
+    def test_container_backend_and_profile_selection_are_trusted_settings(
+        self,
+    ) -> None:
+        selection = ContainerProfileSelection(
+            profile="workspace-readonly",
+            required=True,
+        )
+        settings = ShellToolSettings(
+            backend="container",
+            container=selection,
+        )
+
+        self.assertEqual(settings.backend, "container")
+        self.assertIs(settings.container, selection)
 
     def test_mutable_inputs_are_copied(self) -> None:
         allowed_commands = ["rg"]

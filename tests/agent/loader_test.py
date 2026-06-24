@@ -354,11 +354,13 @@ async def _load_shell_agent_tool_result(
 ) -> tuple[list[str], object]:
     def shell_toolset_factory(
         *,
+        container_runtime: object | None = None,
         settings: ShellToolSettings,
         namespace: str,
     ) -> ShellToolSet:
         return ShellToolSet(
             settings=settings,
+            container_runtime=container_runtime,
             policy=policy,
             executor=executor,
             namespace=namespace,
@@ -640,21 +642,272 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(tool_settings.shell.max_head_lines, 7)
             await stack.aclose()
 
-    async def test_container_toml_sections_are_rejected(self) -> None:
+    async def test_container_toml_sections_load_trusted_settings(self) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "4" * 64
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + f"""
+[tool]
+enable = ["shell.cat"]
+
+[tool.container]
+backend = "docker"
+default_profile = "workspace-readonly"
+
+[tool.container.profiles.workspace-readonly]
+image = "{image}"
+workspace_root = "."
+network = "none"
+
+[tool.shell]
+backend = "container"
+
+[tool.shell.container]
+profile = "workspace-readonly"
+
+""")
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(tmp.name, agent_id=uuid4())
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertEqual(tool_settings.shell.backend, "container")
+            assert tool_settings.shell.container is not None
+            self.assertTrue(tool_settings.shell.container.required)
+            self.assertIsNotNone(tool_settings.container)
+            assert tool_settings.container is not None
+            effective = tool_settings.container.effective_settings
+            assert effective is not None
+            self.assertEqual(effective.profile_name, "workspace-readonly")
+            self.assertTrue(effective.required)
+            self.assertIsNone(tool_settings.extra)
+            await stack.aclose()
+
+    async def test_runtime_container_is_rejected_until_enforced(
+        self,
+    ) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "4" * 64
+        with self.assertRaisesRegex(
+            AssertionError,
+            "runtime.container is not supported",
+        ):
+            OrchestratorLoader.validate_agent_config(
+                {
+                    "agent": {"role": "assistant"},
+                    "engine": {"uri": "ai://local/model"},
+                    "tool": {
+                        "container": {
+                            "backend": "docker",
+                            "profiles": {"runtime": {"image": image}},
+                        },
+                    },
+                    "runtime": {"container": {"profile": "runtime"}},
+                }
+            )
+
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + f"""
+[tool.container]
+backend = "docker"
+
+[tool.container.profiles.runtime]
+image = "{image}"
+
+[runtime.container]
+profile = "runtime"
+""")
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with self.assertRaisesRegex(
+                AssertionError,
+                "runtime.container is not supported",
+            ):
+                await loader.from_file(tmp.name, agent_id=uuid4())
+            await stack.aclose()
+
+    async def test_runtime_section_without_container_is_accepted(self) -> None:
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + """
+[runtime]
+mode = "local"
+""")
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(tmp.name, agent_id=uuid4())
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertIsNone(tool_settings.extra)
+            await stack.aclose()
+
+    async def test_tool_container_registry_only_is_accepted(self) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "4" * 64
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + f"""
+[tool.container]
+backend = "docker"
+
+[tool.container.profiles.runtime]
+image = "{image}"
+""")
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(tmp.name, agent_id=uuid4())
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertIsNone(tool_settings.container)
+            self.assertIsNone(tool_settings.extra)
+            await stack.aclose()
+
+    def test_validate_agent_config_accepts_container_syntax(self) -> None:
+        OrchestratorLoader.validate_agent_config(
+            {
+                "agent": {"role": "assistant"},
+                "engine": {"uri": "ai://local/model"},
+                "tool": {
+                    "container": {
+                        "backend": "docker",
+                        "default_profile": "workspace-readonly",
+                        "profiles": {
+                            "workspace-readonly": {
+                                "image": (
+                                    "ghcr.io/example/tools@sha256:" + "4" * 64
+                                )
+                            }
+                        },
+                    },
+                    "shell": {"backend": "container"},
+                },
+            }
+        )
+
+    async def test_container_toml_rejects_unknown_or_invalid_fields(
+        self,
+    ) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "4" * 64
         cases = (
-            ('\n[tool.container]\nbackend = "auto"\n', "tool.container"),
             (
-                '\n[tool.shell]\nbackend = "container"\n',
-                "tool.shell.backend",
+                """
+[tool.container]
+backend = "docker"
+unknown = true
+""",
+                "Unknown container fields",
             ),
             (
-                '\n[tool.shell.container]\nprofile = "workspace-readonly"\n',
-                "tool.shell.container",
+                f"""
+[tool.container]
+backend = "docker"
+
+[tool.container.profiles.workspace-readonly]
+image = "{image}"
+unexpected = true
+""",
+                "Unknown container fields",
+            ),
+            (
+                """
+[tool.shell]
+backend = "container"
+
+[tool.shell.container]
+required = false
+""",
+                "requires required=true",
+            ),
+            (
+                """
+[tool.shell]
+backend = "container"
+
+[tool.shell.container]
+profile = "missing"
+""",
+                "required container profile unavailable",
+            ),
+            (
+                f"""
+[tool.container]
+backend = "docker"
+default_profile = "workspace-readonly"
+
+[tool.container.profiles.workspace-readonly]
+image = "{image}"
+
+[tool.shell.container]
+profile = "workspace-readonly"
+""",
+                "tool.shell.container requires tool.shell backend container",
+            ),
+            (
+                """
+[runtime.container]
+profile = "workspace-readonly"
+""",
+                "runtime.container is not supported",
+            ),
+            (
+                f"""
+[tool.container]
+backend = "docker"
+default_profile = "workspace-readonly"
+
+[tool.container.profiles.workspace-readonly]
+image = "{image}"
+
+[runtime.container]
+profile = "missing"
+""",
+                "runtime.container is not supported",
             ),
         )
 
-        for config, path in cases:
-            with self.subTest(path=path):
+        for config, error in cases:
+            with self.subTest(error=error):
                 with NamedTemporaryFile("w+", suffix=".toml") as tmp:
                     tmp.write(_minimal_agent_toml() + config)
                     tmp.flush()
@@ -666,19 +919,9 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                         stack=stack,
                     )
 
-                    with self.assertRaisesRegex(AssertionError, path):
+                    with self.assertRaisesRegex(AssertionError, error):
                         await loader.from_file(tmp.name, agent_id=uuid4())
                     await stack.aclose()
-
-    def test_validate_agent_config_rejects_container_syntax(self) -> None:
-        with self.assertRaisesRegex(AssertionError, "tool.container"):
-            OrchestratorLoader.validate_agent_config(
-                {
-                    "agent": {"role": "assistant"},
-                    "engine": {"uri": "ai://local/model"},
-                    "tool": {"container": {"backend": "auto"}},
-                }
-            )
 
     async def test_shell_section_rejects_non_mapping(self):
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:

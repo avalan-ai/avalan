@@ -1,3 +1,4 @@
+from ...container import ContainerProfileSelection
 from ...types import (
     assert_absolute_path_mapping as _assert_absolute_path_mapping,
 )
@@ -100,7 +101,7 @@ class ShellToolSettings:
         "allow_hidden",
     )
 
-    backend: Literal["local"] = "local"
+    backend: Literal["local", "container"] = "local"
     workspace_root: str = "."
     cwd: str = "."
     default_timeout_seconds: float = 10.0
@@ -173,9 +174,13 @@ class ShellToolSettings:
     environment_allowlist: Sequence[str] = field(default_factory=tuple)
     executable_paths: Mapping[str, str] = field(default_factory=dict)
     executable_search_paths: Sequence[str] = field(default_factory=tuple)
+    container: ContainerProfileSelection | None = None
 
     def __post_init__(self) -> None:
-        assert self.backend == "local", "backend must be local"
+        assert self.backend in {
+            "local",
+            "container",
+        }, "backend must be local or container"
         _assert_non_empty_string(self.workspace_root, "workspace_root")
         _assert_non_empty_string(self.cwd, "cwd")
         _assert_positive_timeout_order(
@@ -242,6 +247,8 @@ class ShellToolSettings:
             self.executable_search_paths,
             "executable_search_paths",
         )
+        if self.container is not None:
+            assert isinstance(self.container, ContainerProfileSelection)
         object.__setattr__(
             self,
             "allowed_commands",

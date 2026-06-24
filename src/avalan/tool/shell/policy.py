@@ -211,7 +211,7 @@ class ExecutionPolicy:
     def create_execution_spec(
         self,
         *,
-        backend: Literal["local"],
+        backend: Literal["local", "container"],
         tool_name: str,
         command: str,
         executable: str | None,

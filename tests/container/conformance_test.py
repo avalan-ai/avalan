@@ -79,7 +79,7 @@ class ContainerConformanceTest(TestCase):
             },
         )
 
-    def test_unsupported_container_sections_are_diagnosed(self) -> None:
+    def test_agent_toml_container_sections_are_supported(self) -> None:
         diagnostics = container_syntax_diagnostics(
             ContainerSurface.AGENT_TOML,
             {
@@ -93,12 +93,18 @@ class ContainerConformanceTest(TestCase):
             },
         )
 
+        self.assertEqual(diagnostics, ())
+
+    def test_unsupported_container_sections_are_diagnosed(self) -> None:
+        diagnostics = container_syntax_diagnostics(
+            ContainerSurface.FLOW_TOML,
+            {"runtime": {"container": {"profile": "workspace-readonly"}}},
+        )
+
         self.assertEqual(
             [diagnostic.path for diagnostic in diagnostics],
             [
-                "tool.container",
-                "tool.shell.container",
-                "tool.shell.backend",
+                "runtime.container",
             ],
         )
         self.assertTrue(
@@ -180,6 +186,13 @@ class ContainerConformanceTest(TestCase):
             ),
             (),
         )
+        self.assertEqual(
+            container_syntax_diagnostics(
+                ContainerSurface.FLOW_TOML,
+                {"runtime": "not-a-table"},
+            ),
+            (),
+        )
 
     def test_string_surface_names_are_supported(self) -> None:
         diagnostics = container_syntax_diagnostics(
@@ -193,12 +206,15 @@ class ContainerConformanceTest(TestCase):
     def test_assert_container_syntax_supported_rejects_diagnostics(
         self,
     ) -> None:
-        assert_container_syntax_supported(ContainerSurface.AGENT_TOML, {})
+        assert_container_syntax_supported(
+            ContainerSurface.AGENT_TOML,
+            {"tool": {"container": {"backend": "auto"}}},
+        )
 
-        with self.assertRaisesRegex(AssertionError, "tool.container"):
+        with self.assertRaisesRegex(AssertionError, "runtime.container"):
             assert_container_syntax_supported(
-                ContainerSurface.AGENT_TOML,
-                {"tool": {"container": {"backend": "auto"}}},
+                ContainerSurface.FLOW_TOML,
+                {"runtime": {"container": {"profile": "p"}}},
             )
 
     def test_required_backend_never_falls_back_to_host_execution(self) -> None:
