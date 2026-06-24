@@ -48,6 +48,46 @@ class RemoteContainerProfileSelectionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(exc.exception.status_code, 400)
         self.assertIn("not exposed", str(exc.exception.detail))
 
+    async def test_rejects_malformed_container_profile_selector(self) -> None:
+        request = _Request(
+            {
+                "container": {
+                    "profile": "workspace-readonly",
+                    "image": "registry.example/untrusted:latest",
+                }
+            }
+        )
+        request.app.state.remote_container_policy = (
+            RemoteContainerRequestPolicy(
+                exposed_profiles=("workspace-readonly",)
+            )
+        )
+
+        with self.assertRaises(HTTPException) as exc:
+            await validate_remote_container_profile_selection(request)
+
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertIn("can only select a profile", str(exc.exception.detail))
+
+    async def test_leaves_broad_container_policy_to_request_validation(
+        self,
+    ) -> None:
+        request = _Request(
+            {
+                "container": {
+                    "profiles": {
+                        "unsafe": {
+                            "image": "registry.example/untrusted:latest"
+                        }
+                    }
+                }
+            }
+        )
+
+        await validate_remote_container_profile_selection(request)
+
+        self.assertFalse(hasattr(request.state, "remote_container_profile"))
+
 
 class _Request:
     def __init__(self, payload: object) -> None:

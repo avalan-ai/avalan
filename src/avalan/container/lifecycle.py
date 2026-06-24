@@ -98,13 +98,16 @@ class ContainerLifecycleEventStatus(StrEnum):
 
 
 _PHASE_DEADLINE_FIELDS: Mapping[ContainerLifecyclePhase, str] = {
+    ContainerLifecyclePhase.IMAGE_RESOLUTION: "image_resolution_seconds",
     ContainerLifecyclePhase.IMAGE_PULL: "pull_seconds",
     ContainerLifecyclePhase.IMAGE_BUILD: "build_seconds",
     ContainerLifecyclePhase.CREATE: "create_seconds",
     ContainerLifecyclePhase.ATTACH: "start_seconds",
     ContainerLifecyclePhase.START: "start_seconds",
     ContainerLifecyclePhase.STREAM: "execution_seconds",
+    ContainerLifecyclePhase.STATS: "stats_seconds",
     ContainerLifecyclePhase.WAIT: "execution_seconds",
+    ContainerLifecyclePhase.INSPECT: "inspect_seconds",
     ContainerLifecyclePhase.COPY_OUTPUTS: "copy_seconds",
     ContainerLifecyclePhase.STOP: "cleanup_seconds",
     ContainerLifecyclePhase.KILL: "cleanup_seconds",
@@ -183,24 +186,30 @@ class ContainerLifecycleEvent:
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ContainerLifecycleDeadlines:
+    image_resolution_seconds: float | None = None
     pull_seconds: float | None = None
     build_seconds: float | None = None
     create_seconds: float | None = None
     start_seconds: float | None = None
     execution_seconds: float | None = None
     idle_seconds: float | None = None
+    stats_seconds: float | None = None
+    inspect_seconds: float | None = None
     copy_seconds: float | None = None
     cleanup_seconds: float | None = None
     parent_seconds: float | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
+            "image_resolution_seconds",
             "pull_seconds",
             "build_seconds",
             "create_seconds",
             "start_seconds",
             "execution_seconds",
             "idle_seconds",
+            "stats_seconds",
+            "inspect_seconds",
             "copy_seconds",
             "cleanup_seconds",
             "parent_seconds",
@@ -224,12 +233,15 @@ class ContainerLifecycleDeadlines:
 
     def to_dict(self) -> dict[str, float | None]:
         return {
+            "image_resolution_seconds": self.image_resolution_seconds,
             "pull_seconds": self.pull_seconds,
             "build_seconds": self.build_seconds,
             "create_seconds": self.create_seconds,
             "start_seconds": self.start_seconds,
             "execution_seconds": self.execution_seconds,
             "idle_seconds": self.idle_seconds,
+            "stats_seconds": self.stats_seconds,
+            "inspect_seconds": self.inspect_seconds,
             "copy_seconds": self.copy_seconds,
             "cleanup_seconds": self.cleanup_seconds,
             "parent_seconds": self.parent_seconds,
