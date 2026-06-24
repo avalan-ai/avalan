@@ -151,7 +151,8 @@ class OrchestratorLoader:
             uri: str | None,
             tool_settings: ToolSettingsContext | None,
             event_manager_mode: EventManagerMode,
-        ) -> Orchestrator: ...
+        ) -> Orchestrator:
+            """Load an agent through a trusted runtime envelope."""
 
     @staticmethod
     def _is_trusted_runtime_envelope_loader(loader: object) -> bool:

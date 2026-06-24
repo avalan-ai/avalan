@@ -393,6 +393,52 @@ _CONTAINER_SYNTAX_RULES: Mapping[
 )
 
 
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _AutoBackendCapabilities:
+    rootless: bool = False
+    vm_isolated: bool = False
+    host_powerful_socket: bool = True
+    rank: int
+
+
+_AUTO_BACKEND_CAPABILITY_WEIGHTS: Mapping[
+    ContainerBackend, _AutoBackendCapabilities
+] = MappingProxyType(
+    {
+        ContainerBackend.PODMAN: _AutoBackendCapabilities(
+            rootless=True,
+            host_powerful_socket=False,
+            rank=0,
+        ),
+        ContainerBackend.APPLE_CONTAINER: _AutoBackendCapabilities(
+            vm_isolated=True,
+            host_powerful_socket=False,
+            rank=1,
+        ),
+        ContainerBackend.WINDOWS_DOCKER: _AutoBackendCapabilities(
+            vm_isolated=True,
+            rank=2,
+        ),
+        ContainerBackend.DOCKER: _AutoBackendCapabilities(rank=3),
+        ContainerBackend.NERDCTL: _AutoBackendCapabilities(rank=4),
+    }
+)
+
+
+def _auto_backend_score(
+    backend: ContainerBackend,
+) -> tuple[bool, bool, bool, bool, int]:
+    capabilities = _AUTO_BACKEND_CAPABILITY_WEIGHTS[backend]
+    return (
+        not (capabilities.rootless or capabilities.vm_isolated),
+        not capabilities.rootless,
+        not capabilities.vm_isolated,
+        capabilities.host_powerful_socket,
+        capabilities.rank,
+    )
+
+
 def container_syntax_diagnostics(
     surface: ContainerSurface | str,
     raw: Mapping[str, object],
@@ -433,8 +479,14 @@ def resolve_container_backend(
     ), "settings must be container execution settings"
     selected_backend = _container_backend(settings.backend)
     available = frozenset(
-        _container_backend(backend) for backend in available_backends
+        backend
+        for backend in (
+            _container_backend(backend) for backend in available_backends
+        )
+        if backend not in {ContainerBackend.NONE, ContainerBackend.AUTO}
     )
+    if selected_backend is ContainerBackend.AUTO:
+        selected_backend = _resolve_auto_backend(available)
     if selected_backend is ContainerBackend.NONE:
         if settings.required:
             return ContainerBackendResolution(
@@ -481,6 +533,14 @@ def resolve_container_backend(
             ),
         ),
     )
+
+
+def _resolve_auto_backend(
+    available_backends: Collection[ContainerBackend],
+) -> ContainerBackend:
+    if available_backends:
+        return min(available_backends, key=_auto_backend_score)
+    return ContainerBackend.AUTO
 
 
 def _unsupported_syntax_diagnostic(

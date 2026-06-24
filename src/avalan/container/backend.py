@@ -906,7 +906,9 @@ class ContainerBuildCache:
     ) -> None:
         try:
             operation = task.result()
-        except BaseException:
+        except CancelledError:
+            operation = None
+        except Exception:
             operation = None
         async with self._lock:
             if self._inflight.get(cache_key) is task:

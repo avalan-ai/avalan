@@ -1556,6 +1556,17 @@ class ContainerPhase18Test(TestCase):
         self.assertEqual(cached.cache.status, ContainerCacheLookupStatus.HIT)
         self.assertEqual(backend.build_attempts, 1)
 
+    def test_build_cache_ignores_cancelled_inflight_completion(
+        self,
+    ) -> None:
+        cache = ContainerBuildCache()
+        plan = _run_plan(image=_build_image())
+
+        retry = run_async(_complete_cancelled_inflight_build(cache, plan))
+
+        self.assertTrue(retry.operation.ok)
+        self.assertEqual(retry.cache.status, ContainerCacheLookupStatus.MISS)
+
 
 class _FlakyBuildBackend(ContainerFakeBackend):
     def __init__(self) -> None:
@@ -1699,6 +1710,34 @@ async def _cancel_build_then_retry(
     except CancelledError:
         pass
     return await cache.get_or_build(backend, plan, now_seconds=2)
+
+
+async def _cancelled_build_result() -> ContainerBackendOperationResult:
+    await sleep(0.02)
+    return ContainerBackendOperationResult(
+        operation=ContainerBackendOperation.IMAGE_BUILD,
+    )
+
+
+async def _complete_cancelled_inflight_build(
+    cache: ContainerBuildCache,
+    plan: ContainerRunPlan,
+) -> ContainerBuildCacheResult:
+    task = create_task(_cancelled_build_result())
+    cache_key = container_build_cache_key(plan)
+    cache._inflight[cache_key] = task
+    task.cancel()
+    try:
+        await task
+    except CancelledError:
+        pass
+    await cache._complete_inflight_build(
+        cache_key,
+        task,
+        plan.image.build_cache,
+        1,
+    )
+    return await cache.get_or_build(_fake_backend(), plan, now_seconds=2)
 
 
 def _policy_plan(
