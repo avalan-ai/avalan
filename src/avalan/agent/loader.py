@@ -1105,7 +1105,12 @@ class OrchestratorLoader:
                 )
             )
         if HAS_CODE_DEPENDENCIES:
-            available_toolsets.append(CodeToolSet(namespace="code"))
+            available_toolsets.append(
+                CodeToolSet(
+                    container_runtime=container_runtime,
+                    namespace="code",
+                )
+            )
         if HAS_BROWSER_DEPENDENCIES:
             available_toolsets.append(
                 BrowserToolSet(

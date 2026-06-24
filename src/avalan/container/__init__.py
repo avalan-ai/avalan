@@ -367,6 +367,33 @@ from .policy import (
 from .policy import (
     ContainerVulnerabilitySeverity as ContainerVulnerabilitySeverity,
 )
+from .profiles import (
+    ContainerProfileBackedToolContract as ContainerProfileBackedToolContract,
+)
+from .profiles import (
+    ContainerProfileBackedToolInvocation as ContainerProfileBackedToolInvocation,  # noqa: E501
+)
+from .profiles import (
+    ContainerProfilePayloadContract as ContainerProfilePayloadContract,
+)
+from .profiles import (
+    ContainerProfilePayloadField as ContainerProfilePayloadField,
+)
+from .profiles import (
+    ContainerProfilePayloadType as ContainerProfilePayloadType,
+)
+from .profiles import (
+    ContainerProfilePayloadValue as ContainerProfilePayloadValue,
+)
+from .profiles import (
+    ContainerServiceProfileSpec as ContainerServiceProfileSpec,
+)
+from .profiles import (
+    container_profile_settings as container_profile_settings,
+)
+from .profiles import (
+    container_service_profile as container_service_profile,
+)
 from .runtime import (
     ContainerFakeRuntimeEnvelopeBackend as ContainerFakeRuntimeEnvelopeBackend,
 )

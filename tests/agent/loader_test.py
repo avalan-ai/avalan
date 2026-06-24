@@ -14,6 +14,7 @@ from avalan.agent.loader import OrchestratorLoader
 from avalan.container import (
     ContainerRuntimeEnvelopeKind,
     ContainerSurface,
+    ContainerToolRuntimeSettings,
     trusted_container_source,
 )
 from avalan.entities import (
@@ -3932,6 +3933,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         db_settings = DatabaseToolSettings(dsn="sqlite:///db.sqlite")
         graph_settings = GraphToolSettings(file="/tmp/chart.png")
         shell_settings = ShellToolSettings()
+        container_runtime = ContainerToolRuntimeSettings()
 
         with (
             patch(
@@ -3959,7 +3961,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 "avalan.agent.loader.EventManager", return_value=event_manager
             ),
             patch("avalan.agent.loader.BrowserToolSet"),
-            patch("avalan.agent.loader.CodeToolSet"),
+            patch("avalan.agent.loader.CodeToolSet") as code_patch,
             patch("avalan.agent.loader.MathToolSet"),
             patch("avalan.agent.loader.McpToolSet"),
             patch("avalan.agent.loader.MemoryToolSet"),
@@ -3978,10 +3980,15 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                     database=db_settings,
                     graph=graph_settings,
                     shell=shell_settings,
+                    container=container_runtime,
                 ),
             )
 
             self.assertEqual(result, "orch")
+            code_patch.assert_called_once_with(
+                container_runtime=container_runtime,
+                namespace="code",
+            )
             logger.log.assert_any_call(
                 DEBUG,
                 "<OrchestratorLoader> Tool settings: browser=%s, database=%s,"
