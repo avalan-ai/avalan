@@ -150,8 +150,21 @@ class ContainerPlanningTest(TestCase):
         self.assertEqual(
             plan.canonical_policy_input()["image"],
             {
+                "build_cache": {
+                    "allow_stale": False,
+                    "mode": "disabled",
+                    "require_context_digest_key": True,
+                    "ttl_seconds": 0,
+                },
+                "build_context": None,
                 "build_policy": "disabled",
                 "digest": f"sha256:{_DIGEST_ALT}",
+                "image_cache": {
+                    "allow_stale": False,
+                    "mode": "disabled",
+                    "require_digest_key": True,
+                    "ttl_seconds": 0,
+                },
                 "platform": "linux/amd64",
                 "pull_policy": "never",
                 "reference": "ghcr.io/example/plan-tools:latest",

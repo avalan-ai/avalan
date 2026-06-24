@@ -77,6 +77,12 @@ class ContainerBuildPolicy(StrEnum):
     TRUSTED_ONLY = "trusted_only"
 
 
+class ContainerCacheMode(StrEnum):
+    DISABLED = "disabled"
+    READ_ONLY = "read_only"
+    READ_WRITE = "read_write"
+
+
 class ContainerCommandMode(StrEnum):
     FIXED_ENTRYPOINT = "fixed_entrypoint"
     FIXED_EXECUTABLE = "fixed_executable"
@@ -119,6 +125,13 @@ class ContainerCleanupMode(StrEnum):
 class ContainerPoolingMode(StrEnum):
     DISABLED = "disabled"
     SHORT_LIVED = "short_lived"
+    SERVICE = "service"
+
+
+class ContainerPoolTeardownMode(StrEnum):
+    REMOVE = "remove"
+    RESET = "reset"
+    QUARANTINE = "quarantine"
 
 
 class ContainerAuditMode(StrEnum):
@@ -229,12 +242,300 @@ class ContainerSettingsSource:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerImageCachePolicy:
+    mode: ContainerCacheMode | str = ContainerCacheMode.DISABLED
+    ttl_seconds: int = 0
+    require_digest_key: bool = True
+    allow_stale: bool = False
+
+    def __post_init__(self) -> None:
+        mode = _enum_value(self.mode, ContainerCacheMode, "mode")
+        _assert_optional_non_negative_int(self.ttl_seconds, "ttl_seconds")
+        _assert_bool(self.require_digest_key, "require_digest_key")
+        _assert_bool(self.allow_stale, "allow_stale")
+        if mode is ContainerCacheMode.DISABLED:
+            assert self.ttl_seconds == 0, "disabled cache cannot set ttl"
+        else:
+            _assert_positive_int(self.ttl_seconds, "ttl_seconds")
+            assert self.require_digest_key, "image cache must key by digest"
+            assert not self.allow_stale, "image cache cannot allow stale hits"
+        object.__setattr__(self, "mode", mode)
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode is not ContainerCacheMode.DISABLED
+
+    def to_dict(self) -> dict[str, int | str | bool]:
+        mode = cast(ContainerCacheMode, self.mode)
+        return {
+            "mode": mode.value,
+            "ttl_seconds": self.ttl_seconds,
+            "require_digest_key": self.require_digest_key,
+            "allow_stale": self.allow_stale,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        raw: Mapping[str, object],
+    ) -> "ContainerImageCachePolicy":
+        _assert_fields(
+            raw,
+            {
+                "mode",
+                "ttl_seconds",
+                "require_digest_key",
+                "allow_stale",
+            },
+            "image_cache",
+        )
+        return cls(
+            mode=_optional_str_or_default(
+                raw,
+                "mode",
+                ContainerCacheMode.DISABLED.value,
+            ),
+            ttl_seconds=_optional_int_or_default(raw, "ttl_seconds", 0),
+            require_digest_key=_optional_bool_or_default(
+                raw,
+                "require_digest_key",
+                True,
+            ),
+            allow_stale=_optional_bool_or_default(
+                raw,
+                "allow_stale",
+                False,
+            ),
+        )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerBuildCachePolicy:
+    mode: ContainerCacheMode | str = ContainerCacheMode.DISABLED
+    ttl_seconds: int = 0
+    require_context_digest_key: bool = True
+    allow_stale: bool = False
+
+    def __post_init__(self) -> None:
+        mode = _enum_value(self.mode, ContainerCacheMode, "mode")
+        _assert_optional_non_negative_int(self.ttl_seconds, "ttl_seconds")
+        _assert_bool(
+            self.require_context_digest_key,
+            "require_context_digest_key",
+        )
+        _assert_bool(self.allow_stale, "allow_stale")
+        if mode is ContainerCacheMode.DISABLED:
+            assert self.ttl_seconds == 0, "disabled cache cannot set ttl"
+        else:
+            _assert_positive_int(self.ttl_seconds, "ttl_seconds")
+            assert (
+                self.require_context_digest_key
+            ), "build cache must key by context digest"
+            assert not self.allow_stale, "build cache cannot allow stale hits"
+        object.__setattr__(self, "mode", mode)
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode is not ContainerCacheMode.DISABLED
+
+    def to_dict(self) -> dict[str, int | str | bool]:
+        mode = cast(ContainerCacheMode, self.mode)
+        return {
+            "mode": mode.value,
+            "ttl_seconds": self.ttl_seconds,
+            "require_context_digest_key": self.require_context_digest_key,
+            "allow_stale": self.allow_stale,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        raw: Mapping[str, object],
+    ) -> "ContainerBuildCachePolicy":
+        _assert_fields(
+            raw,
+            {
+                "mode",
+                "ttl_seconds",
+                "require_context_digest_key",
+                "allow_stale",
+            },
+            "build_cache",
+        )
+        return cls(
+            mode=_optional_str_or_default(
+                raw,
+                "mode",
+                ContainerCacheMode.DISABLED.value,
+            ),
+            ttl_seconds=_optional_int_or_default(raw, "ttl_seconds", 0),
+            require_context_digest_key=_optional_bool_or_default(
+                raw,
+                "require_context_digest_key",
+                True,
+            ),
+            allow_stale=_optional_bool_or_default(
+                raw,
+                "allow_stale",
+                False,
+            ),
+        )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerBuildContextPolicy:
+    context_path: str
+    context_digest: str
+    context_size_bytes: int
+    dockerfile_path: str = "Dockerfile"
+    dockerignore_path: str = ".dockerignore"
+    max_context_bytes: int = 10485760
+    secret_names: Sequence[str] = field(default_factory=tuple)
+    network: ContainerNetworkMode | str = ContainerNetworkMode.NONE
+    allow_remote_context: bool = False
+    allow_build_secrets: bool = False
+    allow_build_network: bool = False
+
+    def __post_init__(self) -> None:
+        _assert_bool(self.allow_remote_context, "allow_remote_context")
+        _assert_bool(self.allow_build_secrets, "allow_build_secrets")
+        _assert_bool(self.allow_build_network, "allow_build_network")
+        _assert_bounded_relative_path(
+            self.context_path,
+            "context_path",
+            allow_remote=self.allow_remote_context,
+        )
+        _assert_bounded_relative_path(self.dockerfile_path, "dockerfile_path")
+        _assert_bounded_relative_path(
+            self.dockerignore_path,
+            "dockerignore_path",
+        )
+        _assert_digest(self.context_digest, "context_digest")
+        _assert_positive_int(self.context_size_bytes, "context_size_bytes")
+        _assert_positive_int(self.max_context_bytes, "max_context_bytes")
+        assert (
+            self.context_size_bytes <= self.max_context_bytes
+        ), "build context exceeds configured bound"
+        secret_names = _string_tuple(self.secret_names, "secret_names")
+        assert (
+            not secret_names or self.allow_build_secrets
+        ), "build secrets require explicit trusted authorization"
+        network = _enum_value(self.network, ContainerNetworkMode, "network")
+        assert (
+            network is ContainerNetworkMode.NONE or self.allow_build_network
+        ), "build network requires explicit trusted authorization"
+        object.__setattr__(self, "network", network)
+        object.__setattr__(self, "secret_names", secret_names)
+
+    def to_dict(self) -> dict[str, object]:
+        network = cast(ContainerNetworkMode, self.network)
+        return {
+            "context_path": self.context_path,
+            "context_digest": self.context_digest,
+            "context_size_bytes": self.context_size_bytes,
+            "dockerfile_path": self.dockerfile_path,
+            "dockerignore_path": self.dockerignore_path,
+            "max_context_bytes": self.max_context_bytes,
+            "secret_names": list(self.secret_names),
+            "network": network.value,
+            "allow_remote_context": self.allow_remote_context,
+            "allow_build_secrets": self.allow_build_secrets,
+            "allow_build_network": self.allow_build_network,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        raw: Mapping[str, object],
+    ) -> "ContainerBuildContextPolicy":
+        _assert_fields(
+            raw,
+            {
+                "context_path",
+                "context_digest",
+                "context_size_bytes",
+                "dockerfile_path",
+                "dockerignore_path",
+                "max_context_bytes",
+                "secret_names",
+                "network",
+                "allow_remote_context",
+                "allow_build_secrets",
+                "allow_build_network",
+            },
+            "build_context",
+        )
+        return cls(
+            context_path=_required_str(raw, "context_path", "build_context"),
+            context_digest=_required_str(
+                raw,
+                "context_digest",
+                "build_context",
+            ),
+            context_size_bytes=_required_int(
+                raw,
+                "context_size_bytes",
+                "build_context",
+            ),
+            dockerfile_path=_optional_str_or_default(
+                raw,
+                "dockerfile_path",
+                "Dockerfile",
+            ),
+            dockerignore_path=_optional_str_or_default(
+                raw,
+                "dockerignore_path",
+                ".dockerignore",
+            ),
+            max_context_bytes=_optional_int_or_default(
+                raw,
+                "max_context_bytes",
+                10485760,
+            ),
+            secret_names=_string_tuple(
+                raw.get("secret_names", ()),
+                "secret_names",
+            ),
+            network=_optional_str_or_default(
+                raw,
+                "network",
+                ContainerNetworkMode.NONE.value,
+            ),
+            allow_remote_context=_optional_bool_or_default(
+                raw,
+                "allow_remote_context",
+                False,
+            ),
+            allow_build_secrets=_optional_bool_or_default(
+                raw,
+                "allow_build_secrets",
+                False,
+            ),
+            allow_build_network=_optional_bool_or_default(
+                raw,
+                "allow_build_network",
+                False,
+            ),
+        )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ContainerImagePolicy:
     reference: str
     digest: str | None = None
     pull_policy: ContainerPullPolicy | str = ContainerPullPolicy.NEVER
     build_policy: ContainerBuildPolicy | str = ContainerBuildPolicy.DISABLED
     platform: str = "linux/amd64"
+    build_context: ContainerBuildContextPolicy | None = None
+    image_cache: ContainerImageCachePolicy = field(
+        default_factory=ContainerImageCachePolicy,
+    )
+    build_cache: ContainerBuildCachePolicy = field(
+        default_factory=ContainerBuildCachePolicy,
+    )
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.reference, "reference")
@@ -252,25 +553,29 @@ class ContainerImagePolicy:
         assert digest is not None, "image reference must be digest pinned"
         _assert_digest(digest, "digest")
         _assert_platform(self.platform)
-        object.__setattr__(self, "digest", digest)
-        object.__setattr__(
-            self,
+        pull_policy = _enum_value(
+            self.pull_policy,
+            ContainerPullPolicy,
             "pull_policy",
-            _enum_value(
-                self.pull_policy,
-                ContainerPullPolicy,
-                "pull_policy",
-            ),
         )
-        object.__setattr__(
-            self,
+        build_policy = _enum_value(
+            self.build_policy,
+            ContainerBuildPolicy,
             "build_policy",
-            _enum_value(
-                self.build_policy,
-                ContainerBuildPolicy,
-                "build_policy",
-            ),
         )
+        if self.build_context is not None:
+            assert isinstance(
+                self.build_context,
+                ContainerBuildContextPolicy,
+            )
+            assert (
+                build_policy is not ContainerBuildPolicy.DISABLED
+            ), "build context requires enabled build policy"
+        assert isinstance(self.image_cache, ContainerImageCachePolicy)
+        assert isinstance(self.build_cache, ContainerBuildCachePolicy)
+        object.__setattr__(self, "digest", digest)
+        object.__setattr__(self, "pull_policy", pull_policy)
+        object.__setattr__(self, "build_policy", build_policy)
 
     def to_dict(self) -> dict[str, object]:
         assert self.digest is not None
@@ -282,13 +587,29 @@ class ContainerImagePolicy:
             "pull_policy": pull_policy.value,
             "build_policy": build_policy.value,
             "platform": self.platform,
+            "build_context": (
+                None
+                if self.build_context is None
+                else self.build_context.to_dict()
+            ),
+            "image_cache": self.image_cache.to_dict(),
+            "build_cache": self.build_cache.to_dict(),
         }
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, object]) -> "ContainerImagePolicy":
         _assert_fields(
             raw,
-            {"reference", "digest", "pull_policy", "build_policy", "platform"},
+            {
+                "reference",
+                "digest",
+                "pull_policy",
+                "build_policy",
+                "platform",
+                "build_context",
+                "image_cache",
+                "build_cache",
+            },
             "image",
         )
         return cls(
@@ -308,6 +629,13 @@ class ContainerImagePolicy:
                 raw,
                 "platform",
                 "linux/amd64",
+            ),
+            build_context=_optional_build_context(raw),
+            image_cache=ContainerImageCachePolicy.from_dict(
+                _mapping(raw.get("image_cache", {}), "image_cache")
+            ),
+            build_cache=ContainerBuildCachePolicy.from_dict(
+                _mapping(raw.get("build_cache", {}), "build_cache")
             ),
         )
 
@@ -695,27 +1023,143 @@ class ContainerCleanupPolicy:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ContainerPoolingPolicy:
     mode: ContainerPoolingMode | str = ContainerPoolingMode.DISABLED
+    max_age_seconds: int = 60
+    max_uses: int = 1
+    idle_ttl_seconds: int = 30
+    require_clean_scratch: bool = True
+    require_no_leftover_processes: bool = True
+    health_check_command: Sequence[str] = field(default_factory=tuple)
+    teardown: ContainerPoolTeardownMode | str = (
+        ContainerPoolTeardownMode.REMOVE
+    )
+    audit_labels: Mapping[str, str] = field(default_factory=dict)
+    allow_secret_reuse: bool = False
 
     def __post_init__(self) -> None:
+        mode = _enum_value(self.mode, ContainerPoolingMode, "mode")
+        teardown = _enum_value(
+            self.teardown,
+            ContainerPoolTeardownMode,
+            "teardown",
+        )
+        _assert_positive_int(self.max_age_seconds, "max_age_seconds")
+        _assert_positive_int(self.max_uses, "max_uses")
+        _assert_positive_int(self.idle_ttl_seconds, "idle_ttl_seconds")
+        _assert_bool(self.require_clean_scratch, "require_clean_scratch")
+        _assert_bool(
+            self.require_no_leftover_processes,
+            "require_no_leftover_processes",
+        )
+        _assert_bool(self.allow_secret_reuse, "allow_secret_reuse")
+        health_check_command = _string_tuple(
+            self.health_check_command,
+            "health_check_command",
+        )
+        audit_labels = _string_mapping(self.audit_labels, "audit_labels")
+        if mode is not ContainerPoolingMode.DISABLED:
+            assert (
+                self.require_clean_scratch
+            ), "container pooling requires clean scratch checks"
+            assert (
+                self.require_no_leftover_processes
+            ), "container pooling requires process cleanup checks"
+        if mode is ContainerPoolingMode.SERVICE:
+            assert health_check_command, "service pools require health checks"
+            assert audit_labels, "service pools require audit labels"
+        object.__setattr__(self, "mode", mode)
+        object.__setattr__(self, "teardown", teardown)
         object.__setattr__(
             self,
-            "mode",
-            _enum_value(self.mode, ContainerPoolingMode, "mode"),
+            "health_check_command",
+            health_check_command,
+        )
+        object.__setattr__(
+            self,
+            "audit_labels",
+            MappingProxyType(audit_labels),
         )
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, object]:
         mode = cast(ContainerPoolingMode, self.mode)
-        return {"mode": mode.value}
+        teardown = cast(ContainerPoolTeardownMode, self.teardown)
+        return {
+            "mode": mode.value,
+            "max_age_seconds": self.max_age_seconds,
+            "max_uses": self.max_uses,
+            "idle_ttl_seconds": self.idle_ttl_seconds,
+            "require_clean_scratch": self.require_clean_scratch,
+            "require_no_leftover_processes": (
+                self.require_no_leftover_processes
+            ),
+            "health_check_command": list(self.health_check_command),
+            "teardown": teardown.value,
+            "audit_labels": dict(self.audit_labels),
+            "allow_secret_reuse": self.allow_secret_reuse,
+        }
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, object]) -> "ContainerPoolingPolicy":
-        _assert_fields(raw, {"mode"}, "pooling")
+        _assert_fields(
+            raw,
+            {
+                "mode",
+                "max_age_seconds",
+                "max_uses",
+                "idle_ttl_seconds",
+                "require_clean_scratch",
+                "require_no_leftover_processes",
+                "health_check_command",
+                "teardown",
+                "audit_labels",
+                "allow_secret_reuse",
+            },
+            "pooling",
+        )
         return cls(
             mode=_optional_str_or_default(
                 raw,
                 "mode",
                 ContainerPoolingMode.DISABLED.value,
-            )
+            ),
+            max_age_seconds=_optional_int_or_default(
+                raw,
+                "max_age_seconds",
+                60,
+            ),
+            max_uses=_optional_int_or_default(raw, "max_uses", 1),
+            idle_ttl_seconds=_optional_int_or_default(
+                raw,
+                "idle_ttl_seconds",
+                30,
+            ),
+            require_clean_scratch=_optional_bool_or_default(
+                raw,
+                "require_clean_scratch",
+                True,
+            ),
+            require_no_leftover_processes=_optional_bool_or_default(
+                raw,
+                "require_no_leftover_processes",
+                True,
+            ),
+            health_check_command=_string_tuple(
+                raw.get("health_check_command", ()),
+                "health_check_command",
+            ),
+            teardown=_optional_str_or_default(
+                raw,
+                "teardown",
+                ContainerPoolTeardownMode.REMOVE.value,
+            ),
+            audit_labels=_string_mapping(
+                raw.get("audit_labels", {}),
+                "audit_labels",
+            ),
+            allow_secret_reuse=_optional_bool_or_default(
+                raw,
+                "allow_secret_reuse",
+                False,
+            ),
         )
 
 
@@ -1911,6 +2355,9 @@ class ContainerRunPlan:
     resources: ContainerResourceLimits = field(
         default_factory=ContainerResourceLimits,
     )
+    pooling: ContainerPoolingPolicy = field(
+        default_factory=ContainerPoolingPolicy,
+    )
     policy_version: str = "phase1"
 
     def __post_init__(self) -> None:
@@ -1931,6 +2378,7 @@ class ContainerRunPlan:
         assert isinstance(self.network, ContainerNetworkPolicy)
         assert isinstance(self.devices, ContainerDevicePolicy)
         assert isinstance(self.resources, ContainerResourceLimits)
+        assert isinstance(self.pooling, ContainerPoolingPolicy)
         _assert_profile_name(self.policy_version, "policy_version")
         object.__setattr__(self, "mounts", mounts)
         object.__setattr__(
@@ -1953,6 +2401,7 @@ class ContainerRunPlan:
             "network": self.network.to_dict(),
             "devices": self.devices.to_dict(),
             "resources": self.resources.to_dict(),
+            "pooling": self.pooling.to_dict(),
             "policy_version": self.policy_version,
         }
 
@@ -2227,6 +2676,9 @@ def _canonical_profile_policy(
     canonical["devices"] = _canonical_device_policy(
         _mapping(canonical.get("devices", {}), "devices")
     )
+    canonical["pooling"] = _canonical_pooling_policy(
+        _mapping(canonical.get("pooling", {}), "pooling")
+    )
     return canonical
 
 
@@ -2267,6 +2719,25 @@ def _canonical_device_policy(
     canonical = dict(devices)
     canonical["devices"] = sorted(
         _string_tuple(canonical.get("devices", ()), "devices")
+    )
+    return canonical
+
+
+def _canonical_pooling_policy(
+    pooling: Mapping[str, object],
+) -> dict[str, object]:
+    canonical = dict(pooling)
+    canonical["health_check_command"] = _string_tuple(
+        canonical.get("health_check_command", ()),
+        "health_check_command",
+    )
+    canonical["audit_labels"] = dict(
+        sorted(
+            _string_mapping(
+                canonical.get("audit_labels", {}),
+                "audit_labels",
+            ).items()
+        )
     )
     return canonical
 
@@ -2366,7 +2837,7 @@ def _assert_profile_no_wider(
     _narrow_read_only_rootfs(caps.read_only_rootfs, requested.read_only_rootfs)
     _narrow_user(caps.user, requested.user)
     assert (
-        requested.pooling.mode is caps.pooling.mode
+        requested.pooling.to_dict() == caps.pooling.to_dict()
     ), "pooling policy cannot widen"
 
 
@@ -2929,6 +3400,17 @@ def _optional_escalation(
     return ContainerEscalationPolicy.from_dict(_mapping(value, "escalation"))
 
 
+def _optional_build_context(
+    raw: Mapping[str, object],
+) -> ContainerBuildContextPolicy | None:
+    value = raw.get("build_context")
+    if value is None:
+        return None
+    return ContainerBuildContextPolicy.from_dict(
+        _mapping(value, "build_context")
+    )
+
+
 def _assert_fields(
     raw: Mapping[str, object],
     allowed: set[str],
@@ -2955,6 +3437,12 @@ def _required_bool(raw: Mapping[str, object], key: str, path: str) -> bool:
     value = _required(raw, key, path)
     _assert_bool(value, f"{path}.{key}")
     assert isinstance(value, bool)
+    return value
+
+
+def _required_int(raw: Mapping[str, object], key: str, path: str) -> int:
+    value = _required(raw, key, path)
+    assert isinstance(value, int) and not isinstance(value, bool)
     return value
 
 
@@ -3116,6 +3604,29 @@ def _assert_host_path(value: object, field_name: str) -> None:
     assert isinstance(value, str)
     assert "\x00" not in value, f"{field_name} must not contain NUL"
     assert not value.startswith("~"), f"{field_name} must not expand home"
+
+
+def _assert_bounded_relative_path(
+    value: object,
+    field_name: str,
+    *,
+    allow_remote: bool = False,
+) -> None:
+    _assert_non_empty_string(value, field_name)
+    assert isinstance(value, str)
+    assert "\x00" not in value, f"{field_name} must not contain NUL"
+    is_remote = "://" in value
+    assert allow_remote or not is_remote, f"{field_name} cannot be remote"
+    if is_remote:
+        return
+    normalized = value.replace("\\", "/")
+    assert not normalized.startswith("/"), f"{field_name} must be relative"
+    assert not normalized.startswith("~"), f"{field_name} must not expand home"
+    assert ":" not in normalized, f"{field_name} must not include drive"
+    assert normalized != "", f"{field_name} must name a path"
+    assert ".." not in normalized.split(
+        "/"
+    ), f"{field_name} must stay inside build context"
 
 
 def _assert_container_path(value: object, field_name: str) -> None:

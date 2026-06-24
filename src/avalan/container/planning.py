@@ -15,6 +15,7 @@ from .settings import (
     ContainerImagePolicy,
     ContainerMountDeclaration,
     ContainerNetworkPolicy,
+    ContainerPoolingPolicy,
     ContainerResourceLimits,
     ContainerRunPlan,
     ContainerRuntimeEnvelopePlan,
@@ -194,6 +195,7 @@ class ContainerNormalizedRunPlan:
             "image": _canonical_image_policy(run_plan.image),
             "mounts": _canonical_mounts(run_plan.mounts),
             "network": _canonical_network_policy(run_plan.network),
+            "pooling": run_plan.pooling.to_dict(),
             "policy_version": run_plan.policy_version,
             "profile_name": run_plan.profile_name,
             "profile_registry_id": self.profile_registry_id,
@@ -526,6 +528,7 @@ def normalize_container_run_plan(
         network=profile.network,
         devices=profile.devices,
         resources=profile.resources,
+        pooling=profile.pooling,
         policy_version=settings.policy_version,
     )
     return ContainerNormalizedRunPlan(
@@ -579,6 +582,9 @@ def _resolve_image_for_plan(
             pull_policy=image.pull_policy,
             build_policy=image.build_policy,
             platform=image.platform,
+            build_context=image.build_context,
+            image_cache=image.image_cache,
+            build_cache=image.build_cache,
         )
     return image
 
@@ -594,8 +600,11 @@ def _canonical_command_plan(
 def _canonical_image_policy(image: ContainerImagePolicy) -> dict[str, object]:
     serialized = image.to_dict()
     return {
+        "build_cache": serialized["build_cache"],
+        "build_context": serialized["build_context"],
         "build_policy": serialized["build_policy"],
         "digest": serialized["digest"],
+        "image_cache": serialized["image_cache"],
         "platform": serialized["platform"],
         "pull_policy": serialized["pull_policy"],
         "reference": serialized["reference"],
@@ -651,6 +660,7 @@ def _run_plan_from_dict(raw: Mapping[str, object]) -> ContainerRunPlan:
             "network",
             "devices",
             "resources",
+            "pooling",
             "policy_version",
         },
         "run_plan",
@@ -684,6 +694,9 @@ def _run_plan_from_dict(raw: Mapping[str, object]) -> ContainerRunPlan:
         ),
         resources=ContainerResourceLimits.from_dict(
             _mapping(raw.get("resources", {}), "resources")
+        ),
+        pooling=ContainerPoolingPolicy.from_dict(
+            _mapping(raw.get("pooling", {}), "pooling")
         ),
         policy_version=_required_str(raw, "policy_version", "run_plan"),
     )

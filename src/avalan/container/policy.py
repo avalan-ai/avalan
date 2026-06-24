@@ -1,4 +1,7 @@
 from ..types import (
+    assert_bool as _assert_bool,
+)
+from ..types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
 from ..types import (
@@ -13,6 +16,7 @@ from .settings import (
     ContainerMountAccess,
     ContainerMountType,
     ContainerNetworkMode,
+    ContainerPoolingMode,
 )
 
 from collections.abc import Mapping, Sequence
@@ -21,6 +25,7 @@ from enum import StrEnum
 from hashlib import sha256
 from json import dumps
 from posixpath import normpath as normalize_posix_path
+from re import compile as compile_pattern
 from types import MappingProxyType
 from typing import cast, final
 
@@ -57,6 +62,32 @@ class ContainerEscalationTrigger(StrEnum):
     IMAGE_CHANGE = "image_change"
     PROFILE_CHANGE = "profile_change"
     COMBINED_RISK = "combined_risk"
+    POOLING = "pooling"
+
+
+class ContainerVulnerabilityPolicy(StrEnum):
+    ALLOW = "allow"
+    DENY_CRITICAL = "deny_critical"
+    DENY_HIGH_OR_CRITICAL = "deny_high_or_critical"
+
+
+class ContainerVulnerabilitySeverity(StrEnum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+_DIGEST_PATTERN = compile_pattern(r"^sha256:[0-9a-f]{64}$")
+_PLATFORM_PATTERN = compile_pattern(r"^[A-Za-z0-9_+.-]+/[A-Za-z0-9_+.-]+$")
+_VULNERABILITY_RANK = {
+    ContainerVulnerabilitySeverity.NONE: 0,
+    ContainerVulnerabilitySeverity.LOW: 1,
+    ContainerVulnerabilitySeverity.MEDIUM: 2,
+    ContainerVulnerabilitySeverity.HIGH: 3,
+    ContainerVulnerabilitySeverity.CRITICAL: 4,
+}
 
 
 _REVIEW_MODES = {
@@ -116,6 +147,132 @@ class ContainerPolicyContext:
             "surface": surface.value,
             "scope_id": self.scope_id,
             "attempt_id": self.attempt_id,
+        }
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerImageTrustPolicy:
+    allowed_registries: Sequence[str] = field(default_factory=tuple)
+    digest_pins: Mapping[str, str] = field(default_factory=dict)
+    require_signature_verification: bool = False
+    verified_digests: Sequence[str] = field(default_factory=tuple)
+    require_attestations: bool = False
+    attestation_references: Mapping[str, str] = field(default_factory=dict)
+    require_sbom: bool = False
+    sbom_references: Mapping[str, str] = field(default_factory=dict)
+    vulnerability_policy: ContainerVulnerabilityPolicy | str = (
+        ContainerVulnerabilityPolicy.ALLOW
+    )
+    vulnerability_findings: Mapping[
+        str,
+        ContainerVulnerabilitySeverity | str,
+    ] = field(default_factory=dict)
+    allowed_platforms: Sequence[str] = field(default_factory=tuple)
+    production: bool = False
+    require_production_digest_pinning: bool = True
+    require_noninteractive_digest_pinning: bool = True
+
+    def __post_init__(self) -> None:
+        allowed_registries = _string_tuple(
+            self.allowed_registries,
+            "allowed_registries",
+        )
+        digest_pins = _digest_mapping(self.digest_pins, "digest_pins")
+        verified_digests = _digest_tuple(
+            self.verified_digests,
+            "verified_digests",
+        )
+        attestation_references = _digest_string_mapping(
+            self.attestation_references,
+            "attestation_references",
+        )
+        sbom_references = _digest_string_mapping(
+            self.sbom_references,
+            "sbom_references",
+        )
+        vulnerability_findings = _vulnerability_mapping(
+            self.vulnerability_findings,
+        )
+        allowed_platforms = _platform_tuple(
+            self.allowed_platforms,
+            "allowed_platforms",
+        )
+        object.__setattr__(
+            self,
+            "vulnerability_policy",
+            _enum_value(
+                self.vulnerability_policy,
+                ContainerVulnerabilityPolicy,
+                "vulnerability_policy",
+            ),
+        )
+        for field_name in (
+            "require_signature_verification",
+            "require_attestations",
+            "require_sbom",
+            "production",
+            "require_production_digest_pinning",
+            "require_noninteractive_digest_pinning",
+        ):
+            _assert_bool(getattr(self, field_name), field_name)
+        object.__setattr__(self, "allowed_registries", allowed_registries)
+        object.__setattr__(
+            self,
+            "digest_pins",
+            MappingProxyType(digest_pins),
+        )
+        object.__setattr__(self, "verified_digests", verified_digests)
+        object.__setattr__(
+            self,
+            "attestation_references",
+            MappingProxyType(attestation_references),
+        )
+        object.__setattr__(
+            self,
+            "sbom_references",
+            MappingProxyType(sbom_references),
+        )
+        object.__setattr__(
+            self,
+            "vulnerability_findings",
+            MappingProxyType(vulnerability_findings),
+        )
+        object.__setattr__(self, "allowed_platforms", allowed_platforms)
+
+    def to_dict(self) -> dict[str, object]:
+        vulnerability_policy = cast(
+            ContainerVulnerabilityPolicy,
+            self.vulnerability_policy,
+        )
+        vulnerability_findings = cast(
+            Mapping[str, ContainerVulnerabilitySeverity],
+            self.vulnerability_findings,
+        )
+        return {
+            "allowed_registries": list(self.allowed_registries),
+            "digest_pins": dict(self.digest_pins),
+            "require_signature_verification": (
+                self.require_signature_verification
+            ),
+            "verified_digests": list(self.verified_digests),
+            "require_attestations": self.require_attestations,
+            "attestation_references": dict(self.attestation_references),
+            "require_sbom": self.require_sbom,
+            "sbom_references": dict(self.sbom_references),
+            "vulnerability_policy": vulnerability_policy.value,
+            "vulnerability_findings": {
+                digest: severity.value
+                for digest, severity in vulnerability_findings.items()
+            },
+            "allowed_platforms": list(self.allowed_platforms),
+            "production": self.production,
+            "require_production_digest_pinning": (
+                self.require_production_digest_pinning
+            ),
+            "require_noninteractive_digest_pinning": (
+                self.require_noninteractive_digest_pinning
+            ),
         }
 
 
@@ -321,10 +478,14 @@ class ContainerApprovalRecord:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ContainerPolicy:
     policy_version: str
+    image_trust: ContainerImageTrustPolicy = field(
+        default_factory=ContainerImageTrustPolicy,
+    )
     explanations: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.policy_version, "policy_version")
+        assert isinstance(self.image_trust, ContainerImageTrustPolicy)
         object.__setattr__(
             self,
             "explanations",
@@ -342,6 +503,24 @@ class ContainerPolicy:
         assert (
             plan.policy_version == self.policy_version
         ), "plan policy version must match policy version"
+        image_trust_denial = _image_trust_denial(self.image_trust, plan)
+        if image_trust_denial is not None:
+            code, explanation = image_trust_denial
+            return self._decision(
+                ContainerAuthorizationDecisionType.DENY,
+                code=code,
+                explanation=explanation,
+                plan=plan,
+            )
+        if _secret_pool_reuse_denied(plan):
+            return self._decision(
+                ContainerAuthorizationDecisionType.DENY,
+                code="container.deny.secret_reuse",
+                explanation=(
+                    "Container pool reuse with secrets is not authorized."
+                ),
+                plan=plan,
+            )
         if approval is not None:
             assert isinstance(approval, ContainerApprovalRecord)
             assert (
@@ -366,10 +545,10 @@ class ContainerPolicy:
                 cacheable=True,
             )
         escalation_mode = _plan_escalation_mode(plan)
-        if (
-            escalation_mode is ContainerEscalationMode.PREAUTHORIZED
-            and ContainerEscalationTrigger.COMBINED_RISK
+        if escalation_mode is ContainerEscalationMode.PREAUTHORIZED and (
+            ContainerEscalationTrigger.COMBINED_RISK
             not in plan.escalation_triggers
+            or _secret_pool_combined_risk_authorized(plan)
         ):
             return self._decision(
                 ContainerAuthorizationDecisionType.ALLOW,
@@ -434,6 +613,117 @@ def _plan_escalation_mode(
     return cast(ContainerEscalationMode, profile.escalation.mode)
 
 
+def _image_trust_denial(
+    trust: ContainerImageTrustPolicy,
+    plan: ContainerPolicyPlan,
+) -> tuple[str, str] | None:
+    assert isinstance(trust, ContainerImageTrustPolicy)
+    profile = plan.effective_settings.profile
+    assert profile is not None, "container policy plan requires a profile"
+    image = profile.image
+    assert image.digest is not None
+    reference_is_mutable = "@sha256:" not in image.reference
+    if (
+        trust.production
+        and trust.require_production_digest_pinning
+        and reference_is_mutable
+    ):
+        return (
+            "container.deny.image_trust",
+            "Production container images must use digest-pinned references.",
+        )
+    if (
+        trust.require_noninteractive_digest_pinning
+        and plan.context.review_mode is not ContainerReviewMode.INTERACTIVE
+        and reference_is_mutable
+    ):
+        return (
+            "container.deny.image_trust",
+            (
+                "Noninteractive container images must use digest-pinned"
+                " references."
+            ),
+        )
+    registry = _image_registry(image.reference)
+    if trust.allowed_registries and registry not in trust.allowed_registries:
+        return (
+            "container.deny.image_trust",
+            "Container image registry is not trusted by policy.",
+        )
+    pinned_digest = _pinned_digest_for_reference(
+        trust.digest_pins,
+        image.reference,
+    )
+    if pinned_digest is not None and image.digest != pinned_digest:
+        return (
+            "container.deny.image_trust",
+            "Container image digest does not match trusted pin.",
+        )
+    if (
+        trust.allowed_platforms
+        and image.platform not in trust.allowed_platforms
+    ):
+        return (
+            "container.deny.image_trust",
+            "Container image platform is not trusted by policy.",
+        )
+    if (
+        trust.require_signature_verification
+        and image.digest not in trust.verified_digests
+    ):
+        return (
+            "container.deny.image_trust",
+            "Container image signature verification failed.",
+        )
+    if (
+        trust.require_attestations
+        and image.digest not in trust.attestation_references
+    ):
+        return (
+            "container.deny.image_trust",
+            "Container image attestation is missing.",
+        )
+    if trust.require_sbom and image.digest not in trust.sbom_references:
+        return (
+            "container.deny.image_trust",
+            "Container image SBOM reference is missing.",
+        )
+    vulnerability_denial = _vulnerability_denial(trust, image.digest)
+    if vulnerability_denial is not None:
+        return (
+            "container.deny.image_trust",
+            vulnerability_denial,
+        )
+    return None
+
+
+def _secret_pool_reuse_denied(plan: ContainerPolicyPlan) -> bool:
+    profile = plan.effective_settings.profile
+    assert profile is not None, "container policy plan requires a profile"
+    pool_mode = cast(ContainerPoolingMode, profile.pooling.mode)
+    if pool_mode is ContainerPoolingMode.DISABLED:
+        return False
+    if profile.pooling.allow_secret_reuse:
+        return False
+    return ContainerEscalationTrigger.SECRET in plan.escalation_triggers
+
+
+def _secret_pool_combined_risk_authorized(
+    plan: ContainerPolicyPlan,
+) -> bool:
+    profile = plan.effective_settings.profile
+    assert profile is not None, "container policy plan requires a profile"
+    if not profile.pooling.allow_secret_reuse:
+        return False
+    base_triggers = set(plan.escalation_triggers) - {
+        ContainerEscalationTrigger.COMBINED_RISK,
+    }
+    return base_triggers == {
+        ContainerEscalationTrigger.POOLING,
+        ContainerEscalationTrigger.SECRET,
+    }
+
+
 def _required_escalation_triggers(
     settings: ContainerEffectiveSettings,
     context: ContainerPolicyContext,
@@ -452,6 +742,9 @@ def _required_escalation_triggers(
             triggers.add(ContainerEscalationTrigger.RUNTIME_SOCKET)
     if profile.secrets:
         triggers.add(ContainerEscalationTrigger.SECRET)
+    pool_mode = cast(ContainerPoolingMode, profile.pooling.mode)
+    if pool_mode is not ContainerPoolingMode.DISABLED:
+        triggers.add(ContainerEscalationTrigger.POOLING)
     network_mode = cast(ContainerNetworkMode, profile.network.mode)
     if (
         network_mode is not ContainerNetworkMode.NONE
@@ -503,6 +796,64 @@ def _is_runtime_socket_source(source: str | None) -> bool:
     return normalize_posix_path(source) in _RUNTIME_SOCKET_SOURCES
 
 
+def _image_registry(reference: str) -> str:
+    name = reference.split("@", maxsplit=1)[0]
+    first_component = name.split("/", maxsplit=1)[0]
+    if (
+        "." in first_component
+        or ":" in first_component
+        or first_component == "localhost"
+    ):
+        return first_component
+    return "docker.io"
+
+
+def _pinned_digest_for_reference(
+    digest_pins: Mapping[str, str],
+    reference: str,
+) -> str | None:
+    for key in _reference_pin_keys(reference):
+        pinned_digest = digest_pins.get(key)
+        if pinned_digest is not None:
+            return pinned_digest
+    return None
+
+
+def _reference_pin_keys(reference: str) -> tuple[str, ...]:
+    without_digest = reference.split("@", maxsplit=1)[0]
+    without_tag = without_digest.rsplit(":", maxsplit=1)[0]
+    if without_tag == without_digest:
+        return (reference, without_digest)
+    return (reference, without_digest, without_tag)
+
+
+def _vulnerability_denial(
+    trust: ContainerImageTrustPolicy,
+    digest: str,
+) -> str | None:
+    policy = cast(
+        ContainerVulnerabilityPolicy,
+        trust.vulnerability_policy,
+    )
+    if policy is ContainerVulnerabilityPolicy.ALLOW:
+        return None
+    vulnerability_findings = cast(
+        Mapping[str, ContainerVulnerabilitySeverity],
+        trust.vulnerability_findings,
+    )
+    severity = vulnerability_findings.get(digest)
+    if severity is None:
+        return "Container image vulnerability scan is missing."
+    threshold = (
+        ContainerVulnerabilitySeverity.CRITICAL
+        if policy is ContainerVulnerabilityPolicy.DENY_CRITICAL
+        else ContainerVulnerabilitySeverity.HIGH
+    )
+    if _VULNERABILITY_RANK[severity] >= _VULNERABILITY_RANK[threshold]:
+        return "Container image vulnerability policy denied execution."
+    return None
+
+
 def _fingerprint(value: Mapping[str, object]) -> str:
     payload = dumps(value, sort_keys=True, separators=(",", ":"))
     return sha256(payload.encode("utf-8")).hexdigest()
@@ -518,6 +869,87 @@ def _string_mapping(value: object) -> dict[str, str]:
         assert isinstance(item, str)
         result[key] = item
     return result
+
+
+def _digest_mapping(value: object, field_name: str) -> dict[str, str]:
+    assert isinstance(value, Mapping), f"{field_name} must be a mapping"
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        _assert_non_empty_string(key, f"{field_name} key")
+        _assert_digest(item, field_name)
+        assert isinstance(key, str)
+        assert isinstance(item, str)
+        result[key] = item
+    return result
+
+
+def _digest_string_mapping(value: object, field_name: str) -> dict[str, str]:
+    assert isinstance(value, Mapping), f"{field_name} must be a mapping"
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        _assert_digest(key, f"{field_name} key")
+        _assert_non_empty_string(item, field_name)
+        assert isinstance(key, str)
+        assert isinstance(item, str)
+        result[key] = item
+    return result
+
+
+def _vulnerability_mapping(
+    value: object,
+) -> dict[str, ContainerVulnerabilitySeverity]:
+    assert isinstance(
+        value, Mapping
+    ), "vulnerability_findings must be a mapping"
+    result: dict[str, ContainerVulnerabilitySeverity] = {}
+    for key, item in value.items():
+        _assert_digest(key, "vulnerability_findings key")
+        assert isinstance(key, str)
+        result[key] = cast(
+            ContainerVulnerabilitySeverity,
+            _enum_value(
+                item,
+                ContainerVulnerabilitySeverity,
+                "vulnerability_findings",
+            ),
+        )
+    return result
+
+
+def _digest_tuple(value: object, field_name: str) -> tuple[str, ...]:
+    sequence = _string_tuple(value, field_name)
+    for item in sequence:
+        _assert_digest(item, field_name)
+    return sequence
+
+
+def _platform_tuple(value: object, field_name: str) -> tuple[str, ...]:
+    sequence = _string_tuple(value, field_name)
+    for item in sequence:
+        assert _PLATFORM_PATTERN.match(
+            item
+        ), f"{field_name} must contain os/architecture platforms"
+    return sequence
+
+
+def _string_tuple(value: object, field_name: str) -> tuple[str, ...]:
+    assert isinstance(value, Sequence), f"{field_name} must be a sequence"
+    assert not isinstance(
+        value,
+        str | bytes,
+    ), f"{field_name} must be a sequence"
+    result: list[str] = []
+    for item in value:
+        _assert_non_empty_string(item, field_name)
+        assert isinstance(item, str)
+        result.append(item)
+    return tuple(result)
+
+
+def _assert_digest(value: object, field_name: str) -> None:
+    _assert_non_empty_string(value, field_name)
+    assert isinstance(value, str)
+    assert _DIGEST_PATTERN.match(value), f"{field_name} must be sha256 digest"
 
 
 def _enum_value(

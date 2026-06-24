@@ -92,10 +92,37 @@ from .backend import (
     ContainerBackendWaitResult as ContainerBackendWaitResult,
 )
 from .backend import (
+    ContainerBuildCache as ContainerBuildCache,
+)
+from .backend import (
+    ContainerBuildCacheResult as ContainerBuildCacheResult,
+)
+from .backend import (
+    ContainerCacheLookupResult as ContainerCacheLookupResult,
+)
+from .backend import (
+    ContainerCacheLookupStatus as ContainerCacheLookupStatus,
+)
+from .backend import (
     ContainerFakeBackend as ContainerFakeBackend,
 )
 from .backend import (
     ContainerFakeBackendScript as ContainerFakeBackendScript,
+)
+from .backend import (
+    ContainerImageCache as ContainerImageCache,
+)
+from .backend import (
+    ContainerPool as ContainerPool,
+)
+from .backend import (
+    ContainerPoolDecision as ContainerPoolDecision,
+)
+from .backend import (
+    ContainerPoolDecisionType as ContainerPoolDecisionType,
+)
+from .backend import (
+    ContainerPoolSafetyReport as ContainerPoolSafetyReport,
 )
 from .backend import (
     container_backend_capability_profile as _backend_capability_profile,
@@ -105,6 +132,15 @@ from .backend import (
 )
 from .backend import (
     container_backend_probe_from_profile as _backend_probe_from_profile,
+)
+from .backend import (
+    container_build_cache_key as container_build_cache_key,
+)
+from .backend import (
+    container_image_cache_key as container_image_cache_key,
+)
+from .backend import (
+    container_pool_key as container_pool_key,
 )
 from .backend import (
     run_container_backend_lifecycle as run_container_backend_lifecycle,
@@ -197,7 +233,16 @@ from .lifecycle import (
     ContainerLifecyclePhase as ContainerLifecyclePhase,
 )
 from .lifecycle import (
+    ContainerLifecycleResources as ContainerLifecycleResources,
+)
+from .lifecycle import (
     ContainerManagedLifecycleResult as ContainerManagedLifecycleResult,
+)
+from .lifecycle import (
+    ContainerPoolSafetyChecker as ContainerPoolSafetyChecker,
+)
+from .lifecycle import (
+    ContainerStaticPoolSafetyChecker as ContainerStaticPoolSafetyChecker,
 )
 from .lifecycle import (
     ContainerStreamDrainPolicy as ContainerStreamDrainPolicy,
@@ -299,6 +344,9 @@ from .policy import (
     ContainerEscalationTrigger as ContainerEscalationTrigger,
 )
 from .policy import (
+    ContainerImageTrustPolicy as ContainerImageTrustPolicy,
+)
+from .policy import (
     ContainerPolicy as ContainerPolicy,
 )
 from .policy import (
@@ -312,6 +360,12 @@ from .policy import (
 )
 from .policy import (
     ContainerReviewSurface as ContainerReviewSurface,
+)
+from .policy import (
+    ContainerVulnerabilityPolicy as ContainerVulnerabilityPolicy,
+)
+from .policy import (
+    ContainerVulnerabilitySeverity as ContainerVulnerabilitySeverity,
 )
 from .runtime import (
     ContainerFakeRuntimeEnvelopeBackend as ContainerFakeRuntimeEnvelopeBackend,
@@ -479,7 +533,16 @@ from .settings import (
     ContainerBackendSupportLevel as ContainerBackendSupportLevel,
 )
 from .settings import (
+    ContainerBuildCachePolicy as ContainerBuildCachePolicy,
+)
+from .settings import (
+    ContainerBuildContextPolicy as ContainerBuildContextPolicy,
+)
+from .settings import (
     ContainerBuildPolicy as ContainerBuildPolicy,
+)
+from .settings import (
+    ContainerCacheMode as ContainerCacheMode,
 )
 from .settings import (
     ContainerCleanupMode as ContainerCleanupMode,
@@ -518,6 +581,9 @@ from .settings import (
     ContainerExecutionResult as ContainerExecutionResult,
 )
 from .settings import (
+    ContainerImageCachePolicy as ContainerImageCachePolicy,
+)
+from .settings import (
     ContainerImagePolicy as ContainerImagePolicy,
 )
 from .settings import (
@@ -549,6 +615,9 @@ from .settings import (
 )
 from .settings import (
     ContainerPoolingPolicy as ContainerPoolingPolicy,
+)
+from .settings import (
+    ContainerPoolTeardownMode as ContainerPoolTeardownMode,
 )
 from .settings import (
     ContainerProfile as ContainerProfile,

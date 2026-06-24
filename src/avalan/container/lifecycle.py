@@ -18,6 +18,14 @@ from .backend import (
     ContainerBackendStream,
     ContainerBackendStreamChunk,
     ContainerBackendWaitResult,
+    ContainerBuildCache,
+    ContainerBuildCacheResult,
+    ContainerCacheLookupResult,
+    ContainerCacheLookupStatus,
+    ContainerImageCache,
+    ContainerPool,
+    ContainerPoolDecisionType,
+    ContainerPoolSafetyReport,
 )
 from .output import (
     ContainerOutputContract,
@@ -26,12 +34,16 @@ from .output import (
 )
 from .settings import (
     ContainerBuildPolicy,
+    ContainerCacheMode,
     ContainerExecutionResult,
+    ContainerPoolingMode,
+    ContainerPoolTeardownMode,
     ContainerPullPolicy,
     ContainerResultStatus,
     ContainerRunPlan,
 )
 
+from abc import ABC, abstractmethod
 from asyncio import (
     CancelledError,
     create_task,
@@ -48,6 +60,7 @@ from collections.abc import (
 )
 from dataclasses import dataclass, field
 from enum import StrEnum
+from json import dumps
 from types import MappingProxyType
 from typing import TypeVar, cast, final
 
@@ -655,9 +668,17 @@ class ContainerLifecycleCleanup:
         deadline_budget: "_LifecycleDeadlineBudget | None" = None,
         recorder: "_LifecycleRecorder | None" = None,
         force_kill: bool = False,
+        teardown_mode: ContainerPoolTeardownMode | str = (
+            ContainerPoolTeardownMode.REMOVE
+        ),
     ) -> ContainerLifecycleCleanupResult:
         assert isinstance(backend, ContainerAsyncBackend)
         assert isinstance(container, ContainerBackendContainer)
+        teardown = _enum_value(
+            teardown_mode,
+            ContainerPoolTeardownMode,
+            "teardown_mode",
+        )
         resolved_deadlines = deadlines or ContainerLifecycleDeadlines()
         budget = deadline_budget or _LifecycleDeadlineBudget(
             resolved_deadlines,
@@ -689,19 +710,31 @@ class ContainerLifecycleCleanup:
             if kill_result.diagnostics:
                 cleanup_uncertain = True
                 orphan_quarantined = _contains_orphan(kill_result.diagnostics)
-        remove_result = await _cleanup_operation(
-            backend.remove(container),
-            ContainerLifecyclePhase.REMOVE,
-            ContainerBackendOperation.REMOVE,
-            budget,
-            recorder,
-        )
-        diagnostics.extend(remove_result.diagnostics)
-        if remove_result.diagnostics:
-            cleanup_uncertain = True
-            orphan_quarantined = orphan_quarantined or _contains_orphan(
-                remove_result.diagnostics
+        if teardown is ContainerPoolTeardownMode.REMOVE:
+            remove_result = await _cleanup_operation(
+                backend.remove(container),
+                ContainerLifecyclePhase.REMOVE,
+                ContainerBackendOperation.REMOVE,
+                budget,
+                recorder,
             )
+            diagnostics.extend(remove_result.diagnostics)
+            if remove_result.diagnostics:
+                cleanup_uncertain = True
+                orphan_quarantined = orphan_quarantined or _contains_orphan(
+                    remove_result.diagnostics
+                )
+        else:
+            orphan_quarantined = (
+                orphan_quarantined
+                or teardown is ContainerPoolTeardownMode.QUARANTINE
+            )
+            if recorder is not None:
+                recorder.record(
+                    ContainerLifecyclePhase.REMOVE,
+                    ContainerLifecycleEventStatus.SKIPPED,
+                    {"teardown": teardown.value},
+                )
         cleanup_result = await _cleanup_operation(
             backend.cleanup(container),
             ContainerLifecyclePhase.CLEANUP,
@@ -724,20 +757,125 @@ class ContainerLifecycleCleanup:
         )
 
 
+class ContainerPoolSafetyChecker(ABC):
+    @abstractmethod
+    async def check(
+        self,
+        backend: ContainerAsyncBackend,
+        plan: ContainerRunPlan,
+        container: ContainerBackendContainer,
+    ) -> ContainerPoolSafetyReport:
+        raise NotImplementedError  # pragma: no cover
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerStaticPoolSafetyChecker(ContainerPoolSafetyChecker):
+    report: ContainerPoolSafetyReport = field(
+        default_factory=ContainerPoolSafetyReport,
+    )
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.report, ContainerPoolSafetyReport)
+
+    async def check(
+        self,
+        backend: ContainerAsyncBackend,
+        plan: ContainerRunPlan,
+        container: ContainerBackendContainer,
+    ) -> ContainerPoolSafetyReport:
+        assert isinstance(backend, ContainerAsyncBackend)
+        assert isinstance(plan, ContainerRunPlan)
+        assert isinstance(container, ContainerBackendContainer)
+        return self.report
+
+
+class ContainerLifecycleResources:
+    def __init__(
+        self,
+        *,
+        image_cache: ContainerImageCache | None = None,
+        build_cache: ContainerBuildCache | None = None,
+        pool_safety_checker: ContainerPoolSafetyChecker | None = None,
+    ) -> None:
+        if image_cache is not None:
+            assert isinstance(image_cache, ContainerImageCache)
+        if build_cache is not None:
+            assert isinstance(build_cache, ContainerBuildCache)
+        if pool_safety_checker is not None:
+            assert isinstance(pool_safety_checker, ContainerPoolSafetyChecker)
+        self.image_cache = image_cache or ContainerImageCache()
+        self.build_cache = build_cache or ContainerBuildCache()
+        self.pool_safety_checker = pool_safety_checker
+        self._pools: dict[str, ContainerPool] = {}
+
+    def pool_for(self, plan: ContainerRunPlan) -> ContainerPool:
+        assert isinstance(plan, ContainerRunPlan)
+        pool_key = _pool_policy_key(plan)
+        pool = self._pools.get(pool_key)
+        if pool is None:
+            pool = ContainerPool(plan.pooling)
+            self._pools[pool_key] = pool
+        return pool
+
+
+_DEFAULT_LIFECYCLE_RESOURCES = ContainerLifecycleResources()
+
+
 async def run_container_managed_lifecycle(
     backend: ContainerAsyncBackend,
     plan: ContainerRunPlan,
     *,
+    lifecycle_resources: object | None = None,
+    image_cache: ContainerImageCache | None = None,
+    build_cache: ContainerBuildCache | None = None,
+    pool: ContainerPool | None = None,
+    pool_safety_checker: ContainerPoolSafetyChecker | None = None,
     output_contract: ContainerOutputContract | None = None,
     deadlines: ContainerLifecycleDeadlines | None = None,
     stream_policy: ContainerStreamDrainPolicy | None = None,
     event_policy: ContainerLifecycleEventPolicy | None = None,
+    now_seconds: int | None = None,
     shutdown_requested: bool = False,
 ) -> ContainerManagedLifecycleResult:
     assert isinstance(backend, ContainerAsyncBackend)
     assert isinstance(plan, ContainerRunPlan)
+    if lifecycle_resources is not None:
+        assert isinstance(lifecycle_resources, ContainerLifecycleResources)
+    if image_cache is not None:
+        assert isinstance(image_cache, ContainerImageCache)
+    if build_cache is not None:
+        assert isinstance(build_cache, ContainerBuildCache)
+    if pool is not None:
+        assert isinstance(pool, ContainerPool)
+    if pool_safety_checker is not None:
+        assert isinstance(pool_safety_checker, ContainerPoolSafetyChecker)
     if output_contract is not None:
         assert isinstance(output_contract, ContainerOutputContract)
+    if now_seconds is not None:
+        _assert_non_negative_int(now_seconds, "now_seconds")
+    resources = (
+        _DEFAULT_LIFECYCLE_RESOURCES
+        if lifecycle_resources is None
+        else lifecycle_resources
+    )
+    effective_image_cache = image_cache or (
+        resources.image_cache
+        if plan.image.image_cache.mode is not ContainerCacheMode.DISABLED
+        else None
+    )
+    effective_build_cache = build_cache or (
+        resources.build_cache
+        if plan.image.build_cache.mode is not ContainerCacheMode.DISABLED
+        else None
+    )
+    pooling_enabled = _pooling_enabled(plan)
+    effective_pool = pool or (
+        resources.pool_for(plan) if pooling_enabled else None
+    )
+    effective_pool_safety_checker = (
+        pool_safety_checker or resources.pool_safety_checker
+    )
     resolved_deadlines = deadlines or ContainerLifecycleDeadlines()
     deadline_budget = _LifecycleDeadlineBudget(resolved_deadlines)
     resolved_stream_policy = stream_policy or ContainerStreamDrainPolicy()
@@ -758,6 +896,9 @@ async def run_container_managed_lifecycle(
     orphan_quarantined = False
     cleanup_completed = False
     force_kill = False
+    runtime_metadata: dict[str, str] = {}
+    container_from_pool = False
+    container_pool_accepted = False
     try:
         await _record_noop_phase(
             recorder,
@@ -767,6 +908,14 @@ async def run_container_managed_lifecycle(
             recorder,
             ContainerLifecyclePhase.BACKEND_SELECTION,
         )
+        if pooling_enabled and effective_pool_safety_checker is None:
+            no_checker = _diagnostic(
+                ContainerBackendDiagnosticCode.POOL_DENIED,
+                ContainerBackendOperation.CREATE,
+                "container pooling requires an explicit safety checker",
+            )
+            diagnostics.append(no_checker)
+            raise _ManagedLifecycleFailure(_status_for_diagnostic(no_checker))
         image = cast(
             ContainerBackendImageResolution,
             await _run_phase(
@@ -782,38 +931,201 @@ async def run_container_managed_lifecycle(
             raise _ManagedLifecycleFailure(
                 _status_for_diagnostics(image.diagnostics)
             )
+        image_mismatch = _resolved_image_mismatch(plan, image)
+        if image_mismatch is not None:
+            diagnostics.append(image_mismatch)
+            raise _ManagedLifecycleFailure(
+                _status_for_diagnostic(image_mismatch)
+            )
         if plan.image.pull_policy is not ContainerPullPolicy.NEVER:
-            _append_operation_result(
-                diagnostics,
-                await _run_phase(
+            image_lookup = _lookup_image_cache(
+                effective_image_cache,
+                plan,
+                now_seconds,
+            )
+            if image_lookup is not None:
+                _record_cache_metadata(
+                    runtime_metadata,
+                    "image_cache",
+                    image_lookup,
+                )
+            if image_lookup is not None and image_lookup.hit:
+                _record_skipped_phase(
                     recorder,
-                    deadline_budget,
                     ContainerLifecyclePhase.IMAGE_PULL,
-                    ContainerBackendOperation.IMAGE_PULL,
-                    backend.pull_image(plan, image),
-                ),
-            )
+                    {"cache": "hit"},
+                )
+            else:
+                _append_operation_result(
+                    diagnostics,
+                    await _run_phase(
+                        recorder,
+                        deadline_budget,
+                        ContainerLifecyclePhase.IMAGE_PULL,
+                        ContainerBackendOperation.IMAGE_PULL,
+                        backend.pull_image(plan, image),
+                    ),
+                )
+                image_store = _store_image_cache(
+                    effective_image_cache,
+                    plan,
+                    now_seconds,
+                )
+                if image_store is not None:
+                    _record_cache_metadata(
+                        runtime_metadata,
+                        "image_cache_store",
+                        image_store,
+                    )
         if plan.image.build_policy is not ContainerBuildPolicy.DISABLED:
-            _append_operation_result(
-                diagnostics,
+            if effective_build_cache is None:
+                _append_operation_result(
+                    diagnostics,
+                    await _run_phase(
+                        recorder,
+                        deadline_budget,
+                        ContainerLifecyclePhase.IMAGE_BUILD,
+                        ContainerBackendOperation.IMAGE_BUILD,
+                        backend.build_image(plan),
+                    ),
+                )
+            else:
+                build_cache_denial = _build_cache_denial(plan)
+                if build_cache_denial is not None:
+                    diagnostics.append(build_cache_denial)
+                    raise _ManagedLifecycleFailure(
+                        _status_for_diagnostic(build_cache_denial)
+                    )
+                build_result = cast(
+                    ContainerBuildCacheResult,
+                    await _run_phase(
+                        recorder,
+                        deadline_budget,
+                        ContainerLifecyclePhase.IMAGE_BUILD,
+                        ContainerBackendOperation.IMAGE_BUILD,
+                        effective_build_cache.get_or_build(
+                            backend,
+                            plan,
+                            now_seconds=_lifecycle_now_seconds(
+                                now_seconds,
+                            ),
+                        ),
+                    ),
+                )
+                _record_cache_metadata(
+                    runtime_metadata,
+                    "build_cache",
+                    build_result.cache,
+                )
+                runtime_metadata["build_cache_deduplicated"] = str(
+                    build_result.deduplicated
+                ).lower()
+                _append_operation_result(
+                    diagnostics,
+                    build_result.operation,
+                )
+        if effective_pool is not None:
+            pool_decision = effective_pool.acquire(
+                plan,
+                now_seconds=_lifecycle_now_seconds(now_seconds),
+            )
+            runtime_metadata["pool_decision"] = _pool_decision_value(
+                pool_decision.decision,
+            )
+            runtime_metadata["pool_reason"] = pool_decision.reason
+            if pool_decision.reuse:
+                assert pool_decision.container is not None
+                reuse_safety = await _check_pool_safety(
+                    effective_pool_safety_checker,
+                    backend,
+                    plan,
+                    pool_decision.container,
+                )
+                reuse_safety_reason = _pool_safety_failure(plan, reuse_safety)
+                if reuse_safety_reason is None:
+                    container = pool_decision.container
+                    container_from_pool = True
+                    _record_skipped_phase(
+                        recorder,
+                        ContainerLifecyclePhase.CREATE,
+                        {"pool": "reuse"},
+                    )
+                else:
+                    runtime_metadata["pool_reuse_safety"] = reuse_safety_reason
+                    effective_pool.discard(plan)
+                    (
+                        cleanup_result,
+                        cleanup_cancelled,
+                    ) = await _run_cleanup_shielded(
+                        cleanup,
+                        backend,
+                        pool_decision.container,
+                        deadlines=resolved_deadlines,
+                        deadline_budget=deadline_budget,
+                        recorder=recorder,
+                        force_kill=False,
+                        teardown_mode=plan.pooling.teardown,
+                    )
+                    diagnostics.extend(cleanup_result.diagnostics)
+                    orphan_quarantined = (
+                        orphan_quarantined or cleanup_result.orphan_quarantined
+                    )
+                    if cleanup_cancelled:
+                        raise _ManagedLifecycleCancellation(
+                            ContainerLifecyclePhase.CLEANUP,
+                            ContainerBackendOperation.CLEANUP,
+                            "container lifecycle cancelled during"
+                            " unsafe pooled container cleanup",
+                        )
+                    if cleanup_result.cleanup_uncertain:
+                        cleanup_uncertain = True
+                        orphan_quarantined = cleanup_result.orphan_quarantined
+                        raise _ManagedLifecycleFailure(
+                            ContainerResultStatus.FAILED
+                        )
+            elif pool_decision.decision is ContainerPoolDecisionType.EVICT:
+                if pool_decision.container is not None:
+                    (
+                        cleanup_result,
+                        cleanup_cancelled,
+                    ) = await _run_cleanup_shielded(
+                        cleanup,
+                        backend,
+                        pool_decision.container,
+                        deadlines=resolved_deadlines,
+                        deadline_budget=deadline_budget,
+                        recorder=recorder,
+                        force_kill=False,
+                        teardown_mode=plan.pooling.teardown,
+                    )
+                    diagnostics.extend(cleanup_result.diagnostics)
+                    orphan_quarantined = (
+                        orphan_quarantined or cleanup_result.orphan_quarantined
+                    )
+                    if cleanup_cancelled:
+                        raise _ManagedLifecycleCancellation(
+                            ContainerLifecyclePhase.CLEANUP,
+                            ContainerBackendOperation.CLEANUP,
+                            "container lifecycle cancelled during"
+                            " pooled container eviction cleanup",
+                        )
+                    if cleanup_result.cleanup_uncertain:
+                        cleanup_uncertain = True
+                        orphan_quarantined = cleanup_result.orphan_quarantined
+                        raise _ManagedLifecycleFailure(
+                            ContainerResultStatus.FAILED
+                        )
+        if container is None:
+            container = cast(
+                ContainerBackendContainer,
                 await _run_phase(
                     recorder,
                     deadline_budget,
-                    ContainerLifecyclePhase.IMAGE_BUILD,
-                    ContainerBackendOperation.IMAGE_BUILD,
-                    backend.build_image(plan),
+                    ContainerLifecyclePhase.CREATE,
+                    ContainerBackendOperation.CREATE,
+                    backend.create(plan),
                 ),
             )
-        container = cast(
-            ContainerBackendContainer,
-            await _run_phase(
-                recorder,
-                deadline_budget,
-                ContainerLifecyclePhase.CREATE,
-                ContainerBackendOperation.CREATE,
-                backend.create(plan),
-            ),
-        )
         _append_operation_result(
             diagnostics,
             await _run_phase(
@@ -946,31 +1258,91 @@ async def run_container_managed_lifecycle(
         force_kill = True
     finally:
         if container is not None:
-            cleanup_result, cleanup_cancelled = await _run_cleanup_shielded(
-                cleanup,
-                backend,
-                container,
-                deadlines=resolved_deadlines,
-                deadline_budget=deadline_budget,
-                recorder=recorder,
-                force_kill=force_kill,
+            should_offer_to_pool = (
+                effective_pool is not None
+                and not container_from_pool
+                and not force_kill
+                and status is ContainerResultStatus.COMPLETED
             )
-            diagnostics.extend(cleanup_result.diagnostics)
-            cleanup_uncertain = cleanup_result.cleanup_uncertain
-            orphan_quarantined = cleanup_result.orphan_quarantined
-            cleanup_completed = not cleanup_result.already_cleaned
-            if cleanup_cancelled:
-                status = ContainerResultStatus.CANCELLED
-                cancelled_phase = ContainerLifecyclePhase.CLEANUP
-                diagnostics.append(
-                    _diagnostic(
-                        ContainerBackendDiagnosticCode.CANCELLED,
-                        ContainerBackendOperation.CLEANUP,
-                        "container lifecycle cancelled during cleanup",
-                    )
+            if should_offer_to_pool:
+                assert effective_pool is not None
+                offer_safety = await _check_pool_safety(
+                    effective_pool_safety_checker,
+                    backend,
+                    plan,
+                    container,
                 )
-            if cleanup_uncertain and status is ContainerResultStatus.COMPLETED:
-                status = ContainerResultStatus.FAILED
+                offer_safety_reason = _pool_safety_failure(plan, offer_safety)
+                if offer_safety_reason is None:
+                    pool_offer = effective_pool.offer(
+                        plan,
+                        container,
+                        offer_safety,
+                        now_seconds=_lifecycle_now_seconds(now_seconds),
+                    )
+                    runtime_metadata["pool_offer_decision"] = (
+                        _pool_decision_value(pool_offer.decision)
+                    )
+                    runtime_metadata["pool_offer_reason"] = pool_offer.reason
+                    container_pool_accepted = (
+                        pool_offer.decision is ContainerPoolDecisionType.CREATE
+                    )
+                else:
+                    runtime_metadata["pool_offer_decision"] = "reject"
+                    runtime_metadata["pool_offer_reason"] = offer_safety_reason
+                    container_pool_accepted = False
+            skip_cleanup_for_pool = container_pool_accepted or (
+                container_from_pool
+                and not force_kill
+                and status is ContainerResultStatus.COMPLETED
+            )
+            if (
+                container_from_pool
+                and not skip_cleanup_for_pool
+                and effective_pool is not None
+            ):
+                runtime_metadata["pool_discarded"] = str(
+                    effective_pool.discard(plan)
+                ).lower()
+            if not skip_cleanup_for_pool:
+                (
+                    cleanup_result,
+                    cleanup_cancelled,
+                ) = await _run_cleanup_shielded(
+                    cleanup,
+                    backend,
+                    container,
+                    deadlines=resolved_deadlines,
+                    deadline_budget=deadline_budget,
+                    recorder=recorder,
+                    force_kill=force_kill,
+                    teardown_mode=(
+                        plan.pooling.teardown
+                        if container_from_pool
+                        else ContainerPoolTeardownMode.REMOVE
+                    ),
+                )
+                diagnostics.extend(cleanup_result.diagnostics)
+                cleanup_uncertain = cleanup_result.cleanup_uncertain
+                orphan_quarantined = (
+                    orphan_quarantined or cleanup_result.orphan_quarantined
+                )
+                cleanup_completed = not cleanup_result.already_cleaned
+                if cleanup_cancelled:
+                    status = ContainerResultStatus.CANCELLED
+                    cancelled_phase = ContainerLifecyclePhase.CLEANUP
+                    diagnostics.append(
+                        _diagnostic(
+                            ContainerBackendDiagnosticCode.CANCELLED,
+                            ContainerBackendOperation.CLEANUP,
+                            "container lifecycle cancelled during cleanup",
+                        )
+                    )
+                if (
+                    cleanup_uncertain
+                    and status is ContainerResultStatus.COMPLETED
+                ):
+                    status = ContainerResultStatus.FAILED
         recorder.record(
             ContainerLifecyclePhase.RESULT,
             ContainerLifecycleEventStatus.COMPLETED,
@@ -985,6 +1357,7 @@ async def run_container_managed_lifecycle(
                 "cleanup_completed": str(cleanup_completed).lower(),
                 "cleanup_uncertain": str(cleanup_uncertain).lower(),
                 "dropped_events": str(recorder.dropped_events),
+                **runtime_metadata,
             },
         ),
         events=recorder.events,
@@ -1054,6 +1427,9 @@ async def _run_cleanup_shielded(
     deadline_budget: _LifecycleDeadlineBudget,
     recorder: "_LifecycleRecorder",
     force_kill: bool,
+    teardown_mode: ContainerPoolTeardownMode | str = (
+        ContainerPoolTeardownMode.REMOVE
+    ),
 ) -> tuple[ContainerLifecycleCleanupResult, bool]:
     cleanup_task = create_task(
         cleanup.cleanup(
@@ -1063,6 +1439,7 @@ async def _run_cleanup_shielded(
             deadline_budget=deadline_budget,
             recorder=recorder,
             force_kill=force_kill,
+            teardown_mode=teardown_mode,
         )
     )
     try:
@@ -1181,6 +1558,14 @@ async def _record_noop_phase(
     recorder.record(phase, ContainerLifecycleEventStatus.COMPLETED)
 
 
+def _record_skipped_phase(
+    recorder: _LifecycleRecorder,
+    phase: ContainerLifecyclePhase,
+    metadata: Mapping[str, str],
+) -> None:
+    recorder.record(phase, ContainerLifecycleEventStatus.SKIPPED, metadata)
+
+
 async def _run_phase(
     recorder: _LifecycleRecorder,
     deadline_budget: _LifecycleDeadlineBudget,
@@ -1282,6 +1667,141 @@ def _append_operation_result(
         )
 
 
+def _resolved_image_mismatch(
+    plan: ContainerRunPlan,
+    image: ContainerBackendImageResolution,
+) -> ContainerBackendDiagnostic | None:
+    expected_digest = plan.image.digest
+    if expected_digest is not None and image.digest != expected_digest:
+        return _diagnostic(
+            ContainerBackendDiagnosticCode.IMAGE_DENIED,
+            ContainerBackendOperation.IMAGE_RESOLUTION,
+            "resolved image digest does not match approved plan",
+        )
+    if image.platform != plan.image.platform:
+        return _diagnostic(
+            ContainerBackendDiagnosticCode.IMAGE_DENIED,
+            ContainerBackendOperation.IMAGE_RESOLUTION,
+            "resolved image platform does not match approved plan",
+        )
+    return None
+
+
+def _build_cache_denial(
+    plan: ContainerRunPlan,
+) -> ContainerBackendDiagnostic | None:
+    if (
+        plan.image.build_cache.mode is not ContainerCacheMode.DISABLED
+        and plan.image.build_context is None
+    ):
+        return _diagnostic(
+            ContainerBackendDiagnosticCode.BUILD_DENIED,
+            ContainerBackendOperation.IMAGE_BUILD,
+            "container build cache requires a trusted build context",
+        )
+    return None
+
+
+def _pooling_enabled(plan: ContainerRunPlan) -> bool:
+    mode = cast(ContainerPoolingMode, plan.pooling.mode)
+    return mode is not ContainerPoolingMode.DISABLED
+
+
+async def _check_pool_safety(
+    checker: ContainerPoolSafetyChecker | None,
+    backend: ContainerAsyncBackend,
+    plan: ContainerRunPlan,
+    container: ContainerBackendContainer,
+) -> ContainerPoolSafetyReport:
+    assert checker is not None
+    return await checker.check(backend, plan, container)
+
+
+def _pool_safety_failure(
+    plan: ContainerRunPlan,
+    safety: ContainerPoolSafetyReport,
+) -> str | None:
+    assert isinstance(plan, ContainerRunPlan)
+    assert isinstance(safety, ContainerPoolSafetyReport)
+    mode = cast(ContainerPoolingMode, plan.pooling.mode)
+    if safety.contaminated:
+        return "pooled container is contaminated"
+    if (
+        plan.pooling.require_no_leftover_processes
+        and safety.leftover_processes
+    ):
+        return "pooled container has leftover processes"
+    if plan.pooling.require_clean_scratch and safety.dirty_scratch:
+        return "pooled container scratch is dirty"
+    if mode is ContainerPoolingMode.SERVICE and not safety.healthy:
+        return "service pool health check failed"
+    return None
+
+
+def _pool_policy_key(plan: ContainerRunPlan) -> str:
+    return dumps(
+        {
+            "policy_version": plan.policy_version,
+            "profile_name": plan.profile_name,
+            "pooling": plan.pooling.to_dict(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _lookup_image_cache(
+    cache: ContainerImageCache | None,
+    plan: ContainerRunPlan,
+    now_seconds: int | None,
+) -> ContainerCacheLookupResult | None:
+    if cache is None:
+        return None
+    return cache.lookup(
+        plan,
+        now_seconds=_lifecycle_now_seconds(now_seconds),
+    )
+
+
+def _store_image_cache(
+    cache: ContainerImageCache | None,
+    plan: ContainerRunPlan,
+    now_seconds: int | None,
+) -> ContainerCacheLookupResult | None:
+    if cache is None:
+        return None
+    return cache.store(
+        plan,
+        now_seconds=_lifecycle_now_seconds(now_seconds),
+    )
+
+
+def _record_cache_metadata(
+    metadata: dict[str, str],
+    prefix: str,
+    lookup: ContainerCacheLookupResult,
+) -> None:
+    metadata[f"{prefix}_status"] = _cache_status_value(lookup.status)
+    metadata[f"{prefix}_key"] = lookup.cache_key
+
+
+def _lifecycle_now_seconds(now_seconds: int | None) -> int:
+    if now_seconds is not None:
+        _assert_non_negative_int(now_seconds, "now_seconds")
+        return now_seconds
+    return int(get_running_loop().time())
+
+
+def _cache_status_value(status: ContainerCacheLookupStatus | str) -> str:
+    return cast(ContainerCacheLookupStatus, status).value
+
+
+def _pool_decision_value(
+    decision: ContainerPoolDecisionType | str,
+) -> str:
+    return cast(ContainerPoolDecisionType, decision).value
+
+
 def _truncate_content(content: bytes, limit: int) -> bytes:
     if limit <= len(_TRUNCATION_MARKER):
         return _TRUNCATION_MARKER[:limit]
@@ -1311,6 +1831,7 @@ def _status_for_diagnostic(
         ContainerBackendDiagnosticCode.IMAGE_DENIED,
         ContainerBackendDiagnosticCode.PULL_DENIED,
         ContainerBackendDiagnosticCode.BUILD_DENIED,
+        ContainerBackendDiagnosticCode.POOL_DENIED,
         ContainerBackendDiagnosticCode.CAPABILITY_MISMATCH,
         ContainerBackendDiagnosticCode.ROOTFUL_NOT_AUTHORIZED,
     }:
