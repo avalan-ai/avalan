@@ -1,3 +1,14 @@
+from .container import (
+    ShellContainerCommandExecutor as ShellContainerCommandExecutor,
+)
+from .container import ShellExecutionMode as ShellExecutionMode
+from .container import ShellExecutionPlan as ShellExecutionPlan
+from .container import (
+    lower_shell_execution_spec as lower_shell_execution_spec,
+)
+from .container import (
+    normalize_shell_execution_request as normalize_shell_execution_request,
+)
 from .entities import (
     SHELL_STATUS_ERROR_CODES as SHELL_STATUS_ERROR_CODES,
 )

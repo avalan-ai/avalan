@@ -282,17 +282,47 @@ class ContainerStreamDrainPolicy:
     max_chunks: int = 128
     max_bytes: int = 65536
     max_chunk_bytes: int = 8192
+    max_stdout_bytes: int | None = None
+    max_stderr_bytes: int | None = None
+    max_non_output_chunks: int | None = None
+    max_non_output_bytes: int | None = None
+    preserve_truncated_prefix: bool = False
 
     def __post_init__(self) -> None:
         _assert_positive_int(self.max_chunks, "max_chunks")
         _assert_positive_int(self.max_bytes, "max_bytes")
         _assert_positive_int(self.max_chunk_bytes, "max_chunk_bytes")
+        _assert_optional_non_negative_int(
+            self.max_stdout_bytes,
+            "max_stdout_bytes",
+        )
+        _assert_optional_non_negative_int(
+            self.max_stderr_bytes,
+            "max_stderr_bytes",
+        )
+        _assert_optional_non_negative_int(
+            self.max_non_output_chunks,
+            "max_non_output_chunks",
+        )
+        _assert_optional_non_negative_int(
+            self.max_non_output_bytes,
+            "max_non_output_bytes",
+        )
+        _assert_bool(
+            self.preserve_truncated_prefix,
+            "preserve_truncated_prefix",
+        )
 
-    def to_dict(self) -> dict[str, int]:
+    def to_dict(self) -> dict[str, int | bool | None]:
         return {
             "max_chunks": self.max_chunks,
             "max_bytes": self.max_bytes,
             "max_chunk_bytes": self.max_chunk_bytes,
+            "max_stdout_bytes": self.max_stdout_bytes,
+            "max_stderr_bytes": self.max_stderr_bytes,
+            "max_non_output_chunks": self.max_non_output_chunks,
+            "max_non_output_bytes": self.max_non_output_bytes,
+            "preserve_truncated_prefix": self.preserve_truncated_prefix,
         }
 
 
@@ -302,24 +332,31 @@ class _StreamDrainAccumulator:
         self._policy = policy
         self._kept: list[ContainerBackendStreamChunk] = []
         self._total_bytes = 0
+        self._output_bytes = 0
         self._stdout_bytes = 0
         self._stderr_bytes = 0
+        self._output_chunks = 0
+        self._non_output_chunks = 0
+        self._non_output_bytes = 0
         self._dropped_chunks = 0
         self._truncated_chunks = 0
 
     def append(self, chunk: ContainerBackendStreamChunk) -> None:
         assert isinstance(chunk, ContainerBackendStreamChunk)
-        if len(self._kept) >= self._policy.max_chunks:
+        if self._chunk_limit_reached(chunk):
             self._dropped_chunks += 1
             return
-        remaining = self._policy.max_bytes - self._total_bytes
+        remaining = self._remaining_bytes(chunk)
         if remaining <= 0:
             self._dropped_chunks += 1
             return
         content = chunk.content
         chunk_limit = min(self._policy.max_chunk_bytes, remaining)
         if len(content) > chunk_limit:
-            content = _truncate_content(content, chunk_limit)
+            if self._policy.preserve_truncated_prefix:
+                content = content[:chunk_limit]
+            else:
+                content = _truncate_content(content, chunk_limit)
             self._truncated_chunks += 1
         kept_chunk = ContainerBackendStreamChunk(
             stream=chunk.stream,
@@ -328,10 +365,57 @@ class _StreamDrainAccumulator:
         )
         self._kept.append(kept_chunk)
         self._total_bytes += len(content)
+        if self._is_output_chunk(kept_chunk):
+            self._output_bytes += len(content)
+            self._output_chunks += 1
+        else:
+            self._non_output_bytes += len(content)
+            self._non_output_chunks += 1
         if kept_chunk.stream is ContainerBackendStream.STDOUT:
             self._stdout_bytes += len(content)
         if kept_chunk.stream is ContainerBackendStream.STDERR:
             self._stderr_bytes += len(content)
+
+    def _chunk_limit_reached(
+        self,
+        chunk: ContainerBackendStreamChunk,
+    ) -> bool:
+        if self._policy.max_non_output_chunks is None:
+            return len(self._kept) >= self._policy.max_chunks
+        if self._is_output_chunk(chunk):
+            return self._output_chunks >= self._policy.max_chunks
+        return self._non_output_chunks >= self._policy.max_non_output_chunks
+
+    def _remaining_bytes(self, chunk: ContainerBackendStreamChunk) -> int:
+        if (
+            self._policy.max_non_output_bytes is not None
+            and not self._is_output_chunk(chunk)
+        ):
+            return self._policy.max_non_output_bytes - self._non_output_bytes
+        total_used = self._total_bytes
+        if self._policy.max_non_output_bytes is not None:
+            total_used = self._output_bytes
+        total_remaining = self._policy.max_bytes - total_used
+        if total_remaining <= 0:
+            return 0
+        stream_limit: int | None = None
+        if chunk.stream is ContainerBackendStream.STDOUT:
+            stream_limit = self._policy.max_stdout_bytes
+            stream_used = self._stdout_bytes
+        elif chunk.stream is ContainerBackendStream.STDERR:
+            stream_limit = self._policy.max_stderr_bytes
+            stream_used = self._stderr_bytes
+        else:
+            stream_used = 0
+        if stream_limit is None:
+            return total_remaining
+        return min(total_remaining, stream_limit - stream_used)
+
+    def _is_output_chunk(self, chunk: ContainerBackendStreamChunk) -> bool:
+        return chunk.stream in {
+            ContainerBackendStream.STDOUT,
+            ContainerBackendStream.STDERR,
+        }
 
     def result(self) -> "ContainerStreamDrainResult":
         diagnostics: list[ContainerBackendDiagnostic] = []
@@ -1270,6 +1354,15 @@ def _assert_positive_int(value: int, field_name: str) -> None:
 def _assert_non_negative_int(value: int, field_name: str) -> None:
     assert isinstance(value, int), f"{field_name} must be an integer"
     assert value >= 0, f"{field_name} must not be negative"
+
+
+def _assert_optional_non_negative_int(
+    value: int | None,
+    field_name: str,
+) -> None:
+    if value is None:
+        return
+    _assert_non_negative_int(value, field_name)
 
 
 def _assert_optional_positive_number(
