@@ -117,6 +117,9 @@ class ContainerConformancePlan:
     default_ci_jobs: tuple[str, ...]
     optional_runtime_ci_jobs: tuple[str, ...]
     unsupported_surface_paths: Mapping[ContainerSurface, tuple[str, ...]]
+    promoted_integration_backends: tuple[ContainerBackend, ...] = ()
+    optional_integration_backends: tuple[ContainerBackend, ...] = ()
+    opt_in_integration_backends: tuple[ContainerBackend, ...] = ()
     backward_compatibility_required: bool = False
     reject_unknown_container_sections: bool = True
 
@@ -138,6 +141,16 @@ class ContainerConformancePlan:
         assert isinstance(
             self.unsupported_surface_paths, Mapping
         ), "unsupported_surface_paths must be a mapping"
+        for field_name in (
+            "promoted_integration_backends",
+            "optional_integration_backends",
+            "opt_in_integration_backends",
+        ):
+            for backend in getattr(self, field_name):
+                assert isinstance(
+                    backend,
+                    ContainerBackend,
+                ), f"{field_name} must contain container backends"
         frozen_paths: dict[ContainerSurface, tuple[str, ...]] = {}
         for surface, paths in self.unsupported_surface_paths.items():
             assert isinstance(
@@ -171,6 +184,21 @@ class ContainerConformancePlan:
             self,
             "unsupported_surface_paths",
             MappingProxyType(frozen_paths),
+        )
+        object.__setattr__(
+            self,
+            "promoted_integration_backends",
+            tuple(self.promoted_integration_backends),
+        )
+        object.__setattr__(
+            self,
+            "optional_integration_backends",
+            tuple(self.optional_integration_backends),
+        )
+        object.__setattr__(
+            self,
+            "opt_in_integration_backends",
+            tuple(self.opt_in_integration_backends),
         )
 
     @property
@@ -316,6 +344,13 @@ CONFORMANCE_PLAN = ContainerConformancePlan(
         "apple-container runtime e2e",
         "windows-docker runtime e2e",
     ),
+    promoted_integration_backends=(ContainerBackend.DOCKER,),
+    optional_integration_backends=(
+        ContainerBackend.PODMAN,
+        ContainerBackend.NERDCTL,
+        ContainerBackend.WINDOWS_DOCKER,
+    ),
+    opt_in_integration_backends=(ContainerBackend.APPLE_CONTAINER,),
     unsupported_surface_paths=MappingProxyType(
         {
             ContainerSurface.TASK_TOML: (

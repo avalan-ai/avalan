@@ -41,6 +41,9 @@ from .backend import (
     ContainerAsyncBackend as ContainerAsyncBackend,
 )
 from .backend import (
+    ContainerBackendCapabilityProfile as ContainerBackendCapabilityProfile,
+)
+from .backend import (
     ContainerBackendContainer as ContainerBackendContainer,
 )
 from .backend import (
@@ -93,6 +96,15 @@ from .backend import (
 )
 from .backend import (
     ContainerFakeBackendScript as ContainerFakeBackendScript,
+)
+from .backend import (
+    container_backend_capability_profile as _backend_capability_profile,
+)
+from .backend import (
+    container_backend_capability_profiles as container_backend_capability_profiles,  # noqa: E501
+)
+from .backend import (
+    container_backend_probe_from_profile as _backend_probe_from_profile,
 )
 from .backend import (
     run_container_backend_lifecycle as run_container_backend_lifecycle,
@@ -464,6 +476,9 @@ from .settings import (
     ContainerBackendCapabilities as ContainerBackendCapabilities,
 )
 from .settings import (
+    ContainerBackendSupportLevel as ContainerBackendSupportLevel,
+)
+from .settings import (
     ContainerBuildPolicy as ContainerBuildPolicy,
 )
 from .settings import (
@@ -527,6 +542,9 @@ from .settings import (
     ContainerOutputPolicyOverride as ContainerOutputPolicyOverride,
 )
 from .settings import (
+    ContainerPlatformBehavior as ContainerPlatformBehavior,
+)
+from .settings import (
     ContainerPoolingMode as ContainerPoolingMode,
 )
 from .settings import (
@@ -576,4 +594,6 @@ from .settings import (
 )
 
 container_execution_result_from_diagnostics = _container_result
+container_backend_capability_profile = _backend_capability_profile
+container_backend_probe_from_profile = _backend_probe_from_profile
 format_container_diagnostics_for_model = _format_diags_for_model

@@ -14,11 +14,13 @@ from .output import (
 )
 from .settings import (
     ContainerBackendCapabilities,
+    ContainerBackendSupportLevel,
     ContainerBuildPolicy,
     ContainerDeviceClass,
     ContainerExecutionResult,
     ContainerMountType,
     ContainerNetworkMode,
+    ContainerPlatformBehavior,
     ContainerPullPolicy,
     ContainerRunPlan,
 )
@@ -146,13 +148,19 @@ class ContainerBackendRuntimeRequirements:
     def __post_init__(self) -> None:
         if self.marker is not None:
             _assert_non_empty_string(self.marker, "marker")
+        assert isinstance(
+            self.environment_variables, Sequence
+        ) and not isinstance(
+            self.environment_variables, str | bytes
+        ), "environment_variables must be a sequence"
+        environment_variables = tuple(self.environment_variables)
+        for variable in environment_variables:
+            _assert_non_empty_string(variable, "environment_variables")
+            assert isinstance(variable, str)
         object.__setattr__(
             self,
             "environment_variables",
-            _string_tuple(
-                self.environment_variables,
-                "environment_variables",
-            ),
+            environment_variables,
         )
         _assert_bool(self.requires_network, "requires_network")
         _assert_bool(self.requires_secrets, "requires_secrets")
@@ -216,6 +224,69 @@ class ContainerBackendProbeResult:
             "diagnostics": [
                 diagnostic.to_dict() for diagnostic in self.diagnostics
             ],
+            "runtime_requirements": self.runtime_requirements.to_dict(),
+        }
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerBackendCapabilityProfile:
+    profile_id: str
+    capabilities: ContainerBackendCapabilities
+    runtime_requirements: ContainerBackendRuntimeRequirements = field(
+        default_factory=ContainerBackendRuntimeRequirements,
+    )
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.profile_id, "profile_id")
+        assert isinstance(self.capabilities, ContainerBackendCapabilities)
+        assert isinstance(
+            self.runtime_requirements,
+            ContainerBackendRuntimeRequirements,
+        )
+
+    @property
+    def backend(self) -> ContainerBackend:
+        return cast(ContainerBackend, self.capabilities.backend)
+
+    @property
+    def support_level(self) -> ContainerBackendSupportLevel:
+        return cast(
+            ContainerBackendSupportLevel, self.capabilities.support_level
+        )
+
+    @property
+    def promoted(self) -> bool:
+        return self.support_level is ContainerBackendSupportLevel.SUPPORTED
+
+    def probe(
+        self,
+        *,
+        available: bool = False,
+        diagnostics: Sequence[ContainerBackendDiagnostic] = (),
+    ) -> ContainerBackendProbeResult:
+        _assert_bool(available, "available")
+        _assert_diagnostics(diagnostics)
+        if not available:
+            diagnostics = tuple(diagnostics) or (
+                _backend_unavailable_diagnostic(
+                    self.backend,
+                    f"{self.profile_id} runtime is unavailable",
+                ),
+            )
+        return ContainerBackendProbeResult(
+            backend=self.backend,
+            available=available,
+            capabilities=self.capabilities if available else None,
+            diagnostics=diagnostics,
+            runtime_requirements=self.runtime_requirements,
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "profile_id": self.profile_id,
+            "promoted": self.promoted,
+            "capabilities": self.capabilities.to_dict(),
             "runtime_requirements": self.runtime_requirements.to_dict(),
         }
 
@@ -623,6 +694,461 @@ class ContainerAsyncBackend(ABC):
             plan,
             output_contract=output_contract,
         )
+
+
+def container_backend_capability_profiles(
+    backend: ContainerBackend | str | None = None,
+) -> tuple[ContainerBackendCapabilityProfile, ...]:
+    if backend is None:
+        return _CONTAINER_BACKEND_CAPABILITY_PROFILES
+    selected = _enum_value(backend, ContainerBackend, "backend")
+    return tuple(
+        profile
+        for profile in _CONTAINER_BACKEND_CAPABILITY_PROFILES
+        if profile.backend is selected
+    )
+
+
+def container_backend_capability_profile(
+    profile_id: str,
+) -> ContainerBackendCapabilityProfile:
+    _assert_non_empty_string(profile_id, "profile_id")
+    for profile in _CONTAINER_BACKEND_CAPABILITY_PROFILES:
+        if profile.profile_id == profile_id:
+            return profile
+    assert False, "container backend capability profile is unknown"
+
+
+def container_backend_probe_from_profile(
+    profile_id: str,
+    *,
+    available: bool = False,
+    diagnostics: Sequence[ContainerBackendDiagnostic] = (),
+) -> ContainerBackendProbeResult:
+    return container_backend_capability_profile(profile_id).probe(
+        available=available,
+        diagnostics=diagnostics,
+    )
+
+
+def _runtime_requirements(
+    marker: str,
+    environment_variable: str,
+) -> ContainerBackendRuntimeRequirements:
+    return ContainerBackendRuntimeRequirements(
+        marker=marker,
+        environment_variables=(environment_variable,),
+    )
+
+
+def _platform_behavior(
+    *,
+    file_io: str,
+    networking: str,
+    architecture_emulation: str,
+    resources: str,
+    signals: str,
+    path_syntax: str,
+    drive_letters: str,
+    case_behavior: str,
+) -> ContainerPlatformBehavior:
+    return ContainerPlatformBehavior(
+        file_io=file_io,
+        networking=networking,
+        architecture_emulation=architecture_emulation,
+        resources=resources,
+        signals=signals,
+        path_syntax=path_syntax,
+        drive_letters=drive_letters,
+        case_behavior=case_behavior,
+    )
+
+
+def _capability_profile(
+    profile_id: str,
+    *,
+    backend: ContainerBackend,
+    runtime_name: str,
+    support_level: ContainerBackendSupportLevel,
+    host_os: str,
+    guest_os: str,
+    architecture: str,
+    platform_emulation: bool,
+    rootless: bool,
+    user_namespace: bool,
+    build: bool,
+    pull: bool,
+    network_modes: Sequence[ContainerNetworkMode],
+    mount_types: Sequence[ContainerMountType],
+    resource_limits: bool,
+    device_classes: Sequence[ContainerDeviceClass],
+    platform_behavior: ContainerPlatformBehavior,
+    environment_variable: str,
+    per_container_vm_isolation: bool = False,
+    vm_backed: bool = False,
+    remote_engine: bool = False,
+    windows_process_isolation: bool = False,
+    windows_hyperv_isolation: bool = False,
+    streaming_attach: bool = True,
+    stats: bool = True,
+    lifecycle_normalization: bool = True,
+    shared_mount_prefixes: Sequence[str] = (),
+    parity_requirements: Sequence[str] = (),
+) -> ContainerBackendCapabilityProfile:
+    return ContainerBackendCapabilityProfile(
+        profile_id=profile_id,
+        capabilities=ContainerBackendCapabilities(
+            backend=backend,
+            host_os=host_os,
+            guest_os=guest_os,
+            architecture=architecture,
+            runtime_name=runtime_name,
+            support_level=support_level,
+            platform_emulation=platform_emulation,
+            rootless=rootless,
+            user_namespace=user_namespace,
+            build=build,
+            pull=pull,
+            network_modes=network_modes,
+            mount_types=mount_types,
+            resource_limits=resource_limits,
+            device_classes=device_classes,
+            per_container_vm_isolation=per_container_vm_isolation,
+            vm_backed=vm_backed,
+            remote_engine=remote_engine,
+            windows_process_isolation=windows_process_isolation,
+            windows_hyperv_isolation=windows_hyperv_isolation,
+            streaming_attach=streaming_attach,
+            stats=stats,
+            lifecycle_normalization=lifecycle_normalization,
+            platform_behavior=platform_behavior,
+            shared_mount_prefixes=shared_mount_prefixes,
+            parity_requirements=parity_requirements,
+        ),
+        runtime_requirements=_runtime_requirements(
+            profile_id,
+            environment_variable,
+        ),
+    )
+
+
+_LINUX_MOUNT_TYPES = (
+    ContainerMountType.INPUT,
+    ContainerMountType.WORKSPACE,
+    ContainerMountType.SCRATCH,
+    ContainerMountType.OUTPUT,
+    ContainerMountType.CACHE,
+)
+_WINDOWS_MOUNT_TYPES = (
+    ContainerMountType.INPUT,
+    ContainerMountType.WORKSPACE,
+    ContainerMountType.SCRATCH,
+    ContainerMountType.OUTPUT,
+)
+_CPU_DEVICE_CLASSES = (ContainerDeviceClass.CPU,)
+_DOCKER_NETWORK_MODES = (
+    ContainerNetworkMode.NONE,
+    ContainerNetworkMode.LOOPBACK,
+    ContainerNetworkMode.FULL,
+)
+_ROOTLESS_NETWORK_MODES = (
+    ContainerNetworkMode.NONE,
+    ContainerNetworkMode.LOOPBACK,
+    ContainerNetworkMode.FULL,
+)
+
+_CONTAINER_BACKEND_CAPABILITY_PROFILES = (
+    _capability_profile(
+        "docker-engine-linux",
+        backend=ContainerBackend.DOCKER,
+        runtime_name="Docker Engine",
+        support_level=ContainerBackendSupportLevel.SUPPORTED,
+        host_os="linux",
+        guest_os="linux",
+        architecture="amd64",
+        platform_emulation=True,
+        rootless=False,
+        user_namespace=True,
+        build=True,
+        pull=True,
+        network_modes=_DOCKER_NETWORK_MODES,
+        mount_types=_LINUX_MOUNT_TYPES,
+        resource_limits=True,
+        device_classes=_CPU_DEVICE_CLASSES,
+        platform_behavior=_platform_behavior(
+            file_io="native host filesystem bind mounts",
+            networking="engine bridge, host-controlled none, and full modes",
+            architecture_emulation="qemu or binfmt when configured by host",
+            resources="cgroup-backed CPU, memory, pids, and timeout limits",
+            signals="OCI process signals delivered by Docker Engine",
+            path_syntax="POSIX host paths",
+            drive_letters="not applicable",
+            case_behavior="host filesystem dependent, usually sensitive",
+        ),
+        environment_variable="AVALAN_CONTAINER_DOCKER_E2E",
+    ),
+    _capability_profile(
+        "docker-desktop-macos-linux",
+        backend=ContainerBackend.DOCKER,
+        runtime_name="Docker Desktop Linux VM",
+        support_level=ContainerBackendSupportLevel.OPTIONAL,
+        host_os="darwin",
+        guest_os="linux",
+        architecture="arm64",
+        platform_emulation=True,
+        rootless=False,
+        user_namespace=False,
+        build=True,
+        pull=True,
+        network_modes=_DOCKER_NETWORK_MODES,
+        mount_types=_LINUX_MOUNT_TYPES,
+        resource_limits=True,
+        device_classes=_CPU_DEVICE_CLASSES,
+        vm_backed=True,
+        remote_engine=True,
+        platform_behavior=_platform_behavior(
+            file_io="shared-directory VM file I/O with host sync overhead",
+            networking="Docker Desktop VM networking and port forwarding",
+            architecture_emulation="Apple silicon arm64 with amd64 emulation",
+            resources="Docker Desktop VM resource ceilings apply first",
+            signals="signals cross the Docker Desktop VM boundary",
+            path_syntax="macOS POSIX paths from shared directories",
+            drive_letters="not applicable",
+            case_behavior="host volume case behavior may differ from guest",
+        ),
+        shared_mount_prefixes=("/Users/", "/Volumes/", "/private/", "/tmp/"),
+        environment_variable="AVALAN_CONTAINER_DOCKER_E2E",
+    ),
+    _capability_profile(
+        "docker-desktop-wsl2-linux",
+        backend=ContainerBackend.DOCKER,
+        runtime_name="Docker Desktop WSL2 Linux",
+        support_level=ContainerBackendSupportLevel.OPTIONAL,
+        host_os="windows",
+        guest_os="linux",
+        architecture="amd64",
+        platform_emulation=True,
+        rootless=False,
+        user_namespace=False,
+        build=True,
+        pull=True,
+        network_modes=_DOCKER_NETWORK_MODES,
+        mount_types=_LINUX_MOUNT_TYPES,
+        resource_limits=True,
+        device_classes=_CPU_DEVICE_CLASSES,
+        vm_backed=True,
+        remote_engine=True,
+        platform_behavior=_platform_behavior(
+            file_io="WSL2 or Windows shared path file I/O",
+            networking="WSL2 VM networking with Docker Desktop forwarding",
+            architecture_emulation="amd64 native or host-provided emulation",
+            resources="Docker Desktop and WSL2 limits both apply",
+            signals="signals cross the WSL2 VM boundary",
+            path_syntax="WSL POSIX paths or shared Windows drive paths",
+            drive_letters="Windows drive letters must be normalized",
+            case_behavior="case behavior depends on WSL or NTFS location",
+        ),
+        shared_mount_prefixes=("C:\\", "D:\\", "/mnt/"),
+        environment_variable="AVALAN_CONTAINER_DOCKER_E2E",
+    ),
+    _capability_profile(
+        "podman-rootless-linux",
+        backend=ContainerBackend.PODMAN,
+        runtime_name="Podman rootless",
+        support_level=ContainerBackendSupportLevel.OPTIONAL,
+        host_os="linux",
+        guest_os="linux",
+        architecture="amd64",
+        platform_emulation=False,
+        rootless=True,
+        user_namespace=True,
+        build=True,
+        pull=True,
+        network_modes=_ROOTLESS_NETWORK_MODES,
+        mount_types=_LINUX_MOUNT_TYPES,
+        resource_limits=True,
+        device_classes=_CPU_DEVICE_CLASSES,
+        platform_behavior=_platform_behavior(
+            file_io="native rootless bind mounts with user namespace mapping",
+            networking="slirp or pasta rootless networking where configured",
+            architecture_emulation="host-native unless binfmt is configured",
+            resources="cgroup v2 rootless limits when available",
+            signals="OCI process signals delivered by Podman",
+            path_syntax="POSIX host paths",
+            drive_letters="not applicable",
+            case_behavior="host filesystem dependent, usually sensitive",
+        ),
+        environment_variable="AVALAN_CONTAINER_PODMAN_E2E",
+    ),
+    _capability_profile(
+        "podman-machine-macos-linux",
+        backend=ContainerBackend.PODMAN,
+        runtime_name="Podman machine Linux VM",
+        support_level=ContainerBackendSupportLevel.OPTIONAL,
+        host_os="darwin",
+        guest_os="linux",
+        architecture="arm64",
+        platform_emulation=True,
+        rootless=True,
+        user_namespace=True,
+        build=True,
+        pull=True,
+        network_modes=_ROOTLESS_NETWORK_MODES,
+        mount_types=_LINUX_MOUNT_TYPES,
+        resource_limits=True,
+        device_classes=_CPU_DEVICE_CLASSES,
+        vm_backed=True,
+        remote_engine=True,
+        platform_behavior=_platform_behavior(
+            file_io="Podman machine shared-directory VM file I/O",
+            networking="Podman machine VM networking and forwarding",
+            architecture_emulation="Apple silicon arm64 with VM emulation",
+            resources="Podman machine VM resource ceilings apply first",
+            signals="signals cross the Podman machine VM boundary",
+            path_syntax="macOS POSIX paths from shared directories",
+            drive_letters="not applicable",
+            case_behavior="host volume case behavior may differ from guest",
+        ),
+        shared_mount_prefixes=("/Users/", "/Volumes/", "/private/", "/tmp/"),
+        environment_variable="AVALAN_CONTAINER_PODMAN_E2E",
+    ),
+    _capability_profile(
+        "nerdctl-containerd-linux",
+        backend=ContainerBackend.NERDCTL,
+        runtime_name="nerdctl containerd",
+        support_level=ContainerBackendSupportLevel.OPTIONAL,
+        host_os="linux",
+        guest_os="linux",
+        architecture="amd64",
+        platform_emulation=False,
+        rootless=False,
+        user_namespace=False,
+        build=True,
+        pull=True,
+        network_modes=(ContainerNetworkMode.NONE, ContainerNetworkMode.FULL),
+        mount_types=_LINUX_MOUNT_TYPES,
+        resource_limits=True,
+        device_classes=_CPU_DEVICE_CLASSES,
+        platform_behavior=_platform_behavior(
+            file_io="containerd bind mounts through nerdctl",
+            networking="CNI-backed none or full modes",
+            architecture_emulation="host-native unless binfmt is configured",
+            resources="containerd and cgroup resource limits",
+            signals="OCI process signals delivered through containerd",
+            path_syntax="POSIX host paths",
+            drive_letters="not applicable",
+            case_behavior="host filesystem dependent, usually sensitive",
+        ),
+        environment_variable="AVALAN_CONTAINER_NERDCTL_E2E",
+    ),
+    _capability_profile(
+        "apple-container-macos-linux",
+        backend=ContainerBackend.APPLE_CONTAINER,
+        runtime_name="Apple container",
+        support_level=ContainerBackendSupportLevel.OPT_IN,
+        host_os="darwin",
+        guest_os="linux",
+        architecture="arm64",
+        platform_emulation=False,
+        rootless=False,
+        user_namespace=False,
+        build=False,
+        pull=True,
+        network_modes=(ContainerNetworkMode.NONE,),
+        mount_types=(ContainerMountType.WORKSPACE, ContainerMountType.OUTPUT),
+        resource_limits=False,
+        device_classes=_CPU_DEVICE_CLASSES,
+        per_container_vm_isolation=True,
+        vm_backed=True,
+        streaming_attach=False,
+        stats=False,
+        lifecycle_normalization=False,
+        platform_behavior=_platform_behavior(
+            file_io="Apple Containerization VM file sharing",
+            networking="Apple container VM networking, opt-in until proven",
+            architecture_emulation="Apple silicon linux/arm64 baseline only",
+            resources="resource controls require parity validation",
+            signals="signal behavior requires parity validation",
+            path_syntax="macOS POSIX paths from shared locations",
+            drive_letters="not applicable",
+            case_behavior="host volume case behavior may differ from guest",
+        ),
+        shared_mount_prefixes=("/Users/", "/Volumes/", "/private/", "/tmp/"),
+        parity_requirements=(
+            "streaming attach parity",
+            "mount behavior parity",
+            "cleanup certainty",
+            "startup and file I/O performance budgets",
+        ),
+        environment_variable="AVALAN_CONTAINER_APPLE_E2E",
+    ),
+    _capability_profile(
+        "windows-docker-process",
+        backend=ContainerBackend.WINDOWS_DOCKER,
+        runtime_name="Windows Docker process isolation",
+        support_level=ContainerBackendSupportLevel.OPTIONAL,
+        host_os="windows",
+        guest_os="windows",
+        architecture="amd64",
+        platform_emulation=False,
+        rootless=False,
+        user_namespace=False,
+        build=True,
+        pull=True,
+        network_modes=(ContainerNetworkMode.NONE, ContainerNetworkMode.FULL),
+        mount_types=_WINDOWS_MOUNT_TYPES,
+        resource_limits=True,
+        device_classes=_CPU_DEVICE_CLASSES,
+        windows_process_isolation=True,
+        platform_behavior=_platform_behavior(
+            file_io="Windows bind mounts with NTFS semantics",
+            networking="Windows container NAT or none modes",
+            architecture_emulation=(
+                "Windows process isolation is host-version bound"
+            ),
+            resources="Windows job object and Docker resource controls",
+            signals="Windows stop events differ from POSIX signals",
+            path_syntax="Windows drive-letter paths",
+            drive_letters="drive letters are required for host paths",
+            case_behavior="case-insensitive by default",
+        ),
+        environment_variable="AVALAN_CONTAINER_WINDOWS_DOCKER_E2E",
+    ),
+    _capability_profile(
+        "windows-docker-hyperv",
+        backend=ContainerBackend.WINDOWS_DOCKER,
+        runtime_name="Windows Docker Hyper-V isolation",
+        support_level=ContainerBackendSupportLevel.OPTIONAL,
+        host_os="windows",
+        guest_os="windows",
+        architecture="amd64",
+        platform_emulation=False,
+        rootless=False,
+        user_namespace=False,
+        build=True,
+        pull=True,
+        network_modes=(ContainerNetworkMode.NONE, ContainerNetworkMode.FULL),
+        mount_types=_WINDOWS_MOUNT_TYPES,
+        resource_limits=True,
+        device_classes=_CPU_DEVICE_CLASSES,
+        per_container_vm_isolation=True,
+        vm_backed=True,
+        windows_hyperv_isolation=True,
+        platform_behavior=_platform_behavior(
+            file_io="Windows Hyper-V isolated bind mounts",
+            networking="Hyper-V isolated Windows container networking",
+            architecture_emulation=(
+                "Windows image architecture must match host"
+            ),
+            resources="Hyper-V and Docker resource controls",
+            signals="Windows stop events cross the Hyper-V boundary",
+            path_syntax="Windows drive-letter paths",
+            drive_letters="drive letters are required for host paths",
+            case_behavior="case-insensitive by default",
+        ),
+        environment_variable="AVALAN_CONTAINER_WINDOWS_DOCKER_E2E",
+    ),
+)
 
 
 @final
@@ -1048,11 +1574,16 @@ def select_container_backend(
     *,
     auto_enabled: bool,
     rootful_authorized: bool = False,
+    opt_in_backends: Sequence[ContainerBackend | str] = (),
 ) -> ContainerBackendSelection:
     assert isinstance(plan, ContainerRunPlan)
     for probe in probes:
         assert isinstance(probe, ContainerBackendProbeResult)
     requested = cast(ContainerBackend, plan.backend)
+    opt_in = frozenset(
+        _enum_value(backend, ContainerBackend, "opt_in_backends")
+        for backend in opt_in_backends
+    )
     if requested is ContainerBackend.AUTO and not auto_enabled:
         return ContainerBackendSelection(
             backend=None,
@@ -1085,7 +1616,9 @@ def select_container_backend(
     eligible: list[ContainerBackendProbeResult] = []
     for probe in candidates:
         diagnostics.extend(probe.diagnostics)
-        if not probe.available or probe.capabilities is None:
+        if not probe.ok:
+            if probe.available and probe.capabilities is not None:
+                continue
             diagnostics.append(
                 _backend_unavailable_diagnostic(
                     cast(ContainerBackend, probe.backend),
@@ -1093,10 +1626,13 @@ def select_container_backend(
                 )
             )
             continue
+        capabilities = probe.capabilities
+        assert capabilities is not None
         capability_diagnostics = _capability_diagnostics(
             plan,
-            probe.capabilities,
+            capabilities,
             rootful_authorized=rootful_authorized,
+            opt_in_backends=opt_in,
         )
         if capability_diagnostics:
             diagnostics.extend(capability_diagnostics)
@@ -1153,9 +1689,38 @@ def _capability_diagnostics(
     capabilities: ContainerBackendCapabilities,
     *,
     rootful_authorized: bool,
+    opt_in_backends: frozenset[ContainerBackend],
 ) -> tuple[ContainerBackendDiagnostic, ...]:
     backend = cast(ContainerBackend, capabilities.backend)
     diagnostics: list[ContainerBackendDiagnostic] = []
+    support_level = cast(
+        ContainerBackendSupportLevel,
+        capabilities.support_level,
+    )
+    if support_level is ContainerBackendSupportLevel.CATALOG_ONLY:
+        diagnostics.append(
+            _capability_mismatch(
+                backend,
+                "backend support level catalog_only is not selectable",
+            )
+        )
+    if (
+        support_level is ContainerBackendSupportLevel.OPT_IN
+        and backend not in opt_in_backends
+    ):
+        diagnostics.append(
+            _capability_mismatch(
+                backend,
+                "backend requires explicit operator opt-in",
+            )
+        )
+    if not capabilities.lifecycle_normalization:
+        diagnostics.append(
+            _capability_mismatch(
+                backend,
+                "lifecycle normalization is not supported",
+            )
+        )
     if (
         not rootful_authorized
         and not capabilities.rootless
@@ -1221,6 +1786,7 @@ def _capability_diagnostics(
                 f"mount type {unsupported_mounts[0].value} is not supported",
             )
         )
+    diagnostics.extend(_vm_mount_diagnostics(plan, capabilities, backend))
     unsupported_devices = [
         cast(ContainerDeviceClass, device)
         for device in plan.devices.devices
@@ -1249,6 +1815,146 @@ def _capability_diagnostics(
             _capability_mismatch(backend, "streaming attach is not supported")
         )
     return tuple(diagnostics)
+
+
+def _vm_mount_diagnostics(
+    plan: ContainerRunPlan,
+    capabilities: ContainerBackendCapabilities,
+    backend: ContainerBackend,
+) -> tuple[ContainerBackendDiagnostic, ...]:
+    if not capabilities.vm_backed or not capabilities.shared_mount_prefixes:
+        return ()
+    for mount in plan.mounts:
+        if mount.source is None or not _host_path_is_absolute(mount.source):
+            continue
+        if not _host_path_has_shared_prefix(
+            mount.source,
+            capabilities.shared_mount_prefixes,
+        ):
+            return (
+                _capability_mismatch(
+                    backend,
+                    "VM-backed runtime cannot mount source outside "
+                    "declared shared prefixes",
+                ),
+            )
+    return ()
+
+
+def _host_path_is_absolute(path: str) -> bool:
+    return (
+        path.startswith("/")
+        or _host_path_has_windows_drive(path)
+        or _host_path_is_unc(path)
+    )
+
+
+def _host_path_has_windows_drive(path: str) -> bool:
+    return (
+        len(path) >= 3
+        and path[1] == ":"
+        and path[2] in {"\\", "/"}
+        and path[0].isalpha()
+    )
+
+
+def _host_path_is_unc(path: str) -> bool:
+    return path.startswith("\\\\") or path.startswith("//")
+
+
+def _host_path_has_shared_prefix(
+    path: str,
+    prefixes: Sequence[str],
+) -> bool:
+    normalized_path = _normalized_host_path(path)
+    if normalized_path is None:
+        return False
+    for prefix in prefixes:
+        normalized_prefix = _normalized_host_path(prefix)
+        if normalized_prefix is None:
+            continue
+        if _normalized_path_is_inside_prefix(
+            normalized_path,
+            normalized_prefix,
+        ):
+            return True
+    return False
+
+
+def _normalized_host_path(
+    path: str,
+) -> tuple[str, str, tuple[str, ...]] | None:
+    if _host_path_is_unc(path):
+        return _normalized_unc_path(path)
+    if _host_path_has_windows_drive(path):
+        return _normalized_windows_drive_path(path)
+    if path.startswith("/"):
+        return (
+            "posix",
+            "/",
+            _normalized_path_parts(path.split("/"), case_sensitive=True),
+        )
+    return None
+
+
+def _normalized_unc_path(
+    path: str,
+) -> tuple[str, str, tuple[str, ...]] | None:
+    parts = [
+        part.casefold() for part in path.replace("\\", "/").split("/") if part
+    ]
+    if len(parts) < 2:
+        return None
+    return (
+        "unc",
+        f"{parts[0]}/{parts[1]}",
+        _normalized_path_parts(parts[2:], case_sensitive=False),
+    )
+
+
+def _normalized_windows_drive_path(
+    path: str,
+) -> tuple[str, str, tuple[str, ...]]:
+    normalized_path = path.replace("\\", "/")
+    return (
+        "windows-drive",
+        normalized_path[:2].casefold(),
+        _normalized_path_parts(
+            normalized_path[3:].split("/"),
+            case_sensitive=False,
+        ),
+    )
+
+
+def _normalized_path_parts(
+    parts: Sequence[str],
+    *,
+    case_sensitive: bool,
+) -> tuple[str, ...]:
+    normalized_parts: list[str] = []
+    for part in parts:
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if normalized_parts:
+                normalized_parts.pop()
+            continue
+        normalized_parts.append(part if case_sensitive else part.casefold())
+    return tuple(normalized_parts)
+
+
+def _normalized_path_is_inside_prefix(
+    path: tuple[str, str, tuple[str, ...]],
+    prefix: tuple[str, str, tuple[str, ...]],
+) -> bool:
+    path_family, path_anchor, path_parts = path
+    prefix_family, prefix_anchor, prefix_parts = prefix
+    return (
+        path_family == prefix_family
+        and path_anchor == prefix_anchor
+        and len(path_parts) >= len(prefix_parts)
+        and path_parts[: len(prefix_parts)] == prefix_parts
+    )
 
 
 def _selection_score(
@@ -1357,17 +2063,6 @@ def _assert_diagnostics(
 def _assert_non_negative_int(value: int, field_name: str) -> None:
     assert isinstance(value, int), f"{field_name} must be an integer"
     assert value >= 0, f"{field_name} must not be negative"
-
-
-def _string_tuple(value: object, field_name: str) -> tuple[str, ...]:
-    assert isinstance(value, Sequence) and not isinstance(
-        value, str
-    ), f"{field_name} must be a sequence"
-    result = tuple(value)
-    for item in result:
-        _assert_non_empty_string(item, field_name)
-        assert isinstance(item, str)
-    return result
 
 
 def _string_mapping(

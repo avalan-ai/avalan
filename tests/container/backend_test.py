@@ -5,6 +5,8 @@ from unittest import TestCase, main
 from avalan.container import (
     ContainerBackend,
     ContainerBackendCapabilities,
+    ContainerBackendCapabilityProfile,
+    ContainerBackendDiagnostic,
     ContainerBackendDiagnosticCode,
     ContainerBackendError,
     ContainerBackendOperation,
@@ -14,6 +16,7 @@ from avalan.container import (
     ContainerBackendStats,
     ContainerBackendStream,
     ContainerBackendStreamChunk,
+    ContainerBackendSupportLevel,
     ContainerBuildPolicy,
     ContainerCommandPlan,
     ContainerDeviceClass,
@@ -35,6 +38,9 @@ from avalan.container import (
     ContainerResourceLimits,
     ContainerResultStatus,
     ContainerRunPlan,
+    container_backend_capability_profile,
+    container_backend_capability_profiles,
+    container_backend_probe_from_profile,
     select_container_backend,
 )
 
@@ -44,6 +50,174 @@ _IMAGE = f"ghcr.io/example/backend-tools@sha256:{_DIGEST}"
 
 
 class ContainerBackendTest(TestCase):
+    def test_real_backend_catalog_promotes_docker_and_documents_platforms(
+        self,
+    ) -> None:
+        docker = container_backend_capability_profile("docker-engine-linux")
+        default_probe = docker.probe()
+        docker_probe = docker.probe(available=True)
+        all_profiles = container_backend_capability_profiles()
+        docker_profiles = container_backend_capability_profiles(
+            ContainerBackend.DOCKER
+        )
+        podman_machine = container_backend_capability_profile(
+            "podman-machine-macos-linux"
+        )
+        nerdctl = container_backend_capability_profile(
+            "nerdctl-containerd-linux"
+        )
+        apple = container_backend_capability_profile(
+            "apple-container-macos-linux"
+        )
+        docker_wsl2 = container_backend_capability_profile(
+            "docker-desktop-wsl2-linux"
+        )
+        windows_profiles = container_backend_capability_profiles(
+            ContainerBackend.WINDOWS_DOCKER
+        )
+        behavior = docker.capabilities.platform_behavior
+
+        self.assertTrue(docker.promoted)
+        self.assertEqual(docker.backend, ContainerBackend.DOCKER)
+        self.assertEqual(
+            docker.support_level,
+            ContainerBackendSupportLevel.SUPPORTED,
+        )
+        self.assertFalse(default_probe.ok)
+        self.assertIsNone(default_probe.capabilities)
+        self.assertEqual(
+            default_probe.diagnostics[0].code,
+            ContainerBackendDiagnosticCode.BACKEND_UNAVAILABLE,
+        )
+        self.assertTrue(docker_probe.ok)
+        self.assertEqual(
+            docker_probe.runtime_requirements.environment_variables,
+            ("AVALAN_CONTAINER_DOCKER_E2E",),
+        )
+        self.assertIn(docker, all_profiles)
+        self.assertIn(docker, docker_profiles)
+        self.assertEqual(
+            docker.to_dict()["capabilities"],
+            docker.capabilities.to_dict(),
+        )
+        self.assertIsNotNone(behavior)
+        assert behavior is not None
+        self.assertEqual(behavior.to_dict()["drive_letters"], "not applicable")
+        self.assertTrue(podman_machine.capabilities.vm_backed)
+        self.assertIn(
+            "/Users/",
+            podman_machine.capabilities.shared_mount_prefixes,
+        )
+        self.assertEqual(nerdctl.backend, ContainerBackend.NERDCTL)
+        self.assertEqual(
+            apple.support_level,
+            ContainerBackendSupportLevel.OPT_IN,
+        )
+        self.assertFalse(apple.capabilities.lifecycle_normalization)
+        self.assertIn(
+            "streaming attach parity",
+            apple.capabilities.parity_requirements,
+        )
+        self.assertEqual(docker_wsl2.capabilities.guest_os, "linux")
+        wsl2_behavior = docker_wsl2.capabilities.platform_behavior
+        self.assertIsNotNone(wsl2_behavior)
+        assert wsl2_behavior is not None
+        self.assertIn(
+            "Windows drive letters",
+            wsl2_behavior.to_dict()["drive_letters"],
+        )
+        self.assertEqual(
+            {profile.capabilities.guest_os for profile in windows_profiles},
+            {"windows"},
+        )
+        self.assertTrue(
+            any(
+                profile.capabilities.windows_process_isolation
+                for profile in windows_profiles
+            )
+        )
+        self.assertTrue(
+            any(
+                profile.capabilities.windows_hyperv_isolation
+                for profile in windows_profiles
+            )
+        )
+
+    def test_catalog_probe_unavailable_runtime_and_unknown_profile(
+        self,
+    ) -> None:
+        unavailable = container_backend_probe_from_profile(
+            "docker-engine-linux",
+        )
+
+        self.assertFalse(unavailable.ok)
+        self.assertIsNone(unavailable.capabilities)
+        self.assertEqual(
+            unavailable.diagnostics[0].code,
+            ContainerBackendDiagnosticCode.BACKEND_UNAVAILABLE,
+        )
+        for profile in container_backend_capability_profiles():
+            with self.subTest(profile_id=profile.profile_id):
+                probe = profile.probe()
+
+                self.assertFalse(probe.ok)
+                self.assertFalse(probe.available)
+                self.assertIsNone(probe.capabilities)
+                self.assertEqual(
+                    probe.diagnostics[0].code,
+                    ContainerBackendDiagnosticCode.BACKEND_UNAVAILABLE,
+                )
+                self.assertTrue(
+                    probe.runtime_requirements.environment_variables
+                )
+        with self.assertRaises(AssertionError):
+            container_backend_capability_profile("missing-runtime")
+        with self.assertRaises(AssertionError):
+            ContainerBackendCapabilityProfile(
+                profile_id="",
+                capabilities=container_backend_capability_profile(
+                    "docker-engine-linux"
+                ).capabilities,
+            )
+
+    def test_promoted_docker_profile_uses_fake_lifecycle_contract(
+        self,
+    ) -> None:
+        contract = _output_contract()
+        output = ContainerOutputValidationResult(
+            decision=ContainerOutputDecisionType.ACCEPT,
+            contract=contract,
+        )
+        fake = ContainerFakeBackend(
+            ContainerFakeBackendScript(
+                capabilities=container_backend_capability_profile(
+                    "docker-engine-linux"
+                ).capabilities,
+                stream_chunks=(
+                    ContainerBackendStreamChunk(
+                        stream=ContainerBackendStream.STDOUT,
+                        content=b"docker\n",
+                        sequence=0,
+                    ),
+                ),
+                output_result=output,
+            )
+        )
+
+        result = run_async(fake.run(_run_plan(), output_contract=contract))
+
+        self.assertEqual(
+            result.execution.status,
+            ContainerResultStatus.COMPLETED,
+        )
+        self.assertEqual(result.output, output)
+        self.assertEqual(
+            result.stream_chunks[0].to_dict()["content"], "docker\n"
+        )
+        self.assertIn(ContainerBackendOperation.STREAM, fake.operations)
+        self.assertIn(ContainerBackendOperation.COPY_OUTPUTS, fake.operations)
+        self.assertIn(ContainerBackendOperation.CLEANUP, fake.operations)
+
     def test_probe_selection_and_runtime_requirements(self) -> None:
         podman = ContainerFakeBackend(
             ContainerFakeBackendScript(
@@ -148,9 +322,572 @@ class ContainerBackendTest(TestCase):
         )
         self.assertTrue(rootful_allowed.ok)
 
+    def test_selection_enforces_real_runtime_catalog_profiles(self) -> None:
+        docker_probe = container_backend_probe_from_profile(
+            "docker-engine-linux",
+            available=True,
+        )
+        docker_authorized = select_container_backend(
+            _run_plan(backend=ContainerBackend.DOCKER),
+            (docker_probe,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        rootful_denied = select_container_backend(
+            _run_plan(backend=ContainerBackend.DOCKER),
+            (docker_probe,),
+            auto_enabled=False,
+        )
+        unsupported_network = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                network=ContainerNetworkPolicy(
+                    mode=ContainerNetworkMode.ALLOWLIST,
+                    egress_allowlist=("api.example.test",),
+                ),
+            ),
+            (docker_probe,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        vm_good = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.PODMAN,
+                image=ContainerImagePolicy(
+                    reference=_IMAGE,
+                    platform="linux/arm64",
+                ),
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="/Users/project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "podman-machine-macos-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+        )
+        vm_posix_case_mismatch = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.PODMAN,
+                image=ContainerImagePolicy(
+                    reference=_IMAGE,
+                    platform="linux/arm64",
+                ),
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="/users/project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "podman-machine-macos-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+        )
+        vm_bad = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.PODMAN,
+                image=ContainerImagePolicy(
+                    reference=_IMAGE,
+                    platform="linux/arm64",
+                ),
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="/opt/private-project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "podman-machine-macos-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+        )
+        vm_traversal_bad = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.PODMAN,
+                image=ContainerImagePolicy(
+                    reference=_IMAGE,
+                    platform="linux/arm64",
+                ),
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="/Users/../etc",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "podman-machine-macos-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+        )
+        vm_boundary_bad = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.PODMAN,
+                image=ContainerImagePolicy(
+                    reference=_IMAGE,
+                    platform="linux/arm64",
+                ),
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="/Users2/project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "podman-machine-macos-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+        )
+        vm_relative_mount = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.PODMAN,
+                image=ContainerImagePolicy(
+                    reference=_IMAGE,
+                    platform="linux/arm64",
+                ),
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="workspace",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "podman-machine-macos-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+        )
+        vm_root_shared_mount = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.PODMAN,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="/opt/project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                _probe(
+                    _capabilities(
+                        backend=ContainerBackend.PODMAN,
+                        rootless=True,
+                        vm_backed=True,
+                        shared_mount_prefixes=("/",),
+                    )
+                ),
+            ),
+            auto_enabled=False,
+        )
+        wsl2_windows_drive = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="c:\\Users\\project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "docker-desktop-wsl2-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        wsl2_windows_forward_drive = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="C:/Users/project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "docker-desktop-wsl2-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        wsl2_windows_user_shared = _probe(
+            _capabilities(
+                backend=ContainerBackend.DOCKER,
+                rootless=False,
+                vm_backed=True,
+                shared_mount_prefixes=("C:/Users/",),
+            )
+        )
+        wsl2_windows_user_drive = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="C:/Users/project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (wsl2_windows_user_shared,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        wsl2_windows_casefold_drive = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="c:/users/project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (wsl2_windows_user_shared,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        wsl2_windows_traversal_bad = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="C:/Users/../Windows",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (wsl2_windows_user_shared,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        wsl2_windows_boundary_bad = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="C:/Users2/project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (wsl2_windows_user_shared,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        wsl2_unc_unshared = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="\\\\server\\share\\project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "docker-desktop-wsl2-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        wsl2_unc_project_shared = _probe(
+            _capabilities(
+                backend=ContainerBackend.DOCKER,
+                rootless=False,
+                vm_backed=True,
+                shared_mount_prefixes=("\\\\server\\share\\project\\",),
+            )
+        )
+        wsl2_unc_shared = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="\\\\server\\share\\project\\src",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (wsl2_unc_project_shared,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        wsl2_unc_traversal_bad = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="\\\\server\\share\\project\\..\\Windows",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (wsl2_unc_project_shared,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        windows_platform_mismatch = select_container_backend(
+            _run_plan(backend=ContainerBackend.WINDOWS_DOCKER),
+            (
+                container_backend_probe_from_profile(
+                    "windows-docker-hyperv",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+        )
+        apple_without_opt_in = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.APPLE_CONTAINER,
+                image=ContainerImagePolicy(
+                    reference=_IMAGE,
+                    platform="linux/arm64",
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "apple-container-macos-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+        )
+        apple_with_opt_in = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.APPLE_CONTAINER,
+                image=ContainerImagePolicy(
+                    reference=_IMAGE,
+                    platform="linux/arm64",
+                ),
+            ),
+            (
+                container_backend_probe_from_profile(
+                    "apple-container-macos-linux",
+                    available=True,
+                ),
+            ),
+            auto_enabled=False,
+            opt_in_backends=(ContainerBackend.APPLE_CONTAINER,),
+        )
+
+        self.assertTrue(docker_authorized.ok)
+        self.assertFalse(rootful_denied.ok)
+        self.assertIn(
+            ContainerBackendDiagnosticCode.ROOTFUL_NOT_AUTHORIZED,
+            {diagnostic.code for diagnostic in rootful_denied.diagnostics},
+        )
+        self.assertFalse(unsupported_network.ok)
+        self.assertIn(
+            "network mode allowlist is not supported",
+            {
+                diagnostic.message
+                for diagnostic in unsupported_network.diagnostics
+            },
+        )
+        self.assertTrue(vm_good.ok)
+        self.assertFalse(vm_posix_case_mismatch.ok)
+        self.assertIn(
+            "VM-backed runtime cannot mount source outside declared shared"
+            " prefixes",
+            {
+                diagnostic.message
+                for diagnostic in vm_posix_case_mismatch.diagnostics
+            },
+        )
+        self.assertFalse(vm_bad.ok)
+        self.assertIn(
+            "VM-backed runtime cannot mount source outside declared shared"
+            " prefixes",
+            {diagnostic.message for diagnostic in vm_bad.diagnostics},
+        )
+        self.assertFalse(vm_traversal_bad.ok)
+        self.assertIn(
+            "VM-backed runtime cannot mount source outside declared shared"
+            " prefixes",
+            {
+                diagnostic.message
+                for diagnostic in vm_traversal_bad.diagnostics
+            },
+        )
+        self.assertFalse(vm_boundary_bad.ok)
+        self.assertTrue(vm_relative_mount.ok)
+        self.assertTrue(vm_root_shared_mount.ok)
+        self.assertTrue(wsl2_windows_drive.ok)
+        self.assertTrue(wsl2_windows_forward_drive.ok)
+        self.assertTrue(wsl2_windows_user_drive.ok)
+        self.assertTrue(wsl2_windows_casefold_drive.ok)
+        self.assertFalse(wsl2_windows_traversal_bad.ok)
+        self.assertIn(
+            "VM-backed runtime cannot mount source outside declared shared"
+            " prefixes",
+            {
+                diagnostic.message
+                for diagnostic in wsl2_windows_traversal_bad.diagnostics
+            },
+        )
+        self.assertFalse(wsl2_windows_boundary_bad.ok)
+        self.assertFalse(wsl2_unc_unshared.ok)
+        self.assertIn(
+            "VM-backed runtime cannot mount source outside declared shared"
+            " prefixes",
+            {
+                diagnostic.message
+                for diagnostic in wsl2_unc_unshared.diagnostics
+            },
+        )
+        self.assertTrue(wsl2_unc_shared.ok)
+        self.assertFalse(wsl2_unc_traversal_bad.ok)
+        self.assertIn(
+            "VM-backed runtime cannot mount source outside declared shared"
+            " prefixes",
+            {
+                diagnostic.message
+                for diagnostic in wsl2_unc_traversal_bad.diagnostics
+            },
+        )
+        self.assertFalse(windows_platform_mismatch.ok)
+        self.assertIn(
+            "guest OS linux is not supported",
+            {
+                diagnostic.message
+                for diagnostic in windows_platform_mismatch.diagnostics
+            },
+        )
+        self.assertFalse(apple_without_opt_in.ok)
+        self.assertIn(
+            "backend requires explicit operator opt-in",
+            {
+                diagnostic.message
+                for diagnostic in apple_without_opt_in.diagnostics
+            },
+        )
+        self.assertFalse(apple_with_opt_in.ok)
+        self.assertNotIn(
+            "backend requires explicit operator opt-in",
+            {
+                diagnostic.message
+                for diagnostic in apple_with_opt_in.diagnostics
+            },
+        )
+        self.assertIn(
+            "lifecycle normalization is not supported",
+            {
+                diagnostic.message
+                for diagnostic in apple_with_opt_in.diagnostics
+            },
+        )
+
+    def test_vm_shared_prefix_normalization_edge_branches(self) -> None:
+        mismatch = (
+            "VM-backed runtime cannot mount source outside declared shared"
+            " prefixes"
+        )
+        invalid_prefixes_then_root = _probe(
+            _capabilities(
+                backend=ContainerBackend.DOCKER,
+                rootless=False,
+                vm_backed=True,
+                shared_mount_prefixes=("relative", "\\\\", "/"),
+            )
+        )
+        invalid_source = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="\\\\",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (invalid_prefixes_then_root,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        skipped_invalid_prefixes = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="/Users/project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (invalid_prefixes_then_root,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+
+        self.assertFalse(invalid_source.ok)
+        self.assertIn(
+            mismatch,
+            {diagnostic.message for diagnostic in invalid_source.diagnostics},
+        )
+        self.assertTrue(skipped_invalid_prefixes.ok)
+
     def test_selection_rejects_unavailable_and_capability_mismatch(
         self,
     ) -> None:
+        diagnostic = ContainerBackendDiagnostic(
+            code=ContainerBackendDiagnosticCode.CAPABILITY_MISMATCH,
+            operation=ContainerBackendOperation.PROBE,
+            backend=ContainerBackend.DOCKER,
+            message="runtime reported reduced capabilities",
+        )
         unavailable = run_async(
             ContainerFakeBackend(
                 ContainerFakeBackendScript(
@@ -158,6 +895,30 @@ class ContainerBackendTest(TestCase):
                     available=False,
                 )
             ).probe()
+        )
+        diagnostic_probe = container_backend_probe_from_profile(
+            "docker-engine-linux",
+            available=True,
+            diagnostics=(diagnostic,),
+        )
+        diagnostic_selection = select_container_backend(
+            _run_plan(backend=ContainerBackend.DOCKER),
+            (diagnostic_probe,),
+            auto_enabled=False,
+            rootful_authorized=True,
+        )
+        catalog_only_selection = select_container_backend(
+            _run_plan(backend=ContainerBackend.DOCKER),
+            (
+                _probe(
+                    _capabilities(
+                        rootless=False,
+                        support_level=ContainerBackendSupportLevel.CATALOG_ONLY,
+                    )
+                ),
+            ),
+            auto_enabled=False,
+            rootful_authorized=True,
         )
         mismatch = select_container_backend(
             _rich_run_plan(),
@@ -184,8 +945,21 @@ class ContainerBackendTest(TestCase):
 
         codes = {diagnostic.code for diagnostic in mismatch.diagnostics}
         messages = {diagnostic.message for diagnostic in mismatch.diagnostics}
+        catalog_messages = {
+            diagnostic.message
+            for diagnostic in catalog_only_selection.diagnostics
+        }
 
         self.assertFalse(unavailable.ok)
+        self.assertFalse(diagnostic_probe.ok)
+        self.assertFalse(diagnostic_selection.ok)
+        self.assertIsNone(diagnostic_selection.backend)
+        self.assertIn(diagnostic, diagnostic_selection.diagnostics)
+        self.assertFalse(catalog_only_selection.ok)
+        self.assertIn(
+            "backend support level catalog_only is not selectable",
+            catalog_messages,
+        )
         self.assertFalse(mismatch.ok)
         self.assertIn(
             ContainerBackendDiagnosticCode.BACKEND_UNAVAILABLE,
@@ -813,6 +1587,10 @@ class ContainerBackendTest(TestCase):
         with self.assertRaises(AssertionError):
             ContainerBackendRuntimeRequirements(marker="")
         with self.assertRaises(AssertionError):
+            ContainerBackendRuntimeRequirements(
+                environment_variables=cast(tuple[str, ...], "AVALAN")
+            )
+        with self.assertRaises(AssertionError):
             ContainerBackendStreamChunk(
                 stream=ContainerBackendStream.STDOUT,
                 content=cast(bytes, "bad"),
@@ -823,6 +1601,9 @@ class ContainerBackendTest(TestCase):
 def _capabilities(
     *,
     backend: ContainerBackend = ContainerBackend.DOCKER,
+    support_level: ContainerBackendSupportLevel = (
+        ContainerBackendSupportLevel.SUPPORTED
+    ),
     host_os: str = "linux",
     guest_os: str = "linux",
     architecture: str = "amd64",
@@ -844,9 +1625,12 @@ def _capabilities(
     ),
     resource_limits: bool = True,
     streaming_attach: bool = True,
+    vm_backed: bool = False,
+    shared_mount_prefixes: tuple[str, ...] = (),
 ) -> ContainerBackendCapabilities:
     return ContainerBackendCapabilities(
         backend=backend,
+        support_level=support_level,
         host_os=host_os,
         guest_os=guest_os,
         architecture=architecture,
@@ -859,8 +1643,10 @@ def _capabilities(
         resource_limits=resource_limits,
         device_classes=device_classes,
         per_container_vm_isolation=vm_isolated,
+        vm_backed=vm_backed,
         streaming_attach=streaming_attach,
         stats=True,
+        shared_mount_prefixes=shared_mount_prefixes,
     )
 
 
@@ -880,6 +1666,9 @@ def _run_plan(
     pull_policy: ContainerPullPolicy = ContainerPullPolicy.NEVER,
     build_policy: ContainerBuildPolicy = ContainerBuildPolicy.DISABLED,
     image: ContainerImagePolicy | None = None,
+    mounts: tuple[ContainerMountDeclaration, ...] = (),
+    network: ContainerNetworkPolicy | None = None,
+    resources: ContainerResourceLimits | None = None,
 ) -> ContainerRunPlan:
     return ContainerRunPlan(
         backend=backend,
@@ -897,7 +1686,9 @@ def _run_plan(
             cwd="/workspace",
             scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
         ),
-        network=ContainerNetworkPolicy(),
+        mounts=mounts,
+        network=network or ContainerNetworkPolicy(),
+        resources=resources or ContainerResourceLimits(),
         policy_version="phase7",
     )
 

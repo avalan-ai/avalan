@@ -59,6 +59,22 @@ class ContainerConformanceTest(TestCase):
             "docker runtime e2e",
             CONFORMANCE_PLAN.optional_runtime_ci_jobs,
         )
+        self.assertEqual(
+            CONFORMANCE_PLAN.promoted_integration_backends,
+            (ContainerBackend.DOCKER,),
+        )
+        self.assertEqual(
+            CONFORMANCE_PLAN.optional_integration_backends,
+            (
+                ContainerBackend.PODMAN,
+                ContainerBackend.NERDCTL,
+                ContainerBackend.WINDOWS_DOCKER,
+            ),
+        )
+        self.assertEqual(
+            CONFORMANCE_PLAN.opt_in_integration_backends,
+            (ContainerBackend.APPLE_CONTAINER,),
+        )
 
     def test_diagnostic_serializes_to_public_dictionary(self) -> None:
         diagnostic = ContainerDiagnostic(

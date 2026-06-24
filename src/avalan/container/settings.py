@@ -145,6 +145,13 @@ class ContainerResultStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ContainerBackendSupportLevel(StrEnum):
+    SUPPORTED = "supported"
+    OPTIONAL = "optional"
+    OPT_IN = "opt_in"
+    CATALOG_ONLY = "catalog_only"
+
+
 class ContainerAuditEventType(StrEnum):
     POLICY_EVALUATION = "policy_evaluation"
     REVIEW_REQUEST = "review_request"
@@ -1605,11 +1612,99 @@ class ContainerAuthorityCaps:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerPlatformBehavior:
+    file_io: str
+    networking: str
+    architecture_emulation: str
+    resources: str
+    signals: str
+    path_syntax: str
+    drive_letters: str
+    case_behavior: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "file_io",
+            "networking",
+            "architecture_emulation",
+            "resources",
+            "signals",
+            "path_syntax",
+            "drive_letters",
+            "case_behavior",
+        ):
+            _assert_non_empty_string(getattr(self, field_name), field_name)
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "file_io": self.file_io,
+            "networking": self.networking,
+            "architecture_emulation": self.architecture_emulation,
+            "resources": self.resources,
+            "signals": self.signals,
+            "path_syntax": self.path_syntax,
+            "drive_letters": self.drive_letters,
+            "case_behavior": self.case_behavior,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        raw: Mapping[str, object],
+    ) -> "ContainerPlatformBehavior":
+        _assert_fields(
+            raw,
+            {
+                "file_io",
+                "networking",
+                "architecture_emulation",
+                "resources",
+                "signals",
+                "path_syntax",
+                "drive_letters",
+                "case_behavior",
+            },
+            "platform_behavior",
+        )
+        return cls(
+            file_io=_required_str(raw, "file_io", "platform_behavior"),
+            networking=_required_str(raw, "networking", "platform_behavior"),
+            architecture_emulation=_required_str(
+                raw,
+                "architecture_emulation",
+                "platform_behavior",
+            ),
+            resources=_required_str(raw, "resources", "platform_behavior"),
+            signals=_required_str(raw, "signals", "platform_behavior"),
+            path_syntax=_required_str(
+                raw,
+                "path_syntax",
+                "platform_behavior",
+            ),
+            drive_letters=_required_str(
+                raw,
+                "drive_letters",
+                "platform_behavior",
+            ),
+            case_behavior=_required_str(
+                raw,
+                "case_behavior",
+                "platform_behavior",
+            ),
+        )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ContainerBackendCapabilities:
     backend: ContainerBackend | str
     host_os: str
     guest_os: str
     architecture: str
+    runtime_name: str | None = None
+    support_level: ContainerBackendSupportLevel | str = (
+        ContainerBackendSupportLevel.SUPPORTED
+    )
     platform_emulation: bool = False
     rootless: bool = False
     user_namespace: bool = False
@@ -1626,10 +1721,16 @@ class ContainerBackendCapabilities:
         default_factory=tuple,
     )
     per_container_vm_isolation: bool = False
+    vm_backed: bool = False
+    remote_engine: bool = False
     windows_process_isolation: bool = False
     windows_hyperv_isolation: bool = False
     streaming_attach: bool = False
     stats: bool = False
+    lifecycle_normalization: bool = True
+    platform_behavior: ContainerPlatformBehavior | None = None
+    shared_mount_prefixes: Sequence[str] = field(default_factory=tuple)
+    parity_requirements: Sequence[str] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1640,6 +1741,17 @@ class ContainerBackendCapabilities:
         _assert_non_empty_string(self.host_os, "host_os")
         _assert_non_empty_string(self.guest_os, "guest_os")
         _assert_non_empty_string(self.architecture, "architecture")
+        if self.runtime_name is not None:
+            _assert_non_empty_string(self.runtime_name, "runtime_name")
+        object.__setattr__(
+            self,
+            "support_level",
+            _enum_value(
+                self.support_level,
+                ContainerBackendSupportLevel,
+                "support_level",
+            ),
+        )
         for field_name in (
             "rootless",
             "user_namespace",
@@ -1648,12 +1760,20 @@ class ContainerBackendCapabilities:
             "platform_emulation",
             "resource_limits",
             "per_container_vm_isolation",
+            "vm_backed",
+            "remote_engine",
             "windows_process_isolation",
             "windows_hyperv_isolation",
             "streaming_attach",
             "stats",
+            "lifecycle_normalization",
         ):
             _assert_bool(getattr(self, field_name), field_name)
+        if self.platform_behavior is not None:
+            assert isinstance(
+                self.platform_behavior,
+                ContainerPlatformBehavior,
+            )
         object.__setattr__(
             self,
             "network_modes",
@@ -1678,9 +1798,26 @@ class ContainerBackendCapabilities:
                 for device in self.device_classes
             ),
         )
+        object.__setattr__(
+            self,
+            "shared_mount_prefixes",
+            _string_tuple(
+                self.shared_mount_prefixes,
+                "shared_mount_prefixes",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "parity_requirements",
+            _string_tuple(self.parity_requirements, "parity_requirements"),
+        )
 
     def to_dict(self) -> dict[str, object]:
         backend = cast(ContainerBackend, self.backend)
+        support_level = cast(
+            ContainerBackendSupportLevel,
+            self.support_level,
+        )
         network_modes = cast(
             tuple[ContainerNetworkMode, ...],
             self.network_modes,
@@ -1695,6 +1832,8 @@ class ContainerBackendCapabilities:
             "host_os": self.host_os,
             "guest_os": self.guest_os,
             "architecture": self.architecture,
+            "runtime_name": self.runtime_name,
+            "support_level": support_level.value,
             "platform_emulation": self.platform_emulation,
             "rootless": self.rootless,
             "user_namespace": self.user_namespace,
@@ -1705,10 +1844,20 @@ class ContainerBackendCapabilities:
             "resource_limits": self.resource_limits,
             "device_classes": [device.value for device in device_classes],
             "per_container_vm_isolation": self.per_container_vm_isolation,
+            "vm_backed": self.vm_backed,
+            "remote_engine": self.remote_engine,
             "windows_process_isolation": self.windows_process_isolation,
             "windows_hyperv_isolation": self.windows_hyperv_isolation,
             "streaming_attach": self.streaming_attach,
             "stats": self.stats,
+            "lifecycle_normalization": self.lifecycle_normalization,
+            "platform_behavior": (
+                None
+                if self.platform_behavior is None
+                else self.platform_behavior.to_dict()
+            ),
+            "shared_mount_prefixes": list(self.shared_mount_prefixes),
+            "parity_requirements": list(self.parity_requirements),
         }
 
 
