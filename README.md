@@ -80,17 +80,10 @@ async def main() -> None:
     settings = TransformerEngineSettings(access_token=api_key)
 
     with OpenAIModel("gpt-4o", settings) as model:
-        response = await model(
-            "Give me two facts about Leo Messi.",
-            settings=GenerationSettings(use_async_generator=False),
-        )
-        print(await response.to_str())
-
         async for item in await model(
-            "Give me two more facts about Leo Messi.",
+            "Give me two facts about Leo Messi.",
             settings=GenerationSettings(use_async_generator=True),
         ):
-            assert isinstance(item, CanonicalStreamItem)
             if (
                 item.kind is StreamItemKind.ANSWER_DELTA
                 and item.text_delta is not None
@@ -130,17 +123,17 @@ memory, orchestration, tasks, protocols, and human control.
 
 With Avalan, you can:
 
-- 💻 Run local and hosted models behind one interface, with inference-time
+- 💻 Run **local and hosted models** behind one interface, with inference-time
   control over prompts, sampling, streaming, backends, and vendor routing.
-- 🛠️ Execute tools as first-class runtime steps, including browser automation,
+- 🛠️ **Execute tools** as first-class runtime steps, including browser automation,
   code, databases, shell media tools, MCP servers, and A2A agents.
-- 🔁 Compose flows where each node, edge, input, output, and review boundary is
+- 🔁 **Compose flows** where each node, edge, input, output, and review boundary is
   visible.
-- ✅ Package repeatable work as tasks with typed inputs, file handling, queues,
+- ✅ Package repeatable work as **tasks with typed inputs**, file handling, queues,
   durable execution, privacy settings, and schema-validated outputs.
-- 🌐 Serve the same agents through OpenAI-compatible APIs, MCP, and A2A without
+- 🌐 **Serve your agents** through OpenAI-compatible APIs, MCP, and A2A without
   changing the agent runtime.
-- 🔒 Add human-in-the-loop and least-privilege controls around tool execution,
+- 🔒 Add **human-in-the-loop** and least-privilege controls around tool execution,
   data access, files, and networked agent calls.
 
 ## Documentation & Resources
