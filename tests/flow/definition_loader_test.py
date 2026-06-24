@@ -2061,7 +2061,7 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private.py", str(result.issues))
 
-    def test_rejects_container_syntax_until_flow_phase(self) -> None:
+    def test_container_syntax_fails_closed_without_strict_policy(self) -> None:
         cases = (
             (
                 """
@@ -2076,7 +2076,16 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 [nodes.start]
                 type = "echo"
                 """,
-                "runtime.container",
+                (
+                    (
+                        "flow.unsupported_field",
+                        "runtime.container.profile",
+                    ),
+                    (
+                        "flow.untrusted_container_authority",
+                        "runtime.container",
+                    ),
+                ),
             ),
             (
                 """
@@ -2091,23 +2100,23 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 [nodes.start.runtime.container]
                 profile = "workspace-readonly"
                 """,
-                "nodes.start.runtime.container",
+                (
+                    (
+                        "flow.container_legacy_runtime_unsupported",
+                        "runtime.container",
+                    ),
+                ),
             ),
         )
 
-        for source, path in cases:
-            with self.subTest(path=path):
+        for source, expected in cases:
+            with self.subTest(expected=expected):
                 result = loads_flow_definition_result(source)
 
                 self.assertFalse(result.ok)
-                self.assertEqual(len(result.issues), 1)
                 self.assertEqual(
-                    (result.issues[0].code, result.issues[0].path),
-                    ("container.unsupported_syntax", path),
-                )
-                self.assertEqual(
-                    result.issues[0].category.value,
-                    "unsupported",
+                    tuple((issue.code, issue.path) for issue in result.issues),
+                    expected,
                 )
 
     def test_rejects_unsupported_fields_and_values(self) -> None:

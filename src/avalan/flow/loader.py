@@ -1,6 +1,14 @@
 from ..container import (
     ContainerDiagnostic,
+    ContainerExecutionScope,
+    ContainerProfileSelection,
+    ContainerSettings,
+    ContainerSettingsOverride,
+    ContainerSettingsPrecedence,
+    ContainerSettingsSource,
     ContainerSurface,
+    ContainerTrustLevel,
+    container_selection_from_mapping,
     container_syntax_diagnostics,
 )
 from ..filesystem import (
@@ -36,6 +44,7 @@ from .definition import (
     FlowRetryBackoffStrategy,
     FlowRetryPolicy,
     FlowRouteMatchPolicy,
+    FlowRuntimeEnvelopeDefinition,
     FlowTimeoutPolicy,
 )
 from .diagnostics import (
@@ -73,7 +82,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from tomllib import TOMLDecodeError, loads
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 EnumValue = TypeVar("EnumValue", bound=StrEnum)
 RawSection = Mapping[str, object]
@@ -93,6 +102,7 @@ _ALLOWED_TOP_LEVEL_SECTIONS = frozenset(
         "outputs",
         "ownership",
         "privacy",
+        "runtime",
         "runtime_limits",
         "variables",
     }
@@ -134,6 +144,7 @@ _ALLOWED_NODE_FIELDS = frozenset(
         "path",
         "ref",
         "retry_policy",
+        "runtime",
         "timeout_policy",
         "type",
         "value",
@@ -199,6 +210,27 @@ _ALLOWED_GRAPH_FIELDS = frozenset(
         "source",
     }
 )
+_ALLOWED_RUNTIME_FIELDS = frozenset({"container"})
+_ALLOWED_RUNTIME_CONTAINER_FIELDS = frozenset(
+    {
+        "allowed_profiles",
+        "backend",
+        "default_profile",
+        "envelope",
+        "profile_registry_id",
+        "profiles",
+        "policy_version",
+    }
+)
+_ALLOWED_RUNTIME_ENVELOPE_FIELDS = frozenset(
+    {
+        "profile",
+        "readiness_timeout_seconds",
+        "required",
+        "scope",
+    }
+)
+_ALLOWED_NODE_RUNTIME_FIELDS = frozenset({"container"})
 _ALLOWED_GRAPH_EDGE_FIELDS = _ALLOWED_EDGE_FIELDS - {"source", "target"}
 _GRAPH_EDGE_METADATA_PATH = "graph.edges.metadata"
 _ALLOWED_CONDITION_FIELDS = frozenset(
@@ -497,6 +529,15 @@ def build_flow(
     registry: FlowNodeRegistry | None = None,
 ) -> Flow:
     assert isinstance(definition, FlowDefinition)
+    if _requires_strict_container_runtime(definition):
+        raise FlowNodeConfigurationError(
+            code="flow.container_legacy_runtime_unsupported",
+            path="runtime.container",
+            message="Legacy flow runtime cannot enforce container policy.",
+            hint=(
+                "Run containerized flows through strict flow execution plans."
+            ),
+        )
     node_registry = registry or default_flow_node_registry()
     flow = Flow()
     for node_definition in definition.nodes:
@@ -515,6 +556,14 @@ def build_flow(
             conditions=conditions,
         )
     return flow
+
+
+def _requires_strict_container_runtime(definition: FlowDefinition) -> bool:
+    return bool(
+        definition.container is not None
+        or definition.runtime_envelope is not None
+        or any(node.container is not None for node in definition.nodes)
+    )
 
 
 def _edge_condition_callable(
@@ -609,6 +658,11 @@ async def _build_result(
         "runtime_limits",
         issues,
         required=False,
+    )
+    runtime_raw = _section(raw, "runtime", issues, required=False)
+    container_settings, runtime_envelope = _runtime_container(
+        runtime_raw,
+        issues,
     )
     privacy_raw = _section(raw, "privacy", issues, required=False)
     observability_raw = _section(
@@ -730,6 +784,8 @@ async def _build_result(
         entry_behavior=entry_behavior,
         output_behavior=output_behavior,
         runtime_limits=runtime_limits or {},
+        container=container_settings,
+        runtime_envelope=runtime_envelope,
         privacy_policy=privacy_policy or {},
         observability_policy=observability_policy or {},
         tags=tags,
@@ -739,6 +795,26 @@ async def _build_result(
         edges=edges,
         definition_base=definition_base,
     )
+    if build_runtime and _requires_strict_container_runtime(definition):
+        return FlowLoadResult(
+            definition=None,
+            issues=(
+                _issue(
+                    code="flow.container_legacy_runtime_unsupported",
+                    path="runtime.container",
+                    message=(
+                        "Legacy flow runtime cannot enforce container policy."
+                    ),
+                    hint=(
+                        "Run containerized flows through strict flow "
+                        "execution plans."
+                    ),
+                    category=FlowLoadIssueCategory.VALUE,
+                ),
+            ),
+            authoring_graph=authoring_graph,
+            graph_inspection=graph_inspection,
+        )
     validation_result = validate_flow_definition(definition, registry)
     issues.extend(
         _issue_from_diagnostic(diagnostic)
@@ -827,6 +903,7 @@ def _uses_strict_definition(
         "outputs",
         "ownership",
         "privacy",
+        "runtime",
         "runtime_limits",
     }
     return bool(
@@ -847,9 +924,133 @@ def _nodes_use_strict_definition(value: object) -> bool:
             "loop_policy",
             "mapping",
             "retry_policy",
+            "runtime",
             "timeout_policy",
         }.intersection(raw)
         for raw in value.values()
+    )
+
+
+def _runtime_container(
+    raw: RawSection | None,
+    issues: list[FlowLoadIssue],
+) -> tuple[ContainerSettings | None, FlowRuntimeEnvelopeDefinition | None]:
+    if raw is None:
+        return None, None
+    _validate_unknown_fields(
+        raw,
+        allowed=_ALLOWED_RUNTIME_FIELDS,
+        path="runtime",
+        issues=issues,
+    )
+    container_raw = _optional_mapping(
+        raw,
+        "runtime.container",
+        "container",
+        issues,
+    )
+    if container_raw is None:
+        return None, None
+    settings_raw = dict(container_raw)
+    envelope_raw = settings_raw.pop("envelope", None)
+    _validate_unknown_fields(
+        container_raw,
+        allowed=_ALLOWED_RUNTIME_CONTAINER_FIELDS,
+        path="runtime.container",
+        issues=issues,
+    )
+    settings = _flow_toml_container_authority(settings_raw, issues)
+    envelope = _runtime_envelope(envelope_raw, issues)
+    return settings, envelope
+
+
+def _flow_toml_container_authority(
+    raw: Mapping[str, object],
+    issues: list[FlowLoadIssue],
+) -> ContainerSettings | None:
+    if not raw:
+        return None
+    issues.append(
+        _issue(
+            code="flow.untrusted_container_authority",
+            path="runtime.container",
+            message="Flow TOML cannot define trusted container authority.",
+            hint=(
+                "Provide trusted container defaults from an operator or "
+                "deployment source before loading the flow."
+            ),
+            category=FlowLoadIssueCategory.VALUE,
+        )
+    )
+    return None
+
+
+def _runtime_envelope(
+    value: object,
+    issues: list[FlowLoadIssue],
+) -> FlowRuntimeEnvelopeDefinition | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_section_type("runtime.container.envelope"))
+        return None
+    raw = cast(RawSection, value)
+    _validate_unknown_fields(
+        raw,
+        allowed=_ALLOWED_RUNTIME_ENVELOPE_FIELDS,
+        path="runtime.container.envelope",
+        issues=issues,
+    )
+    readiness_timeout_seconds = _optional_int(
+        raw,
+        "runtime.container.envelope.readiness_timeout_seconds",
+        "readiness_timeout_seconds",
+        issues,
+    )
+    if (
+        readiness_timeout_seconds is not None
+        and readiness_timeout_seconds <= 0
+    ):
+        issues.append(
+            _issue(
+                code="flow.invalid_container_runtime_envelope",
+                path="runtime.container.envelope.readiness_timeout_seconds",
+                message="Flow runtime envelope readiness timeout is invalid.",
+                hint="Use a positive integer readiness timeout.",
+                category=FlowLoadIssueCategory.VALUE,
+            )
+        )
+        return None
+    selection_raw = {
+        key: item
+        for key, item in raw.items()
+        if key != "readiness_timeout_seconds"
+    }
+    try:
+        selection = container_selection_from_mapping(
+            selection_raw,
+            source=_untrusted_flow_container_source(),
+            scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+        )
+    except AssertionError as error:
+        issues.append(
+            _issue(
+                code="flow.invalid_container_runtime_envelope",
+                path="runtime.container.envelope",
+                message="Flow runtime envelope selection is invalid.",
+                hint=_assertion_hint(error),
+                category=FlowLoadIssueCategory.VALUE,
+            )
+        )
+        return None
+    assert isinstance(selection, ContainerProfileSelection)
+    return FlowRuntimeEnvelopeDefinition(
+        container=selection,
+        readiness_timeout_seconds=(
+            readiness_timeout_seconds
+            if readiness_timeout_seconds is not None
+            else 30
+        ),
     )
 
 
@@ -1388,6 +1589,11 @@ def _node_definitions(
             issues,
             path=f"nodes.{name}.loop_policy",
         )
+        container = _node_container_override(
+            value.get("runtime"),
+            issues,
+            path=f"nodes.{name}.runtime",
+        )
         if node_type is None:
             continue
         config = _node_config(value, issues, path=f"nodes.{name}")
@@ -1402,11 +1608,64 @@ def _node_definitions(
                 retry_policy=retry_policy,
                 timeout_policy=timeout_policy,
                 loop_policy=loop_policy,
+                container=container,
                 mappings=mappings,
                 config=config,
             )
         )
     return tuple(nodes)
+
+
+def _node_container_override(
+    value: object,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> ContainerSettingsOverride | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_section_type(path))
+        return None
+    raw = cast(RawSection, value)
+    _validate_unknown_fields(
+        raw,
+        allowed=_ALLOWED_NODE_RUNTIME_FIELDS,
+        path=path,
+        issues=issues,
+    )
+    container_raw = _optional_mapping(
+        raw,
+        f"{path}.container",
+        "container",
+        issues,
+    )
+    if container_raw is None:
+        return None
+    try:
+        return ContainerSettingsOverride.from_dict(
+            container_raw,
+            source=_untrusted_flow_container_source(),
+            layer=ContainerSettingsPrecedence.FLOW_TOML,
+        )
+    except AssertionError as error:
+        issues.append(
+            _issue(
+                code="flow.invalid_node_container",
+                path=f"{path}.container",
+                message="Flow node container settings are invalid.",
+                hint=_assertion_hint(error),
+                category=FlowLoadIssueCategory.VALUE,
+            )
+        )
+        return None
+
+
+def _untrusted_flow_container_source() -> ContainerSettingsSource:
+    return ContainerSettingsSource(
+        surface=ContainerSurface.FLOW_TOML,
+        trust_level=ContainerTrustLevel.UNTRUSTED_FLOW,
+    )
 
 
 def _container_issues(
@@ -2290,6 +2549,13 @@ def _issue(
         source_span=source_span,
         diagnostic_category=diagnostic_category,
     )
+
+
+def _assertion_hint(error: AssertionError) -> str:
+    text = str(error).strip()
+    if text:
+        return text
+    return "Use only supported, trusted flow configuration values."
 
 
 def _issue_from_diagnostic(diagnostic: FlowDiagnostic) -> FlowLoadIssue:

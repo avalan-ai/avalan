@@ -425,6 +425,23 @@ def _direct_execution_diagnostics(
     plan: FlowExecutionPlan,
 ) -> tuple[FlowDiagnostic, ...]:
     assert isinstance(plan, FlowExecutionPlan)
+    if plan.runtime_envelope is not None:
+        return (
+            FlowDiagnostic(
+                code="flow.execution.container_runtime_envelope_unavailable",
+                category=FlowDiagnosticCategory.EXECUTION,
+                severity=FlowDiagnosticSeverity.ERROR,
+                path="runtime.container.envelope",
+                message=(
+                    "Flow runtime envelope execution is not available in "
+                    "this runner."
+                ),
+                hint=(
+                    "Use an operator runtime that can enforce the flow "
+                    "runtime envelope."
+                ),
+            ),
+        )
     for node in plan.nodes:
         if FlowNodeCapability.TASK_BACKED in node.capabilities:
             return (

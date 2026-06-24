@@ -1,3 +1,15 @@
+from ..container import (
+    ContainerApprovalRecord,
+    ContainerAuditEvent,
+    ContainerAuditEventType,
+    ContainerAuthorizationDecisionType,
+    ContainerEffectiveSettings,
+    ContainerPolicy,
+    ContainerPolicyContext,
+    ContainerPolicyPlan,
+    ContainerResultStatus,
+    ContainerReviewSurface,
+)
 from ..event import EventType
 from ..model.stream import CanonicalStreamItem
 from ..types import assert_non_empty_string
@@ -24,6 +36,7 @@ from .plan import (
     FlowMappingPlan,
     FlowNodePlan,
     FlowRetryPlan,
+    flow_node_container_fingerprint,
 )
 from .registry import (
     FlowNodeConfigurationError,
@@ -46,7 +59,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from importlib import import_module
 from inspect import isawaitable
-from time import monotonic
+from time import monotonic, time
 from types import MappingProxyType, ModuleType
 from typing import Protocol, TypeAlias, cast
 from uuid import uuid4
@@ -395,6 +408,12 @@ async def execute_flow_plan(
     )
     assert concurrency_limit > 0
     flow_run_id = _flow_event_id(plan)
+    if plan.runtime_envelope is not None:
+        return FlowPlanExecutionResult(
+            trace=resume_trace or FlowExecutionTrace.from_plan(plan),
+            diagnostics=(_runtime_envelope_unavailable_diagnostic(),),
+            node_outputs=resume_node_outputs or {},
+        )
     if stream_session is None:
         stream_session = flow_stream_session(
             stream_session_id=str(uuid4()),
@@ -420,15 +439,20 @@ async def execute_flow_plan(
     trace = resume_trace or FlowExecutionTrace.from_plan(plan)
     node_map = plan.node_map
     event_drafts: list[_FlowEventDraft] = []
-    ready, queued, processed, trace, resume_diagnostics = (
-        _initial_runtime_queue(
-            plan,
-            input_values,
-            node_outputs,
-            resume_payloads,
-            trace,
-            event_drafts=event_drafts,
-        )
+    (
+        ready,
+        queued,
+        processed,
+        trace,
+        resume_diagnostics,
+        container_approvals,
+    ) = _initial_runtime_queue(
+        plan,
+        input_values,
+        node_outputs,
+        resume_payloads,
+        trace,
+        event_drafts=event_drafts,
     )
     diagnostics.extend(resume_diagnostics)
     paused = False
@@ -509,6 +533,17 @@ async def execute_flow_plan(
                         )
                     )
                     continue
+                container_outcome = await _container_authorization_outcome(
+                    plan,
+                    node,
+                    approval=container_approvals.get(node.name),
+                    started_at=started_at,
+                    event_listener=event_listener,
+                    stream_session=stream_session,
+                )
+                if container_outcome is not None:
+                    batch_outcomes.append(container_outcome)
+                    continue
                 pause_outcome = _human_review_pause_outcome(
                     node,
                     started_at,
@@ -550,6 +585,12 @@ async def execute_flow_plan(
                 )
                 diagnostics.extend(outcome.diagnostics)
                 await _emit_node_outcome_event(
+                    event_listener,
+                    stream_session,
+                    plan,
+                    outcome,
+                )
+                await _emit_container_result_events(
                     event_listener,
                     stream_session,
                     plan,
@@ -720,10 +761,13 @@ def _initial_runtime_queue(
     set[str],
     FlowExecutionTrace,
     tuple[FlowDiagnostic, ...],
+    Mapping[str, ContainerApprovalRecord],
 ]:
     node_states = {node.node: node.state for node in trace.nodes}
     diagnostics: list[FlowDiagnostic] = []
     resume_routes: dict[str, FlowEdgeKind] = {}
+    resumed_container_nodes: set[str] = set()
+    container_approvals: dict[str, ContainerApprovalRecord] = {}
     for node_name, payload in resume_decisions.items():
         node = plan.node_map.get(node_name)
         if node is None:
@@ -752,6 +796,82 @@ def _initial_runtime_queue(
                 diagnostics=(diagnostic,),
             )
             continue
+        if _is_container_review_node(node):
+            if payload.get("decision") == "denied":
+                diagnostic = _execution_diagnostic(
+                    code="flow.execution.container_review_denied",
+                    path=f"nodes.{node.name}.runtime.container",
+                    message="Container review denied execution.",
+                    hint="Change the container profile or approve the review.",
+                )
+                diagnostics.append(diagnostic)
+                trace = trace.with_node_state(
+                    node.name,
+                    FlowNodeState.FAILED,
+                    diagnostics=(diagnostic,),
+                )
+                _append_node_event_draft(
+                    event_drafts,
+                    EventType.FLOW_NODE_FAILED,
+                    node=node.name,
+                    status="failed",
+                    diagnostics=(diagnostic,),
+                )
+                _append_container_event_draft(
+                    event_drafts,
+                    node=node,
+                    event_type=ContainerAuditEventType.REVIEW_DECISION,
+                    metadata={"decision": "denied"},
+                )
+                continue
+            approval = _container_approval_from_resume(plan, node, payload)
+            if approval is None:
+                diagnostic = _execution_diagnostic(
+                    code="flow.execution.invalid_container_approval",
+                    path=f"nodes.{node.name}.approval",
+                    message="Container review approval is invalid.",
+                    hint=(
+                        "Resume with a durable approval record for the "
+                        "exact paused container plan."
+                    ),
+                )
+                diagnostics.append(diagnostic)
+                trace = trace.with_node_state(
+                    node.name,
+                    FlowNodeState.FAILED,
+                    diagnostics=(diagnostic,),
+                )
+                _append_node_event_draft(
+                    event_drafts,
+                    EventType.FLOW_NODE_FAILED,
+                    node=node.name,
+                    status="failed",
+                    diagnostics=(diagnostic,),
+                )
+                _append_container_event_draft(
+                    event_drafts,
+                    node=node,
+                    event_type=ContainerAuditEventType.REVIEW_DECISION,
+                    metadata={"decision": "invalid"},
+                )
+                continue
+            container_approvals[node.name] = approval
+            resumed_container_nodes.add(node.name)
+            attempts = max(1, _node_trace_attempts(trace, node.name))
+            _append_node_event_draft(
+                event_drafts,
+                EventType.FLOW_NODE_RESUMED,
+                node=node.name,
+                status="resumed",
+                attempts=attempts,
+            )
+            _append_container_event_draft(
+                event_drafts,
+                node=node,
+                event_type=ContainerAuditEventType.REVIEW_DECISION,
+                metadata={"decision": "approved"},
+            )
+            continue
         node_outputs[node.name] = _node_output_mapping(node, payload)
         attempts = max(1, _node_trace_attempts(trace, node.name))
         trace = trace.with_node_state(
@@ -775,10 +895,34 @@ def _initial_runtime_queue(
     }
     processed.update(resume_routes)
     if not processed:
+        if resumed_container_nodes:
+            resumed_ready = deque(sorted(resumed_container_nodes))
+            return (
+                resumed_ready,
+                set(resumed_container_nodes),
+                set(),
+                trace,
+                tuple(diagnostics),
+                MappingProxyType(container_approvals),
+            )
         if resume_decisions:
-            return deque(), set(), set(), trace, tuple(diagnostics)
+            return (
+                deque(),
+                set(),
+                set(),
+                trace,
+                tuple(diagnostics),
+                MappingProxyType(container_approvals),
+            )
         ready: deque[str] = deque((plan.entry_node,))
-        return ready, {plan.entry_node}, set(), trace, tuple(diagnostics)
+        return (
+            ready,
+            {plan.entry_node},
+            set(),
+            trace,
+            tuple(diagnostics),
+            MappingProxyType(container_approvals),
+        )
 
     ready = deque[str]()
     queued: set[str] = set()
@@ -804,7 +948,18 @@ def _initial_runtime_queue(
                 event_drafts=event_drafts,
             )
             diagnostics.extend(join_diagnostics)
-    return ready, queued, processed, trace, tuple(diagnostics)
+    for node_name in sorted(resumed_container_nodes):
+        if node_name not in processed and node_name not in queued:
+            ready.append(node_name)
+            queued.add(node_name)
+    return (
+        ready,
+        queued,
+        processed,
+        trace,
+        tuple(diagnostics),
+        MappingProxyType(container_approvals),
+    )
 
 
 def _node_trace_attempts(trace: FlowExecutionTrace, node_name: str) -> int:
@@ -819,6 +974,8 @@ def _validate_resume_decision(
     payload: Mapping[str, object],
     node_states: Mapping[str, FlowNodeState],
 ) -> FlowDiagnostic | None:
+    if _is_container_review_node(node):
+        return _validate_container_resume_decision(node, payload, node_states)
     if node.kind != FlowNodeKind.HUMAN_REVIEW:
         return _execution_diagnostic(
             code="flow.execution.invalid_resume_node",
@@ -853,6 +1010,110 @@ def _validate_resume_decision(
             hint="Use one of the configured human review decisions.",
         )
     return _validate_resume_decision_schema(node, payload)
+
+
+def _validate_container_resume_decision(
+    node: FlowNodePlan,
+    payload: Mapping[str, object],
+    node_states: Mapping[str, FlowNodeState],
+) -> FlowDiagnostic | None:
+    if node_states.get(node.name) != FlowNodeState.PAUSED:
+        return _execution_diagnostic(
+            code="flow.execution.invalid_resume_state",
+            path=f"nodes.{node.name}",
+            message="Container review targets a node that is not paused.",
+            hint="Resume a currently paused container review node.",
+        )
+    decision = payload.get("decision")
+    if decision not in {"approved", "denied"}:
+        return _execution_diagnostic(
+            code="flow.execution.invalid_container_review_decision",
+            path=f"nodes.{node.name}.decision",
+            message="Container review decision is invalid.",
+            hint="Use approved or denied.",
+        )
+    if decision == "approved":
+        approval = payload.get("approval")
+        if not isinstance(approval, Mapping):
+            return _execution_diagnostic(
+                code="flow.execution.missing_container_approval",
+                path=f"nodes.{node.name}.approval",
+                message="Container review approval record is missing.",
+                hint=(
+                    "Provide a durable approval record for this container "
+                    "plan."
+                ),
+            )
+    return None
+
+
+def _is_container_review_node(node: FlowNodePlan) -> bool:
+    return node.container is not None and node.container.enabled
+
+
+def _container_approval_from_resume(
+    plan: FlowExecutionPlan,
+    node: FlowNodePlan,
+    payload: Mapping[str, object],
+) -> ContainerApprovalRecord | None:
+    decision = payload.get("decision")
+    if decision != "approved":
+        return None
+    approval = payload.get("approval")
+    if not isinstance(approval, Mapping):
+        return None
+    try:
+        return _container_approval_from_mapping(approval)
+    except AssertionError:
+        return None
+
+
+def _container_approval_from_mapping(
+    raw: Mapping[str, object],
+) -> ContainerApprovalRecord:
+    approved_triggers = raw.get("approved_triggers", ())
+    assert isinstance(approved_triggers, list | tuple)
+    return ContainerApprovalRecord(
+        reviewer_identity=_required_resume_str(raw, "reviewer_identity"),
+        review_mode=_required_resume_str(raw, "review_mode"),
+        plan_fingerprint=_required_resume_str(raw, "plan_fingerprint"),
+        scope_id=_required_resume_str(raw, "scope_id"),
+        attempt_id=_optional_resume_str(raw, "attempt_id"),
+        profile_name=_required_resume_str(raw, "profile_name"),
+        policy_version=_required_resume_str(raw, "policy_version"),
+        expires_at_seconds=_required_resume_int(raw, "expires_at_seconds"),
+        approved_triggers=tuple(
+            _required_sequence_str(trigger, "approved_triggers")
+            for trigger in approved_triggers
+        ),
+    )
+
+
+def _required_resume_str(raw: Mapping[str, object], key: str) -> str:
+    value = raw.get(key)
+    assert isinstance(value, str) and value.strip()
+    return value
+
+
+def _optional_resume_str(raw: Mapping[str, object], key: str) -> str | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    assert isinstance(value, str) and value.strip()
+    return value
+
+
+def _required_resume_int(raw: Mapping[str, object], key: str) -> int:
+    value = raw.get(key)
+    assert isinstance(value, int) and not isinstance(value, bool)
+    return value
+
+
+def _required_sequence_str(value: object, field_name: str) -> str:
+    assert (
+        isinstance(value, str) and value.strip()
+    ), f"{field_name} must contain non-empty strings"
+    return value
 
 
 def _validate_resume_decision_schema(
@@ -918,6 +1179,170 @@ def _human_review_pause_outcome(
         diagnostics=(),
         duration_ms=_elapsed_ms(started_at),
         pause_token=uuid4().hex,
+    )
+
+
+async def _container_authorization_outcome(
+    plan: FlowExecutionPlan,
+    node: FlowNodePlan,
+    *,
+    approval: ContainerApprovalRecord | None,
+    started_at: float,
+    event_listener: FlowStreamListener | None,
+    stream_session: FlowStreamSession,
+) -> _NodeRunOutcome | None:
+    settings = node.container
+    if settings is None or not settings.enabled:
+        return None
+    policy_plan = _container_policy_plan(plan, node)
+    policy = ContainerPolicy(policy_version=settings.policy_version)
+    try:
+        decision = policy.authorize(
+            policy_plan,
+            approval=approval,
+            now_seconds=int(time()),
+        )
+    except AssertionError:
+        diagnostic = _execution_diagnostic(
+            code="flow.execution.container_review_invalid",
+            path=f"nodes.{node.name}.runtime.container",
+            message="Container review approval is invalid.",
+            hint=(
+                "Resume with an approval for the exact paused container plan."
+            ),
+        )
+        await _emit_container_event(
+            event_listener,
+            stream_session,
+            plan,
+            node,
+            ContainerAuditEventType.REVIEW_DECISION,
+            metadata={"decision": "invalid"},
+        )
+        return _NodeRunOutcome(
+            node=node,
+            state=FlowNodeState.FAILED,
+            route_kind=FlowEdgeKind.ERROR,
+            attempts=1,
+            diagnostics=(diagnostic,),
+            duration_ms=_elapsed_ms(started_at),
+            failure_category="container_policy",
+        )
+    decision_type = cast(ContainerAuthorizationDecisionType, decision.decision)
+    await _emit_container_event(
+        event_listener,
+        stream_session,
+        plan,
+        node,
+        ContainerAuditEventType.POLICY_EVALUATION,
+        metadata={
+            "decision": decision_type.value,
+            "code": decision.code,
+        },
+    )
+    if decision_type is ContainerAuthorizationDecisionType.ALLOW:
+        if approval is not None:
+            await _emit_container_event(
+                event_listener,
+                stream_session,
+                plan,
+                node,
+                ContainerAuditEventType.REVIEW_DECISION,
+                metadata={"decision": "approved"},
+            )
+        await _emit_container_event(
+            event_listener,
+            stream_session,
+            plan,
+            node,
+            ContainerAuditEventType.BACKEND_SELECTION,
+            metadata={"backend": str(settings.backend)},
+        )
+        await _emit_container_event(
+            event_listener,
+            stream_session,
+            plan,
+            node,
+            ContainerAuditEventType.CONTAINER_CREATE,
+        )
+        await _emit_container_event(
+            event_listener,
+            stream_session,
+            plan,
+            node,
+            ContainerAuditEventType.CONTAINER_START,
+        )
+        return None
+    if decision_type is ContainerAuthorizationDecisionType.REQUIRES_REVIEW:
+        await _emit_container_event(
+            event_listener,
+            stream_session,
+            plan,
+            node,
+            ContainerAuditEventType.REVIEW_REQUEST,
+            metadata={"decision": "requires_review"},
+        )
+        return _NodeRunOutcome(
+            node=node,
+            state=FlowNodeState.PAUSED,
+            route_kind=FlowEdgeKind.PAUSE,
+            attempts=1,
+            diagnostics=(),
+            duration_ms=_elapsed_ms(started_at),
+            pause_token=uuid4().hex,
+        )
+    diagnostic = _execution_diagnostic(
+        code="flow.execution.container_policy_denied",
+        path=f"nodes.{node.name}.runtime.container",
+        message="Container policy denied node execution.",
+        hint=decision.explanation,
+    )
+    await _emit_container_event(
+        event_listener,
+        stream_session,
+        plan,
+        node,
+        ContainerAuditEventType.DENIAL,
+        metadata={"decision": "denied", "code": decision.code},
+    )
+    return _NodeRunOutcome(
+        node=node,
+        state=FlowNodeState.FAILED,
+        route_kind=FlowEdgeKind.ERROR,
+        attempts=1,
+        diagnostics=(diagnostic,),
+        duration_ms=_elapsed_ms(started_at),
+        failure_category="container_policy",
+    )
+
+
+def _container_policy_plan(
+    plan: FlowExecutionPlan,
+    node: FlowNodePlan,
+) -> ContainerPolicyPlan:
+    settings = node.container
+    assert isinstance(settings, ContainerEffectiveSettings)
+    return ContainerPolicyPlan(
+        effective_settings=settings,
+        context=ContainerPolicyContext(
+            surface=ContainerReviewSurface.STRICT_FLOW,
+            scope_id=f"{_flow_event_id(plan)}:{node.name}",
+        ),
+        command_fingerprint=flow_node_container_fingerprint(plan, node),
+    )
+
+
+def _runtime_envelope_unavailable_diagnostic() -> FlowDiagnostic:
+    return _execution_diagnostic(
+        code="flow.execution.container_runtime_envelope_unavailable",
+        path="runtime.container.envelope",
+        message=(
+            "Flow runtime envelope execution is not available in this runner."
+        ),
+        hint=(
+            "Use an operator runtime that can enforce the flow runtime "
+            "envelope."
+        ),
     )
 
 
@@ -1353,6 +1778,68 @@ async def _emit_flow_event_drafts(
         )
 
 
+async def _emit_container_event(
+    event_listener: FlowStreamListener | None,
+    stream_session: FlowStreamSession,
+    plan: FlowExecutionPlan,
+    node: FlowNodePlan,
+    event_type: ContainerAuditEventType,
+    *,
+    metadata: Mapping[str, str] | None = None,
+) -> None:
+    if node.container is None:
+        return
+    event = ContainerAuditEvent(
+        event_type=event_type,
+        scope=node.container.scope,
+        profile_name=node.container.profile_name,
+        policy_version=node.container.policy_version,
+        metadata=metadata or {},
+    )
+    await _emit_flow_event(
+        event_listener,
+        stream_session,
+        EventType.FLOW_CONTAINER_EVENT,
+        plan,
+        payload=_container_event_payload(node, event),
+    )
+
+
+async def _emit_container_result_events(
+    event_listener: FlowStreamListener | None,
+    stream_session: FlowStreamSession,
+    plan: FlowExecutionPlan,
+    outcome: _NodeRunOutcome,
+) -> None:
+    if outcome.node.container is None or outcome.state == FlowNodeState.PAUSED:
+        return
+    status = (
+        ContainerResultStatus.COMPLETED
+        if outcome.state == FlowNodeState.SUCCEEDED
+        else (
+            ContainerResultStatus.CANCELLED
+            if outcome.state == FlowNodeState.CANCELLED
+            else ContainerResultStatus.FAILED
+        )
+    )
+    await _emit_container_event(
+        event_listener,
+        stream_session,
+        plan,
+        outcome.node,
+        ContainerAuditEventType.RESULT_RECORDED,
+        metadata={"status": status.value},
+    )
+    await _emit_container_event(
+        event_listener,
+        stream_session,
+        plan,
+        outcome.node,
+        ContainerAuditEventType.CLEANUP,
+        metadata={"status": "completed"},
+    )
+
+
 async def _emit_node_outcome_event(
     event_listener: FlowStreamListener | None,
     stream_session: FlowStreamSession,
@@ -1462,6 +1949,55 @@ def _append_node_event_draft(
     if attempts is not None:
         payload["attempts"] = attempts
     drafts.append(_FlowEventDraft(type=event_type, payload=payload))
+
+
+def _append_container_event_draft(
+    drafts: list[_FlowEventDraft] | None,
+    *,
+    node: FlowNodePlan,
+    event_type: ContainerAuditEventType,
+    metadata: Mapping[str, str] | None = None,
+) -> None:
+    if drafts is None or node.container is None:
+        return
+    event = ContainerAuditEvent(
+        event_type=event_type,
+        scope=node.container.scope,
+        profile_name=node.container.profile_name,
+        policy_version=node.container.policy_version,
+        metadata=metadata or {},
+    )
+    drafts.append(
+        _FlowEventDraft(
+            type=EventType.FLOW_CONTAINER_EVENT,
+            payload=_container_event_payload(node, event),
+        )
+    )
+
+
+def _container_event_payload(
+    node: FlowNodePlan,
+    event: ContainerAuditEvent,
+) -> dict[str, object]:
+    serialized = event.to_dict()
+    metadata = serialized["metadata"]
+    assert isinstance(metadata, Mapping)
+    payload: dict[str, object] = {
+        "node": node.name,
+        "container_event": serialized["event_type"],
+        "scope": serialized["scope"],
+        "profile_name": serialized["profile_name"],
+        "policy_version": serialized["policy_version"],
+        "metadata": dict(metadata),
+        "status": str(metadata.get("status", serialized["event_type"])),
+    }
+    decision = metadata.get("decision")
+    if isinstance(decision, str) and decision.strip():
+        payload["decision"] = decision
+    backend = metadata.get("backend")
+    if isinstance(backend, str) and backend.strip():
+        payload["backend"] = backend
+    return payload
 
 
 def _append_condition_event_draft(

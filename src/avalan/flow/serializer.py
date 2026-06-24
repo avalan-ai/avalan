@@ -1,3 +1,4 @@
+from ..container import ContainerSettings, ContainerSettingsOverride
 from .condition import FlowCondition
 from .definition import (
     FlowDefinition,
@@ -11,6 +12,7 @@ from .definition import (
     FlowOutputBehavior,
     FlowOutputDefinition,
     FlowRetryPolicy,
+    FlowRuntimeEnvelopeDefinition,
     FlowTimeoutPolicy,
 )
 
@@ -101,6 +103,15 @@ def _write_flow_definition(
     )
     _write_metadata_table(writer, ("ownership",), definition.ownership)
     _write_metadata_table(writer, ("variables",), definition.variables)
+    if (
+        definition.container is not None
+        or definition.runtime_envelope is not None
+    ):
+        _write_runtime_container(
+            writer,
+            definition.container,
+            definition.runtime_envelope,
+        )
     for node in definition.nodes:
         _write_node_definition(writer, node)
     for edge in definition.edges:
@@ -203,11 +214,43 @@ def _write_node_definition(
         _write_timeout_policy(writer, node.name, node.timeout_policy)
     if node.loop_policy is not None:
         _write_loop_policy(writer, node.name, node.loop_policy)
+    if node.container is not None:
+        _write_node_container(writer, node.name, node.container)
     for mapping in node.mappings:
         _write_node_mapping(writer, node.name, mapping)
     if node.config:
         writer.table("nodes", node.name, "config")
         _write_sorted_mapping(writer, node.config)
+
+
+def _write_runtime_container(
+    writer: _TomlWriter,
+    settings: ContainerSettings | None,
+    envelope: FlowRuntimeEnvelopeDefinition | None,
+) -> None:
+    if settings is not None:
+        fields = _container_toml_mapping(settings.to_dict())
+        fields.pop("source", None)
+        writer.table("runtime", "container")
+        _write_sorted_mapping(writer, fields)
+    if envelope is not None:
+        fields = _container_toml_mapping(envelope.container.to_dict())
+        fields["readiness_timeout_seconds"] = (
+            envelope.readiness_timeout_seconds
+        )
+        writer.table("runtime", "container", "envelope")
+        _write_sorted_mapping(writer, fields)
+
+
+def _write_node_container(
+    writer: _TomlWriter,
+    node_name: str,
+    override: ContainerSettingsOverride,
+) -> None:
+    fields = _container_toml_mapping(override.to_dict())
+    fields.pop("layer", None)
+    writer.table("nodes", node_name, "runtime", "container")
+    _write_sorted_mapping(writer, fields)
 
 
 def _write_join_policy(
@@ -362,6 +405,30 @@ def _write_sorted_mapping(
 ) -> None:
     for key in sorted(value):
         writer.field(key, value[key])
+
+
+def _container_toml_mapping(
+    value: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        key: cleaned
+        for key, item in value.items()
+        if (cleaned := _container_toml_value(item)) is not None
+    }
+
+
+def _container_toml_value(value: object) -> object | None:
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        return _container_toml_mapping(value)
+    if isinstance(value, list | tuple):
+        return tuple(
+            cleaned
+            for item in value
+            if (cleaned := _container_toml_value(item)) is not None
+        )
+    return value
 
 
 def _toml_path(path: Sequence[str]) -> str:

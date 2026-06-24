@@ -1,3 +1,4 @@
+from ..container import ContainerEffectiveSettings
 from ..entities import (
     ToolCall,
     ToolCallContext,
@@ -105,6 +106,10 @@ class FlowNodeRegistry:
         self._metadata: dict[str, FlowNodeMetadata] = {}
         self._validators: dict[str, FlowNodeDefinitionValidator] = {}
         self._tool_resolvers: dict[str, FlowToolResolver] = {}
+        self._tool_container_settings: dict[
+            str,
+            ContainerEffectiveSettings,
+        ] = {}
         self._tool_descriptors: dict[str, Mapping[str, ToolDescriptor]] = {}
         self._subflow_resolvers: dict[str, FlowSubflowResolver] = {}
         node_metadata = metadata or {}
@@ -186,15 +191,21 @@ class FlowNodeRegistry:
         node_type: str,
         resolver: FlowToolResolver,
         descriptors: Mapping[str, ToolDescriptor],
+        *,
+        container_settings: ContainerEffectiveSettings | None = None,
     ) -> "FlowNodeRegistry":
         assert isinstance(node_type, str) and node_type.strip()
         assert _is_flow_tool_resolver(resolver)
         assert isinstance(descriptors, Mapping)
+        if container_settings is not None:
+            assert isinstance(container_settings, ContainerEffectiveSettings)
         for name, descriptor in descriptors.items():
             assert isinstance(name, str) and name.strip()
             assert isinstance(descriptor, ToolDescriptor)
         self._tool_resolvers[node_type] = resolver
         self._tool_descriptors[node_type] = dict(descriptors)
+        if container_settings is not None:
+            self._tool_container_settings[node_type] = container_settings
         return self
 
     def supports_tool_resolution(self, node_type: str) -> bool:
@@ -211,6 +222,13 @@ class FlowNodeRegistry:
             self._tool_resolvers[definition.type],
             self._tool_descriptors[definition.type],
         )
+
+    def tool_container_settings(
+        self,
+        node_type: str,
+    ) -> ContainerEffectiveSettings | None:
+        assert isinstance(node_type, str) and node_type.strip()
+        return self._tool_container_settings.get(node_type)
 
     def validate_tool_definition(
         self,
@@ -360,10 +378,13 @@ def tool_flow_node_registry(
     resolver: FlowToolResolver,
     *,
     base_registry: FlowNodeRegistry | None = None,
+    container_settings: ContainerEffectiveSettings | None = None,
 ) -> FlowNodeRegistry:
     assert _is_flow_tool_resolver(resolver)
     if base_registry is not None:
         assert isinstance(base_registry, FlowNodeRegistry)
+    if container_settings is not None:
+        assert isinstance(container_settings, ContainerEffectiveSettings)
     registry = base_registry or default_flow_node_registry()
     descriptors = {
         descriptor.name: descriptor for descriptor in resolver.list_tools()
@@ -390,7 +411,12 @@ def tool_flow_node_registry(
             metadata={"tools": _tool_contracts(descriptors.values())},
         ),
     )
-    registry.register_tool_resolver(FLOW_TOOL_NODE_TYPE, resolver, descriptors)
+    registry.register_tool_resolver(
+        FLOW_TOOL_NODE_TYPE,
+        resolver,
+        descriptors,
+        container_settings=container_settings,
+    )
     return registry
 
 

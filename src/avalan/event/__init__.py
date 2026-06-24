@@ -45,6 +45,7 @@ class EventType(StrEnum):
     FLOW_CANCELLED = "flow_cancelled"
     FLOW_COMPLETED = "flow_completed"
     FLOW_CONDITION_EVALUATED = "flow_condition_evaluated"
+    FLOW_CONTAINER_EVENT = "flow_container_event"
     FLOW_EDGE_ELIGIBLE = "flow_edge_eligible"
     FLOW_EDGE_ROUTED = "flow_edge_routed"
     FLOW_JOIN_READY = "flow_join_ready"
