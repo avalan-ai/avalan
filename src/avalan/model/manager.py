@@ -1,12 +1,8 @@
 from ..container import (
     ContainerExecutionScope,
     ContainerNormalizedRuntimeEnvelopePlan,
-    ContainerPlanRequest,
-    ContainerPlanRequestKind,
-    ContainerRuntimeEnvelopeKind,
     ContainerSurface,
     ContainerToolRuntimeSettings,
-    normalize_runtime_envelope_plan,
 )
 from ..entities import (
     AttentionImplementation,
@@ -27,6 +23,10 @@ from ..secrets import KeyringSecrets
 from .call import ModelCall
 from .modalities import ModalityRegistry
 from .provider import provider_options_from_uri_params
+from .runtime import (
+    ModelBackendRuntimeProfileSelection,
+    trusted_model_backend_profile_selection,
+)
 
 import asyncio
 from argparse import Namespace
@@ -112,6 +112,7 @@ class ModelBackendRuntimeEnvelopeLoader(Protocol):
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         modality: Modality,
+        profile_selection: ModelBackendRuntimeProfileSelection,
     ) -> ModelType: ...
 
 
@@ -533,19 +534,22 @@ class ModelManager:
         engine_settings: TransformerEngineSettings,
         modality: Modality = Modality.TEXT_GENERATION,
     ) -> ModelType:
-        envelope_plan = self.model_backend_runtime_envelope_plan(
+        envelope_selection = self.model_backend_runtime_profile_selection(
             engine_uri,
             engine_settings,
             modality,
         )
-        if envelope_plan is not None:
+        if envelope_selection is not None:
             if self._model_backend_envelope_loader is None:
-                raise ModelRuntimeEnvelopeUnavailableError(envelope_plan)
+                raise ModelRuntimeEnvelopeUnavailableError(
+                    envelope_selection.plan,
+                )
             return self._model_backend_envelope_loader.load_model_backend_envelope(  # noqa: E501
-                envelope_plan,
+                envelope_selection.plan,
                 engine_uri=engine_uri,
                 engine_settings=engine_settings,
                 modality=modality,
+                profile_selection=envelope_selection,
             )
         if modality is Modality.EMBEDDING:
             from ..model.nlp.sentence import SentenceTransformerModel
@@ -567,12 +571,12 @@ class ModelManager:
         self._stack.enter_context(model)
         return model
 
-    def model_backend_runtime_envelope_plan(
+    def model_backend_runtime_profile_selection(
         self,
         engine_uri: EngineUri,
         engine_settings: TransformerEngineSettings,
         modality: Modality = Modality.TEXT_GENERATION,
-    ) -> ContainerNormalizedRuntimeEnvelopePlan | None:
+    ) -> ModelBackendRuntimeProfileSelection | None:
         assert isinstance(engine_uri, EngineUri)
         assert isinstance(engine_settings, TransformerEngineSettings)
         if not isinstance(modality, Modality):
@@ -583,29 +587,37 @@ class ModelManager:
         effective_settings = (
             None if runtime is None else runtime.effective_settings
         )
-        if effective_settings is None or not effective_settings.enabled:
+        if effective_settings is None:
             return None
-        if (
-            effective_settings.scope
+        should_ignore_runtime = (
+            not effective_settings.enabled
+            or effective_settings.scope
             is not ContainerExecutionScope.RUNTIME_ENVELOPE
             or effective_settings.source.surface
             is not ContainerSurface.MODEL_BACKEND
-        ):
+        )
+        if should_ignore_runtime and not effective_settings.required:
             return None
         model_id = engine_uri.model_id or "model"
-        return normalize_runtime_envelope_plan(
+        return trusted_model_backend_profile_selection(
             effective_settings,
-            ContainerPlanRequest(
-                request_kind=ContainerPlanRequestKind.RUNTIME_ENVELOPE,
-                logical_name=model_id,
-                command="avalan-model",
-                argv=("avalan", "model", "run", modality.value, model_id),
-                cwd="/workspace",
-                scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
-                request_id=model_id,
-            ),
-            envelope_kind=ContainerRuntimeEnvelopeKind.MODEL_BACKEND,
+            engine_settings=engine_settings,
+            modality=modality,
+            model_id=model_id,
         )
+
+    def model_backend_runtime_envelope_plan(
+        self,
+        engine_uri: EngineUri,
+        engine_settings: TransformerEngineSettings,
+        modality: Modality = Modality.TEXT_GENERATION,
+    ) -> ContainerNormalizedRuntimeEnvelopePlan | None:
+        selection = self.model_backend_runtime_profile_selection(
+            engine_uri,
+            engine_settings,
+            modality,
+        )
+        return None if selection is None else selection.plan
 
     @staticmethod
     def parse_uri(uri: str) -> EngineUri:
