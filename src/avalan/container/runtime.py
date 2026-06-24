@@ -33,7 +33,7 @@ from .settings import (
 
 from abc import ABC, abstractmethod
 from asyncio import sleep, wait_for
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from posixpath import normpath as normalize_posix_path
@@ -41,6 +41,7 @@ from types import MappingProxyType
 from typing import TypeVar, cast, final
 
 EnumValue = TypeVar("EnumValue", bound=StrEnum)
+RuntimeOperationResult = TypeVar("RuntimeOperationResult")
 
 _RUNTIME_SCOPE = ContainerExecutionScope.RUNTIME_ENVELOPE
 _COMMAND_SCOPE = ContainerExecutionScope.SHELL_CONTAINER_EXECUTION
@@ -571,7 +572,30 @@ class ContainerRuntimeEnvelope:
         handle: ContainerRuntimeEnvelopeHandle | None = None
         self._state = ContainerRuntimeEnvelopeState.STARTING
         try:
-            handle = await self._backend.start(self._plan)
+            handle = await _bounded_runtime_operation(
+                self._backend.start(self._plan),
+                ContainerRuntimeEnvelopeOperation.START,
+                self._operation_timeout_seconds(),
+            )
+        except _RuntimeEnvelopeOperationTimeout as error:
+            diagnostics.append(error.diagnostic)
+            self._state = ContainerRuntimeEnvelopeState.DEGRADED
+            records.extend(
+                _audit_records_for_operation(
+                    ContainerRuntimeEnvelopeOperation.START,
+                    (error.diagnostic,),
+                    self._correlation,
+                )
+            )
+            return ContainerRuntimeEnvelopeOperationResult(
+                execution=_execution_result(
+                    diagnostics,
+                    self._correlation,
+                    status=ContainerResultStatus.FAILED,
+                ),
+                audit_records=records,
+            )
+        try:
             self._set_handle(handle, ContainerRuntimeEnvelopeState.STARTING)
             readiness = await wait_for(
                 self._backend.readiness(handle),
@@ -680,7 +704,34 @@ class ContainerRuntimeEnvelope:
                     self._correlation,
                 ),
             )
-        health = await self._backend.health(handle)
+        try:
+            health = await _bounded_runtime_operation(
+                self._backend.health(handle),
+                ContainerRuntimeEnvelopeOperation.HEALTH,
+                self._operation_timeout_seconds(),
+            )
+        except _RuntimeEnvelopeOperationTimeout as error:
+            health = ContainerRuntimeEnvelopeHealth(
+                healthy=False,
+                status="timeout",
+                diagnostics=(error.diagnostic,),
+            )
+            self._state = ContainerRuntimeEnvelopeState.DEGRADED
+            self._set_handle(handle, ContainerRuntimeEnvelopeState.DEGRADED)
+            return ContainerRuntimeEnvelopeScopedExecutionResult(
+                execution=_execution_result(
+                    (error.diagnostic,),
+                    self._correlation,
+                    status=ContainerResultStatus.FAILED,
+                ),
+                composition=composition,
+                health=health,
+                audit_records=_audit_records_for_operation(
+                    ContainerRuntimeEnvelopeOperation.HEALTH,
+                    (error.diagnostic,),
+                    self._correlation,
+                ),
+            )
         if not health.ok:
             self._state = ContainerRuntimeEnvelopeState.DEGRADED
             self._set_handle(handle, ContainerRuntimeEnvelopeState.DEGRADED)
@@ -698,11 +749,51 @@ class ContainerRuntimeEnvelope:
                     self._correlation,
                 ),
             )
-        execution = await self._backend.execute(handle, command_plan)
-        telemetry = _string_mapping(
-            await self._backend.telemetry(handle),
-            "telemetry",
-        )
+        try:
+            execution = await _bounded_runtime_operation(
+                self._backend.execute(handle, command_plan),
+                ContainerRuntimeEnvelopeOperation.SCOPED_EXECUTION,
+                self._operation_timeout_seconds(),
+            )
+        except _RuntimeEnvelopeOperationTimeout as error:
+            return ContainerRuntimeEnvelopeScopedExecutionResult(
+                execution=_execution_result(
+                    (error.diagnostic,),
+                    self._correlation,
+                    status=ContainerResultStatus.FAILED,
+                ),
+                composition=composition,
+                health=health,
+                audit_records=_audit_records_for_operation(
+                    ContainerRuntimeEnvelopeOperation.SCOPED_EXECUTION,
+                    (error.diagnostic,),
+                    self._correlation,
+                ),
+            )
+        try:
+            telemetry = _string_mapping(
+                await _bounded_runtime_operation(
+                    self._backend.telemetry(handle),
+                    ContainerRuntimeEnvelopeOperation.TELEMETRY,
+                    self._operation_timeout_seconds(),
+                ),
+                "telemetry",
+            )
+        except _RuntimeEnvelopeOperationTimeout as error:
+            return ContainerRuntimeEnvelopeScopedExecutionResult(
+                execution=_execution_result(
+                    (error.diagnostic,),
+                    self._correlation,
+                    status=ContainerResultStatus.FAILED,
+                ),
+                composition=composition,
+                health=health,
+                audit_records=_audit_records_for_operation(
+                    ContainerRuntimeEnvelopeOperation.TELEMETRY,
+                    (error.diagnostic,),
+                    self._correlation,
+                ),
+            )
         diagnostics = tuple(
             _mapped_runtime_diagnostic(
                 ContainerStableDiagnosticCode.UNKNOWN,
@@ -724,7 +815,19 @@ class ContainerRuntimeEnvelope:
         )
 
     async def health(self) -> ContainerRuntimeEnvelopeHealth:
-        health = await self._backend.health(self._require_ready_handle())
+        handle = self._require_ready_handle()
+        try:
+            health = await _bounded_runtime_operation(
+                self._backend.health(handle),
+                ContainerRuntimeEnvelopeOperation.HEALTH,
+                self._operation_timeout_seconds(),
+            )
+        except _RuntimeEnvelopeOperationTimeout as error:
+            health = ContainerRuntimeEnvelopeHealth(
+                healthy=False,
+                status="timeout",
+                diagnostics=(error.diagnostic,),
+            )
         if not health.ok:
             self._state = ContainerRuntimeEnvelopeState.DEGRADED
             assert self._handle is not None
@@ -735,12 +838,21 @@ class ContainerRuntimeEnvelope:
         return health
 
     async def telemetry(self) -> Mapping[str, str]:
-        return MappingProxyType(
-            _string_mapping(
-                await self._backend.telemetry(self._require_ready_handle()),
-                "telemetry",
+        try:
+            telemetry = await _bounded_runtime_operation(
+                self._backend.telemetry(self._require_ready_handle()),
+                ContainerRuntimeEnvelopeOperation.TELEMETRY,
+                self._operation_timeout_seconds(),
             )
-        )
+        except _RuntimeEnvelopeOperationTimeout as error:
+            return MappingProxyType(
+                _diagnostic_telemetry_mapping(
+                    error.diagnostic,
+                    self._correlation,
+                    ContainerRuntimeEnvelopeOperation.TELEMETRY,
+                )
+            )
+        return MappingProxyType(_string_mapping(telemetry, "telemetry"))
 
     async def handoff(
         self,
@@ -749,7 +861,28 @@ class ContainerRuntimeEnvelope:
         handle = self._require_ready_handle()
         resolved_metadata = metadata or self._plan.to_metadata()
         resolved_metadata.assert_matches(self._plan)
-        handoff = await self._backend.handoff(handle, resolved_metadata)
+        try:
+            handoff = await _bounded_runtime_operation(
+                self._backend.handoff(handle, resolved_metadata),
+                ContainerRuntimeEnvelopeOperation.HANDOFF,
+                self._operation_timeout_seconds(),
+            )
+        except _RuntimeEnvelopeOperationTimeout as error:
+            self._state = ContainerRuntimeEnvelopeState.DEGRADED
+            self._set_handle(handle, ContainerRuntimeEnvelopeState.DEGRADED)
+            return ContainerRuntimeEnvelopeOperationResult(
+                execution=_execution_result(
+                    (error.diagnostic,),
+                    self._correlation,
+                    status=ContainerResultStatus.FAILED,
+                ),
+                handle=self._handle,
+                audit_records=_audit_records_for_operation(
+                    ContainerRuntimeEnvelopeOperation.HANDOFF,
+                    (error.diagnostic,),
+                    self._correlation,
+                ),
+            )
         return ContainerRuntimeEnvelopeOperationResult(
             execution=ContainerExecutionResult(
                 status=ContainerResultStatus.COMPLETED,
@@ -816,7 +949,18 @@ class ContainerRuntimeEnvelope:
 
     async def cleanup(self) -> ContainerRuntimeEnvelopeOperationResult:
         handle = self._require_started_handle()
-        cleanup = await self._backend.cleanup(handle)
+        try:
+            cleanup = await _bounded_runtime_operation(
+                self._backend.cleanup(handle),
+                ContainerRuntimeEnvelopeOperation.CLEANUP,
+                self._operation_timeout_seconds(),
+            )
+        except _RuntimeEnvelopeOperationTimeout as error:
+            cleanup = ContainerRuntimeEnvelopeCleanupResult(
+                cleanup_completed=False,
+                cleanup_uncertain=True,
+                diagnostics=(error.diagnostic,),
+            )
         diagnostics = tuple(cleanup.diagnostics)
         status = (
             ContainerResultStatus.COMPLETED
@@ -860,12 +1004,20 @@ class ContainerRuntimeEnvelope:
 
     async def _cleanup_after_failed_start(
         self,
-        handle: ContainerRuntimeEnvelopeHandle | None,
-    ) -> ContainerRuntimeEnvelopeCleanupResult | None:
-        if handle is None:
-            self._state = ContainerRuntimeEnvelopeState.DEGRADED
-            return None
-        cleanup = await self._backend.cleanup(handle)
+        handle: ContainerRuntimeEnvelopeHandle,
+    ) -> ContainerRuntimeEnvelopeCleanupResult:
+        try:
+            cleanup = await _bounded_runtime_operation(
+                self._backend.cleanup(handle),
+                ContainerRuntimeEnvelopeOperation.CLEANUP,
+                self._operation_timeout_seconds(),
+            )
+        except _RuntimeEnvelopeOperationTimeout as error:
+            cleanup = ContainerRuntimeEnvelopeCleanupResult(
+                cleanup_completed=False,
+                cleanup_uncertain=True,
+                diagnostics=(error.diagnostic,),
+            )
         self._state = (
             ContainerRuntimeEnvelopeState.CLEANED
             if cleanup.ok
@@ -887,6 +1039,16 @@ class ContainerRuntimeEnvelope:
             plan_fingerprint=handle.plan_fingerprint,
             state=state,
         )
+
+    def _operation_timeout_seconds(self) -> float:
+        timeout_seconds: int | float | None = (
+            self._plan.run_plan.run_plan.resources.timeout_seconds
+        )
+        if timeout_seconds is None:
+            timeout_seconds = (
+                self._plan.envelope_plan.readiness_timeout_seconds
+            )
+        return float(timeout_seconds)
 
 
 @final
@@ -1104,6 +1266,51 @@ def validate_runtime_envelope_composition(
 ) -> ContainerRuntimeEnvelopeCompositionResult:
     resolved_policy = policy or ContainerRuntimeEnvelopeCompositionPolicy()
     return resolved_policy.validate(envelope_plan, command_plan)
+
+
+class _RuntimeEnvelopeOperationTimeout(Exception):
+    def __init__(
+        self,
+        operation: ContainerRuntimeEnvelopeOperation,
+        diagnostic: ContainerMappedDiagnostic,
+    ) -> None:
+        assert isinstance(operation, ContainerRuntimeEnvelopeOperation)
+        assert isinstance(diagnostic, ContainerMappedDiagnostic)
+        super().__init__(diagnostic.message)
+        self.operation = operation
+        self.diagnostic = diagnostic
+
+
+async def _bounded_runtime_operation(
+    awaitable: Awaitable[RuntimeOperationResult],
+    operation: ContainerRuntimeEnvelopeOperation,
+    timeout_seconds: float,
+) -> RuntimeOperationResult:
+    assert isinstance(operation, ContainerRuntimeEnvelopeOperation)
+    assert isinstance(timeout_seconds, int | float)
+    assert timeout_seconds > 0, "timeout_seconds must be positive"
+    try:
+        return await wait_for(awaitable, timeout=timeout_seconds)
+    except TimeoutError as error:
+        raise _RuntimeEnvelopeOperationTimeout(
+            operation,
+            _runtime_operation_timeout_diagnostic(operation),
+        ) from error
+
+
+def _runtime_operation_timeout_diagnostic(
+    operation: ContainerRuntimeEnvelopeOperation,
+) -> ContainerMappedDiagnostic:
+    return _timeout_diagnostic(
+        f"container.runtime_envelope.{operation.value}_timeout",
+        _runtime_operation_timeout_message(operation),
+    )
+
+
+def _runtime_operation_timeout_message(
+    operation: ContainerRuntimeEnvelopeOperation,
+) -> str:
+    return f"runtime envelope {operation.value} timed out"
 
 
 def _assert_runtime_envelope_plan(
@@ -1361,6 +1568,29 @@ def _execution_metadata(
     correlation: ContainerAuditCorrelation,
 ) -> dict[str, str]:
     return correlation.to_metadata()
+
+
+def _diagnostic_telemetry_mapping(
+    diagnostic: ContainerMappedDiagnostic,
+    correlation: ContainerAuditCorrelation,
+    operation: ContainerRuntimeEnvelopeOperation,
+) -> dict[str, str]:
+    assert isinstance(diagnostic, ContainerMappedDiagnostic)
+    assert isinstance(correlation, ContainerAuditCorrelation)
+    assert isinstance(operation, ContainerRuntimeEnvelopeOperation)
+    code = cast(ContainerStableDiagnosticCode, diagnostic.code)
+    status = cast(ContainerResultStatus, diagnostic.status)
+    event_type = cast(ContainerAuditEventType, diagnostic.event_type)
+    return _execution_metadata(correlation) | {
+        "operation": operation.value,
+        "status": status.value,
+        "diagnostic_count": "1",
+        "diagnostic_codes": code.value,
+        "diagnostic_event_types": event_type.value,
+        "diagnostic_messages": diagnostic.result_message(),
+        "diagnostic_retryable": str(diagnostic.retryable).lower(),
+        "diagnostic_source_codes": diagnostic.source_code or "unknown",
+    }
 
 
 def _diagnostic_codes(

@@ -1,9 +1,6 @@
 from ..types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
-from ..types import (
-    assert_positive_int as _assert_positive_int,
-)
 from .conformance import (
     ContainerExecutionScope,
 )
@@ -545,7 +542,7 @@ def normalize_runtime_envelope_plan(
     *,
     envelope_kind: ContainerRuntimeEnvelopeKind | str,
     resolved_image_digest: str | None = None,
-    readiness_timeout_seconds: int = 30,
+    readiness_timeout_seconds: int | float = 30,
 ) -> ContainerNormalizedRuntimeEnvelopePlan:
     normalized_run = normalize_container_run_plan(
         settings,
@@ -728,7 +725,7 @@ def _runtime_envelope_plan_from_dict(
                 "command",
             )
         ),
-        readiness_timeout_seconds=_required_int(
+        readiness_timeout_seconds=_required_positive_number(
             raw,
             "readiness_timeout_seconds",
             "runtime_envelope_plan",
@@ -789,14 +786,17 @@ def _required_str(
     return value
 
 
-def _required_int(
+def _required_positive_number(
     raw: Mapping[str, object],
     key: str,
     field_name: str,
-) -> int:
+) -> int | float:
     value = _required(raw, key, field_name)
-    assert isinstance(value, int), f"{field_name}.{key} must be an integer"
-    _assert_positive_int(value, key)
+    assert isinstance(
+        value, int | float
+    ), f"{field_name}.{key} must be numeric"
+    assert not isinstance(value, bool), f"{field_name}.{key} must be numeric"
+    assert value > 0, f"{field_name}.{key} must be positive"
     return value
 
 

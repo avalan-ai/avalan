@@ -2412,7 +2412,7 @@ class ContainerRuntimeEnvelopePlan:
     scope: ContainerExecutionScope | str
     profile_name: str
     command: ContainerCommandPlan
-    readiness_timeout_seconds: int = 30
+    readiness_timeout_seconds: int | float = 30
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -2422,7 +2422,7 @@ class ContainerRuntimeEnvelopePlan:
         )
         _assert_profile_name(self.profile_name, "profile_name")
         assert isinstance(self.command, ContainerCommandPlan)
-        _assert_positive_int(
+        _assert_positive_number(
             self.readiness_timeout_seconds,
             "readiness_timeout_seconds",
         )
@@ -3597,6 +3597,15 @@ def _assert_profile_name(value: object, field_name: str) -> None:
     assert _PROFILE_NAME_PATTERN.match(
         value
     ), f"{field_name} must be a container identifier"
+
+
+def _assert_positive_number(value: object, field_name: str) -> None:
+    assert isinstance(
+        value,
+        int | float,
+    ), f"{field_name} must be numeric"
+    assert not isinstance(value, bool), f"{field_name} must be numeric"
+    assert value > 0, f"{field_name} must be positive"
 
 
 def _assert_host_path(value: object, field_name: str) -> None:

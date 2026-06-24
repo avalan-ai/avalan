@@ -46,12 +46,17 @@ def _profile_selector_arguments(
         if key not in payload:
             continue
         value = payload[key]
-        if _looks_like_profile_selector(key, value):
-            arguments[key] = value
+        if key == "container" and not _is_container_profile_selector_value(
+            value
+        ):
+            continue
+        arguments[key] = value
     return arguments
 
 
-def _looks_like_profile_selector(key: str, value: object) -> bool:
-    if key == "container":
-        return isinstance(value, Mapping) and set(value) == {"profile"}
-    return key in {"containerProfile", "container_profile"}
+def _is_container_profile_selector_value(value: object) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and "profile" in value
+        and "profiles" not in value
+    )

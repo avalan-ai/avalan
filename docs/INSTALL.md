@@ -212,3 +212,14 @@ For durable queue deployments, also configure `AVALAN_TASK_HMAC_KEY_ID`,
 under a process supervisor or container restart policy. See
 [Task queue operations](TASK_OPERATIONS.md) for deployment profiles and
 failure-mode runbooks.
+
+## Container execution
+
+Container-backed execution is disabled by default and requires trusted
+operator configuration. Current release readiness centers on the core
+container contract, shell container policy, fake-backend tests, and injected
+runtime backends; real Docker, Podman, nerdctl, Apple `container`, and Windows
+Docker jobs are optional environment-gated checks. See
+[Container execution](CONTAINERS.md) for supported scope, runtime setup,
+test gates, platform limits, fail-closed behavior, diagnostics, and known
+deferred conformance.

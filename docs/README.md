@@ -44,6 +44,9 @@ agents and workflows across local and hosted models.
   storage and schema migration dependencies.
 - [Task queue operations](TASK_OPERATIONS.md) - Deploy task workers and follow
   failure-mode runbooks for durable queue mode.
+- [Container execution](CONTAINERS.md) - Configure trusted container profiles,
+  understand current runtime scope, optional live-runtime gates, platform
+  limits, security posture, diagnostics, and deferred conformance.
 - [Task file delivery](task_file_delivery.md) - Understand direct and queued
   file descriptors, provider references, conversion, local backends, and the
   file-delivery capability matrix.
