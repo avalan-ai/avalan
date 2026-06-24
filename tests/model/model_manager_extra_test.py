@@ -1,15 +1,31 @@
 import asyncio
+from json import dumps
 from logging import Logger
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from avalan.agent import Specification
 from avalan.container import (
+    ContainerAuditMode,
+    ContainerAuditPolicy,
     ContainerBackend,
+    ContainerCleanupMode,
+    ContainerCleanupPolicy,
+    ContainerDeviceClass,
+    ContainerDevicePolicy,
     ContainerEffectiveSettings,
     ContainerExecutionScope,
+    ContainerImagePolicy,
+    ContainerMountDeclaration,
+    ContainerMountType,
+    ContainerNetworkMode,
+    ContainerNetworkPolicy,
+    ContainerOutputPolicy,
     ContainerProfile,
+    ContainerResourceLimits,
     ContainerRuntimeEnvelopeKind,
+    ContainerSecretReference,
     ContainerSettingsSource,
     ContainerSurface,
     ContainerToolRuntimeSettings,
@@ -28,11 +44,24 @@ from avalan.entities import (
 from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.model import manager as model_manager
+from avalan.model import runtime as model_runtime
 from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import (
     ModelManager,
     ModelRuntimeEnvelopeUnavailableError,
+)
+from avalan.model.runtime import (
+    ModelBackendAcceleratorClass,
+    ModelBackendEnvelopeLifecyclePhase,
+    ModelBackendEnvelopeLifecycleScript,
+    ModelBackendEnvelopeLifecycleStatus,
+    ModelBackendRuntimeDiagnostic,
+    ModelBackendRuntimePolicy,
+    ModelBackendRuntimePolicyError,
+    model_backend_accelerator_class,
+    simulate_model_backend_envelope_lifecycle,
+    trusted_model_backend_profile_selection,
 )
 
 
@@ -167,9 +196,11 @@ class ModelManagerExtraTestCase(TestCase):
 
             def __init__(self) -> None:
                 self.plan = None
+                self.kwargs = None
 
             def load_model_backend_envelope(self, plan, **kwargs):
                 self.plan = plan
+                self.kwargs = kwargs
                 return "enveloped-model"
 
         loader = FakeModelEnvelopeLoader()
@@ -197,6 +228,29 @@ class ModelManagerExtraTestCase(TestCase):
             loader.plan.envelope_kind,
             ContainerRuntimeEnvelopeKind.MODEL_BACKEND,
         )
+        assert loader.kwargs is not None
+        profile_selection = loader.kwargs["profile_selection"]
+        self.assertIs(profile_selection.plan, loader.plan)
+        profile = profile_selection.to_dict()["effective_settings"]["profile"]
+        assert isinstance(profile, dict)
+        self.assertEqual(profile["output"], ContainerOutputPolicy().to_dict())
+        self.assertEqual(profile["audit"], {"mode": "full"})
+        runtime_policy = profile_selection.to_dict()["runtime_policy"]
+        assert isinstance(runtime_policy, dict)
+        self.assertEqual(
+            runtime_policy["output"],
+            ContainerOutputPolicy().to_dict(),
+        )
+        self.assertEqual(runtime_policy["audit"], {"mode": "full"})
+        self.assertIn("policy_fingerprint", runtime_policy)
+        self.assertIn(
+            "selection_fingerprint",
+            profile_selection.to_dict(),
+        )
+        self.assertEqual(
+            profile["cleanup"],
+            {"mode": "remove", "grace_seconds": 5},
+        )
 
     def test_model_backend_runtime_envelope_loader_must_be_trusted(self):
         class UntrustedModelEnvelopeLoader:
@@ -213,27 +267,68 @@ class ModelManagerExtraTestCase(TestCase):
                 model_backend_envelope_loader=UntrustedModelEnvelopeLoader(),
             )
 
-    def test_model_backend_runtime_envelope_requires_model_scope(self):
+    def test_model_backend_runtime_invalid_required_settings_fail_closed(
+        self,
+    ):
+        cases = (
+            (
+                _container_runtime_settings(
+                    surface=ContainerSurface.SERVER,
+                    scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+                ),
+                "model.runtime.surface_invalid",
+            ),
+            (
+                ContainerToolRuntimeSettings(
+                    effective_settings=ContainerEffectiveSettings(
+                        backend=ContainerBackend.NONE,
+                        required=True,
+                        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                        source=ContainerSettingsSource(
+                            surface=ContainerSurface.MODEL_BACKEND,
+                            trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,
+                        ),
+                        policy_version="phase16",
+                        profile_registry_id="model",
+                    )
+                ),
+                "model.runtime.disabled",
+            ),
+        )
+
+        for container_runtime, expected in cases:
+            with self.subTest(expected=expected):
+                manager = ModelManager(
+                    self.hub,
+                    self.logger,
+                    container_runtime=container_runtime,
+                )
+
+                with self.assertRaises(
+                    ModelBackendRuntimePolicyError
+                ) as raised:
+                    manager.load_engine(
+                        _local_uri("local-model"),
+                        TransformerEngineSettings(),
+                    )
+
+                self.assertIn(expected, _policy_codes(raised.exception))
+
+    def test_model_backend_runtime_envelope_ignores_optional_invalid_settings(
+        self,
+    ):
         manager = ModelManager(
             self.hub,
             self.logger,
             container_runtime=_container_runtime_settings(
                 surface=ContainerSurface.SERVER,
                 scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+                required=False,
             ),
-        )
-        uri = EngineUri(
-            host=None,
-            port=None,
-            user=None,
-            password=None,
-            vendor=None,
-            model_id="local-model",
-            params={},
         )
 
         plan = manager.model_backend_runtime_envelope_plan(
-            uri,
+            _local_uri("local-model"),
             TransformerEngineSettings(),
         )
 
@@ -261,6 +356,622 @@ class ModelManagerExtraTestCase(TestCase):
         )
 
         self.assertIsNone(plan)
+
+    def test_model_backend_runtime_profile_selection_preserves_policy(self):
+        resources = ContainerResourceLimits(
+            cpu_count=4,
+            memory_bytes=4 * 1024 * 1024,
+            timeout_seconds=45,
+        )
+        manager = ModelManager(
+            self.hub,
+            self.logger,
+            container_runtime=_container_runtime_settings(
+                mounts=(
+                    _workspace_mount(),
+                    ContainerMountDeclaration(
+                        target="/cache/hf",
+                        mount_type=ContainerMountType.CACHE,
+                    ),
+                ),
+                resources=resources,
+            ),
+        )
+
+        selection = manager.model_backend_runtime_profile_selection(
+            _local_uri("local-model"),
+            TransformerEngineSettings(device="cpu"),
+        )
+
+        assert selection is not None
+        self.assertEqual(
+            selection.accelerator,
+            ModelBackendAcceleratorClass.CPU,
+        )
+        self.assertEqual(
+            selection.plan.run_plan.run_plan.resources.to_dict(),
+            resources.to_dict(),
+        )
+        self.assertEqual(
+            selection.plan.run_plan.run_plan.network.to_dict(),
+            ContainerNetworkPolicy().to_dict(),
+        )
+        self.assertEqual(
+            selection.plan.envelope_plan.profile_name,
+            "model-runtime",
+        )
+        self.assertEqual(
+            selection.plan.envelope_plan.readiness_timeout_seconds,
+            30,
+        )
+        self.assertEqual(
+            selection.runtime_policy.output.to_dict(),
+            ContainerOutputPolicy().to_dict(),
+        )
+        self.assertEqual(
+            selection.runtime_policy.audit.to_dict(),
+            ContainerAuditPolicy(mode=ContainerAuditMode.FULL).to_dict(),
+        )
+        dumps(selection.to_dict(), sort_keys=True)
+
+    def test_model_backend_runtime_authorizes_accelerator_classes(self):
+        cases = (
+            (
+                TransformerEngineSettings(device="cuda:0"),
+                (ContainerDeviceClass.NVIDIA_CDI,),
+                ModelBackendAcceleratorClass.NVIDIA_CDI,
+            ),
+            (
+                TransformerEngineSettings(device="rocm"),
+                (ContainerDeviceClass.AMD_CDI,),
+                ModelBackendAcceleratorClass.AMD_CDI,
+            ),
+            (
+                TransformerEngineSettings(device="vulkan:0"),
+                (ContainerDeviceClass.VULKAN_FORWARDED,),
+                ModelBackendAcceleratorClass.VULKAN_FORWARDED,
+            ),
+            (
+                TransformerEngineSettings(
+                    device="cuda",
+                    backend_config={"native_backend": "auto"},
+                ),
+                (ContainerDeviceClass.NVIDIA_CDI,),
+                ModelBackendAcceleratorClass.NVIDIA_CDI,
+            ),
+        )
+
+        for settings, devices, expected in cases:
+            with self.subTest(expected=expected):
+                manager = ModelManager(
+                    self.hub,
+                    self.logger,
+                    container_runtime=_container_runtime_settings(
+                        devices=devices,
+                    ),
+                )
+
+                selection = manager.model_backend_runtime_profile_selection(
+                    _local_uri("local-model"),
+                    settings,
+                )
+
+                assert selection is not None
+                self.assertEqual(selection.accelerator, expected)
+
+    def test_model_backend_runtime_policy_denies_unsafe_profiles(self):
+        cases = (
+            (
+                _container_runtime_settings(
+                    network=ContainerNetworkPolicy(
+                        mode=ContainerNetworkMode.LOOPBACK,
+                    ),
+                ).effective_settings,
+                TransformerEngineSettings(),
+                "model.runtime.network_denied",
+            ),
+            (
+                _container_runtime_settings(
+                    secrets=(
+                        ContainerSecretReference(
+                            name="token",
+                            env_name="TOKEN",
+                        ),
+                    ),
+                ).effective_settings,
+                TransformerEngineSettings(),
+                "model.runtime.secret_leakage_risk",
+            ),
+            (
+                _container_runtime_settings(
+                    mounts=(
+                        _workspace_mount(),
+                        ContainerMountDeclaration(
+                            source="cache",
+                            target="/cache",
+                            mount_type=ContainerMountType.CACHE,
+                        ),
+                    ),
+                ).effective_settings,
+                TransformerEngineSettings(),
+                "model.runtime.cache_misuse",
+            ),
+            (
+                _container_runtime_settings(
+                    resources=ContainerResourceLimits(
+                        cpu_count=2,
+                        timeout_seconds=30,
+                    ),
+                ).effective_settings,
+                TransformerEngineSettings(),
+                "model.runtime.resource_mismatch",
+            ),
+            (
+                _container_runtime_settings(
+                    output=ContainerOutputPolicy(
+                        allow_artifacts=True,
+                        max_artifact_bytes=64,
+                    ),
+                ).effective_settings,
+                TransformerEngineSettings(),
+                "model.runtime.output_policy_unsafe",
+            ),
+            (
+                _container_runtime_settings(
+                    cleanup=ContainerCleanupPolicy(
+                        mode=ContainerCleanupMode.QUARANTINE,
+                    ),
+                ).effective_settings,
+                TransformerEngineSettings(),
+                "model.runtime.cleanup_policy_unsafe",
+            ),
+            (
+                _container_runtime_settings(
+                    audit=ContainerAuditPolicy(
+                        mode=ContainerAuditMode.MINIMAL
+                    ),
+                ).effective_settings,
+                TransformerEngineSettings(),
+                "model.runtime.audit_insufficient",
+            ),
+        )
+
+        for settings, engine_settings, expected in cases:
+            with self.subTest(expected=expected):
+                with self.assertRaises(
+                    ModelBackendRuntimePolicyError
+                ) as raised:
+                    trusted_model_backend_profile_selection(
+                        settings,
+                        engine_settings=engine_settings,
+                        modality=Modality.TEXT_GENERATION,
+                        model_id="local-model",
+                    )
+
+                self.assertIn(expected, _policy_codes(raised.exception))
+                dumps(raised.exception.to_dict(), sort_keys=True)
+
+    def test_model_backend_runtime_policy_denies_authority_mismatch(self):
+        digest = (
+            "sha256:"
+            "1111111111111111111111111111111111111111111111111111111111111111"
+        )
+        cases = (
+            (
+                ContainerEffectiveSettings(
+                    backend=ContainerBackend.NONE,
+                    required=True,
+                    scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                    source=ContainerSettingsSource(
+                        surface=ContainerSurface.MODEL_BACKEND,
+                        trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,
+                    ),
+                    policy_version="phase16",
+                    profile_registry_id="model",
+                ),
+                "model.runtime.disabled",
+            ),
+            (
+                _container_runtime_settings(
+                    surface=ContainerSurface.SERVER,
+                ).effective_settings,
+                "model.runtime.surface_invalid",
+            ),
+            (
+                _container_runtime_settings(
+                    trust_level=ContainerTrustLevel.UNTRUSTED_REQUEST,
+                ).effective_settings,
+                "model.runtime.profile_untrusted",
+            ),
+            (
+                _container_runtime_settings(
+                    scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+                ).effective_settings,
+                "model.runtime.scope_invalid",
+            ),
+            (
+                ContainerEffectiveSettings(
+                    backend=ContainerBackend.DOCKER,
+                    required=True,
+                    scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                    source=ContainerSettingsSource(
+                        surface=ContainerSurface.MODEL_BACKEND,
+                        trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,
+                    ),
+                    policy_version="phase16",
+                    profile_registry_id="model",
+                ),
+                "model.runtime.profile_missing",
+            ),
+            (
+                _container_runtime_settings(
+                    allowed_profiles=(),
+                ).effective_settings,
+                "model.runtime.profile_mismatch",
+            ),
+            (
+                _container_runtime_settings(
+                    image=ContainerImagePolicy(
+                        reference="registry.example/model:latest",
+                        digest=digest,
+                    ),
+                ).effective_settings,
+                "model.runtime.image_untrusted",
+            ),
+        )
+
+        for settings, expected in cases:
+            with self.subTest(expected=expected):
+                with self.assertRaises(
+                    ModelBackendRuntimePolicyError
+                ) as raised:
+                    trusted_model_backend_profile_selection(
+                        settings,
+                        engine_settings=TransformerEngineSettings(),
+                        modality=Modality.TEXT_GENERATION,
+                        model_id="local-model",
+                    )
+
+                self.assertIn(expected, _policy_codes(raised.exception))
+                self.assertEqual(
+                    raised.exception.diagnostic["code"],
+                    _policy_codes(raised.exception)[0],
+                )
+
+    def test_model_backend_runtime_policy_denies_plan_mismatch(self):
+        settings = _container_runtime_settings().effective_settings
+        assert settings.profile is not None
+        bad_plan = SimpleNamespace(
+            envelope_kind=ContainerRuntimeEnvelopeKind.SERVER,
+            envelope_plan=SimpleNamespace(
+                scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+            ),
+            run_plan=SimpleNamespace(
+                run_plan=SimpleNamespace(
+                    profile_name="other-runtime",
+                    image=ContainerImagePolicy(
+                        reference=(
+                            "registry.example/other@sha256:"
+                            "2222222222222222222222222222222222222222222222222222222222222222"
+                        ),
+                    ),
+                    mounts=(),
+                    secret_names=("token",),
+                    network=ContainerNetworkPolicy(
+                        mode=ContainerNetworkMode.LOOPBACK,
+                    ),
+                    devices=ContainerDevicePolicy(
+                        devices=(ContainerDeviceClass.NVIDIA_CDI,),
+                    ),
+                    resources=ContainerResourceLimits(
+                        cpu_count=1,
+                        memory_bytes=1,
+                        timeout_seconds=1,
+                    ),
+                )
+            ),
+        )
+
+        diagnostics = (
+            model_runtime._plan_preservation_diagnostics(  # noqa: SLF001
+                settings,
+                bad_plan,
+            )
+        )
+
+        self.assertEqual(
+            [diagnostic.path for diagnostic in diagnostics],
+            [
+                "model.container.plan.envelope_kind",
+                "model.container.plan.scope",
+                "model.container.plan.profile_name",
+                "model.container.plan.image",
+                "model.container.plan.mounts",
+                "model.container.plan.secrets",
+                "model.container.plan.network",
+                "model.container.plan.devices",
+                "model.container.plan.resources",
+            ],
+        )
+
+    def test_model_backend_runtime_policy_denies_runtime_policy_mismatch(self):
+        settings = _container_runtime_settings().effective_settings
+        bad_policy = ModelBackendRuntimePolicy(
+            output=ContainerOutputPolicy(
+                allow_artifacts=True,
+                max_artifact_bytes=1,
+            ),
+            cleanup=ContainerCleanupPolicy(
+                mode=ContainerCleanupMode.QUARANTINE,
+            ),
+            audit=ContainerAuditPolicy(mode=ContainerAuditMode.MINIMAL),
+        )
+
+        diagnostics = model_runtime._runtime_policy_preservation_diagnostics(  # noqa: SLF001
+            settings,
+            bad_policy,
+        )
+
+        self.assertEqual(
+            [diagnostic.path for diagnostic in diagnostics],
+            [
+                "model.container.plan.output",
+                "model.container.plan.cleanup",
+                "model.container.plan.audit",
+            ],
+        )
+
+    def test_model_backend_runtime_policy_denies_post_plan_diagnostic(self):
+        diagnostic = ModelBackendRuntimeDiagnostic(
+            code="model.runtime.policy_mismatch",
+            path="model.container.plan.image",
+            message="Image changed.",
+            hint="Recompute the plan.",
+        )
+
+        with (
+            patch.object(
+                model_runtime,
+                "_plan_preservation_diagnostics",
+                return_value=(diagnostic,),
+            ),
+            self.assertRaises(ModelBackendRuntimePolicyError) as raised,
+        ):
+            trusted_model_backend_profile_selection(
+                _container_runtime_settings().effective_settings,
+                engine_settings=TransformerEngineSettings(),
+                modality=Modality.TEXT_GENERATION,
+                model_id="local-model",
+            )
+
+        self.assertEqual(
+            raised.exception.diagnostic["code"],
+            "model.runtime.policy_mismatch",
+        )
+
+    def test_model_backend_runtime_policy_denies_devices_and_metal(self):
+        cases = (
+            (
+                TransformerEngineSettings(device="tpu"),
+                (),
+                "model.runtime.device_unsupported",
+            ),
+            (
+                TransformerEngineSettings(device="cuda"),
+                (),
+                "model.runtime.device_denied",
+            ),
+            (
+                TransformerEngineSettings(device="mps"),
+                (ContainerDeviceClass.NVIDIA_CDI,),
+                "model.runtime.metal_container_unsupported",
+            ),
+            (
+                TransformerEngineSettings(
+                    backend=Backend.DS4,
+                    backend_config={"native_backend": "metal"},
+                ),
+                (),
+                "model.runtime.metal_container_unsupported",
+            ),
+        )
+
+        for settings, devices, expected in cases:
+            with self.subTest(expected=expected):
+                manager = ModelManager(
+                    self.hub,
+                    self.logger,
+                    container_runtime=_container_runtime_settings(
+                        devices=devices,
+                    ),
+                )
+
+                with self.assertRaises(
+                    ModelBackendRuntimePolicyError
+                ) as raised:
+                    manager.load_engine(_local_uri("local-model"), settings)
+
+                self.assertIn(expected, _policy_codes(raised.exception))
+
+    def test_model_backend_accelerator_classifies_cpu_and_amd_native(self):
+        self.assertEqual(
+            model_backend_accelerator_class(TransformerEngineSettings()),
+            ModelBackendAcceleratorClass.CPU,
+        )
+        self.assertEqual(
+            model_backend_accelerator_class(
+                TransformerEngineSettings(
+                    backend_config={"native_backend": "hip"},
+                )
+            ),
+            ModelBackendAcceleratorClass.AMD_CDI,
+        )
+        self.assertEqual(
+            model_backend_accelerator_class(
+                TransformerEngineSettings(
+                    backend_config={"native_backend": object()},
+                )
+            ),
+            ModelBackendAcceleratorClass.UNSUPPORTED,
+        )
+
+    def test_model_backend_lifecycle_streaming_health_shutdown(self):
+        plan = _model_backend_plan(self.hub, self.logger)
+
+        result = simulate_model_backend_envelope_lifecycle(
+            plan,
+            ModelBackendEnvelopeLifecycleScript(
+                stream_chunks=("hello", " world"),
+                result="hello world",
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.stream_chunks, ("hello", " world"))
+        self.assertEqual(result.result, "hello world")
+        self.assertEqual(
+            result.health.status,
+            ModelBackendEnvelopeLifecycleStatus.COMPLETED,
+        )
+        self.assertEqual(
+            result.shutdown.phase,
+            ModelBackendEnvelopeLifecyclePhase.SHUTDOWN,
+        )
+        dumps(result.to_dict(), sort_keys=True)
+
+    def test_model_backend_lifecycle_reports_startup_timeout(self):
+        plan = _model_backend_plan(self.hub, self.logger)
+
+        result = simulate_model_backend_envelope_lifecycle(
+            plan,
+            ModelBackendEnvelopeLifecycleScript(startup_timeout=True),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.startup.status,
+            ModelBackendEnvelopeLifecycleStatus.FAILED,
+        )
+        self.assertEqual(
+            result.diagnostics[0].code,
+            "model.runtime.startup_timeout",
+        )
+        self.assertEqual(
+            result.cleanup.status,
+            ModelBackendEnvelopeLifecycleStatus.COMPLETED,
+        )
+
+    def test_model_backend_lifecycle_reports_cancel_cleanup_failure(self):
+        plan = _model_backend_plan(self.hub, self.logger)
+
+        result = simulate_model_backend_envelope_lifecycle(
+            plan,
+            ModelBackendEnvelopeLifecycleScript(
+                stream_chunks=("a", "b"),
+                cancel_after_chunks=1,
+                cleanup_failure=True,
+                health_failure=True,
+            ),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stream_chunks, ("a",))
+        self.assertIsNone(result.result)
+        self.assertEqual(
+            result.request_streaming.status,
+            ModelBackendEnvelopeLifecycleStatus.CANCELLED,
+        )
+        self.assertEqual(
+            result.cancellation.status,
+            ModelBackendEnvelopeLifecycleStatus.COMPLETED,
+        )
+        self.assertEqual(
+            {diagnostic.code for diagnostic in result.diagnostics},
+            {
+                "model.runtime.request_cancelled",
+                "model.runtime.health_failed",
+                "model.runtime.cleanup_failed",
+            },
+        )
+
+    def test_model_backend_runtime_fake_e2e_lifecycle_loader(self):
+        class FakeModelEnvelopeLoader:
+            trusted_runtime_envelope_runner = True
+
+            def __init__(
+                self,
+                script: ModelBackendEnvelopeLifecycleScript,
+            ) -> None:
+                self.script = script
+                self.lifecycle_result = None
+
+            def load_model_backend_envelope(self, plan, **kwargs):
+                self.lifecycle_result = (
+                    simulate_model_backend_envelope_lifecycle(
+                        plan,
+                        self.script,
+                    )
+                )
+                return self.lifecycle_result.result
+
+        cases = (
+            (
+                "success",
+                ModelBackendEnvelopeLifecycleScript(
+                    stream_chunks=("a", "b"),
+                    result="ab",
+                ),
+                "ab",
+                (),
+            ),
+            (
+                "cancelled",
+                ModelBackendEnvelopeLifecycleScript(
+                    stream_chunks=("a", "b"),
+                    result="ab",
+                    cancel_after_chunks=1,
+                ),
+                None,
+                ("model.runtime.request_cancelled",),
+            ),
+        )
+
+        for name, script, expected_result, expected_codes in cases:
+            with self.subTest(name):
+                loader = FakeModelEnvelopeLoader(script)
+                manager = ModelManager(
+                    self.hub,
+                    self.logger,
+                    container_runtime=_container_runtime_settings(),
+                    model_backend_envelope_loader=loader,
+                )
+
+                result = manager.load_engine(
+                    _local_uri("local-model"),
+                    TransformerEngineSettings(),
+                )
+
+                self.assertEqual(result, expected_result)
+                assert loader.lifecycle_result is not None
+                self.assertEqual(
+                    [step.phase for step in loader.lifecycle_result.steps],
+                    [
+                        ModelBackendEnvelopeLifecyclePhase.STARTUP,
+                        ModelBackendEnvelopeLifecyclePhase.WARMUP,
+                        ModelBackendEnvelopeLifecyclePhase.REQUEST_STREAMING,
+                        ModelBackendEnvelopeLifecyclePhase.CANCELLATION,
+                        ModelBackendEnvelopeLifecyclePhase.HEALTH,
+                        ModelBackendEnvelopeLifecyclePhase.SHUTDOWN,
+                        ModelBackendEnvelopeLifecyclePhase.CLEANUP,
+                    ],
+                )
+                self.assertEqual(
+                    tuple(
+                        diagnostic.code
+                        for diagnostic in loader.lifecycle_result.diagnostics
+                    ),
+                    expected_codes,
+                )
 
     def test_load_backend_from_uri(self):
         manager = ModelManager(self.hub, self.logger)
@@ -711,28 +1422,103 @@ def _container_runtime_settings(
     *,
     surface: ContainerSurface = ContainerSurface.MODEL_BACKEND,
     scope: ContainerExecutionScope = ContainerExecutionScope.RUNTIME_ENVELOPE,
+    trust_level: ContainerTrustLevel = ContainerTrustLevel.TRUSTED_OPERATOR,
+    image: ContainerImagePolicy | None = None,
+    mounts: tuple[ContainerMountDeclaration, ...] | None = None,
+    secrets: tuple[ContainerSecretReference, ...] = (),
+    network: ContainerNetworkPolicy | None = None,
+    devices: tuple[ContainerDeviceClass, ...] = (),
+    resources: ContainerResourceLimits | None = None,
+    output: ContainerOutputPolicy | None = None,
+    cleanup: ContainerCleanupPolicy | None = None,
+    audit: ContainerAuditPolicy | None = None,
+    allowed_profiles: tuple[str, ...] | None = None,
+    required: bool = True,
 ) -> ContainerToolRuntimeSettings:
     source = ContainerSettingsSource(
         surface=surface,
-        trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,
+        trust_level=trust_level,
     )
-    profile = ContainerProfile.minimal_readonly(
+    profile = ContainerProfile(
         name="model-runtime",
-        image_reference=(
-            "registry.example/model@sha256:"
-            "1111111111111111111111111111111111111111111111111111111111111111"
+        image=image
+        or ContainerImagePolicy(
+            reference=(
+                "registry.example/model@sha256:"
+                "1111111111111111111111111111111111111111111111111111111111111111"
+            ),
         ),
+        mounts=mounts if mounts is not None else (_workspace_mount(),),
+        secrets=secrets,
+        network=network or ContainerNetworkPolicy(),
+        devices=ContainerDevicePolicy(devices=devices),
+        resources=resources
+        or ContainerResourceLimits(
+            cpu_count=2,
+            memory_bytes=2 * 1024 * 1024,
+            timeout_seconds=60,
+        ),
+        output=output or ContainerOutputPolicy(),
+        cleanup=cleanup or ContainerCleanupPolicy(),
+        audit=audit or ContainerAuditPolicy(mode=ContainerAuditMode.FULL),
     )
     return ContainerToolRuntimeSettings(
         effective_settings=ContainerEffectiveSettings(
             backend=ContainerBackend.DOCKER,
-            required=True,
+            required=required,
             scope=scope,
             source=source,
-            policy_version="phase15",
+            policy_version="phase16",
             profile_registry_id="model",
             profile_name=profile.name,
             profile=profile,
-            allowed_profiles=(profile.name,),
+            allowed_profiles=(
+                (profile.name,)
+                if allowed_profiles is None
+                else allowed_profiles
+            ),
         )
     )
+
+
+def _workspace_mount() -> ContainerMountDeclaration:
+    return ContainerMountDeclaration(
+        source=".",
+        target="/workspace",
+        mount_type=ContainerMountType.WORKSPACE,
+    )
+
+
+def _local_uri(model_id: str) -> EngineUri:
+    return EngineUri(
+        host=None,
+        port=None,
+        user=None,
+        password=None,
+        vendor=None,
+        model_id=model_id,
+        params={},
+    )
+
+
+def _model_backend_plan(
+    hub: MagicMock,
+    logger: MagicMock,
+):
+    manager = ModelManager(
+        hub,
+        logger,
+        container_runtime=_container_runtime_settings(),
+    )
+    plan = manager.model_backend_runtime_envelope_plan(
+        _local_uri("local-model"),
+        TransformerEngineSettings(),
+    )
+    assert plan is not None
+    return plan
+
+
+def _policy_codes(
+    error: ModelBackendRuntimePolicyError,
+) -> tuple[str, ...]:
+    return tuple(diagnostic.code for diagnostic in error.diagnostics)
