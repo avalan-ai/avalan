@@ -1,4 +1,9 @@
+from ...container import (
+    ContainerAsyncBackend,
+    ContainerEffectiveSettings,
+)
 from .. import ToolSet
+from .container import ShellContainerCommandExecutor
 from .executor import CommandExecutor, LocalCommandExecutor
 from .formatting import format_shell_result
 from .opt_in import SHELL_TOOL_NAMESPACE
@@ -35,11 +40,23 @@ class ShellToolSet(ToolSet):
         formatter: ShellResultFormatter | None = None,
         namespace: str | None = "shell",
         policy: ExecutionPolicy | None = None,
+        container_settings: ContainerEffectiveSettings | None = None,
+        container_backend: ContainerAsyncBackend | None = None,
     ) -> None:
         assert namespace == SHELL_TOOL_NAMESPACE, "namespace must be shell"
         self._settings = settings or ShellToolSettings()
         policy = policy or ExecutionPolicy(settings=self._settings)
-        executor = executor or LocalCommandExecutor(settings=self._settings)
+        if executor is None:
+            local_executor = LocalCommandExecutor(settings=self._settings)
+            executor = (
+                local_executor
+                if container_settings is None
+                else ShellContainerCommandExecutor(
+                    container_settings=container_settings,
+                    container_backend=container_backend,
+                    local_executor=local_executor,
+                )
+            )
         formatter = formatter or (
             lambda result: format_shell_result(
                 result,

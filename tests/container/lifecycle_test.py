@@ -261,8 +261,141 @@ class ContainerLifecycleTest(TestCase):
 
         self.assertEqual(filled.dropped_chunks, 1)
         self.assertEqual(marker.chunks[0].content, b"[con")
+        per_stream_policy = ContainerStreamDrainPolicy(
+            max_chunks=3,
+            max_bytes=9,
+            max_chunk_bytes=4,
+            max_stdout_bytes=3,
+            max_stderr_bytes=2,
+        )
+        per_stream = drain_container_streams(
+            (
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.STDERR,
+                    content=b"wxyz",
+                    sequence=0,
+                ),
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.STDOUT,
+                    content=b"abcd",
+                    sequence=1,
+                ),
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.PROGRESS,
+                    content=b"prog",
+                    sequence=2,
+                ),
+            ),
+            per_stream_policy,
+        )
+
+        self.assertEqual(per_stream.stdout_bytes, 3)
+        self.assertEqual(per_stream.stderr_bytes, 2)
+        self.assertEqual(per_stream.chunks[0].content, b"[c")
+        self.assertEqual(per_stream.chunks[1].content, b"[co")
+        self.assertEqual(per_stream.chunks[2].content, b"prog")
+        self.assertEqual(
+            per_stream_policy.to_dict()["max_stdout_bytes"],
+            3,
+        )
+        self.assertEqual(
+            per_stream_policy.to_dict()["preserve_truncated_prefix"],
+            False,
+        )
+        raw_prefix_policy = ContainerStreamDrainPolicy(
+            max_chunks=3,
+            max_bytes=9,
+            max_chunk_bytes=4,
+            max_stdout_bytes=3,
+            max_stderr_bytes=2,
+            preserve_truncated_prefix=True,
+        )
+        raw_prefix = drain_container_streams(
+            (
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.STDERR,
+                    content=b"wxyz",
+                    sequence=0,
+                ),
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.STDOUT,
+                    content=b"abcd",
+                    sequence=1,
+                ),
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.PROGRESS,
+                    content=b"prog",
+                    sequence=2,
+                ),
+            ),
+            raw_prefix_policy,
+        )
+
+        self.assertEqual(raw_prefix.stdout_bytes, 3)
+        self.assertEqual(raw_prefix.stderr_bytes, 2)
+        self.assertEqual(raw_prefix.chunks[0].content, b"wx")
+        self.assertEqual(raw_prefix.chunks[1].content, b"abc")
+        self.assertEqual(raw_prefix.chunks[2].content, b"prog")
+        self.assertEqual(
+            raw_prefix_policy.to_dict()["preserve_truncated_prefix"],
+            True,
+        )
+        reserved_policy = ContainerStreamDrainPolicy(
+            max_chunks=2,
+            max_bytes=9,
+            max_chunk_bytes=5,
+            max_stdout_bytes=5,
+            max_stderr_bytes=4,
+            max_non_output_chunks=1,
+            max_non_output_bytes=3,
+            preserve_truncated_prefix=True,
+        )
+        reserved = drain_container_streams(
+            (
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.PROGRESS,
+                    content=b"progress",
+                    sequence=0,
+                ),
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.PROGRESS,
+                    content=b"dropped",
+                    sequence=1,
+                ),
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.STDOUT,
+                    content=b"hello",
+                    sequence=2,
+                ),
+                ContainerBackendStreamChunk(
+                    stream=ContainerBackendStream.STDERR,
+                    content=b"warn",
+                    sequence=3,
+                ),
+            ),
+            reserved_policy,
+        )
+
+        self.assertEqual(reserved.truncated_chunks, 1)
+        self.assertEqual(reserved.dropped_chunks, 1)
+        self.assertEqual(
+            [chunk.content for chunk in reserved.chunks],
+            [b"pro", b"hello", b"warn"],
+        )
+        self.assertEqual(reserved.stdout_bytes, 5)
+        self.assertEqual(reserved.stderr_bytes, 4)
+        self.assertEqual(
+            reserved_policy.to_dict()["max_non_output_bytes"],
+            3,
+        )
         with self.assertRaises(AssertionError):
             ContainerStreamDrainPolicy(max_chunks=0)
+        with self.assertRaises(AssertionError):
+            ContainerStreamDrainPolicy(max_stdout_bytes=-1)
+        with self.assertRaises(AssertionError):
+            ContainerStreamDrainPolicy(max_non_output_chunks=-1)
+        with self.assertRaises(AssertionError):
+            ContainerStreamDrainPolicy(max_non_output_bytes=-1)
 
     def test_incremental_stream_drains_with_idle_timeout_and_bounds(
         self,
