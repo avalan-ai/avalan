@@ -19,6 +19,11 @@ from ...server.entities import (
 )
 from ...types import JsonObject, JsonScalar, MutableJsonValue
 from ...utils import to_json
+from ..container_policy import (
+    RemoteContainerRequestError,
+    remote_container_policy_from_state,
+    validate_remote_container_arguments,
+)
 from ..sse import sse_bytes, sse_headers
 from . import (
     MODEL_FALLBACK as DEFAULT_MODEL_FALLBACK,
@@ -472,6 +477,18 @@ def _parse_call_request(
     )
     if not isinstance(arguments, dict):
         raise HTTPException(status_code=400, detail="Invalid tool arguments")
+
+    try:
+        container_request = validate_remote_container_arguments(
+            arguments,
+            policy=remote_container_policy_from_state(request.app.state),
+        )
+    except RemoteContainerRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    arguments = cast(dict[str, JSONValue], container_request.arguments)
+    if container_request.profile is not None:
+        request.state.mcp_container_profile = container_request.profile
 
     try:
         request_model = MCPToolRequest.model_validate(arguments)

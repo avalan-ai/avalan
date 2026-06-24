@@ -19,6 +19,28 @@ from avalan.server.entities import (
     ResponsesRequest,
 )
 
+_REMOTE_RUNTIME_POLICY_KEYS = (
+    "capabilities",
+    "capability",
+    "command_mode",
+    "container_flags",
+    "env",
+    "environment",
+    "environment_variables",
+    "envvars",
+    "gid",
+    "platform",
+    "privileged",
+    "pull_policy",
+    "read_only_rootfs",
+    "uid",
+    "user",
+    "workdir",
+    "working_directory",
+    "workspace",
+    "workspace_root",
+)
+
 
 class ChatEntitiesTestCase(TestCase):
     def test_request_defaults(self) -> None:
@@ -34,6 +56,103 @@ class ChatEntitiesTestCase(TestCase):
         msg = ChatMessage(role=MessageRole.USER, content="hi")
         with self.assertRaises(ValidationError):
             ChatCompletionRequest(model="m", messages=[msg], temperature=3.0)
+
+    def test_chat_request_rejects_remote_runtime_authority(self) -> None:
+        base = {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        invalid_requests = [
+            {**base, "container": {"profiles": {}}},
+            {
+                **base,
+                "metadata": {
+                    "runtime": {
+                        "container": {
+                            "image": "registry.example/untrusted:latest"
+                        }
+                    }
+                },
+            },
+            {**base, "model": "m?backend=container"},
+            {
+                **base,
+                "tool_choice": {
+                    "type": "function",
+                    "function": {"name": "run"},
+                    "backend": "container",
+                },
+            },
+            {
+                "model": "m",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_file",
+                                "file_data": "YWJj",
+                                "file": {"mounts": ["/"]},
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+
+        for payload in invalid_requests:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "runtime authority",
+                ):
+                    ChatCompletionRequest.model_validate(payload)
+
+    def test_chat_request_rejects_runtime_policy_metadata_keys(
+        self,
+    ) -> None:
+        base = {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+
+        for key in _REMOTE_RUNTIME_POLICY_KEYS:
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "runtime authority",
+                ):
+                    ChatCompletionRequest.model_validate(
+                        {
+                            **base,
+                            "metadata": {key: True},
+                        }
+                    )
+
+    def test_chat_request_ignores_non_runtime_extras(self) -> None:
+        req = ChatCompletionRequest.model_validate(
+            {
+                "model": "m",
+                "messages": [{"role": "user", "content": "hi"}],
+                "metadata": {"trace_id": "request-1"},
+            }
+        )
+
+        self.assertEqual(req.model, "m")
+        self.assertFalse(hasattr(req, "metadata"))
+
+    def test_chat_request_accepts_safe_container_profile_selector_shape(
+        self,
+    ) -> None:
+        req = ChatCompletionRequest.model_validate(
+            {
+                "model": "m",
+                "messages": [{"role": "user", "content": "hi"}],
+                "container": {"profile": "workspace-readonly"},
+            }
+        )
+
+        self.assertEqual(req.model, "m")
 
     def test_chat_message_accepts_input_text_blocks(self) -> None:
         msg = ChatMessage(
@@ -418,3 +537,68 @@ class ChatEntitiesTestCase(TestCase):
                 stop="END",
                 text={"stop": "DONE"},
             )
+
+    def test_responses_request_rejects_remote_runtime_authority(self) -> None:
+        invalid_requests = [
+            {"input": "hi", "runtime_envelope": {"profile": "unsafe"}},
+            {
+                "input": "hi",
+                "metadata": {"resources": {"cpu_count": 128}},
+            },
+            {
+                "model": "m?ds4_native_backend=metal",
+                "input": "hi",
+            },
+            {
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "https://example.test/i.png",
+                                    "network": "host",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+        ]
+
+        for payload in invalid_requests:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "runtime authority",
+                ):
+                    ResponsesRequest.model_validate(payload)
+
+    def test_responses_request_rejects_runtime_policy_extra_keys(
+        self,
+    ) -> None:
+        for key in _REMOTE_RUNTIME_POLICY_KEYS:
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "runtime authority",
+                ):
+                    ResponsesRequest.model_validate(
+                        {
+                            "input": "hi",
+                            key: True,
+                        }
+                    )
+
+    def test_responses_request_accepts_safe_container_profile_selector_shape(
+        self,
+    ) -> None:
+        req = ResponsesRequest.model_validate(
+            {
+                "input": "hi",
+                "container": {"profile": "workspace-readonly"},
+            }
+        )
+
+        self.assertEqual(req.messages[0].content, "hi")

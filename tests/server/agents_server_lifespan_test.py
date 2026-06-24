@@ -8,7 +8,20 @@ from uuid import UUID
 
 import pytest
 
+from avalan.container import (
+    ContainerBackend,
+    ContainerEffectiveSettings,
+    ContainerExecutionScope,
+    ContainerProfile,
+    ContainerSettingsSource,
+    ContainerSurface,
+    ContainerToolRuntimeSettings,
+    ContainerTrustLevel,
+    disabled_required_container_settings,
+)
 from avalan.server import agents_server
+from avalan.server.container_policy import RemoteContainerRequestPolicy
+from avalan.tool.context import ToolSettingsContext
 
 
 @pytest.fixture
@@ -35,6 +48,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
     loader_kwargs: dict[str, object] = {}
     captured_lifespan: dict[str, object] = {}
     hub = MagicMock(name="hub")
+    tool_settings = ToolSettingsContext(extra={"fixture": "tools"})
 
     def build_fastapi(*args, **kwargs):
         app = SimpleNamespace(
@@ -90,7 +104,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 reload=False,
                 specs_path="agent.yaml",
                 settings=None,
-                tool_settings="tools",
+                tool_settings=tool_settings,
                 mcp_prefix="/mcp",
                 openai_prefix="/openai",
                 mcp_name="run",
@@ -125,7 +139,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 participant_id=generated_participant_id,
                 specs_path="agent.yaml",
                 settings=None,
-                tool_settings="tools",
+                tool_settings=tool_settings,
             )
             resource_store_cls.assert_called_once_with()
             uuid4_mock.assert_called_once_with()
@@ -134,6 +148,150 @@ async def test_agents_server_lifespan_initializes_state() -> None:
     assert loader_kwargs["hub"] is hub
     assert loader_kwargs["logger"] is logger
     assert loader_kwargs["participant_id"] == generated_participant_id
+
+
+@pytest.mark.anyio
+async def test_agents_server_lifespan_exposes_remote_policy() -> None:
+    logger = MagicMock(spec=Logger)
+    loader_instance = MagicMock(name="loader_instance")
+    config_instance = MagicMock(name="config_instance")
+    server_instance = MagicMock(name="server_instance")
+    captured_lifespan: dict[str, object] = {}
+    hub = MagicMock(name="hub")
+    tool_settings = _tool_settings_with_profiles("workspace-readonly")
+
+    def build_fastapi(*args, **kwargs):
+        app = SimpleNamespace(
+            state=SimpleNamespace(),
+            include_router=MagicMock(),
+            add_middleware=MagicMock(),
+        )
+        captured_lifespan["app"] = app
+        captured_lifespan["lifespan"] = kwargs["lifespan"]
+        return app
+
+    uvicorn_module = ModuleType("uvicorn")
+    uvicorn_module.Config = MagicMock(return_value=config_instance)
+    uvicorn_module.Server = MagicMock(return_value=server_instance)
+
+    with patch.dict(
+        sys.modules,
+        {"uvicorn": uvicorn_module, "avalan.server.a2a": _fake_a2a_module()},
+    ):
+        with (
+            patch("avalan.server.FastAPI", side_effect=build_fastapi),
+            patch(
+                "avalan.server.OrchestratorLoader",
+                return_value=loader_instance,
+            ),
+            patch("avalan.server.mcp_router.MCPResourceStore"),
+            patch("avalan.server.logger_replace"),
+            patch.dict(os.environ, {}, clear=True),
+            patch("avalan.server.uuid4", return_value=UUID(int=6)),
+        ):
+            server = agents_server(
+                hub=hub,
+                name="srv",
+                version="v1",
+                host="0.0.0.0",
+                port=9999,
+                reload=False,
+                specs_path="agent.yaml",
+                settings=None,
+                tool_settings=tool_settings,
+                mcp_prefix="/mcp",
+                openai_prefix="/openai",
+                mcp_name="run",
+                logger=logger,
+                agent_id=None,
+                participant_id=None,
+            )
+
+            assert server is server_instance
+
+            lifespan = captured_lifespan["lifespan"]
+            app = captured_lifespan["app"]
+
+            async with lifespan(app):
+                policy = app.state.remote_container_policy
+                assert isinstance(policy, RemoteContainerRequestPolicy)
+                assert policy.exposed_profiles == ("workspace-readonly",)
+
+
+@pytest.mark.anyio
+async def test_agents_server_lifespan_clears_untrusted_remote_policy() -> None:
+    logger = MagicMock(spec=Logger)
+    loader_instance = MagicMock(name="loader_instance")
+    config_instance = MagicMock(name="config_instance")
+    server_instance = MagicMock(name="server_instance")
+    captured_lifespan: dict[str, object] = {}
+    hub = MagicMock(name="hub")
+    tool_settings = ToolSettingsContext(
+        container=ContainerToolRuntimeSettings(
+            effective_settings=disabled_required_container_settings(
+                ContainerSurface.SERVER
+            )
+        )
+    )
+
+    def build_fastapi(*args, **kwargs):
+        app = SimpleNamespace(
+            state=SimpleNamespace(
+                remote_container_policy=RemoteContainerRequestPolicy(
+                    exposed_profiles=("adhoc",)
+                )
+            ),
+            include_router=MagicMock(),
+            add_middleware=MagicMock(),
+        )
+        captured_lifespan["app"] = app
+        captured_lifespan["lifespan"] = kwargs["lifespan"]
+        return app
+
+    uvicorn_module = ModuleType("uvicorn")
+    uvicorn_module.Config = MagicMock(return_value=config_instance)
+    uvicorn_module.Server = MagicMock(return_value=server_instance)
+
+    with patch.dict(
+        sys.modules,
+        {"uvicorn": uvicorn_module, "avalan.server.a2a": _fake_a2a_module()},
+    ):
+        with (
+            patch("avalan.server.FastAPI", side_effect=build_fastapi),
+            patch(
+                "avalan.server.OrchestratorLoader",
+                return_value=loader_instance,
+            ),
+            patch("avalan.server.mcp_router.MCPResourceStore"),
+            patch("avalan.server.logger_replace"),
+            patch.dict(os.environ, {}, clear=True),
+            patch("avalan.server.uuid4", return_value=UUID(int=7)),
+        ):
+            server = agents_server(
+                hub=hub,
+                name="srv",
+                version="v1",
+                host="0.0.0.0",
+                port=9998,
+                reload=False,
+                specs_path="agent.yaml",
+                settings=None,
+                tool_settings=tool_settings,
+                mcp_prefix="/mcp",
+                openai_prefix="/openai",
+                mcp_name="run",
+                logger=logger,
+                agent_id=None,
+                participant_id=None,
+            )
+
+            assert server is server_instance
+
+            lifespan = captured_lifespan["lifespan"]
+            app = captured_lifespan["app"]
+
+            async with lifespan(app):
+                assert not hasattr(app.state, "remote_container_policy")
 
 
 @pytest.mark.anyio
@@ -280,3 +438,34 @@ async def test_agents_server_lifespan_sets_a2a_description() -> None:
                     app.state.a2a_tool_description
                     == "Execute the orchestrated agent"
                 )
+
+
+def _tool_settings_with_profiles(*profiles: str) -> ToolSettingsContext:
+    return ToolSettingsContext(
+        container=ContainerToolRuntimeSettings(
+            effective_settings=ContainerEffectiveSettings(
+                backend=ContainerBackend.DOCKER,
+                required=False,
+                scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+                source=ContainerSettingsSource(
+                    surface=ContainerSurface.SERVER,
+                    trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,
+                ),
+                policy_version="phase14",
+                profile_registry_id="server",
+                profile_name=profiles[0] if profiles else None,
+                profile=(_readonly_profile(profiles[0]) if profiles else None),
+                allowed_profiles=profiles,
+            )
+        )
+    )
+
+
+def _readonly_profile(name: str) -> ContainerProfile:
+    return ContainerProfile.minimal_readonly(
+        name=name,
+        image_reference=(
+            "registry.example/workspace@sha256:"
+            "1111111111111111111111111111111111111111111111111111111111111111"
+        ),
+    )

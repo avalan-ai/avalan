@@ -17,6 +17,7 @@ from ...server.entities import (
 )
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
+from ..remote_container import validate_remote_container_profile_selection
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
 from .streaming import (
@@ -100,7 +101,11 @@ router = APIRouter(
 )
 
 
-@router.post("/completions", response_model=ChatCompletionResponse)
+@router.post(
+    "/completions",
+    response_model=ChatCompletionResponse,
+    dependencies=[Depends(validate_remote_container_profile_selection)],
+)
 async def create_chat_completion(
     request: ChatCompletionRequest,
     logger: Logger = Depends(di_get_logger),

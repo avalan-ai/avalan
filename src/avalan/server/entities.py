@@ -1,8 +1,14 @@
 from ..entities import MessageRole, OrchestratorSettings, ReasoningEffort
 from ..tool.context import ToolSettingsContext
+from .authority import (
+    reject_remote_runtime_authority_extra_fields,
+    reject_remote_runtime_authority_fields,
+    reject_remote_runtime_authority_model_identifier,
+)
 
 from base64 import b64decode
 from binascii import Error as BinasciiError
+from collections.abc import Mapping
 from dataclasses import dataclass
 from re import fullmatch
 from typing import Annotated, Any, Literal
@@ -249,6 +255,14 @@ class ContentImage(BaseModel):
     type: Literal["image_url"]
     image_url: dict[str, str]
 
+    @model_validator(mode="after")
+    def validate_remote_runtime_authority(self) -> "ContentImage":
+        reject_remote_runtime_authority_fields(
+            self.image_url,
+            path="image_url",
+        )
+        return self
+
 
 class ContentFile(BaseModel):
     type: Literal["file", "input_file"]
@@ -261,6 +275,7 @@ class ContentFile(BaseModel):
     @model_validator(mode="after")
     def validate_source(self) -> "ContentFile":
         nested = self.file or {}
+        reject_remote_runtime_authority_fields(nested, path="file")
         has_source = any(
             _has_non_empty_file_source(value)
             for value in (
@@ -386,6 +401,25 @@ class ChatCompletionRequest(BaseModel):
         Literal["auto", "none", "required"] | str | dict[str, object] | None
     ) = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def validate_remote_runtime_authority(cls, value: object) -> object:
+        _reject_request_remote_runtime_authority(
+            value,
+            allowed_fields=frozenset(cls.model_fields),
+            path="chat",
+        )
+        if isinstance(value, Mapping):
+            reject_remote_runtime_authority_model_identifier(
+                value.get("model"),
+                path="chat.model",
+            )
+            reject_remote_runtime_authority_fields(
+                value.get("tool_choice"),
+                path="chat.tool_choice",
+            )
+        return value
+
 
 ResponsesInput = str | list[ChatMessage]
 
@@ -410,6 +444,21 @@ class ResponsesRequest(BaseModel):
     response_format: ResponseFormat | None = None
     reasoning: ReasoningConfig | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def validate_remote_runtime_authority(cls, value: object) -> object:
+        _reject_request_remote_runtime_authority(
+            value,
+            allowed_fields=frozenset(cls.model_fields),
+            path="responses",
+        )
+        if isinstance(value, Mapping):
+            reject_remote_runtime_authority_model_identifier(
+                value.get("model"),
+                path="responses.model",
+            )
+        return value
+
     @property
     def messages(self) -> list[ChatMessage]:
         if isinstance(self.input, str):
@@ -431,6 +480,20 @@ class ResponsesRequest(BaseModel):
         ):
             raise ValueError("Use either text.stop or stop")
         return self
+
+
+def _reject_request_remote_runtime_authority(
+    value: object,
+    *,
+    allowed_fields: frozenset[str],
+    path: str,
+) -> None:
+    reject_remote_runtime_authority_extra_fields(
+        value,
+        allowed_fields=allowed_fields,
+        allow_container_profile_selector=True,
+        path=path,
+    )
 
 
 class MCPFileDescriptor(BaseModel):

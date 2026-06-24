@@ -22,6 +22,7 @@ from avalan.server.a2a.router import (
     AvalanA2AAgentExecutor,
     install_a2a_routes,
 )
+from avalan.server.container_policy import RemoteContainerRequestPolicy
 from avalan.server.entities import ContentFile, ContentImage, ContentText
 
 
@@ -308,6 +309,117 @@ async def test_chat_request_preserves_text_only_a2a_parts() -> None:
     request = await executor._chat_request(context, _ExecutorOrchestrator())
 
     assert request.messages[0].content == "hello\nworld"
+    assert request.tools is None
+    assert request.tool_choice is None
+
+
+@pytest.mark.anyio
+async def test_chat_request_rejects_a2a_runtime_authority_metadata() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                _FakePart(
+                    text="hello",
+                    metadata={
+                        "runtime": {
+                            "container": {
+                                "image": "registry.example/untrusted:latest"
+                            }
+                        }
+                    },
+                )
+            ]
+        )
+    )
+
+    with pytest.raises(ValueError, match="runtime authority"):
+        await executor._chat_request(context, _ExecutorOrchestrator())
+
+
+@pytest.mark.anyio
+async def test_chat_request_rejects_a2a_file_runtime_authority() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                {
+                    "file": {
+                        "data": "YWJj",
+                        "filename": "raw.bin",
+                        "mounts": ["/"],
+                    }
+                }
+            ]
+        )
+    )
+
+    with pytest.raises(ValueError, match="runtime authority"):
+        await executor._chat_request(context, _ExecutorOrchestrator())
+
+
+@pytest.mark.anyio
+async def test_chat_request_rejects_a2a_nested_content_authority() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                {"raw": {"base64": "YWJj", "mounts": ["/"]}},
+                {
+                    "file": {
+                        "data": {
+                            "base64": "YWJj",
+                            "privileged": True,
+                        }
+                    }
+                },
+            ]
+        )
+    )
+
+    with pytest.raises(ValueError, match="runtime authority"):
+        await executor._chat_request(context, _ExecutorOrchestrator())
+
+
+@pytest.mark.anyio
+async def test_chat_request_rejects_unexposed_a2a_container_profile() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                _FakePart(
+                    text="hello",
+                    metadata={"container": {"profile": "workspace-readonly"}},
+                )
+            ]
+        )
+    )
+
+    with pytest.raises(ValueError, match="not exposed"):
+        await executor._chat_request(context, _ExecutorOrchestrator())
+
+
+@pytest.mark.anyio
+async def test_chat_request_allows_exposed_a2a_container_profile() -> None:
+    app = FastAPI()
+    app.state.remote_container_policy = RemoteContainerRequestPolicy(
+        exposed_profiles=("workspace-readonly",)
+    )
+    executor = AvalanA2AAgentExecutor(app)
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                _FakePart(
+                    text="hello",
+                    metadata={"container": {"profile": "workspace-readonly"}},
+                )
+            ]
+        )
+    )
+
+    request = await executor._chat_request(context, _ExecutorOrchestrator())
+
+    assert request.messages[0].content == "hello"
 
 
 @pytest.mark.anyio
@@ -381,6 +493,7 @@ async def test_chat_request_accepts_nested_a2a_file_payloads() -> None:
         message=_FakeMessage(
             [
                 {"file": {"data": "YWJj", "filename": "raw.bin"}},
+                {"file": {"data": {"base64": "ZA=="}}},
                 {"file": {"url": "mcp://resources/1"}},
             ]
         )
@@ -392,7 +505,8 @@ async def test_chat_request_accepts_nested_a2a_file_payloads() -> None:
     assert isinstance(content, list)
     assert content[0].file_data == "YWJj"
     assert content[0].file == {"filename": "raw.bin"}
-    assert content[1].file_url == "mcp://resources/1"
+    assert content[1].file_data == "ZA=="
+    assert content[2].file_url == "mcp://resources/1"
 
 
 @pytest.mark.anyio
@@ -675,6 +789,12 @@ async def test_a2a_json_file_part_validator_edge_cases() -> None:
     a2a_router._validate_a2a_json_part_payload({"raw": "-_8"})
     a2a_router._validate_a2a_json_part_payload({"raw": "YWJjZA"})
     a2a_router._validate_a2a_json_part_payload({"raw": "YWJj\nZA=="})
+    a2a_router._validate_a2a_json_part_payload(
+        {"file": {"data": "YWJj", "filename": "raw.bin"}}
+    )
+    a2a_router._validate_a2a_json_part_payload(
+        {"file": {"data": {"base64": "YWJj"}, "filename": "raw.bin"}}
+    )
     assert a2a_router._raw_file_data("-_8") == "+/8="
     assert a2a_router._raw_file_data("YWJj\nZA==") == "YWJjZA=="
 
@@ -688,7 +808,189 @@ async def test_a2a_json_file_part_validator_edge_cases() -> None:
     with pytest.raises(a2a_router.HTTPException):
         a2a_router._validate_a2a_json_part_payload({"raw": None})
     with pytest.raises(a2a_router.HTTPException):
+        a2a_router._validate_a2a_json_part_payload(
+            {"file": {"data": "not base64!"}}
+        )
+    with pytest.raises(a2a_router.HTTPException):
+        a2a_router._validate_a2a_json_part_payload(
+            {"file": {"data": {"base64": "not base64!"}}}
+        )
+    with pytest.raises(a2a_router.HTTPException):
         a2a_router._validate_a2a_json_part_payload({"metadata": {}})
+
+
+@pytest.mark.anyio
+async def test_a2a_json_validator_allows_nested_file_parts() -> None:
+    request = _BodyRequest(b"""{
+            "params": {
+                "message": {
+                    "parts": [
+                        {
+                            "file": {
+                                "data": "YWJj",
+                                "filename": "raw.bin"
+                            }
+                        }
+                    ]
+                }
+            }
+        }""")
+
+    payload = await a2a_router._validate_a2a_json_file_parts(request)
+
+    assert isinstance(payload, dict)
+
+
+@pytest.mark.anyio
+async def test_a2a_json_validator_rejects_runtime_authority() -> None:
+    request = _BodyRequest(b"""{
+            "params": {
+                "message": {
+                    "parts": [
+                        {
+                            "text": "hello",
+                            "metadata": {
+                                "container": {
+                                    "image": "registry.example/untrusted"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }""")
+
+    with pytest.raises(a2a_router.HTTPException) as exc_info:
+        await a2a_router._validate_a2a_json_file_parts(request)
+
+    assert exc_info.value.status_code == 400
+    assert "runtime authority" in str(exc_info.value.detail)
+
+
+@pytest.mark.anyio
+async def test_a2a_json_validator_rejects_nested_content_authority() -> None:
+    request = _BodyRequest(b"""{
+            "params": {
+                "message": {
+                    "parts": [
+                        {
+                            "raw": {
+                                "base64": "YWJj",
+                                "mounts": ["/"]
+                            }
+                        },
+                        {
+                            "file": {
+                                "data": {
+                                    "base64": "YWJj",
+                                    "privileged": true
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }""")
+
+    with pytest.raises(a2a_router.HTTPException) as exc_info:
+        await a2a_router._validate_a2a_json_file_parts(request)
+
+    assert exc_info.value.status_code == 400
+    assert "runtime authority" in str(exc_info.value.detail)
+
+
+def test_a2a_part_authority_ignores_non_mapping_part_payload() -> None:
+    a2a_router._reject_a2a_remote_runtime_authority(
+        7,
+        path="a2a.parts[0]",
+        part_payload=True,
+    )
+
+
+def test_a2a_part_authority_allows_exposed_profile_selector() -> None:
+    a2a_router._reject_a2a_remote_runtime_authority(
+        {"containerProfile": "workspace-readonly"},
+        path="a2a.parts[0]",
+        policy=RemoteContainerRequestPolicy(
+            exposed_profiles=("workspace-readonly",)
+        ),
+        part_payload=True,
+    )
+
+
+def test_a2a_part_authority_rejects_direct_runtime_key() -> None:
+    with pytest.raises(ValueError, match="runtime authority"):
+        a2a_router._reject_a2a_remote_runtime_authority(
+            {"runtime": "container"},
+            path="a2a.parts[0]",
+            part_payload=True,
+        )
+
+
+def test_a2a_part_authority_rejects_nested_content_wrappers() -> None:
+    invalid_parts = (
+        {"raw": {"base64": "YWJj", "mounts": ["/"]}},
+        {"data": [{"base64": "YWJj"}, {"workdir": "/workspace"}]},
+        {
+            "file": {
+                "data": {
+                    "base64": "YWJj",
+                    "privileged": True,
+                }
+            }
+        },
+        {
+            "file": {
+                "data": "YWJj",
+                "filename": {"container": {"image": "untrusted"}},
+            }
+        },
+    )
+
+    for part in invalid_parts:
+        with pytest.raises(ValueError, match="runtime authority"):
+            a2a_router._reject_a2a_remote_runtime_authority(
+                part,
+                path="a2a.parts[0]",
+                part_payload=True,
+            )
+
+
+def test_a2a_file_authority_allows_safe_metadata_and_profile() -> None:
+    a2a_router._reject_a2a_remote_runtime_authority(
+        {
+            "file": {
+                "data": "YWJj",
+                "metadata": {"trace_id": "request-1"},
+                "containerProfile": "workspace-readonly",
+                "attributes": {"tag": "safe"},
+            }
+        },
+        path="a2a.parts[0]",
+        policy=RemoteContainerRequestPolicy(
+            exposed_profiles=("workspace-readonly",)
+        ),
+        part_payload=True,
+    )
+
+
+def test_a2a_file_authority_ignores_non_mapping_file_payload() -> None:
+    a2a_router._reject_a2a_remote_runtime_authority(
+        {"file": 7},
+        path="a2a.parts[0]",
+        part_payload=True,
+    )
+
+
+def test_a2a_profile_selector_rejects_non_string_alias_value() -> None:
+    with pytest.raises(ValueError, match="runtime authority"):
+        a2a_router._reject_a2a_remote_runtime_authority(
+            {"containerProfile": {"profile": "workspace-readonly"}},
+            path="a2a",
+            policy=RemoteContainerRequestPolicy(
+                exposed_profiles=("workspace-readonly",)
+            ),
+        )
 
 
 @pytest.mark.anyio
