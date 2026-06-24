@@ -1,3 +1,42 @@
+from .audit import (
+    ContainerAuditCorrelation as ContainerAuditCorrelation,
+)
+from .audit import (
+    ContainerAuditRecord as ContainerAuditRecord,
+)
+from .audit import (
+    ContainerAuditSeverity as ContainerAuditSeverity,
+)
+from .audit import (
+    ContainerFormattedOutput as ContainerFormattedOutput,
+)
+from .audit import (
+    ContainerMappedDiagnostic as ContainerMappedDiagnostic,
+)
+from .audit import (
+    ContainerStableDiagnosticCode as ContainerStableDiagnosticCode,
+)
+from .audit import (
+    container_diagnostic_audit_event as container_diagnostic_audit_event,
+)
+from .audit import (
+    container_execution_result_from_diagnostics as _container_result,
+)
+from .audit import (
+    container_lifecycle_audit_events as container_lifecycle_audit_events,
+)
+from .audit import (
+    format_container_diagnostics_for_model as _format_diags_for_model,
+)
+from .audit import (
+    normalize_container_diagnostic as normalize_container_diagnostic,
+)
+from .audit import (
+    redact_container_audit_value as redact_container_audit_value,
+)
+from .audit import (
+    sanitize_container_audit_metadata as sanitize_container_audit_metadata,
+)
 from .backend import (
     ContainerAsyncBackend as ContainerAsyncBackend,
 )
@@ -466,3 +505,6 @@ from .settings import (
 from .settings import (
     ContainerWorkspaceMapping as ContainerWorkspaceMapping,
 )
+
+container_execution_result_from_diagnostics = _container_result
+format_container_diagnostics_for_model = _format_diags_for_model
