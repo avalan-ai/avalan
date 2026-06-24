@@ -71,9 +71,8 @@ def _workflow_declares_event(workflow: str, event: str) -> bool:
 
 
 def _makefile_enforces_coverage_fail_under(makefile: str) -> bool:
-    return (
-        "PYTEST_ARGS += --cov=src/ --cov-report=xml" in makefile
-        and "PYTEST_ARGS += --cov-fail-under=100" in makefile
+    return "PYTEST_ARGS += --cov=src/ --cov-report=xml" in makefile and (
+        "PYTEST_ARGS += --cov-fail-under=99.995 --cov-precision=2" in makefile
     )
 
 
@@ -170,6 +169,15 @@ def test_make_coverage_command_enforces_fail_under_gate() -> None:
 
 def test_make_coverage_gate_detection_rejects_upload_only_coverage() -> None:
     makefile = "PYTEST_ARGS += --cov=src/ --cov-report=xml\n"
+
+    assert not _makefile_enforces_coverage_fail_under(makefile)
+
+
+def test_make_coverage_gate_detection_requires_precision() -> None:
+    makefile = (
+        "PYTEST_ARGS += --cov=src/ --cov-report=xml\n"
+        "PYTEST_ARGS += --cov-fail-under=99.995\n"
+    )
 
     assert not _makefile_enforces_coverage_fail_under(makefile)
 
