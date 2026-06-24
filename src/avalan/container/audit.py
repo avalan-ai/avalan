@@ -108,6 +108,7 @@ class ContainerStableDiagnosticCode(StrEnum):
     PULL_FAILED = "container.backend.pull_failed"
     BUILD_DENIED = "container.backend.build_denied"
     BUILD_FAILED = "container.backend.build_failed"
+    POOL_DENIED = "container.backend.pool_denied"
     CREATE_FAILED = "container.backend.create_failed"
     ATTACH_FAILED = "container.backend.attach_failed"
     START_FAILED = "container.backend.start_failed"
@@ -177,6 +178,9 @@ _BACKEND_CODE_MAP = {
     ),
     ContainerBackendDiagnosticCode.BUILD_FAILED: (
         ContainerStableDiagnosticCode.BUILD_FAILED
+    ),
+    ContainerBackendDiagnosticCode.POOL_DENIED: (
+        ContainerStableDiagnosticCode.POOL_DENIED
     ),
     ContainerBackendDiagnosticCode.CREATE_FAILED: (
         ContainerStableDiagnosticCode.CREATE_FAILED

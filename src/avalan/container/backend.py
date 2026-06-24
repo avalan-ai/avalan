@@ -15,21 +15,28 @@ from .output import (
 from .settings import (
     ContainerBackendCapabilities,
     ContainerBackendSupportLevel,
+    ContainerBuildCachePolicy,
     ContainerBuildPolicy,
+    ContainerCacheMode,
     ContainerDeviceClass,
     ContainerExecutionResult,
+    ContainerImageCachePolicy,
     ContainerMountType,
     ContainerNetworkMode,
     ContainerPlatformBehavior,
+    ContainerPoolingMode,
+    ContainerPoolingPolicy,
     ContainerPullPolicy,
     ContainerRunPlan,
 )
 
 from abc import ABC, abstractmethod
-from asyncio import CancelledError, sleep
+from asyncio import CancelledError, Lock, Task, create_task, shield, sleep
 from collections.abc import AsyncIterable, AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from hashlib import sha256
+from json import dumps
 from types import MappingProxyType
 from typing import TypeVar, cast, final
 
@@ -65,6 +72,7 @@ class ContainerBackendDiagnosticCode(StrEnum):
     PULL_FAILED = "container.backend.pull_failed"
     BUILD_DENIED = "container.backend.build_denied"
     BUILD_FAILED = "container.backend.build_failed"
+    POOL_DENIED = "container.backend.pool_denied"
     CREATE_FAILED = "container.backend.create_failed"
     ATTACH_FAILED = "container.backend.attach_failed"
     START_FAILED = "container.backend.start_failed"
@@ -82,6 +90,20 @@ class ContainerBackendStream(StrEnum):
     STDOUT = "stdout"
     STDERR = "stderr"
     PROGRESS = "progress"
+
+
+class ContainerCacheLookupStatus(StrEnum):
+    DISABLED = "disabled"
+    HIT = "hit"
+    MISS = "miss"
+    STALE = "stale"
+
+
+class ContainerPoolDecisionType(StrEnum):
+    CREATE = "create"
+    REUSE = "reuse"
+    REJECT = "reject"
+    EVICT = "evict"
 
 
 @final
@@ -361,6 +383,63 @@ class ContainerBackendOperationResult:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerCacheLookupResult:
+    status: ContainerCacheLookupStatus | str
+    cache_key: str
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "status",
+            _enum_value(
+                self.status,
+                ContainerCacheLookupStatus,
+                "status",
+            ),
+        )
+        _assert_non_empty_string(self.cache_key, "cache_key")
+        object.__setattr__(
+            self,
+            "metadata",
+            MappingProxyType(_string_mapping(self.metadata, "metadata")),
+        )
+
+    @property
+    def hit(self) -> bool:
+        return self.status is ContainerCacheLookupStatus.HIT
+
+    def to_dict(self) -> dict[str, object]:
+        status = cast(ContainerCacheLookupStatus, self.status)
+        return {
+            "status": status.value,
+            "cache_key": self.cache_key,
+            "metadata": dict(self.metadata),
+        }
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerBuildCacheResult:
+    operation: ContainerBackendOperationResult
+    cache: ContainerCacheLookupResult
+    deduplicated: bool = False
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.operation, ContainerBackendOperationResult)
+        assert isinstance(self.cache, ContainerCacheLookupResult)
+        _assert_bool(self.deduplicated, "deduplicated")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "operation": self.operation.to_dict(),
+            "cache": self.cache.to_dict(),
+            "deduplicated": self.deduplicated,
+        }
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ContainerBackendImageResolution:
     reference: str
     digest: str
@@ -568,6 +647,428 @@ class ContainerBackendLifecycleResult:
         }
 
 
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerPoolSafetyReport:
+    leftover_processes: int = 0
+    dirty_scratch: bool = False
+    contaminated: bool = False
+    healthy: bool = True
+
+    def __post_init__(self) -> None:
+        _assert_non_negative_int(self.leftover_processes, "leftover_processes")
+        _assert_bool(self.dirty_scratch, "dirty_scratch")
+        _assert_bool(self.contaminated, "contaminated")
+        _assert_bool(self.healthy, "healthy")
+
+    def to_dict(self) -> dict[str, int | bool]:
+        return {
+            "leftover_processes": self.leftover_processes,
+            "dirty_scratch": self.dirty_scratch,
+            "contaminated": self.contaminated,
+            "healthy": self.healthy,
+        }
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContainerPoolDecision:
+    decision: ContainerPoolDecisionType | str
+    reason: str
+    container: ContainerBackendContainer | None = None
+    audit_labels: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "decision",
+            _enum_value(
+                self.decision,
+                ContainerPoolDecisionType,
+                "decision",
+            ),
+        )
+        _assert_non_empty_string(self.reason, "reason")
+        if self.container is not None:
+            assert isinstance(self.container, ContainerBackendContainer)
+        object.__setattr__(
+            self,
+            "audit_labels",
+            MappingProxyType(_string_mapping(self.audit_labels, "audit")),
+        )
+
+    @property
+    def reuse(self) -> bool:
+        return self.decision is ContainerPoolDecisionType.REUSE
+
+    def to_dict(self) -> dict[str, object]:
+        decision = cast(ContainerPoolDecisionType, self.decision)
+        return {
+            "decision": decision.value,
+            "reason": self.reason,
+            "container": (
+                None if self.container is None else self.container.to_dict()
+            ),
+            "audit_labels": dict(self.audit_labels),
+        }
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _ImageCacheEntry:
+    digest: str
+    created_at_seconds: int
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _BuildCacheEntry:
+    result: ContainerBackendOperationResult
+    created_at_seconds: int
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _PoolEntry:
+    container: ContainerBackendContainer
+    created_at_seconds: int
+    last_used_at_seconds: int
+    uses: int
+    safety: ContainerPoolSafetyReport
+
+
+class ContainerImageCache:
+    def __init__(self) -> None:
+        self._entries: dict[str, _ImageCacheEntry] = {}
+
+    def lookup(
+        self,
+        plan: ContainerRunPlan,
+        *,
+        now_seconds: int,
+    ) -> ContainerCacheLookupResult:
+        policy = plan.image.image_cache
+        assert isinstance(policy, ContainerImageCachePolicy)
+        _assert_non_negative_int(now_seconds, "now_seconds")
+        cache_key = container_image_cache_key(plan)
+        if policy.mode is ContainerCacheMode.DISABLED:
+            return _cache_result(
+                ContainerCacheLookupStatus.DISABLED, cache_key
+            )
+        entry = self._entries.get(cache_key)
+        if entry is None:
+            return _cache_result(ContainerCacheLookupStatus.MISS, cache_key)
+        if _cache_entry_stale(
+            entry.created_at_seconds,
+            now_seconds,
+            policy.ttl_seconds,
+        ):
+            del self._entries[cache_key]
+            return _cache_result(ContainerCacheLookupStatus.STALE, cache_key)
+        return _cache_result(
+            ContainerCacheLookupStatus.HIT,
+            cache_key,
+            digest=entry.digest,
+        )
+
+    def store(
+        self,
+        plan: ContainerRunPlan,
+        *,
+        now_seconds: int,
+    ) -> ContainerCacheLookupResult:
+        policy = plan.image.image_cache
+        assert isinstance(policy, ContainerImageCachePolicy)
+        _assert_non_negative_int(now_seconds, "now_seconds")
+        cache_key = container_image_cache_key(plan)
+        if policy.mode is not ContainerCacheMode.READ_WRITE:
+            return _cache_result(
+                ContainerCacheLookupStatus.DISABLED, cache_key
+            )
+        assert plan.image.digest is not None
+        self._entries[cache_key] = _ImageCacheEntry(
+            digest=plan.image.digest,
+            created_at_seconds=now_seconds,
+        )
+        return _cache_result(
+            ContainerCacheLookupStatus.HIT,
+            cache_key,
+            digest=plan.image.digest,
+        )
+
+
+class ContainerBuildCache:
+    def __init__(self) -> None:
+        self._entries: dict[str, _BuildCacheEntry] = {}
+        self._inflight: dict[str, Task[ContainerBackendOperationResult]] = {}
+        self._lock = Lock()
+
+    async def get_or_build(
+        self,
+        backend: "ContainerAsyncBackend",
+        plan: ContainerRunPlan,
+        *,
+        now_seconds: int,
+    ) -> ContainerBuildCacheResult:
+        assert isinstance(backend, ContainerAsyncBackend)
+        assert isinstance(plan, ContainerRunPlan)
+        policy = plan.image.build_cache
+        assert isinstance(policy, ContainerBuildCachePolicy)
+        _assert_non_negative_int(now_seconds, "now_seconds")
+        cache_key = container_build_cache_key(plan)
+        if policy.mode is ContainerCacheMode.DISABLED:
+            build_operation = await backend.build_image(plan)
+            return ContainerBuildCacheResult(
+                operation=build_operation,
+                cache=_cache_result(
+                    ContainerCacheLookupStatus.DISABLED,
+                    cache_key,
+                ),
+            )
+        cached, cache_status = self._lookup_build_entry(
+            policy,
+            cache_key,
+            now_seconds,
+        )
+        if cached is not None:
+            return ContainerBuildCacheResult(
+                operation=cached.result,
+                cache=_cache_result(
+                    ContainerCacheLookupStatus.HIT,
+                    cache_key,
+                ),
+            )
+        async with self._lock:
+            cached, locked_status = self._lookup_build_entry(
+                policy,
+                cache_key,
+                now_seconds,
+            )
+            if cached is not None:
+                return ContainerBuildCacheResult(
+                    operation=cached.result,
+                    cache=_cache_result(
+                        ContainerCacheLookupStatus.HIT,
+                        cache_key,
+                    ),
+                )
+            if locked_status is ContainerCacheLookupStatus.STALE:
+                cache_status = locked_status
+            task = self._inflight.get(cache_key)
+            deduplicated = task is not None
+            if task is None:
+                task = create_task(backend.build_image(plan))
+                self._inflight[cache_key] = task
+                task.add_done_callback(
+                    lambda finished_task: create_task(
+                        self._complete_inflight_build(
+                            cache_key,
+                            finished_task,
+                            policy,
+                            now_seconds,
+                        )
+                    )
+                )
+        operation = await shield(task)
+        await self._complete_inflight_build(
+            cache_key,
+            task,
+            policy,
+            now_seconds,
+        )
+        return ContainerBuildCacheResult(
+            operation=operation,
+            cache=_cache_result(cache_status, cache_key),
+            deduplicated=deduplicated,
+        )
+
+    def _lookup_build_entry(
+        self,
+        policy: ContainerBuildCachePolicy,
+        cache_key: str,
+        now_seconds: int,
+    ) -> tuple[_BuildCacheEntry | None, ContainerCacheLookupStatus]:
+        entry = self._entries.get(cache_key)
+        if entry is None:
+            return None, ContainerCacheLookupStatus.MISS
+        if _cache_entry_stale(
+            entry.created_at_seconds,
+            now_seconds,
+            policy.ttl_seconds,
+        ):
+            del self._entries[cache_key]
+            return None, ContainerCacheLookupStatus.STALE
+        return entry, ContainerCacheLookupStatus.HIT
+
+    async def _complete_inflight_build(
+        self,
+        cache_key: str,
+        task: Task[ContainerBackendOperationResult],
+        policy: ContainerBuildCachePolicy,
+        now_seconds: int,
+    ) -> None:
+        try:
+            operation = task.result()
+        except BaseException:
+            operation = None
+        async with self._lock:
+            if self._inflight.get(cache_key) is task:
+                del self._inflight[cache_key]
+            if (
+                operation is not None
+                and policy.mode is ContainerCacheMode.READ_WRITE
+                and operation.ok
+            ):
+                self._entries[cache_key] = _BuildCacheEntry(
+                    result=operation,
+                    created_at_seconds=now_seconds,
+                )
+
+
+class ContainerPool:
+    def __init__(self, policy: ContainerPoolingPolicy) -> None:
+        assert isinstance(policy, ContainerPoolingPolicy)
+        self._policy = policy
+        self._entries: dict[str, _PoolEntry] = {}
+
+    def offer(
+        self,
+        plan: ContainerRunPlan,
+        container: ContainerBackendContainer,
+        safety: ContainerPoolSafetyReport,
+        *,
+        now_seconds: int,
+    ) -> ContainerPoolDecision:
+        assert isinstance(plan, ContainerRunPlan)
+        assert isinstance(container, ContainerBackendContainer)
+        assert isinstance(safety, ContainerPoolSafetyReport)
+        _assert_non_negative_int(now_seconds, "now_seconds")
+        rejection = self._rejection(plan, safety)
+        if rejection is not None:
+            return rejection
+        cache_key = _pool_key(plan)
+        if container.plan_fingerprint != cache_key:
+            return ContainerPoolDecision(
+                decision=ContainerPoolDecisionType.REJECT,
+                reason="container plan fingerprint does not match pool key",
+                container=container,
+                audit_labels=self._policy.audit_labels,
+            )
+        self._entries[cache_key] = _PoolEntry(
+            container=container,
+            created_at_seconds=now_seconds,
+            last_used_at_seconds=now_seconds,
+            uses=0,
+            safety=safety,
+        )
+        return ContainerPoolDecision(
+            decision=ContainerPoolDecisionType.CREATE,
+            reason="container accepted into pool",
+            container=container,
+            audit_labels=self._policy.audit_labels,
+        )
+
+    def acquire(
+        self,
+        plan: ContainerRunPlan,
+        *,
+        now_seconds: int,
+    ) -> ContainerPoolDecision:
+        assert isinstance(plan, ContainerRunPlan)
+        _assert_non_negative_int(now_seconds, "now_seconds")
+        mode = cast(ContainerPoolingMode, self._policy.mode)
+        if mode is ContainerPoolingMode.DISABLED:
+            return ContainerPoolDecision(
+                decision=ContainerPoolDecisionType.CREATE,
+                reason="container pooling is disabled",
+            )
+        if plan.secret_names and not self._policy.allow_secret_reuse:
+            return ContainerPoolDecision(
+                decision=ContainerPoolDecisionType.REJECT,
+                reason="secret-bearing plan cannot reuse pooled container",
+                audit_labels=self._policy.audit_labels,
+            )
+        cache_key = _pool_key(plan)
+        entry = self._entries.get(cache_key)
+        if entry is None:
+            return ContainerPoolDecision(
+                decision=ContainerPoolDecisionType.CREATE,
+                reason="no reusable container is available",
+                audit_labels=self._policy.audit_labels,
+            )
+        eviction_reason = self._eviction_reason(entry, now_seconds)
+        if eviction_reason is not None:
+            del self._entries[cache_key]
+            return ContainerPoolDecision(
+                decision=ContainerPoolDecisionType.EVICT,
+                reason=eviction_reason,
+                container=entry.container,
+                audit_labels=self._policy.audit_labels,
+            )
+        self._entries[cache_key] = _PoolEntry(
+            container=entry.container,
+            created_at_seconds=entry.created_at_seconds,
+            last_used_at_seconds=now_seconds,
+            uses=entry.uses + 1,
+            safety=entry.safety,
+        )
+        return ContainerPoolDecision(
+            decision=ContainerPoolDecisionType.REUSE,
+            reason="container passed pool reuse checks",
+            container=entry.container,
+            audit_labels=self._policy.audit_labels,
+        )
+
+    def discard(self, plan: ContainerRunPlan) -> bool:
+        assert isinstance(plan, ContainerRunPlan)
+        return self._entries.pop(_pool_key(plan), None) is not None
+
+    def _rejection(
+        self,
+        plan: ContainerRunPlan,
+        safety: ContainerPoolSafetyReport,
+    ) -> ContainerPoolDecision | None:
+        mode = cast(ContainerPoolingMode, self._policy.mode)
+        if mode is ContainerPoolingMode.DISABLED:
+            return ContainerPoolDecision(
+                decision=ContainerPoolDecisionType.REJECT,
+                reason="container pooling is disabled",
+            )
+        if plan.secret_names and not self._policy.allow_secret_reuse:
+            return ContainerPoolDecision(
+                decision=ContainerPoolDecisionType.REJECT,
+                reason="secret-bearing plan cannot enter pool",
+                audit_labels=self._policy.audit_labels,
+            )
+        safety_reason = _pool_safety_reason(self._policy, safety)
+        if safety_reason is not None:
+            return ContainerPoolDecision(
+                decision=ContainerPoolDecisionType.REJECT,
+                reason=safety_reason,
+                audit_labels=self._policy.audit_labels,
+            )
+        return None
+
+    def _eviction_reason(
+        self,
+        entry: _PoolEntry,
+        now_seconds: int,
+    ) -> str | None:
+        safety_reason = _pool_safety_reason(self._policy, entry.safety)
+        if safety_reason is not None:
+            return safety_reason
+        if (
+            now_seconds - entry.created_at_seconds
+            > self._policy.max_age_seconds
+        ):
+            return "pooled container exceeded max age"
+        if (
+            now_seconds - entry.last_used_at_seconds
+            > self._policy.idle_ttl_seconds
+        ):
+            return "pooled container exceeded idle ttl"
+        if entry.uses >= self._policy.max_uses:
+            return "pooled container exceeded max uses"
+        return None
+
+
 class ContainerAsyncBackend(ABC):
     @abstractmethod
     async def probe(self) -> ContainerBackendProbeResult:
@@ -687,11 +1188,13 @@ class ContainerAsyncBackend(ABC):
         self,
         plan: ContainerRunPlan,
         *,
+        lifecycle_resources: object | None = None,
         output_contract: ContainerOutputContract | None = None,
     ) -> ContainerBackendLifecycleResult:
         return await run_container_backend_lifecycle(
             self,
             plan,
+            lifecycle_resources=lifecycle_resources,
             output_contract=output_contract,
         )
 
@@ -1175,6 +1678,9 @@ class ContainerFakeBackendScript:
         ContainerBackendOperation | str,
         float,
     ] = field(default_factory=dict)
+    build_progress_chunks: Sequence[ContainerBackendStreamChunk] = field(
+        default_factory=tuple,
+    )
     stream_chunks: Sequence[ContainerBackendStreamChunk] = field(
         default_factory=lambda: (
             ContainerBackendStreamChunk(
@@ -1261,6 +1767,16 @@ class ContainerFakeBackendScript:
             "operation_delay_seconds",
             MappingProxyType(operation_delay_seconds),
         )
+        for chunk in self.build_progress_chunks:
+            assert isinstance(chunk, ContainerBackendStreamChunk)
+            assert (
+                chunk.stream is ContainerBackendStream.PROGRESS
+            ), "build progress chunks must use progress stream"
+        object.__setattr__(
+            self,
+            "build_progress_chunks",
+            tuple(self.build_progress_chunks),
+        )
         for chunk in self.stream_chunks:
             assert isinstance(chunk, ContainerBackendStreamChunk)
         _assert_bool(self.stream_incremental, "stream_incremental")
@@ -1288,11 +1804,16 @@ class ContainerFakeBackend(ContainerAsyncBackend):
         assert isinstance(script, ContainerFakeBackendScript)
         self._script = script
         self._operations: list[ContainerBackendOperation] = []
+        self._build_progress: list[ContainerBackendStreamChunk] = []
         self._created_count = 0
 
     @property
     def operations(self) -> tuple[ContainerBackendOperation, ...]:
         return tuple(self._operations)
+
+    @property
+    def build_progress(self) -> tuple[ContainerBackendStreamChunk, ...]:
+        return tuple(self._build_progress)
 
     @property
     def backend(self) -> ContainerBackend:
@@ -1368,7 +1889,18 @@ class ContainerFakeBackend(ContainerAsyncBackend):
                     "image builds are disabled by policy",
                 )
             )
-        return self._operation_result(ContainerBackendOperation.IMAGE_BUILD)
+        self._build_progress.extend(self._script.build_progress_chunks)
+        return ContainerBackendOperationResult(
+            operation=ContainerBackendOperation.IMAGE_BUILD,
+            diagnostics=self._soft_diagnostics(
+                ContainerBackendOperation.IMAGE_BUILD,
+            ),
+            metadata={
+                "progress_chunks": str(
+                    len(self._script.build_progress_chunks)
+                ),
+            },
+        )
 
     async def create(
         self,
@@ -1379,7 +1911,7 @@ class ContainerFakeBackend(ContainerAsyncBackend):
         return ContainerBackendContainer(
             container_id=f"fake-{self._created_count}",
             backend=self.backend,
-            plan_fingerprint=_plan_fingerprint(plan),
+            plan_fingerprint=_pool_key(plan),
         )
 
     async def start(
@@ -1660,6 +2192,7 @@ async def run_container_backend_lifecycle(
     backend: ContainerAsyncBackend,
     plan: ContainerRunPlan,
     *,
+    lifecycle_resources: object | None = None,
     output_contract: ContainerOutputContract | None = None,
 ) -> ContainerBackendLifecycleResult:
     from .lifecycle import (
@@ -1670,6 +2203,7 @@ async def run_container_backend_lifecycle(
         await _run_container_managed_lifecycle(
             backend,
             plan,
+            lifecycle_resources=lifecycle_resources,
             output_contract=output_contract,
         )
     ).to_backend_result()
@@ -2044,13 +2578,134 @@ def _is_retryable(code: ContainerBackendDiagnosticCode) -> bool:
 
 
 def _plan_fingerprint(plan: ContainerRunPlan) -> str:
+    return _fingerprint(_canonical_run_plan(plan))
+
+
+def _fingerprint(value: Mapping[str, object]) -> str:
+    payload = dumps(value, sort_keys=True, separators=(",", ":"))
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _canonical_run_plan(plan: ContainerRunPlan) -> dict[str, object]:
     backend = cast(ContainerBackend, plan.backend)
-    return (
-        f"{backend.value}:"
-        f"{plan.profile_name}:"
-        f"{plan.image.digest}:"
-        f"{plan.command.tool_name}"
+    network = plan.network.to_dict()
+    network["egress_allowlist"] = sorted(
+        cast(Sequence[str], network["egress_allowlist"])
     )
+    devices = plan.devices.to_dict()
+    devices["devices"] = sorted(cast(Sequence[str], devices["devices"]))
+    return {
+        "backend": backend.value,
+        "command": plan.command.to_dict(),
+        "devices": devices,
+        "environment_names": sorted(plan.environment_names),
+        "image": plan.image.to_dict(),
+        "mounts": sorted(
+            (mount.to_dict() for mount in plan.mounts),
+            key=lambda mount: (
+                mount["target"],
+                mount["source"] or "",
+                mount["mount_type"],
+                mount["access"],
+            ),
+        ),
+        "network": network,
+        "pooling": plan.pooling.to_dict(),
+        "policy_version": plan.policy_version,
+        "profile_name": plan.profile_name,
+        "resources": plan.resources.to_dict(),
+        "secret_names": sorted(plan.secret_names),
+    }
+
+
+def container_image_cache_key(plan: ContainerRunPlan) -> str:
+    assert isinstance(plan, ContainerRunPlan)
+    backend = cast(ContainerBackend, plan.backend)
+    assert plan.image.digest is not None
+    return (
+        f"image:{backend.value}:"
+        f"{plan.image.reference}:"
+        f"{plan.image.digest}:"
+        f"{plan.image.platform}:"
+        f"{plan.policy_version}"
+    )
+
+
+def container_build_cache_key(plan: ContainerRunPlan) -> str:
+    assert isinstance(plan, ContainerRunPlan)
+    backend = cast(ContainerBackend, plan.backend)
+    context = plan.image.build_context
+    build_cache = plan.image.build_cache
+    if build_cache.mode is not ContainerCacheMode.DISABLED:
+        assert context is not None, "build cache requires trusted context"
+    context_key = (
+        "legacy"
+        if context is None
+        else ":".join(
+            (
+                context.context_path,
+                context.dockerfile_path,
+                context.dockerignore_path,
+                context.context_digest,
+            )
+        )
+    )
+    build_policy = cast(ContainerBuildPolicy, plan.image.build_policy)
+    assert plan.image.digest is not None
+    return (
+        f"build:{backend.value}:"
+        f"{plan.image.reference}:"
+        f"{plan.image.digest}:"
+        f"{plan.image.platform}:"
+        f"{build_policy.value}:"
+        f"{context_key}:"
+        f"{plan.policy_version}"
+    )
+
+
+def _cache_result(
+    status: ContainerCacheLookupStatus,
+    cache_key: str,
+    **metadata: str,
+) -> ContainerCacheLookupResult:
+    return ContainerCacheLookupResult(
+        status=status,
+        cache_key=cache_key,
+        metadata=metadata,
+    )
+
+
+def _cache_entry_stale(
+    created_at_seconds: int,
+    now_seconds: int,
+    ttl_seconds: int,
+) -> bool:
+    return now_seconds - created_at_seconds > ttl_seconds
+
+
+def _pool_key(plan: ContainerRunPlan) -> str:
+    return container_pool_key(plan)
+
+
+def container_pool_key(plan: ContainerRunPlan) -> str:
+    assert isinstance(plan, ContainerRunPlan)
+    return _plan_fingerprint(plan)
+
+
+def _pool_safety_reason(
+    policy: ContainerPoolingPolicy,
+    safety: ContainerPoolSafetyReport,
+) -> str | None:
+    mode = cast(ContainerPoolingMode, policy.mode)
+    if safety.contaminated:
+        return "pooled container is contaminated"
+    if policy.require_no_leftover_processes and safety.leftover_processes:
+        return "pooled container has leftover processes"
+    if policy.require_clean_scratch and safety.dirty_scratch:
+        return "pooled container scratch is dirty"
+    if mode is ContainerPoolingMode.SERVICE and not safety.healthy:
+        return "service pool health check failed"
+    return None
 
 
 def _assert_diagnostics(

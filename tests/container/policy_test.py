@@ -444,7 +444,7 @@ class ContainerPolicyTest(TestCase):
             ContainerAuthorizationDecisionType.DENY,
         )
 
-    def test_mutable_image_preauthorized_durable_plans_require_review(
+    def test_mutable_image_preauthorized_durable_plans_fail_image_trust(
         self,
     ) -> None:
         for surface in (
@@ -474,11 +474,11 @@ class ContainerPolicyTest(TestCase):
                 )
                 self.assertEqual(
                     decision.decision,
-                    ContainerAuthorizationDecisionType.REQUIRES_REVIEW,
+                    ContainerAuthorizationDecisionType.DENY,
                 )
-                self.assertEqual(decision.code, "container.review.durable")
+                self.assertEqual(decision.code, "container.deny.image_trust")
 
-    def test_mutable_image_preauthorized_server_plan_fails_closed(
+    def test_mutable_image_preauthorized_server_plan_fails_image_trust(
         self,
     ) -> None:
         plan = _plan(
@@ -505,7 +505,7 @@ class ContainerPolicyTest(TestCase):
             decision.decision,
             ContainerAuthorizationDecisionType.DENY,
         )
-        self.assertEqual(decision.code, "container.deny.review_unavailable")
+        self.assertEqual(decision.code, "container.deny.image_trust")
 
     def test_all_escalation_triggers_deny_without_review_authority(
         self,

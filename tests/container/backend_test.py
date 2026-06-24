@@ -984,7 +984,7 @@ class ContainerBackendTest(TestCase):
         fake = ContainerFakeBackend(
             ContainerFakeBackendScript(
                 capabilities=_capabilities(pull=True),
-                resolved_digest=f"sha256:{_DIGEST_ALT}",
+                resolved_digest=f"sha256:{_DIGEST}",
                 stream_chunks=(
                     ContainerBackendStreamChunk(
                         stream=ContainerBackendStream.STDOUT,
