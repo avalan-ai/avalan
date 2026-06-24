@@ -106,6 +106,42 @@ from .conformance import (
 from .conformance import (
     resolve_container_backend as resolve_container_backend,
 )
+from .lifecycle import (
+    ContainerLifecycleCleanup as ContainerLifecycleCleanup,
+)
+from .lifecycle import (
+    ContainerLifecycleCleanupResult as ContainerLifecycleCleanupResult,
+)
+from .lifecycle import (
+    ContainerLifecycleDeadlines as ContainerLifecycleDeadlines,
+)
+from .lifecycle import (
+    ContainerLifecycleEvent as ContainerLifecycleEvent,
+)
+from .lifecycle import (
+    ContainerLifecycleEventPolicy as ContainerLifecycleEventPolicy,
+)
+from .lifecycle import (
+    ContainerLifecycleEventStatus as ContainerLifecycleEventStatus,
+)
+from .lifecycle import (
+    ContainerLifecyclePhase as ContainerLifecyclePhase,
+)
+from .lifecycle import (
+    ContainerManagedLifecycleResult as ContainerManagedLifecycleResult,
+)
+from .lifecycle import (
+    ContainerStreamDrainPolicy as ContainerStreamDrainPolicy,
+)
+from .lifecycle import (
+    ContainerStreamDrainResult as ContainerStreamDrainResult,
+)
+from .lifecycle import (
+    drain_container_streams as drain_container_streams,
+)
+from .lifecycle import (
+    run_container_managed_lifecycle as run_container_managed_lifecycle,
+)
 from .output import (
     ContainerArchiveEntry as ContainerArchiveEntry,
 )

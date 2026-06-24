@@ -20,13 +20,12 @@ from .settings import (
     ContainerMountType,
     ContainerNetworkMode,
     ContainerPullPolicy,
-    ContainerResultStatus,
     ContainerRunPlan,
 )
 
 from abc import ABC, abstractmethod
 from asyncio import CancelledError, sleep
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -73,6 +72,8 @@ class ContainerBackendDiagnosticCode(StrEnum):
     ORPHAN_QUARANTINED = "container.backend.orphan_quarantined"
     CANCELLED = "container.backend.cancelled"
     TIMEOUT = "container.backend.timeout"
+    STREAM_TRUNCATED = "container.backend.stream_truncated"
+    EVENT_DROPPED = "container.backend.event_dropped"
 
 
 class ContainerBackendStream(StrEnum):
@@ -132,20 +133,6 @@ class ContainerBackendError(Exception):
         assert isinstance(diagnostic, ContainerBackendDiagnostic)
         super().__init__(diagnostic.message)
         self.diagnostic = diagnostic
-
-
-class _ContainerBackendLifecycleFailure(Exception):
-    def __init__(
-        self,
-        status: ContainerResultStatus,
-        *,
-        kill_container: bool = False,
-    ) -> None:
-        assert isinstance(status, ContainerResultStatus)
-        _assert_bool(kill_container, "kill_container")
-        super().__init__(status.value)
-        self.status = status
-        self.kill_container = kill_container
 
 
 @final
@@ -562,7 +549,10 @@ class ContainerAsyncBackend(ABC):
     async def stream(
         self,
         container: ContainerBackendContainer,
-    ) -> tuple[ContainerBackendStreamChunk, ...]:
+    ) -> (
+        Sequence[ContainerBackendStreamChunk]
+        | AsyncIterable[ContainerBackendStreamChunk]
+    ):
         raise NotImplementedError  # pragma: no cover
 
     @abstractmethod
@@ -655,6 +645,10 @@ class ContainerFakeBackendScript:
     timeout_operations: Sequence[ContainerBackendOperation | str] = field(
         default_factory=tuple,
     )
+    operation_delay_seconds: Mapping[
+        ContainerBackendOperation | str,
+        float,
+    ] = field(default_factory=dict)
     stream_chunks: Sequence[ContainerBackendStreamChunk] = field(
         default_factory=lambda: (
             ContainerBackendStreamChunk(
@@ -664,6 +658,7 @@ class ContainerFakeBackendScript:
             ),
         ),
     )
+    stream_incremental: bool = False
     stream_delay_seconds: float = 0
     stats_samples: Sequence[ContainerBackendStats] = field(
         default_factory=lambda: (ContainerBackendStats(memory_bytes=1024),),
@@ -728,8 +723,21 @@ class ContainerFakeBackendScript:
                 for operation in self.timeout_operations
             ),
         )
+        operation_delay_seconds: dict[ContainerBackendOperation, float] = {}
+        for operation, seconds in self.operation_delay_seconds.items():
+            assert isinstance(seconds, int | float)
+            assert seconds >= 0, "operation delay must not be negative"
+            operation_delay_seconds[
+                _enum_value(operation, ContainerBackendOperation, "operation")
+            ] = float(seconds)
+        object.__setattr__(
+            self,
+            "operation_delay_seconds",
+            MappingProxyType(operation_delay_seconds),
+        )
         for chunk in self.stream_chunks:
             assert isinstance(chunk, ContainerBackendStreamChunk)
+        _assert_bool(self.stream_incremental, "stream_incremental")
         assert isinstance(self.stream_delay_seconds, int | float)
         assert (
             self.stream_delay_seconds >= 0
@@ -867,9 +875,14 @@ class ContainerFakeBackend(ContainerAsyncBackend):
     async def stream(
         self,
         container: ContainerBackendContainer,
-    ) -> tuple[ContainerBackendStreamChunk, ...]:
+    ) -> (
+        Sequence[ContainerBackendStreamChunk]
+        | AsyncIterable[ContainerBackendStreamChunk]
+    ):
         assert isinstance(container, ContainerBackendContainer)
         await self._enter(ContainerBackendOperation.STREAM)
+        if self._script.stream_incremental:
+            return self._stream_incrementally()
         chunks: list[ContainerBackendStreamChunk] = []
         for chunk in self._script.stream_chunks:
             if self._script.stream_delay_seconds:
@@ -970,6 +983,9 @@ class ContainerFakeBackend(ContainerAsyncBackend):
 
     async def _enter(self, operation: ContainerBackendOperation) -> None:
         self._record(operation)
+        delay_seconds = self._script.operation_delay_seconds.get(operation)
+        if delay_seconds:
+            await sleep(delay_seconds)
         if operation in self._script.cancel_operations:
             raise CancelledError
         if operation in self._script.timeout_operations:
@@ -1016,6 +1032,14 @@ class ContainerFakeBackend(ContainerAsyncBackend):
 
     def _record(self, operation: ContainerBackendOperation) -> None:
         self._operations.append(operation)
+
+    async def _stream_incrementally(
+        self,
+    ) -> AsyncIterator[ContainerBackendStreamChunk]:
+        for chunk in self._script.stream_chunks:
+            if self._script.stream_delay_seconds:
+                await sleep(self._script.stream_delay_seconds)
+            yield chunk
 
 
 def select_container_backend(
@@ -1102,291 +1126,17 @@ async def run_container_backend_lifecycle(
     *,
     output_contract: ContainerOutputContract | None = None,
 ) -> ContainerBackendLifecycleResult:
-    assert isinstance(backend, ContainerAsyncBackend)
-    assert isinstance(plan, ContainerRunPlan)
-    if output_contract is not None:
-        assert isinstance(output_contract, ContainerOutputContract)
-    diagnostics: list[ContainerBackendDiagnostic] = []
-    stream_chunks: tuple[ContainerBackendStreamChunk, ...] = ()
-    stats: tuple[ContainerBackendStats, ...] = ()
-    output: ContainerOutputValidationResult | None = None
-    container: ContainerBackendContainer | None = None
-    exit_code: int | None = None
-    cleanup_uncertain = False
-    orphan_quarantined = False
-    status = ContainerResultStatus.COMPLETED
-    try:
-        image = await backend.resolve_image(plan)
-        diagnostics.extend(image.diagnostics)
-        if not image.ok:
-            raise _ContainerBackendLifecycleFailure(
-                _status_for_diagnostics(image.diagnostics)
-            )
-        if plan.image.pull_policy is not ContainerPullPolicy.NEVER:
-            _append_operation_result(
-                diagnostics,
-                await backend.pull_image(plan, image),
-            )
-        if plan.image.build_policy is not ContainerBuildPolicy.DISABLED:
-            _append_operation_result(
-                diagnostics,
-                await backend.build_image(plan),
-            )
-        container = await backend.create(plan)
-        _append_operation_result(
-            diagnostics,
-            await backend.attach(container),
-        )
-        _append_operation_result(
-            diagnostics,
-            await backend.start(container),
-        )
-        stream_chunks = await backend.stream(container)
-        stats = await backend.stats(container)
-        wait_result = await backend.wait(container)
-        diagnostics.extend(wait_result.diagnostics)
-        if wait_result.timed_out:
-            diagnostics.append(
-                _diagnostic(
-                    ContainerBackendDiagnosticCode.TIMEOUT,
-                    ContainerBackendOperation.WAIT,
-                    None,
-                    "container execution timed out",
-                    retryable=True,
-                )
-            )
-        exit_code = wait_result.exit_code
-        if wait_result.timed_out or wait_result.diagnostics:
-            raise _ContainerBackendLifecycleFailure(
-                _status_for_diagnostics(diagnostics),
-                kill_container=True,
-            )
-        await backend.inspect(container)
-        if output_contract is not None:
-            output = await backend.copy_outputs(container, output_contract)
-            if output.decision is not ContainerOutputDecisionType.ACCEPT:
-                status = ContainerResultStatus.FAILED
-        if exit_code != 0:
-            status = ContainerResultStatus.FAILED
-    except CancelledError:
-        status = ContainerResultStatus.CANCELLED
-        diagnostics.append(
-            _diagnostic(
-                ContainerBackendDiagnosticCode.CANCELLED,
-                ContainerBackendOperation.STREAM,
-                None,
-                "container execution was cancelled",
-                retryable=True,
-            )
-        )
-        if container is not None:
-            kill_result = await _kill_container(
-                backend,
-                container,
-                diagnostics,
-            )
-            cleanup_uncertain = cleanup_uncertain or kill_result[0]
-            orphan_quarantined = orphan_quarantined or kill_result[1]
-    except TimeoutError:
-        status = ContainerResultStatus.FAILED
-        diagnostics.append(
-            _diagnostic(
-                ContainerBackendDiagnosticCode.TIMEOUT,
-                ContainerBackendOperation.WAIT,
-                None,
-                "container execution timed out",
-                retryable=True,
-            )
-        )
-        if container is not None:
-            kill_result = await _kill_container(
-                backend,
-                container,
-                diagnostics,
-            )
-            cleanup_uncertain = cleanup_uncertain or kill_result[0]
-            orphan_quarantined = orphan_quarantined or kill_result[1]
-    except _ContainerBackendLifecycleFailure as failure:
-        status = failure.status
-        if failure.kill_container and container is not None:
-            kill_result = await _kill_container(
-                backend,
-                container,
-                diagnostics,
-            )
-            cleanup_uncertain = cleanup_uncertain or kill_result[0]
-            orphan_quarantined = orphan_quarantined or kill_result[1]
-    except ContainerBackendError as error:
-        diagnostics.append(error.diagnostic)
-        status = _status_for_diagnostic(error.diagnostic)
-    finally:
-        if container is not None:
-            cleanup = await _cleanup_container(backend, container, diagnostics)
-            cleanup_uncertain = cleanup_uncertain or cleanup[0]
-            orphan_quarantined = orphan_quarantined or cleanup[1]
-            if cleanup_uncertain and status is ContainerResultStatus.COMPLETED:
-                status = ContainerResultStatus.FAILED
-    return ContainerBackendLifecycleResult(
-        execution=ContainerExecutionResult(
-            status=status,
-            exit_code=exit_code,
-            diagnostics=tuple(_diagnostic_text(item) for item in diagnostics),
-            metadata={
-                "stream_chunks": str(len(stream_chunks)),
-                "stats_samples": str(len(stats)),
-                "cleanup_uncertain": str(cleanup_uncertain).lower(),
-                "orphan_quarantined": str(orphan_quarantined).lower(),
-            },
-        ),
-        diagnostics=diagnostics,
-        stream_chunks=stream_chunks,
-        stats=stats,
-        output=output,
-        cleanup_uncertain=cleanup_uncertain,
-        orphan_quarantined=orphan_quarantined,
+    from .lifecycle import (
+        run_container_managed_lifecycle as _run_container_managed_lifecycle,
     )
 
-
-def _append_operation_result(
-    diagnostics: list[ContainerBackendDiagnostic],
-    result: ContainerBackendOperationResult,
-) -> None:
-    assert isinstance(result, ContainerBackendOperationResult)
-    diagnostics.extend(result.diagnostics)
-    if not result.ok:
-        raise _ContainerBackendLifecycleFailure(
-            _status_for_diagnostics(result.diagnostics)
+    return (
+        await _run_container_managed_lifecycle(
+            backend,
+            plan,
+            output_contract=output_contract,
         )
-
-
-async def _kill_container(
-    backend: ContainerAsyncBackend,
-    container: ContainerBackendContainer,
-    diagnostics: list[ContainerBackendDiagnostic],
-) -> tuple[bool, bool]:
-    try:
-        kill_result = await backend.kill(container)
-        diagnostics.extend(kill_result.diagnostics)
-        if kill_result.diagnostics:
-            return True, _diagnostics_include_orphan(kill_result.diagnostics)
-    except ContainerBackendError as error:
-        diagnostics.append(error.diagnostic)
-        return (
-            True,
-            error.diagnostic.code
-            is ContainerBackendDiagnosticCode.ORPHAN_QUARANTINED,
-        )
-    except TimeoutError:
-        diagnostics.append(
-            _runtime_exception_diagnostic(
-                ContainerBackendDiagnosticCode.TIMEOUT,
-                ContainerBackendOperation.KILL,
-            )
-        )
-        return True, False
-    except CancelledError:
-        diagnostics.append(
-            _runtime_exception_diagnostic(
-                ContainerBackendDiagnosticCode.CANCELLED,
-                ContainerBackendOperation.KILL,
-            )
-        )
-        return True, False
-    return False, False
-
-
-async def _cleanup_container(
-    backend: ContainerAsyncBackend,
-    container: ContainerBackendContainer,
-    diagnostics: list[ContainerBackendDiagnostic],
-) -> tuple[bool, bool]:
-    cleanup_uncertain = False
-    orphan_quarantined = False
-    try:
-        remove_result = await backend.remove(container)
-        diagnostics.extend(remove_result.diagnostics)
-        if remove_result.diagnostics:
-            cleanup_uncertain = True
-            orphan_quarantined = _diagnostics_include_orphan(
-                remove_result.diagnostics
-            )
-    except ContainerBackendError as error:
-        diagnostics.append(error.diagnostic)
-        cleanup_uncertain = True
-        orphan_quarantined = (
-            error.diagnostic.code
-            is ContainerBackendDiagnosticCode.ORPHAN_QUARANTINED
-        )
-    except TimeoutError:
-        diagnostics.append(
-            _runtime_exception_diagnostic(
-                ContainerBackendDiagnosticCode.TIMEOUT,
-                ContainerBackendOperation.REMOVE,
-            )
-        )
-        cleanup_uncertain = True
-    except CancelledError:
-        diagnostics.append(
-            _runtime_exception_diagnostic(
-                ContainerBackendDiagnosticCode.CANCELLED,
-                ContainerBackendOperation.REMOVE,
-            )
-        )
-        cleanup_uncertain = True
-    try:
-        cleanup_result = await backend.cleanup(container)
-        diagnostics.extend(cleanup_result.diagnostics)
-        if cleanup_result.diagnostics:
-            cleanup_uncertain = True
-        orphan_quarantined = orphan_quarantined or _diagnostics_include_orphan(
-            cleanup_result.diagnostics
-        )
-    except ContainerBackendError as error:
-        diagnostics.append(error.diagnostic)
-        cleanup_uncertain = True
-        orphan_quarantined = orphan_quarantined or (
-            error.diagnostic.code
-            is ContainerBackendDiagnosticCode.ORPHAN_QUARANTINED
-        )
-    except TimeoutError:
-        diagnostics.append(
-            _runtime_exception_diagnostic(
-                ContainerBackendDiagnosticCode.TIMEOUT,
-                ContainerBackendOperation.CLEANUP,
-            )
-        )
-        cleanup_uncertain = True
-    except CancelledError:
-        diagnostics.append(
-            _runtime_exception_diagnostic(
-                ContainerBackendDiagnosticCode.CANCELLED,
-                ContainerBackendOperation.CLEANUP,
-            )
-        )
-        cleanup_uncertain = True
-    return cleanup_uncertain, orphan_quarantined
-
-
-def _diagnostics_include_orphan(
-    diagnostics: Sequence[ContainerBackendDiagnostic],
-) -> bool:
-    return any(
-        diagnostic.code is ContainerBackendDiagnosticCode.ORPHAN_QUARANTINED
-        for diagnostic in diagnostics
-    )
-
-
-def _runtime_exception_diagnostic(
-    code: ContainerBackendDiagnosticCode,
-    operation: ContainerBackendOperation,
-) -> ContainerBackendDiagnostic:
-    return _diagnostic(
-        code,
-        operation,
-        None,
-        _diagnostic_message(code, operation),
-        retryable=True,
-    )
+    ).to_backend_result()
 
 
 def _candidate_matches_request(
@@ -1570,36 +1320,6 @@ def _diagnostic_message(
     operation: ContainerBackendOperation,
 ) -> str:
     return f"{operation.value} failed with {code.value}"
-
-
-def _diagnostic_text(diagnostic: ContainerBackendDiagnostic) -> str:
-    code = cast(ContainerBackendDiagnosticCode, diagnostic.code)
-    operation = cast(ContainerBackendOperation, diagnostic.operation)
-    return f"{code.value}:{operation.value}:{diagnostic.message}"
-
-
-def _status_for_diagnostic(
-    diagnostic: ContainerBackendDiagnostic,
-) -> ContainerResultStatus:
-    code = cast(ContainerBackendDiagnosticCode, diagnostic.code)
-    if code in {
-        ContainerBackendDiagnosticCode.IMAGE_DENIED,
-        ContainerBackendDiagnosticCode.PULL_DENIED,
-        ContainerBackendDiagnosticCode.BUILD_DENIED,
-        ContainerBackendDiagnosticCode.CAPABILITY_MISMATCH,
-        ContainerBackendDiagnosticCode.ROOTFUL_NOT_AUTHORIZED,
-    }:
-        return ContainerResultStatus.DENIED
-    return ContainerResultStatus.FAILED
-
-
-def _status_for_diagnostics(
-    diagnostics: Sequence[ContainerBackendDiagnostic],
-) -> ContainerResultStatus:
-    for diagnostic in diagnostics:
-        if _status_for_diagnostic(diagnostic) is ContainerResultStatus.DENIED:
-            return ContainerResultStatus.DENIED
-    return ContainerResultStatus.FAILED
 
 
 def _is_retryable(code: ContainerBackendDiagnosticCode) -> bool:
