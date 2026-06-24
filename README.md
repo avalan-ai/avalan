@@ -67,21 +67,19 @@ echo "Who are you, and who is Leo Messi?" \
 ### 🐍 Use the Python SDK
 
 ```python
-import asyncio
+from asyncio import run
 from os import environ
-
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.vendor.openai import OpenAIModel
 from avalan.model.stream import CanonicalStreamItem, StreamItemKind
-
 
 async def main() -> None:
     api_key = environ["OPENAI_API_KEY"]
     settings = TransformerEngineSettings(access_token=api_key)
 
-    with OpenAIModel("gpt-4o", settings) as model:
+    with OpenAIModel("gpt-5-mini", settings) as model:
         async for item in await model(
-            "Give me two facts about Leo Messi.",
+            "Give me two five about Leo Messi.",
             settings=GenerationSettings(use_async_generator=True),
         ):
             if (
@@ -90,8 +88,7 @@ async def main() -> None:
             ):
                 print(item.text_delta, end="", flush=True)
 
-
-asyncio.run(main())
+run(main())
 ```
 
 ### ✅ Run a flow-backed task
