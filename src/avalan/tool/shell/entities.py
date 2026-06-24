@@ -225,7 +225,7 @@ class ShellCommandRequest:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ExecutionSpec:
     _policy_owned: InitVar[object]
-    backend: Literal["local"]
+    backend: Literal["local", "container"]
     tool_name: str
     command: str
     executable: str | None
@@ -248,7 +248,10 @@ class ExecutionSpec:
         assert (
             _policy_owned is _EXECUTION_SPEC_FACTORY_KEY
         ), "ExecutionSpec must be created by policy"
-        assert self.backend == "local", "backend must be local"
+        assert self.backend in {
+            "local",
+            "container",
+        }, "backend must be local or container"
         _assert_non_empty_string(self.tool_name, "tool_name")
         _assert_non_empty_string(self.command, "command")
         if self.executable is not None:
@@ -303,7 +306,7 @@ _EXECUTION_SPEC_FACTORY_KEY = object()
 
 def _create_execution_spec_from_policy(
     *,
-    backend: Literal["local"],
+    backend: Literal["local", "container"],
     tool_name: str,
     command: str,
     executable: str | None,

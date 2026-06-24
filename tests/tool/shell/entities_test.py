@@ -1,3 +1,4 @@
+from copy import copy, deepcopy
 from dataclasses import FrozenInstanceError
 from unittest import TestCase, main
 
@@ -12,6 +13,7 @@ from avalan.tool.shell.entities import (
     ShellCommandRequest,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
+    ShellFormattedResult,
     ShellOutputKind,
     ShellPolicyDenied,
     ShellToolError,
@@ -697,6 +699,33 @@ class ShellEntitiesTest(TestCase):
 
         with self.assertRaises(FrozenInstanceError):
             result.stdout = "changed"
+
+    def test_formatted_result_preserves_execution_result_on_copy(
+        self,
+    ) -> None:
+        result = ExecutionResult(
+            backend="container",
+            tool_name="shell.cat",
+            command="cat",
+            argv=("cat", "file.txt"),
+            display_argv=("cat", "file.txt"),
+            cwd="/workspace",
+            display_cwd=".",
+            status=ShellExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout="contents",
+            stderr="",
+            stdout_media_type="text/plain",
+            output_kind=ShellOutputKind.TEXT,
+        )
+        formatted = ShellFormattedResult("formatted", result)
+
+        reduced_type, reduced_args = formatted.__reduce__()
+
+        self.assertIs(copy(formatted), formatted)
+        self.assertIs(deepcopy(formatted), formatted)
+        self.assertIs(reduced_type, ShellFormattedResult)
+        self.assertEqual(reduced_args, ("formatted", result))
 
     def test_shell_exceptions_validate_error_codes(self) -> None:
         denied = ShellPolicyDenied(

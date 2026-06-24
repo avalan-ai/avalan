@@ -1,6 +1,8 @@
 from ...container import (
     ContainerAsyncBackend,
     ContainerEffectiveSettings,
+    ContainerToolRuntimeSettings,
+    disabled_required_container_settings,
 )
 from .. import ToolSet
 from .container import ShellContainerCommandExecutor
@@ -40,11 +42,26 @@ class ShellToolSet(ToolSet):
         formatter: ShellResultFormatter | None = None,
         namespace: str | None = "shell",
         policy: ExecutionPolicy | None = None,
+        container_runtime: ContainerToolRuntimeSettings | None = None,
         container_settings: ContainerEffectiveSettings | None = None,
         container_backend: ContainerAsyncBackend | None = None,
     ) -> None:
         assert namespace == SHELL_TOOL_NAMESPACE, "namespace must be shell"
         self._settings = settings or ShellToolSettings()
+        if (
+            container_runtime is not None
+            and self._settings.backend == "container"
+        ):
+            assert isinstance(container_runtime, ContainerToolRuntimeSettings)
+            container_settings = (
+                container_settings or container_runtime.effective_settings
+            )
+            container_backend = container_backend or container_runtime.backend
+        if (
+            container_settings is None
+            and self._settings.backend == "container"
+        ):
+            container_settings = disabled_required_container_settings()
         policy = policy or ExecutionPolicy(settings=self._settings)
         if executor is None:
             local_executor = LocalCommandExecutor(settings=self._settings)

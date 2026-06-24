@@ -8,6 +8,15 @@ from ...cli.commands.model import token_generation
 from ...cli.display import cli_stream_display_config
 from ...cli.stream_coordinator import CliStreamCoordinator
 from ...cli.theme import Theme
+from ...container import (
+    ContainerProfileSelection,
+    ContainerSettingsSource,
+    ContainerSurface,
+    ContainerToolRuntimeSettings,
+    ContainerTrustLevel,
+    container_selection_from_mapping,
+    trusted_container_runtime_from_mapping,
+)
 from ...entities import (
     Backend,
     EngineMessageScored,
@@ -441,6 +450,62 @@ def _shell_tool_template_settings(
     return rendered
 
 
+def _container_tool_template_settings(
+    args: Namespace,
+) -> dict[str, object] | None:
+    backend = getattr(args, "tool_container_backend", None)
+    if backend is None and not _has_container_profile_args(args):
+        return None
+    _agent_container_config_from_args(args)
+    if backend == "none":
+        return {"backend": "none"}
+    profile_name = getattr(args, "tool_container_profile", None) or (
+        getattr(args, "tool_shell_container_profile", None)
+        or "workspace-readonly"
+    )
+    profile: dict[str, object] = {}
+    for source_key, target_key in (
+        ("tool_container_image", "image"),
+        ("tool_container_workspace_root", "workspace_root"),
+        ("tool_container_pull_policy", "pull_policy"),
+        ("tool_container_platform", "platform"),
+        ("tool_container_network_mode", "network"),
+        ("tool_container_review_mode", "review_mode"),
+    ):
+        value = getattr(args, source_key, None)
+        if value is not None:
+            profile[target_key] = value
+    resources = _agent_container_resources_from_args(args)
+    if resources:
+        profile["resources"] = resources
+    rendered: dict[str, object] = {
+        "profiles": {profile_name: profile},
+        "default_profile": profile_name,
+    }
+    if backend is not None:
+        rendered["backend"] = backend
+    return rendered
+
+
+def _shell_container_template_settings(
+    args: Namespace,
+) -> dict[str, object] | None:
+    rendered: dict[str, object] = {}
+    profile = getattr(args, "tool_shell_container_profile", None)
+    if profile is not None:
+        rendered["profile"] = profile
+    if getattr(args, "tool_shell_container_required", None):
+        rendered["required"] = True
+    if not rendered:
+        return None
+    assert (
+        getattr(args, "tool_shell_backend", None) == "container"
+    ), "tool.shell.container requires tool.shell backend container"
+    container_config = _agent_container_config_from_args(args)
+    assert container_config is not None, "container backend is required"
+    return rendered
+
+
 def _is_simple_string_mapping(value: object) -> bool:
     if not isinstance(value, Mapping):
         return False
@@ -479,20 +544,164 @@ def _agent_tool_format(args: Namespace) -> ToolFormat | None:
     return None
 
 
+def _agent_container_runtime_settings(
+    args: Namespace,
+    shell_settings: ShellToolSettings | None,
+) -> ContainerToolRuntimeSettings | None:
+    container_config = _agent_container_config_from_args(args)
+    shell_selection = _agent_shell_container_selection_from_args(
+        args,
+        shell_settings,
+    )
+    if container_config is None:
+        assert (
+            shell_selection is None or shell_selection.profile is None
+        ), "required container profile unavailable"
+        return None
+    return trusted_container_runtime_from_mapping(
+        container_config,
+        source=_cli_container_source(),
+        selection=shell_selection,
+    )
+
+
+def _agent_container_config_from_args(
+    args: Namespace,
+) -> dict[str, object] | None:
+    backend = getattr(args, "tool_container_backend", None)
+    if backend is None and not _has_container_profile_args(args):
+        return None
+    assert backend is not None, "container backend is required"
+    if backend == "none":
+        return {"backend": "none", "policy_version": "phase11"}
+    profile_name = getattr(args, "tool_container_profile", None) or (
+        getattr(args, "tool_shell_container_profile", None)
+        or "workspace-readonly"
+    )
+    image = getattr(args, "tool_container_image", None)
+    assert image is not None, "container image is required"
+    profile: dict[str, object] = {
+        "image": image,
+        "workspace_root": (
+            getattr(
+                args,
+                "tool_container_workspace_root",
+                None,
+            )
+            or getattr(args, "tool_shell_workspace_root", None)
+            or "."
+        ),
+    }
+    for source_key, target_key in (
+        ("tool_container_pull_policy", "pull_policy"),
+        ("tool_container_platform", "platform"),
+        ("tool_container_network_mode", "network"),
+        ("tool_container_review_mode", "review_mode"),
+    ):
+        value = getattr(args, source_key, None)
+        if value is not None:
+            profile[target_key] = value
+    resources = _agent_container_resources_from_args(args)
+    if resources:
+        profile["resources"] = resources
+    return {
+        "backend": backend,
+        "default_profile": profile_name,
+        "allowed_profiles": (profile_name,),
+        "profiles": {profile_name: profile},
+        "profile_registry_id": "default",
+        "policy_version": "phase11",
+    }
+
+
+def _agent_container_resources_from_args(
+    args: Namespace,
+) -> dict[str, int]:
+    resources: dict[str, int] = {}
+    for source_key, target_key in (
+        ("tool_container_cpu_count", "cpu_count"),
+        ("tool_container_memory_bytes", "memory_bytes"),
+        ("tool_container_pids", "pids"),
+        ("tool_container_timeout_seconds", "timeout_seconds"),
+    ):
+        value = getattr(args, source_key, None)
+        if value is not None:
+            resources[target_key] = value
+    return resources
+
+
+def _agent_shell_container_selection_from_args(
+    args: Namespace,
+    shell_settings: ShellToolSettings | None,
+) -> ContainerProfileSelection | None:
+    profile = getattr(args, "tool_shell_container_profile", None)
+    required = getattr(args, "tool_shell_container_required", None)
+    explicit_selection = profile is not None or required is not None
+    shell_backend_container = (
+        shell_settings is not None and shell_settings.backend == "container"
+    )
+    if explicit_selection:
+        assert (
+            shell_backend_container
+        ), "tool.shell.container requires tool.shell backend container"
+    if required is None and shell_settings is not None:
+        required = shell_settings.backend == "container"
+    if profile is None and not required:
+        return None
+    return container_selection_from_mapping(
+        {
+            "profile": profile,
+            "required": bool(required),
+        },
+        source=_cli_container_source(),
+    )
+
+
+def _has_container_profile_args(args: Namespace) -> bool:
+    return any(
+        getattr(args, key, None) is not None
+        for key in (
+            "tool_container_profile",
+            "tool_container_image",
+            "tool_container_workspace_root",
+            "tool_container_pull_policy",
+            "tool_container_platform",
+            "tool_container_cpu_count",
+            "tool_container_memory_bytes",
+            "tool_container_pids",
+            "tool_container_timeout_seconds",
+            "tool_container_network_mode",
+            "tool_container_review_mode",
+        )
+    )
+
+
+def _cli_container_source() -> ContainerSettingsSource:
+    return ContainerSettingsSource(
+        surface=ContainerSurface.CLI,
+        trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,
+    )
+
+
 def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
+    browser_settings = get_tool_settings(
+        args, prefix="browser", settings_cls=BrowserToolSettings
+    )
+    database_settings = get_tool_settings(
+        args, prefix="database", settings_cls=DatabaseToolSettings
+    )
+    graph_settings = get_tool_settings(
+        args, prefix="graph", settings_cls=GraphToolSettings
+    )
+    shell_settings = get_tool_settings(
+        args, prefix="shell", settings_cls=ShellToolSettings
+    )
     return ToolSettingsContext(
-        browser=get_tool_settings(
-            args, prefix="browser", settings_cls=BrowserToolSettings
-        ),
-        database=get_tool_settings(
-            args, prefix="database", settings_cls=DatabaseToolSettings
-        ),
-        graph=get_tool_settings(
-            args, prefix="graph", settings_cls=GraphToolSettings
-        ),
-        shell=get_tool_settings(
-            args, prefix="shell", settings_cls=ShellToolSettings
-        ),
+        browser=browser_settings,
+        database=database_settings,
+        graph=graph_settings,
+        shell=shell_settings,
+        container=_agent_container_runtime_settings(args, shell_settings),
     )
 
 
@@ -1200,6 +1409,8 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         database_tool=database_tool,
         graph_tool=graph_tool,
         shell_tool=_shell_tool_template_settings(shell_tool),
+        container_tool=_container_tool_template_settings(args),
+        shell_container=_shell_container_template_settings(args),
         tool_format=tool_format,
         tool_recovery_formats=tool_recovery_formats,
     )

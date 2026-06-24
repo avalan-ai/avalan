@@ -145,6 +145,24 @@ from .conformance import (
 from .conformance import (
     resolve_container_backend as resolve_container_backend,
 )
+from .integration import (
+    ContainerToolRuntimeSettings as ContainerToolRuntimeSettings,
+)
+from .integration import (
+    container_selection_from_mapping as container_selection_from_mapping,
+)
+from .integration import (
+    disabled_required_container_settings as disabled_required_container_settings,  # noqa: E501
+)
+from .integration import (
+    trusted_container_runtime_from_mapping as trusted_container_runtime_from_mapping,  # noqa: E501
+)
+from .integration import (
+    trusted_container_settings_from_mapping as trusted_container_settings_from_mapping,  # noqa: E501
+)
+from .integration import (
+    trusted_container_source as trusted_container_source,
+)
 from .lifecycle import (
     ContainerLifecycleCleanup as ContainerLifecycleCleanup,
 )

@@ -454,6 +454,8 @@ class CliShellToolOptionTestCase(TestCase):
             for field in ShellToolSettings.CLI_SCALAR_FIELDS
         }
         expected |= {
+            "--tool-shell-container-profile",
+            "--tool-shell-container-required",
             "--tool-shell-executable-path",
             "--tool-shell-executable-search-path",
         }
@@ -3234,6 +3236,53 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             args.tool_shell_executable_paths, [("rg", "/usr/bin/rg")]
         )
+
+    def test_add_shell_tool_settings_arguments_accepts_container_options(self):
+        parser = ArgumentParser()
+        CLI._add_tool_settings_arguments(
+            parser, prefix="shell", settings_cls=ShellToolSettings
+        )
+
+        args = parser.parse_args(
+            [
+                "--tool-shell-backend",
+                "container",
+                "--tool-container-backend",
+                "docker",
+                "--tool-container-profile",
+                "workspace-readonly",
+                "--tool-container-image",
+                "ghcr.io/example/tools@sha256:" + "1" * 64,
+                "--tool-container-workspace-root",
+                ".",
+                "--tool-container-pull-policy",
+                "never",
+                "--tool-container-platform",
+                "linux/amd64",
+                "--tool-container-cpu-count",
+                "1",
+                "--tool-container-memory-bytes",
+                "268435456",
+                "--tool-container-network-mode",
+                "none",
+                "--tool-container-review-mode",
+                "deny",
+                "--tool-shell-container-profile",
+                "workspace-readonly",
+                "--tool-shell-container-required",
+            ]
+        )
+
+        self.assertEqual(args.tool_shell_backend, "container")
+        self.assertEqual(args.tool_container_backend, "docker")
+        self.assertEqual(args.tool_container_profile, "workspace-readonly")
+        self.assertEqual(args.tool_container_pull_policy, "never")
+        self.assertEqual(args.tool_container_cpu_count, 1)
+        self.assertEqual(args.tool_container_memory_bytes, 268435456)
+        self.assertEqual(args.tool_container_network_mode, "none")
+        self.assertTrue(args.tool_shell_container_required)
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--tool-container-network-mode", "host"])
 
     async def test_call_prompts_for_token_and_handles_exception(self):
         with (

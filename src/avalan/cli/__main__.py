@@ -3802,6 +3802,112 @@ class CLI:
                 metavar="COMMAND=PATH",
                 help="Map a shell command to a trusted absolute executable.",
             )
+            group.add_argument(
+                "--tool-container-backend",
+                dest="tool_container_backend",
+                choices=(
+                    "none",
+                    "docker",
+                    "podman",
+                    "nerdctl",
+                    "apple-container",
+                    "windows-docker",
+                    "auto",
+                ),
+                default=None,
+                help="Trusted container backend for shell tools.",
+            )
+            group.add_argument(
+                "--tool-container-profile",
+                dest="tool_container_profile",
+                type=str,
+                default=None,
+                help="Trusted default container profile name.",
+            )
+            group.add_argument(
+                "--tool-container-image",
+                dest="tool_container_image",
+                type=str,
+                default=None,
+                help="Digest-pinned image reference for the trusted profile.",
+            )
+            group.add_argument(
+                "--tool-container-workspace-root",
+                dest="tool_container_workspace_root",
+                type=str,
+                default=None,
+                help="Trusted host workspace root mounted into the container.",
+            )
+            group.add_argument(
+                "--tool-container-pull-policy",
+                dest="tool_container_pull_policy",
+                choices=("never", "if_missing", "always"),
+                default=None,
+                help="Trusted image pull policy.",
+            )
+            group.add_argument(
+                "--tool-container-platform",
+                dest="tool_container_platform",
+                type=str,
+                default=None,
+                help="Trusted target image platform such as linux/amd64.",
+            )
+            group.add_argument(
+                "--tool-container-cpu-count",
+                dest="tool_container_cpu_count",
+                type=int,
+                default=None,
+                help="Trusted default container CPU limit.",
+            )
+            group.add_argument(
+                "--tool-container-memory-bytes",
+                dest="tool_container_memory_bytes",
+                type=int,
+                default=None,
+                help="Trusted default container memory limit in bytes.",
+            )
+            group.add_argument(
+                "--tool-container-pids",
+                dest="tool_container_pids",
+                type=int,
+                default=None,
+                help="Trusted default container PID limit.",
+            )
+            group.add_argument(
+                "--tool-container-timeout-seconds",
+                dest="tool_container_timeout_seconds",
+                type=int,
+                default=None,
+                help="Trusted default container execution timeout.",
+            )
+            group.add_argument(
+                "--tool-container-network-mode",
+                dest="tool_container_network_mode",
+                choices=("none", "loopback", "allowlist", "full"),
+                default=None,
+                help="Trusted default container network mode.",
+            )
+            group.add_argument(
+                "--tool-container-review-mode",
+                dest="tool_container_review_mode",
+                choices=("deny", "require_review", "preauthorized"),
+                default=None,
+                help="Trusted container escalation review mode.",
+            )
+            group.add_argument(
+                "--tool-shell-container-profile",
+                dest="tool_shell_container_profile",
+                type=str,
+                default=None,
+                help="Select an approved container profile for shell tools.",
+            )
+            group.add_argument(
+                "--tool-shell-container-required",
+                dest="tool_shell_container_required",
+                action="store_true",
+                default=None,
+                help="Fail closed instead of falling back to local shell.",
+            )
 
         return group
 

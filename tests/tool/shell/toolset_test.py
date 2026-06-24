@@ -2,6 +2,16 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
+from avalan.container import (
+    ContainerBackend,
+    ContainerBackendCapabilities,
+    ContainerFakeBackend,
+    ContainerFakeBackendScript,
+    ContainerMountType,
+    ContainerToolRuntimeSettings,
+    trusted_container_runtime_from_mapping,
+    trusted_container_source,
+)
 from avalan.entities import (
     ToolCallContext,
     ToolExecutionStreamEvent,
@@ -22,10 +32,13 @@ from avalan.tool.shell import (
     TrustedExecutableResolver,
     unavailable_executable_lookup,
 )
+from avalan.tool.shell.entities import ShellFormattedResult
 
 _EXPECTED_SCHEMA_NAMES = tuple(
     f"shell.{command_id}" for command_id in SHELL_COMMAND_IDS
 )
+_DIGEST = "7" * 64
+_IMAGE = f"ghcr.io/example/sdk-shell@sha256:{_DIGEST}"
 
 
 class ShellToolSetAssemblyTest(TestCase):
@@ -189,6 +202,122 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
             executor.seen_tool_names,
             ["shell.file", "shell.find", "shell.pdfinfo"],
         )
+
+    async def test_container_runtime_settings_inject_custom_fake_backend(
+        self,
+    ) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            backend="container",
+            workspace_root=str(fixture_root),
+        )
+        backend = ContainerFakeBackend(
+            ContainerFakeBackendScript(
+                capabilities=ContainerBackendCapabilities(
+                    backend=ContainerBackend.DOCKER,
+                    host_os="linux",
+                    guest_os="linux",
+                    architecture="amd64",
+                    rootless=True,
+                    mount_types=(ContainerMountType.WORKSPACE,),
+                    streaming_attach=True,
+                ),
+                stream_chunks=(),
+            )
+        )
+        runtime = trusted_container_runtime_from_mapping(
+            {
+                "backend": "docker",
+                "default_profile": "workspace-readonly",
+                "profiles": {
+                    "workspace-readonly": {
+                        "image": _IMAGE,
+                        "workspace_root": str(fixture_root),
+                    }
+                },
+            },
+            source=trusted_container_source("sdk"),
+        )
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            container_runtime=ContainerToolRuntimeSettings(
+                effective_settings=runtime.effective_settings,
+                backend=backend,
+            ),
+        )
+
+        output = await _call_cat(_tool_by_name(toolset, "cat"))
+
+        self.assertIn(f"status: {ShellExecutionStatus.COMPLETED}", output)
+        self.assertIsInstance(output, ShellFormattedResult)
+        self.assertEqual(output.execution_result.backend, "container")
+
+    async def test_container_runtime_does_not_override_local_backend(
+        self,
+    ) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(workspace_root=str(fixture_root))
+        backend = ContainerFakeBackend(
+            ContainerFakeBackendScript(
+                capabilities=ContainerBackendCapabilities(
+                    backend=ContainerBackend.DOCKER,
+                    host_os="linux",
+                    guest_os="linux",
+                    architecture="amd64",
+                    rootless=True,
+                    mount_types=(ContainerMountType.WORKSPACE,),
+                    streaming_attach=True,
+                ),
+                stream_chunks=(),
+            )
+        )
+        runtime = trusted_container_runtime_from_mapping(
+            {
+                "backend": "docker",
+                "default_profile": "workspace-readonly",
+                "profiles": {
+                    "workspace-readonly": {
+                        "image": _IMAGE,
+                        "workspace_root": str(fixture_root),
+                    }
+                },
+            },
+            source=trusted_container_source("sdk"),
+        )
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            container_runtime=ContainerToolRuntimeSettings(
+                effective_settings=runtime.effective_settings,
+                backend=backend,
+            ),
+        )
+
+        output = await _call_cat(_tool_by_name(toolset, "cat"))
+
+        self.assertIsInstance(output, ShellFormattedResult)
+        self.assertEqual(output.execution_result.backend, "local")
+
+    async def test_container_backend_without_runtime_fails_closed(
+        self,
+    ) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            backend="container",
+            workspace_root=str(fixture_root),
+        )
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+        )
+
+        output = await _call_cat(_tool_by_name(toolset, "cat"))
+
+        self.assertIn(f"status: {ShellExecutionStatus.POLICY_DENIED}", output)
+        self.assertIsInstance(output, ShellFormattedResult)
+        self.assertEqual(output.execution_result.backend, "container")
+        self.assertIn("container execution is required", output)
 
 
 def _schema_names(toolset: ShellToolSet) -> tuple[str, ...]:

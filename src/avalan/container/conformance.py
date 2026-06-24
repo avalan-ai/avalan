@@ -318,12 +318,6 @@ CONFORMANCE_PLAN = ContainerConformancePlan(
     ),
     unsupported_surface_paths=MappingProxyType(
         {
-            ContainerSurface.AGENT_TOML: (
-                "tool.container",
-                "tool.shell.container",
-                "tool.shell.backend",
-                "runtime.container",
-            ),
             ContainerSurface.FLOW_TOML: (
                 "runtime.container",
                 "nodes.*.runtime.container",
@@ -345,16 +339,6 @@ _CONTAINER_SYNTAX_RULES: Mapping[
     ContainerSurface, tuple[_ContainerSyntaxRule, ...]
 ] = MappingProxyType(
     {
-        ContainerSurface.AGENT_TOML: (
-            _ContainerSyntaxRule(path="tool.container"),
-            _ContainerSyntaxRule(path="tool.shell.container"),
-            _ContainerSyntaxRule(
-                path="tool.shell.backend",
-                expected_value="container",
-                match_any_value=False,
-            ),
-            _ContainerSyntaxRule(path="runtime.container"),
-        ),
         ContainerSurface.FLOW_TOML: (
             _ContainerSyntaxRule(path="runtime.container"),
             _ContainerSyntaxRule(path="nodes.*.runtime.container"),

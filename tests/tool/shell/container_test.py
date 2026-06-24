@@ -1,9 +1,12 @@
+from argparse import Namespace
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
+from avalan.agent.loader import OrchestratorLoader
+from avalan.cli.commands import agent as agent_cmds
 from avalan.container import (
     ContainerBackend,
     ContainerBackendCapabilities,
@@ -32,6 +35,9 @@ from avalan.container import (
     ContainerSettingsSource,
     ContainerSurface,
     ContainerTrustLevel,
+    container_selection_from_mapping,
+    trusted_container_runtime_from_mapping,
+    trusted_container_source,
 )
 from avalan.entities import (
     ToolCallContext,
@@ -332,6 +338,87 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
             ToolExecutionStreamKind.STDERR,
             {event.kind for event in events},
         )
+
+    async def test_sdk_cli_and_agent_toml_settings_are_equivalent(
+        self,
+    ) -> None:
+        raw = _runtime_mapping()
+        selection = container_selection_from_mapping(
+            {"profile": "workspace-readonly", "required": True},
+            source=trusted_container_source(ContainerSurface.SDK),
+        )
+        sdk_runtime = trusted_container_runtime_from_mapping(
+            raw,
+            source=trusted_container_source(ContainerSurface.SDK),
+            selection=selection,
+        )
+        cli_settings = agent_cmds._agent_tool_settings(
+            Namespace(
+                tool_shell_backend="container",
+                tool_container_backend="docker",
+                tool_container_profile="workspace-readonly",
+                tool_container_image=_IMAGE,
+                tool_container_workspace_root=".",
+                tool_container_pull_policy="never",
+                tool_container_platform="linux/amd64",
+                tool_container_cpu_count=None,
+                tool_container_memory_bytes=None,
+                tool_container_pids=None,
+                tool_container_timeout_seconds=None,
+                tool_container_network_mode="none",
+                tool_container_review_mode=None,
+                tool_shell_container_profile="workspace-readonly",
+                tool_shell_container_required=True,
+            )
+        )
+        agent_runtime = (
+            OrchestratorLoader._container_runtime_settings_from_config(
+                {"agent": {}, "runtime": {}},
+                {
+                    "container": raw,
+                    "shell": {
+                        "backend": "container",
+                        "container": {"profile": "workspace-readonly"},
+                    },
+                },
+            )
+        )
+        assert cli_settings.container is not None
+        assert agent_runtime is not None
+        runtimes = (
+            sdk_runtime,
+            cli_settings.container,
+            agent_runtime,
+        )
+        canonical = [
+            runtime.effective_settings.canonical_policy_input()
+            for runtime in runtimes
+            if runtime.effective_settings is not None
+        ]
+
+        self.assertEqual(canonical[0], canonical[1])
+        self.assertEqual(canonical[1], canonical[2])
+        outputs: list[str] = []
+        for runtime in runtimes:
+            assert runtime.effective_settings is not None
+            result = await ShellContainerCommandExecutor(
+                container_settings=runtime.effective_settings,
+                container_backend=ContainerFakeBackend(
+                    ContainerFakeBackendScript(
+                        capabilities=_capabilities(),
+                        stream_chunks=(
+                            ContainerBackendStreamChunk(
+                                stream=ContainerBackendStream.STDOUT,
+                                content=b"ok\n",
+                                sequence=0,
+                            ),
+                        ),
+                    )
+                ),
+            ).execute(_direct_text_spec())
+            outputs.append(result.stdout)
+
+        self.assertEqual(outputs, ["ok\n", "ok\n", "ok\n"])
 
     async def test_container_zero_stream_budgets_do_not_crash(self) -> None:
         events: list[ToolExecutionStreamEvent] = []
@@ -907,6 +994,21 @@ def _disabled_required_settings() -> ContainerEffectiveSettings:
         policy_version="phase10",
         profile_registry_id="shell",
     )
+
+
+def _runtime_mapping() -> dict[str, object]:
+    return {
+        "backend": "docker",
+        "default_profile": "workspace-readonly",
+        "profiles": {
+            "workspace-readonly": {
+                "image": _IMAGE,
+                "workspace_root": ".",
+                "network": "none",
+            }
+        },
+        "policy_version": "phase11",
+    }
 
 
 def _source() -> ContainerSettingsSource:
