@@ -43,6 +43,60 @@ from .conformance import (
 from .conformance import (
     resolve_container_backend as resolve_container_backend,
 )
+from .output import (
+    ContainerArchiveEntry as ContainerArchiveEntry,
+)
+from .output import (
+    ContainerArchiveEntryType as ContainerArchiveEntryType,
+)
+from .output import (
+    ContainerOutputArtifact as ContainerOutputArtifact,
+)
+from .output import (
+    ContainerOutputContract as ContainerOutputContract,
+)
+from .output import (
+    ContainerOutputContractType as ContainerOutputContractType,
+)
+from .output import (
+    ContainerOutputDecisionType as ContainerOutputDecisionType,
+)
+from .output import (
+    ContainerOutputDiagnostic as ContainerOutputDiagnostic,
+)
+from .output import (
+    ContainerOutputDiagnosticCode as ContainerOutputDiagnosticCode,
+)
+from .output import (
+    ContainerOutputMediaPolicy as ContainerOutputMediaPolicy,
+)
+from .output import (
+    ContainerOutputValidationResult as ContainerOutputValidationResult,
+)
+from .output import (
+    ContainerPartialOutput as ContainerPartialOutput,
+)
+from .output import (
+    ContainerPartialOutputMode as ContainerPartialOutputMode,
+)
+from .output import (
+    ContainerPartialOutputPolicy as ContainerPartialOutputPolicy,
+)
+from .output import (
+    ContainerPartialOutputReason as ContainerPartialOutputReason,
+)
+from .output import (
+    output_contracts_from_policy as output_contracts_from_policy,
+)
+from .output import (
+    validate_archive_entries as validate_archive_entries,
+)
+from .output import (
+    validate_copied_outputs as validate_copied_outputs,
+)
+from .output import (
+    validate_output_stream as validate_output_stream,
+)
 from .planning import (
     ContainerDurablePlanKind as ContainerDurablePlanKind,
 )
