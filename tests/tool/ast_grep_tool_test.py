@@ -12,6 +12,7 @@ from avalan.container import (
     ContainerBackendOperation,
     ContainerBackendStream,
     ContainerBackendStreamChunk,
+    ContainerBackendSupportLevel,
     ContainerDeviceClass,
     ContainerEffectiveSettings,
     ContainerExecutionScope,
@@ -209,6 +210,50 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(events[0].metadata["backend"], "container")
+
+    async def test_container_runtime_forwards_apple_opt_in(self) -> None:
+        without_opt_in = AstGrepTool(
+            container_settings=_apple_effective_settings(required=True),
+            container_backend=ContainerFakeBackend(
+                ContainerFakeBackendScript(capabilities=_apple_capabilities())
+            ),
+        )
+        backend = _RecordingContainerFakeBackend(
+            ContainerFakeBackendScript(
+                capabilities=_apple_capabilities(),
+                stream_chunks=(
+                    ContainerBackendStreamChunk(
+                        stream=ContainerBackendStream.STDOUT,
+                        content=b"match\n",
+                        sequence=0,
+                    ),
+                ),
+            )
+        )
+        toolset = CodeToolSet(
+            namespace="code",
+            container_runtime=ContainerToolRuntimeSettings(
+                effective_settings=_apple_effective_settings(required=True),
+                backend=backend,
+                opt_in_backends=(ContainerBackend.APPLE_CONTAINER,),
+            ),
+        )
+
+        with self.assertRaises(AstGrepContainerExecutionError) as raised:
+            await without_opt_in(
+                "call($A)",
+                context=ToolCallContext(),
+                lang="py",
+            )
+        result = await _ast_grep_tool(toolset)(
+            "call($A)",
+            context=ToolCallContext(),
+            lang="py",
+        )
+
+        self.assertIn("capability_mismatch", raised.exception.message)
+        self.assertEqual(result, "match\n")
+        self.assertIn(ContainerBackendOperation.CREATE, backend.operations)
 
     async def test_container_stream_events_emit_each_output_kind_once(
         self,
@@ -565,6 +610,27 @@ def _effective_settings(
     )
 
 
+def _apple_effective_settings(
+    *,
+    required: bool = False,
+) -> ContainerEffectiveSettings:
+    profile = ContainerProfile.minimal_readonly(
+        name="apple-code-search-readonly",
+        image_reference=_IMAGE,
+    )
+    return ContainerEffectiveSettings(
+        backend=ContainerBackend.APPLE_CONTAINER,
+        required=required,
+        scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+        source=_source(),
+        policy_version="phase19",
+        profile_registry_id="code",
+        profile_name=profile.name,
+        profile=profile,
+        allowed_profiles=(profile.name,),
+    )
+
+
 def _network_settings() -> ContainerEffectiveSettings:
     profile = ContainerProfile(
         name="code-search-network",
@@ -613,6 +679,24 @@ def _capabilities() -> ContainerBackendCapabilities:
         mount_types=(ContainerMountType.WORKSPACE, ContainerMountType.OUTPUT),
         device_classes=(ContainerDeviceClass.CPU,),
         resource_limits=True,
+        streaming_attach=True,
+        stats=True,
+    )
+
+
+def _apple_capabilities() -> ContainerBackendCapabilities:
+    return ContainerBackendCapabilities(
+        backend=ContainerBackend.APPLE_CONTAINER,
+        host_os="darwin",
+        guest_os="linux",
+        architecture="amd64",
+        support_level=ContainerBackendSupportLevel.OPT_IN,
+        rootless=False,
+        network_modes=(ContainerNetworkMode.NONE,),
+        mount_types=(ContainerMountType.WORKSPACE, ContainerMountType.OUTPUT),
+        device_classes=(),
+        resource_limits=True,
+        per_container_vm_isolation=True,
         streaming_attach=True,
         stats=True,
     )

@@ -1,5 +1,6 @@
 from ...container import (
     ContainerAsyncBackend,
+    ContainerBackend,
     ContainerBackendDiagnostic,
     ContainerBackendDiagnosticCode,
     ContainerBackendSelection,
@@ -83,13 +84,13 @@ class ShellExecutionPlan:
         if self.output_contract is not None:
             assert isinstance(self.output_contract, ContainerOutputContract)
         if self.mode is ShellExecutionMode.LOCAL:
-            assert (
-                self.container_plan is None
-            ), "local shell plans cannot carry container plans"
+            assert self.container_plan is None, (
+                "local shell plans cannot carry container plans"
+            )
         if self.mode is ShellExecutionMode.CONTAINER:
-            assert (
-                self.container_plan is not None
-            ), "container shell plans require a container plan"
+            assert self.container_plan is not None, (
+                "container shell plans require a container plan"
+            )
 
     def to_dict(self) -> dict[str, object]:
         mode = cast(ShellExecutionMode, self.mode)
@@ -171,6 +172,7 @@ class ShellContainerCommandExecutor(CommandExecutor):
         *,
         container_settings: ContainerEffectiveSettings | None,
         container_backend: ContainerAsyncBackend | None = None,
+        opt_in_backends: Sequence[ContainerBackend | str] = (),
         local_executor: CommandExecutor | None = None,
         auto_enabled: bool = False,
         rootful_authorized: bool = False,
@@ -181,10 +183,14 @@ class ShellContainerCommandExecutor(CommandExecutor):
             assert isinstance(container_backend, ContainerAsyncBackend)
         if local_executor is not None:
             assert hasattr(local_executor, "execute")
+        opt_in_backends = tuple(
+            ContainerBackend(backend) for backend in opt_in_backends
+        )
         _assert_bool(auto_enabled, "auto_enabled")
         _assert_bool(rootful_authorized, "rootful_authorized")
         self._container_settings = container_settings
         self._container_backend = container_backend
+        self._opt_in_backends = opt_in_backends
         self._local_executor = local_executor or LocalCommandExecutor()
         self._auto_enabled = auto_enabled
         self._rootful_authorized = rootful_authorized
@@ -241,6 +247,7 @@ class ShellContainerCommandExecutor(CommandExecutor):
             plan.container_plan,
             self._container_backend,
             auto_enabled=self._auto_enabled,
+            opt_in_backends=self._opt_in_backends,
             rootful_authorized=self._rootful_authorized,
         )
         if not selection.ok:
@@ -286,6 +293,7 @@ async def _select_backend(
     backend: ContainerAsyncBackend,
     *,
     auto_enabled: bool,
+    opt_in_backends: Sequence[ContainerBackend | str] = (),
     rootful_authorized: bool,
 ) -> ContainerBackendSelection:
     probe = await backend.probe()
@@ -294,6 +302,7 @@ async def _select_backend(
         (probe,),
         auto_enabled=auto_enabled,
         rootful_authorized=rootful_authorized,
+        opt_in_backends=opt_in_backends,
     )
 
 
@@ -600,12 +609,10 @@ def _diagnostic_summary(
 ) -> str:
     if not diagnostics:
         return "container execution failed"
-    codes = sorted(
-        {
-            cast(ContainerBackendDiagnosticCode, diagnostic.code).value
-            for diagnostic in diagnostics
-        }
-    )
+    codes = sorted({
+        cast(ContainerBackendDiagnosticCode, diagnostic.code).value
+        for diagnostic in diagnostics
+    })
     return "container execution failed: " + ", ".join(codes)
 
 

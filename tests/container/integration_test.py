@@ -8,6 +8,7 @@ from avalan.container import (
     ContainerFakeBackend,
     ContainerFakeBackendScript,
     ContainerMountAccess,
+    ContainerMountType,
     ContainerNetworkMode,
     ContainerSettingsSource,
     ContainerSurface,
@@ -255,7 +256,12 @@ class ContainerIntegrationTest(TestCase):
         effective = settings.select_profile(selection)
 
         assert effective.profile is not None
-        self.assertEqual(effective.profile.mounts, ())
+        self.assertEqual(len(effective.profile.mounts), 1)
+        mount = effective.profile.mounts[0]
+        self.assertEqual(mount.target, "/workspace")
+        self.assertEqual(mount.source, ".")
+        self.assertEqual(mount.mount_type, ContainerMountType.WORKSPACE)
+        self.assertEqual(mount.access, ContainerMountAccess.READ)
         self.assertEqual(
             effective.scope,
             ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,

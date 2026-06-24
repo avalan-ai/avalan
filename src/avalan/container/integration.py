@@ -44,6 +44,9 @@ from typing import cast, final
 class ContainerToolRuntimeSettings:
     effective_settings: ContainerEffectiveSettings | None = None
     backend: ContainerAsyncBackend | None = None
+    opt_in_backends: Sequence[ContainerBackend | str] = field(
+        default_factory=tuple,
+    )
     authorization_provider: Callable[[object], object] | None = None
     secret_resolver: Callable[[str], object] | None = None
     audit_listeners: Sequence[Callable[[object], object]] = field(
@@ -58,14 +61,21 @@ class ContainerToolRuntimeSettings:
             )
         if self.backend is not None:
             assert isinstance(self.backend, ContainerAsyncBackend)
+        object.__setattr__(
+            self,
+            "opt_in_backends",
+            tuple(
+                ContainerBackend(backend) for backend in self.opt_in_backends
+            ),
+        )
         if self.authorization_provider is not None:
-            assert callable(
-                self.authorization_provider
-            ), "authorization_provider must be callable"
+            assert callable(self.authorization_provider), (
+                "authorization_provider must be callable"
+            )
         if self.secret_resolver is not None:
-            assert callable(
-                self.secret_resolver
-            ), "secret_resolver must be callable"
+            assert callable(self.secret_resolver), (
+                "secret_resolver must be callable"
+            )
         for listener in self.audit_listeners:
             assert callable(listener), "audit listeners must be callable"
         object.__setattr__(
@@ -208,17 +218,17 @@ def _normalize_profile_mapping(
     raw = _mapping(value, f"container.profiles.{name}")
     _assert_known_keys(raw, _PROFILE_KEYS, f"container.profiles.{name}")
     if "name" in raw:
-        assert (
-            raw["name"] == profile_name
-        ), "profile table name must match name"
+        assert raw["name"] == profile_name, (
+            "profile table name must match name"
+        )
     workspace = _workspace_mapping(raw)
     return ContainerProfile(
         name=profile_name,
         image=_image_policy(raw),
         workspace=workspace,
-        mounts=tuple(
-            _mount_declaration(item, workspace.container_path)
-            for item in _sequence(raw.get("mounts", ()), "mounts")
+        mounts=_profile_mounts(
+            raw,
+            workspace,
         ),
         environment=ContainerEnvironmentPolicy.from_dict(
             _mapping(raw.get("environment", {}), "environment")
@@ -279,13 +289,13 @@ def _workspace_mapping(
     if isinstance(workspace, Mapping):
         return ContainerWorkspaceMapping.from_dict(workspace)
     if workspace is not None:
-        assert isinstance(
-            workspace, str
-        ), "workspace must be string or mapping"
+        assert isinstance(workspace, str), (
+            "workspace must be string or mapping"
+        )
     container_path = workspace or raw.get("container_workspace", "/workspace")
-    assert isinstance(
-        container_path, str
-    ), "container workspace must be string"
+    assert isinstance(container_path, str), (
+        "container workspace must be string"
+    )
     return ContainerWorkspaceMapping(
         host_root=_optional_string(raw, "workspace_root", "."),
         container_path=container_path,
@@ -317,6 +327,29 @@ def _mount_declaration(
         target=target,
         mount_type=mount_type,
         access=_optional_string(raw, "access", ContainerMountAccess.READ),
+    )
+
+
+def _profile_mounts(
+    raw: Mapping[str, object],
+    workspace: ContainerWorkspaceMapping,
+) -> tuple[ContainerMountDeclaration, ...]:
+    explicit_mounts = tuple(
+        _mount_declaration(item, workspace.container_path)
+        for item in _sequence(raw.get("mounts", ()), "mounts")
+    )
+    if any(
+        mount.target == workspace.container_path for mount in explicit_mounts
+    ):
+        return explicit_mounts
+    return (
+        ContainerMountDeclaration(
+            source=workspace.host_root,
+            target=workspace.container_path,
+            mount_type=ContainerMountType.WORKSPACE,
+            access=ContainerMountAccess.READ,
+        ),
+        *explicit_mounts,
     )
 
 

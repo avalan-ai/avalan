@@ -13,6 +13,9 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
+from avalan.agent.orchestrator.response.orchestrator_response import (
+    OrchestratorResponse,
+)
 from avalan.entities import (
     GenerationSettings,
     Message,
@@ -1946,6 +1949,28 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 StreamTerminalOutcome.ERRORED,
                 {"error": {"message": "opaque response"}},
             ),
+            (
+                [
+                    SimpleNamespace(
+                        type="response.failed",
+                        response=SimpleNamespace(
+                            id="resp-1",
+                            status="failed",
+                            error=None,
+                        ),
+                    )
+                ],
+                StreamItemKind.STREAM_ERRORED,
+                StreamTerminalOutcome.ERRORED,
+                {
+                    "error": {
+                        "code": "response_failed",
+                        "message": "response failed",
+                        "status": "failed",
+                        "response_id": "resp-1",
+                    }
+                },
+            ),
         )
 
         for events, kind, outcome, data in cases:
@@ -1971,6 +1996,79 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(items[1].data, data)
                 self.assertIs(items[1].terminal_outcome, outcome)
+
+    async def test_canonical_stream_maps_incomplete_response_to_error(self):
+        cases = (
+            (
+                [
+                    SimpleNamespace(
+                        type="response.incomplete",
+                        response=SimpleNamespace(
+                            id="resp-1",
+                            status="incomplete",
+                            incomplete_details=SimpleNamespace(
+                                reason="max_output_tokens"
+                            ),
+                            usage={"input_tokens": 3, "output_tokens": 4},
+                        ),
+                    )
+                ],
+                "response.incomplete",
+            ),
+            (
+                [
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": "resp-2",
+                            "status": "incomplete",
+                            "incomplete_details": {
+                                "reason": "content_filter"
+                            },
+                            "usage": {
+                                "input_tokens": 5,
+                                "output_tokens": 6,
+                            },
+                        },
+                    }
+                ],
+                "response.completed",
+            ),
+        )
+
+        for events, provider_event_type in cases:
+            with self.subTest(provider_event_type=provider_event_type):
+                stream = self.mod.OpenAIStream(AsyncIter(events))
+
+                items = await _stream_items(stream)
+
+                self.assertEqual(
+                    [item.kind for item in items],
+                    [
+                        StreamItemKind.STREAM_STARTED,
+                        StreamItemKind.USAGE_COMPLETED,
+                        StreamItemKind.STREAM_ERRORED,
+                        StreamItemKind.STREAM_CLOSED,
+                    ],
+                )
+                self.assertEqual(
+                    items[1].provider_event_type, provider_event_type
+                )
+                self.assertEqual(
+                    items[2].provider_event_type, provider_event_type
+                )
+                self.assertIs(
+                    items[2].terminal_outcome,
+                    StreamTerminalOutcome.ERRORED,
+                )
+                data = items[2].data
+                assert isinstance(data, dict)
+                error = data["error"]
+                assert isinstance(error, dict)
+                self.assertEqual(error["code"], "response_incomplete")
+                self.assertEqual(error["status"], "incomplete")
+                self.assertIn("reason", error)
+                self.assertIs(stream.usage, items[1].usage)
 
     async def test_canonical_stream_maps_malformed_responses_events_to_error(
         self,
@@ -3401,6 +3499,31 @@ class TemplateAndToolSchemaTestCase(TestCase):
                 },
             ],
         )
+
+    def test_template_messages_uses_model_facing_tool_result(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        limit = OrchestratorResponse._MAXIMUM_MODEL_TOOL_OUTPUT_CHARS
+        output = "x" * (limit + 5_000)
+        call = ToolCall(id="c1", name="shell.cat", arguments={"path": "big.py"})
+        result = ToolCallResult(
+            id="c1",
+            name="shell.cat",
+            arguments=call.arguments,
+            call=call,
+            result=output,
+        )
+        messages = OrchestratorResponse._tool_observation_messages(
+            result,
+            json_output=False,
+        )
+
+        templated = client._template_messages(messages)
+
+        payload = loads(templated[1]["output"])
+        self.assertTrue(payload["truncated"])
+        self.assertEqual(payload["original_output_chars"], limit + 5_000)
+        self.assertIn("truncated 5000 characters", payload["output"])
+        self.assertLess(len(templated[1]["output"]), len(output))
 
     def test_template_messages_tool_error(self):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")

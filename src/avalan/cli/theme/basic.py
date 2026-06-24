@@ -648,6 +648,13 @@ def _basic_tool_entries(
         result.tool_call_id for result in snapshot.tool_results
     }
     canonical_tool_call_ids = _basic_canonical_tool_call_ids(request)
+    terminal_entries = (
+        (_basic_terminal_error_entry(request),)
+        if _basic_terminal_error(request)
+        else (_basic_empty_answer_entry(),)
+        if _basic_terminal_empty_answer(request)
+        else ()
+    )
     history_entries = [
         *(
             _BasicToolLineEntry(
@@ -700,16 +707,12 @@ def _basic_tool_entries(
             for event in snapshot.tool_events
             if _basic_should_show_tool_event(event, canonical_tool_call_ids)
         ),
-        *(
-            [_basic_empty_answer_entry()]
-            if _basic_terminal_empty_answer(request)
-            else []
-        ),
         *completed_model_entries,
     ]
     limit = request.display_config.display_tools_events
     if limit is not None:
         history_entries = history_entries[-limit:] if limit else []
+    history_entries.extend(terminal_entries)
     if not include_active:
         return tuple(history_entries)
 
@@ -826,6 +829,24 @@ def _basic_empty_answer_entry() -> _BasicToolLineEntry:
         key="terminal:no_answer",
         line="\n[yellow]⚠️ No final answer emitted.[/yellow]",
     )
+
+
+def _basic_terminal_error_entry(
+    request: CliStreamPresenterRequest,
+) -> _BasicToolLineEntry:
+    summary = request.snapshot.terminal.error_summary or "stream errored"
+    return _BasicToolLineEntry(
+        key="terminal:error",
+        line=(
+            "\n[red]✖ Model stream error: "
+            f"{_basic_markup_summary(summary)}[/red]"
+        ),
+    )
+
+
+def _basic_terminal_error(request: CliStreamPresenterRequest) -> bool:
+    terminal = request.snapshot.terminal
+    return terminal.completed and terminal.outcome == "errored"
 
 
 def _basic_terminal_empty_answer(

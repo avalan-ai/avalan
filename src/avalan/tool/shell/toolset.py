@@ -1,5 +1,6 @@
 from ...container import (
     ContainerAsyncBackend,
+    ContainerBackend,
     ContainerEffectiveSettings,
     ContainerToolRuntimeSettings,
     disabled_required_container_settings,
@@ -30,6 +31,8 @@ from .tools import (
     WcTool,
 )
 
+from collections.abc import Sequence
+
 
 class ShellToolSet(ToolSet):
     _settings: ShellToolSettings
@@ -45,6 +48,7 @@ class ShellToolSet(ToolSet):
         container_runtime: ContainerToolRuntimeSettings | None = None,
         container_settings: ContainerEffectiveSettings | None = None,
         container_backend: ContainerAsyncBackend | None = None,
+        container_opt_in_backends: Sequence[ContainerBackend | str] = (),
     ) -> None:
         assert namespace == SHELL_TOOL_NAMESPACE, "namespace must be shell"
         self._settings = settings or ShellToolSettings()
@@ -57,6 +61,9 @@ class ShellToolSet(ToolSet):
                 container_settings or container_runtime.effective_settings
             )
             container_backend = container_backend or container_runtime.backend
+            container_opt_in_backends = (
+                container_opt_in_backends or container_runtime.opt_in_backends
+            )
         if (
             container_settings is None
             and self._settings.backend == "container"
@@ -71,6 +78,7 @@ class ShellToolSet(ToolSet):
                 else ShellContainerCommandExecutor(
                     container_settings=container_settings,
                     container_backend=container_backend,
+                    opt_in_backends=container_opt_in_backends,
                     local_executor=local_executor,
                 )
             )

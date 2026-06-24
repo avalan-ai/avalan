@@ -15,6 +15,7 @@ from avalan.container import (
     ContainerBackendStats,
     ContainerBackendStream,
     ContainerBackendStreamChunk,
+    ContainerBackendSupportLevel,
     ContainerDeviceClass,
     ContainerEffectiveSettings,
     ContainerExecutionScope,
@@ -693,6 +694,36 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
                 self.assertEqual(result.status, expected_status)
                 self.assertNotEqual(result.backend, "local")
 
+    async def test_apple_container_requires_runtime_opt_in(self) -> None:
+        without_opt_in = await ShellContainerCommandExecutor(
+            container_settings=_apple_effective_settings(required=True),
+            container_backend=ContainerFakeBackend(
+                ContainerFakeBackendScript(capabilities=_apple_capabilities())
+            ),
+        ).execute(_direct_text_spec())
+        with_opt_in_backend = ContainerFakeBackend(
+            ContainerFakeBackendScript(capabilities=_apple_capabilities())
+        )
+        with_opt_in = await ShellContainerCommandExecutor(
+            container_settings=_apple_effective_settings(required=True),
+            container_backend=with_opt_in_backend,
+            opt_in_backends=(ContainerBackend.APPLE_CONTAINER,),
+        ).execute(_direct_text_spec())
+
+        self.assertEqual(
+            without_opt_in.status,
+            ShellExecutionStatus.TOOL_ERROR,
+        )
+        self.assertIn(
+            "container.backend.capability_mismatch",
+            without_opt_in.error_message or "",
+        )
+        self.assertEqual(with_opt_in.status, ShellExecutionStatus.COMPLETED)
+        self.assertIn(
+            ContainerBackendOperation.CREATE,
+            with_opt_in_backend.operations,
+        )
+
     async def test_malformed_generated_output_contract_fails_closed(
         self,
     ) -> None:
@@ -955,6 +986,27 @@ def _effective_settings(
     )
 
 
+def _apple_effective_settings(
+    *,
+    required: bool = False,
+) -> ContainerEffectiveSettings:
+    profile = ContainerProfile.minimal_readonly(
+        name="shell-readonly",
+        image_reference=_IMAGE,
+    )
+    return ContainerEffectiveSettings(
+        backend=ContainerBackend.APPLE_CONTAINER,
+        required=required,
+        scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
+        source=_source(),
+        policy_version="phase10",
+        profile_registry_id="shell",
+        profile_name=profile.name,
+        profile=profile,
+        allowed_profiles=(profile.name,),
+    )
+
+
 def _network_settings() -> ContainerEffectiveSettings:
     profile = ContainerProfile(
         name="shell-network",
@@ -1031,6 +1083,26 @@ def _capabilities() -> ContainerBackendCapabilities:
         resource_limits=True,
         streaming_attach=True,
         stats=True,
+    )
+
+
+def _apple_capabilities() -> ContainerBackendCapabilities:
+    return ContainerBackendCapabilities(
+        backend=ContainerBackend.APPLE_CONTAINER,
+        host_os="darwin",
+        guest_os="linux",
+        architecture="amd64",
+        support_level=ContainerBackendSupportLevel.OPT_IN,
+        platform_emulation=False,
+        rootless=False,
+        network_modes=(ContainerNetworkMode.NONE,),
+        mount_types=(ContainerMountType.WORKSPACE, ContainerMountType.OUTPUT),
+        device_classes=(ContainerDeviceClass.CPU,),
+        resource_limits=True,
+        per_container_vm_isolation=True,
+        streaming_attach=True,
+        stats=True,
+        lifecycle_normalization=True,
     )
 
 

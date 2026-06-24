@@ -227,6 +227,73 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_answer_chunks(items), [])
         self.assertEqual(_frames(items), [])
 
+    async def test_completed_empty_answer_warning_survives_zero_tool_limit(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_tools_events=0,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_result_summary(
+            tool_call_id="call-1",
+            name="shell.cat",
+            status="result",
+            result="output",
+            arguments_count=0,
+        )
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(items), [])
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        tool_text = _render_text(frames[0].renderable)
+        self.assertIn("No final answer emitted.", tool_text)
+        self.assertNotIn("shell.cat", tool_text)
+
+    async def test_errored_terminal_survives_zero_tool_limit(self) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_tools_events=0,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_result_summary(
+            tool_call_id="call-1",
+            name="shell.cat",
+            status="result",
+            result="output",
+            arguments_count=0,
+        )
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.ERRORED,
+            error={"error": {"message": "response failed"}},
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(items), [])
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        tool_text = _render_text(frames[0].renderable)
+        self.assertIn("Model stream error: ", tool_text)
+        self.assertIn("response failed", tool_text)
+        self.assertNotIn("No final answer emitted.", tool_text)
+        self.assertNotIn("shell.cat", tool_text)
+
     async def test_completed_answer_ending_newline_is_not_duplicated(
         self,
     ) -> None:
