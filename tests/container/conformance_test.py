@@ -299,6 +299,48 @@ class ContainerConformanceTest(TestCase):
         self.assertEqual(resolution.backend, ContainerBackend.DOCKER)
         self.assertFalse(resolution.direct_execution_allowed)
 
+    def test_auto_backend_resolution_uses_available_concrete_backend(
+        self,
+    ) -> None:
+        settings = ContainerExecutionSettings(
+            backend="auto",
+            required=True,
+            profile="workspace-readonly",
+        )
+
+        resolution = resolve_container_backend(
+            settings,
+            available_backends=(ContainerBackend.AUTO, "podman"),
+        )
+
+        self.assertTrue(settings.enabled)
+        self.assertEqual(settings.backend, ContainerBackend.AUTO)
+        self.assertTrue(resolution.ok)
+        self.assertEqual(resolution.backend, ContainerBackend.PODMAN)
+        self.assertFalse(resolution.direct_execution_allowed)
+
+    def test_auto_backend_resolution_prefers_safer_available_backend(
+        self,
+    ) -> None:
+        settings = ContainerExecutionSettings(
+            backend=ContainerBackend.AUTO,
+            required=True,
+            profile="workspace-readonly",
+        )
+
+        resolution = resolve_container_backend(
+            settings,
+            available_backends=(
+                ContainerBackend.DOCKER,
+                ContainerBackend.PODMAN,
+                ContainerBackend.APPLE_CONTAINER,
+            ),
+        )
+
+        self.assertTrue(resolution.ok)
+        self.assertEqual(resolution.backend, ContainerBackend.PODMAN)
+        self.assertFalse(resolution.direct_execution_allowed)
+
     def test_required_disabled_backend_fails_closed(self) -> None:
         resolution = resolve_container_backend(
             ContainerExecutionSettings(required=True),

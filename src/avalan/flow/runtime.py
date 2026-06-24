@@ -88,7 +88,8 @@ class FlowRuntimeEnvelopeRunner(Protocol):
         resume_trace: FlowExecutionTrace | None,
         resume_node_outputs: Mapping[str, Mapping[str, object]],
         resume_decisions: Mapping[str, Mapping[str, object]],
-    ) -> "FlowPlanExecutionResult": ...
+    ) -> "FlowPlanExecutionResult":
+        """Run a flow through a trusted runtime envelope."""
 
 
 def is_trusted_flow_runtime_envelope_runner(
@@ -110,14 +111,16 @@ _FLOW_EXECUTION_OPTIONS: ContextVar[_FlowExecutionOptions | None] = ContextVar(
 
 
 class _JsonSchemaValidator(Protocol):
-    def validate(self, instance: object) -> None: ...
+    def validate(self, instance: object) -> None:
+        """Validate a JSON schema instance."""
 
 
 class _JsonSchemaValidatorClass(Protocol):
-    def __call__(
-        self, schema: Mapping[str, object]
-    ) -> _JsonSchemaValidator: ...
-    def check_schema(self, schema: Mapping[str, object]) -> None: ...
+    def __call__(self, schema: Mapping[str, object]) -> _JsonSchemaValidator:
+        """Build a validator for a JSON schema."""
+
+    def check_schema(self, schema: Mapping[str, object]) -> None:
+        """Validate a JSON schema definition."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

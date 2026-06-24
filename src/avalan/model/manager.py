@@ -113,7 +113,8 @@ class ModelBackendRuntimeEnvelopeLoader(Protocol):
         engine_settings: TransformerEngineSettings,
         modality: Modality,
         profile_selection: ModelBackendRuntimeProfileSelection,
-    ) -> ModelType: ...
+    ) -> ModelType:
+        """Load a model backend through a trusted runtime envelope."""
 
 
 def _is_ds4_backend(backend: Backend | str) -> bool:

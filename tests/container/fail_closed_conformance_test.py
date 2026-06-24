@@ -138,6 +138,22 @@ class ContainerFailClosedConformanceTest(TestCase):
                 ContainerDiagnosticCode.BACKEND_UNAVAILABLE,
                 ContainerStableDiagnosticCode.CONFORMANCE_BACKEND_UNAVAILABLE,
             ),
+            (
+                "auto without a concrete backend",
+                resolve_container_backend(
+                    ContainerExecutionSettings(
+                        backend=ContainerBackend.AUTO,
+                        required=True,
+                        profile="workspace-readonly",
+                    ),
+                    available_backends=(
+                        ContainerBackend.NONE,
+                        ContainerBackend.AUTO,
+                    ),
+                ),
+                ContainerDiagnosticCode.BACKEND_UNAVAILABLE,
+                ContainerStableDiagnosticCode.CONFORMANCE_BACKEND_UNAVAILABLE,
+            ),
         )
 
         for name, resolution, expected_code, stable_code in cases:

@@ -44,7 +44,6 @@ EnumValue = TypeVar("EnumValue", bound=StrEnum)
 RuntimeOperationResult = TypeVar("RuntimeOperationResult")
 
 _RUNTIME_SCOPE = ContainerExecutionScope.RUNTIME_ENVELOPE
-_COMMAND_SCOPE = ContainerExecutionScope.SHELL_CONTAINER_EXECUTION
 
 
 class ContainerRuntimeEnvelopeOperation(StrEnum):
