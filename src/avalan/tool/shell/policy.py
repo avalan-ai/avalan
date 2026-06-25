@@ -18,6 +18,7 @@ from .entities import (
     PathOperand,
     ShellCommandRequest,
     ShellExecutionErrorCode,
+    ShellExecutionModeValue,
     ShellOutputKind,
     _create_execution_spec_from_policy,
 )
@@ -37,7 +38,7 @@ from collections.abc import Mapping, Sequence
 from math import isfinite
 from os import environ
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Literal, cast
 
 _DEFAULT_CHILD_ENVIRONMENT = {
     "LC_ALL": "C",
@@ -131,7 +132,10 @@ class ExecutionPolicy:
                 "media tools are disabled",
             )
         _validate_argument_budgets(request, self._settings)
-        metadata = _validated_metadata(request.metadata)
+        metadata = _with_local_audit_metadata(
+            _validated_metadata(request.metadata),
+            self._settings,
+        )
         workspace = await _normalized_workspace(
             self._settings,
             request.cwd,
@@ -186,7 +190,9 @@ class ExecutionPolicy:
             request
         )
         return self.create_execution_spec(
-            backend=self._settings.backend,
+            backend=cast(
+                ShellExecutionModeValue, self._settings.execution_mode
+            ),
             tool_name=request.tool_name,
             command=request.command,
             executable=executable,
@@ -211,7 +217,7 @@ class ExecutionPolicy:
     def create_execution_spec(
         self,
         *,
-        backend: Literal["local", "container"],
+        backend: ShellExecutionModeValue,
         tool_name: str,
         command: str,
         executable: str | None,
@@ -821,6 +827,17 @@ def _validated_metadata(value: Mapping[str, object]) -> dict[str, object]:
             )
         metadata[key] = item
     return metadata
+
+
+def _with_local_audit_metadata(
+    metadata: dict[str, object],
+    settings: ShellToolSettings,
+) -> dict[str, object]:
+    if settings.execution_mode != "local":
+        return metadata
+    audited = dict(metadata)
+    audited["local_host_approval"] = "required"
+    return audited
 
 
 def _validate_argument_budgets(

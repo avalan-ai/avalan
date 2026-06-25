@@ -17,6 +17,12 @@ from avalan.entities import (
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
 )
+from avalan.isolation import (
+    IsolationEffectiveSettings,
+    IsolationMode,
+    IsolationToolRuntimeSettings,
+    trusted_isolation_source,
+)
 from avalan.tool import Tool
 from avalan.tool.shell import (
     SHELL_COMMAND_IDS,
@@ -24,6 +30,7 @@ from avalan.tool.shell import (
     ExecutionPolicy,
     ExecutionResult,
     ExecutionSpec,
+    LocalCommandExecutor,
     ShellCommandDefinition,
     ShellExecutionStatus,
     ShellOutputKind,
@@ -305,7 +312,61 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(output, ShellFormattedResult)
         self.assertEqual(output.execution_result.backend, "container")
 
-    async def test_container_runtime_does_not_override_local_backend(
+    async def test_isolation_runtime_uses_container_settings(
+        self,
+    ) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            execution_mode="container",
+            workspace_root=str(fixture_root),
+        )
+        backend = ContainerFakeBackend(
+            ContainerFakeBackendScript(
+                capabilities=ContainerBackendCapabilities(
+                    backend=ContainerBackend.DOCKER,
+                    host_os="linux",
+                    guest_os="linux",
+                    architecture="amd64",
+                    rootless=True,
+                    mount_types=(ContainerMountType.WORKSPACE,),
+                    streaming_attach=True,
+                ),
+                stream_chunks=(),
+            )
+        )
+        runtime = trusted_container_runtime_from_mapping(
+            {
+                "backend": "docker",
+                "default_profile": "workspace-readonly",
+                "profiles": {
+                    "workspace-readonly": {
+                        "image": _IMAGE,
+                        "workspace_root": str(fixture_root),
+                    }
+                },
+            },
+            source=trusted_container_source("sdk"),
+        )
+        isolation_runtime = IsolationToolRuntimeSettings(
+            effective_settings=IsolationEffectiveSettings(
+                mode=IsolationMode.CONTAINER,
+                source=trusted_isolation_source("sdk"),
+                container=runtime.effective_settings,
+            )
+        )
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            isolation_runtime=isolation_runtime,
+            container_backend=backend,
+        )
+
+        output = await _call_cat(_tool_by_name(toolset, "cat"))
+
+        self.assertIsInstance(output, ShellFormattedResult)
+        self.assertEqual(output.execution_result.backend, "container")
+
+    async def test_container_runtime_with_local_mode_is_rejected(
         self,
     ) -> None:
         fixture_root = Path(__file__).parent / "fixtures"
@@ -337,19 +398,132 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
             },
             source=trusted_container_source("sdk"),
         )
-        toolset = ShellToolSet(
-            settings=settings,
-            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
-            container_runtime=ContainerToolRuntimeSettings(
-                effective_settings=runtime.effective_settings,
-                backend=backend,
-            ),
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "container runtime requires",
+        ):
+            ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                container_runtime=ContainerToolRuntimeSettings(
+                    effective_settings=runtime.effective_settings,
+                    backend=backend,
+                ),
+            )
+
+    async def test_mixed_isolation_and_container_runtimes_are_rejected(
+        self,
+    ) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            execution_mode="container",
+            workspace_root=str(fixture_root),
+        )
+        backend = ContainerFakeBackend(
+            ContainerFakeBackendScript(
+                capabilities=ContainerBackendCapabilities(
+                    backend=ContainerBackend.DOCKER,
+                    host_os="linux",
+                    guest_os="linux",
+                    architecture="amd64",
+                    rootless=True,
+                    mount_types=(ContainerMountType.WORKSPACE,),
+                    streaming_attach=True,
+                ),
+                stream_chunks=(),
+            )
+        )
+        runtime = trusted_container_runtime_from_mapping(
+            {
+                "backend": "docker",
+                "default_profile": "workspace-readonly",
+                "profiles": {
+                    "workspace-readonly": {
+                        "image": _IMAGE,
+                        "workspace_root": str(fixture_root),
+                    }
+                },
+            },
+            source=trusted_container_source("sdk"),
+        )
+        isolation_runtime = IsolationToolRuntimeSettings(
+            effective_settings=IsolationEffectiveSettings(
+                mode=IsolationMode.CONTAINER,
+                source=trusted_isolation_source("sdk"),
+                container=runtime.effective_settings,
+            )
         )
 
-        output = await _call_cat(_tool_by_name(toolset, "cat"))
+        with self.assertRaisesRegex(
+            AssertionError,
+            "cannot be combined",
+        ):
+            ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                isolation_runtime=isolation_runtime,
+                container_runtime=ContainerToolRuntimeSettings(
+                    effective_settings=runtime.effective_settings,
+                    backend=backend,
+                ),
+            )
 
-        self.assertIsInstance(output, ShellFormattedResult)
-        self.assertEqual(output.execution_result.backend, "local")
+    def test_container_settings_with_local_mode_are_rejected(self) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(workspace_root=str(fixture_root))
+        runtime = trusted_container_runtime_from_mapping(
+            {
+                "backend": "docker",
+                "default_profile": "workspace-readonly",
+                "profiles": {
+                    "workspace-readonly": {
+                        "image": _IMAGE,
+                        "workspace_root": str(fixture_root),
+                    }
+                },
+            },
+            source=trusted_container_source("sdk"),
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "container settings require",
+        ):
+            ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                container_settings=runtime.effective_settings,
+            )
+
+    def test_container_mode_rejects_custom_executor(self) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            execution_mode="container",
+            workspace_root=str(fixture_root),
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "custom shell executors require",
+        ):
+            ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                executor=LocalCommandExecutor(settings=settings),
+            )
 
     async def test_container_backend_without_runtime_fails_closed(
         self,

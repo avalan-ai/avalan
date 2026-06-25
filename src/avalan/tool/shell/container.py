@@ -29,6 +29,16 @@ from ...entities import (
     ToolExecutionStreamKind,
     ToolValue,
 )
+from ...isolation import (
+    SandboxEffectiveSettings,
+    SandboxOutputPolicy,
+    SandboxResourceLimits,
+)
+from ...sandbox import (
+    SandboxExecutionPlan,
+    SandboxPlanRequest,
+    SandboxPlanRequestKind,
+)
 from ...types import (
     assert_bool as _assert_bool,
 )
@@ -47,7 +57,7 @@ from .executor import CommandExecutor, LocalCommandExecutor
 from .policy import ExecutionPolicy
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from time import perf_counter
@@ -61,6 +71,7 @@ _MAX_PROGRESS_STREAM_CHUNKS = 16
 
 class ShellExecutionMode(StrEnum):
     LOCAL = "local"
+    SANDBOX = "sandbox"
     CONTAINER = "container"
 
 
@@ -69,6 +80,7 @@ class ShellExecutionMode(StrEnum):
 class ShellExecutionPlan:
     mode: ShellExecutionMode | str
     local_spec: ExecutionSpec
+    sandbox_plan: SandboxExecutionPlan | None = None
     container_plan: ContainerNormalizedRunPlan | None = None
     output_contract: ContainerOutputContract | None = None
 
@@ -79,18 +91,33 @@ class ShellExecutionPlan:
             _enum_value(self.mode, ShellExecutionMode, "mode"),
         )
         assert isinstance(self.local_spec, ExecutionSpec)
+        if self.sandbox_plan is not None:
+            assert isinstance(self.sandbox_plan, SandboxExecutionPlan)
         if self.container_plan is not None:
             assert isinstance(self.container_plan, ContainerNormalizedRunPlan)
         if self.output_contract is not None:
             assert isinstance(self.output_contract, ContainerOutputContract)
         if self.mode is ShellExecutionMode.LOCAL:
             assert (
+                self.sandbox_plan is None
+            ), "local shell plans cannot carry sandbox plans"
+            assert (
                 self.container_plan is None
             ), "local shell plans cannot carry container plans"
+        if self.mode is ShellExecutionMode.SANDBOX:
+            assert (
+                self.sandbox_plan is not None
+            ), "sandbox shell plans require a sandbox plan"
+            assert (
+                self.container_plan is None
+            ), "sandbox shell plans cannot carry container plans"
         if self.mode is ShellExecutionMode.CONTAINER:
             assert (
                 self.container_plan is not None
             ), "container shell plans require a container plan"
+            assert (
+                self.sandbox_plan is None
+            ), "container shell plans cannot carry sandbox plans"
 
     def to_dict(self) -> dict[str, object]:
         mode = cast(ShellExecutionMode, self.mode)
@@ -108,6 +135,11 @@ class ShellExecutionPlan:
                 if self.container_plan is None
                 else self.container_plan.to_dict()
             ),
+            "sandbox": (
+                None
+                if self.sandbox_plan is None
+                else self.sandbox_plan.to_dict()
+            ),
             "output_contract": (
                 None
                 if self.output_contract is None
@@ -120,6 +152,7 @@ async def normalize_shell_execution_request(
     request: ShellCommandRequest,
     policy: ExecutionPolicy,
     *,
+    sandbox_settings: SandboxEffectiveSettings | None = None,
     container_settings: ContainerEffectiveSettings | None = None,
 ) -> ShellExecutionPlan:
     assert isinstance(request, ShellCommandRequest)
@@ -127,6 +160,7 @@ async def normalize_shell_execution_request(
     local_spec = await policy.normalize(request)
     return lower_shell_execution_spec(
         local_spec,
+        sandbox_settings=sandbox_settings,
         container_settings=container_settings,
     )
 
@@ -134,13 +168,43 @@ async def normalize_shell_execution_request(
 def lower_shell_execution_spec(
     spec: ExecutionSpec,
     *,
+    sandbox_settings: SandboxEffectiveSettings | None = None,
     container_settings: ContainerEffectiveSettings | None = None,
 ) -> ShellExecutionPlan:
     assert isinstance(spec, ExecutionSpec)
-    if container_settings is None:
+    assert not (
+        sandbox_settings is not None and container_settings is not None
+    ), "shell execution cannot mix sandbox and container settings"
+    if spec.backend == ShellExecutionMode.LOCAL.value:
+        assert sandbox_settings is None, "local shell plans cannot use sandbox"
+        assert (
+            container_settings is None
+        ), "local shell plans cannot use container settings"
         return ShellExecutionPlan(
             mode=ShellExecutionMode.LOCAL,
             local_spec=spec,
+        )
+    elif spec.backend == ShellExecutionMode.SANDBOX.value:
+        assert (
+            container_settings is None
+        ), "sandbox shell plans cannot use container settings"
+        assert (
+            sandbox_settings is not None
+        ), "sandbox execution is selected but no settings are configured"
+    else:
+        assert spec.backend == ShellExecutionMode.CONTAINER.value
+        assert (
+            sandbox_settings is None
+        ), "container shell plans cannot use sandbox settings"
+        assert (
+            container_settings is not None
+        ), "container execution is selected but no settings are configured"
+    if sandbox_settings is not None:
+        assert isinstance(sandbox_settings, SandboxEffectiveSettings)
+        return ShellExecutionPlan(
+            mode=ShellExecutionMode.SANDBOX,
+            local_spec=spec,
+            sandbox_plan=_sandbox_plan_from_spec(spec, sandbox_settings),
         )
     assert isinstance(container_settings, ContainerEffectiveSettings)
     if not container_settings.enabled:
@@ -149,9 +213,9 @@ def lower_shell_execution_spec(
                 ShellExecutionErrorCode.POLICY_DENIED,
                 "container execution is required but no profile is enabled",
             )
-        return ShellExecutionPlan(
-            mode=ShellExecutionMode.LOCAL,
-            local_spec=spec,
+        raise ShellPolicyDenied(
+            ShellExecutionErrorCode.POLICY_DENIED,
+            "container execution is selected but no profile is enabled",
         )
     container_plan = normalize_container_run_plan(
         container_settings,
@@ -163,6 +227,142 @@ def lower_shell_execution_spec(
         container_plan=container_plan,
         output_contract=_output_contract_from_spec(spec),
     )
+
+
+def _sandbox_plan_from_spec(
+    spec: ExecutionSpec,
+    sandbox_settings: SandboxEffectiveSettings,
+) -> SandboxExecutionPlan:
+    assert spec.executable is not None, "sandbox execution requires executable"
+    effective_settings = _narrow_sandbox_settings(spec, sandbox_settings)
+    output_dir = _sandbox_output_dir(spec, effective_settings)
+    return SandboxExecutionPlan(
+        request=SandboxPlanRequest(
+            request_kind=SandboxPlanRequestKind.TYPED_TOOL,
+            logical_name=spec.tool_name,
+            command=spec.executable,
+            argv=_sandbox_argv(spec, output_dir),
+            cwd=spec.cwd,
+            request_id=_optional_metadata_string(spec, "tool_call_id"),
+        ),
+        settings=effective_settings,
+        environment=_sandbox_environment(spec, effective_settings),
+        temp_dir=None,
+        output_dir=output_dir,
+        collect_outputs=spec.output_kind is ShellOutputKind.GENERATED_FILES,
+        cleanup_budget_seconds=_DEFAULT_CLEANUP_SECONDS,
+        stream_buffer_bytes=max(
+            1,
+            spec.max_stdout_bytes,
+            spec.max_stderr_bytes,
+        ),
+    )
+
+
+def _narrow_sandbox_settings(
+    spec: ExecutionSpec,
+    sandbox_settings: SandboxEffectiveSettings,
+) -> SandboxEffectiveSettings:
+    profile = sandbox_settings.profile
+    resources = replace(
+        profile.resources,
+        timeout_seconds=_sandbox_timeout_seconds(spec, profile.resources),
+    )
+    output = _sandbox_output_policy(spec, profile.output)
+    narrowed_profile = replace(
+        profile,
+        resources=resources,
+        output=output,
+    )
+    return replace(sandbox_settings, profile=narrowed_profile)
+
+
+def _sandbox_timeout_seconds(
+    spec: ExecutionSpec,
+    resources: SandboxResourceLimits,
+) -> int:
+    timeout = max(1, int(spec.timeout_seconds))
+    if resources.timeout_seconds is None:
+        return timeout
+    return min(resources.timeout_seconds, timeout)
+
+
+def _sandbox_output_policy(
+    spec: ExecutionSpec,
+    output: SandboxOutputPolicy,
+) -> SandboxOutputPolicy:
+    max_stdout_bytes = max(
+        1, min(output.max_stdout_bytes, spec.max_stdout_bytes)
+    )
+    max_stderr_bytes = max(
+        1, min(output.max_stderr_bytes, spec.max_stderr_bytes)
+    )
+    if spec.output_kind is not ShellOutputKind.GENERATED_FILES:
+        return replace(
+            output,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+    assert spec.output_plan is not None, "generated outputs require a plan"
+    max_artifact_bytes = min(
+        output.max_artifact_bytes,
+        spec.output_plan.max_total_bytes,
+    )
+    return replace(
+        output,
+        max_stdout_bytes=max_stdout_bytes,
+        max_stderr_bytes=max_stderr_bytes,
+        max_artifact_bytes=max_artifact_bytes,
+    )
+
+
+def _sandbox_output_dir(
+    spec: ExecutionSpec,
+    sandbox_settings: SandboxEffectiveSettings,
+) -> str | None:
+    if spec.output_kind is not ShellOutputKind.GENERATED_FILES:
+        return None
+    assert spec.output_plan is not None, "generated outputs require a plan"
+    output_roots = sandbox_settings.profile.output_roots
+    assert output_roots, "sandbox generated outputs require an output root"
+    return output_roots[0]
+
+
+def _sandbox_argv(
+    spec: ExecutionSpec,
+    output_dir: str | None,
+) -> tuple[str, ...]:
+    assert spec.executable is not None, "sandbox execution requires executable"
+    argv_tail = spec.argv[1:]
+    if spec.output_kind is ShellOutputKind.GENERATED_FILES:
+        assert spec.output_plan is not None, "generated outputs require a plan"
+        assert output_dir is not None, "generated outputs require output_dir"
+        output_prefix = PurePosixPath(
+            output_dir,
+            spec.output_plan.prefix_name,
+        ).as_posix()
+        argv_tail = tuple(
+            (
+                output_prefix
+                if argument == GENERATED_OUTPUT_PREFIX_PLACEHOLDER
+                else argument
+            )
+            for argument in argv_tail
+        )
+    return (spec.executable, *argv_tail)
+
+
+def _sandbox_environment(
+    spec: ExecutionSpec,
+    sandbox_settings: SandboxEffectiveSettings,
+) -> dict[str, str]:
+    profile = sandbox_settings.profile
+    environment = dict(profile.environment.variables)
+    for name in profile.environment.allowlist:
+        value = spec.env.get(name)
+        if value is not None:
+            environment[name] = value
+    return environment
 
 
 @final

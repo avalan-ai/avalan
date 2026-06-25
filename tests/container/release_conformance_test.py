@@ -422,7 +422,10 @@ class ContainerReleaseAsyncConformanceTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             (root / "visible.txt").write_text("hello\n", encoding="utf-8")
-            settings = ShellToolSettings(workspace_root=str(root))
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+            )
             policy = ExecutionPolicy(settings=settings)
             container_settings = _settings(
                 ContainerProfile.minimal_readonly(

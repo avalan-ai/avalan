@@ -8,7 +8,7 @@ from pathlib import Path
 from stat import S_IMODE
 from sys import executable as python_executable
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Literal
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
@@ -99,7 +99,11 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.error_message, "command is unavailable")
         self.assertEqual(
             result.metadata,
-            {"source": "test", "exit_code_statuses": {1: "no_matches"}},
+            {
+                "source": "test",
+                "local_host_approval": "required",
+                "exit_code_statuses": {1: "no_matches"},
+            },
         )
 
     async def test_non_spec_remains_unimplemented(
@@ -109,6 +113,29 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
 
         with self.assertRaises(NotImplementedError):
             await executor.execute(object())  # type: ignore[arg-type]
+
+    async def test_local_executor_refuses_isolated_specs(self) -> None:
+        executor = LocalCommandExecutor()
+
+        for backend in ("sandbox", "container"):
+            with self.subTest(backend=backend):
+                result = await executor.execute(
+                    _direct_spec(
+                        backend=backend,
+                        executable=python_executable,
+                        argv=(python_executable, "-c", "print('unsafe')"),
+                    )
+                )
+
+                self.assertEqual(result.backend, backend)
+                self.assertEqual(
+                    result.status, ShellExecutionStatus.POLICY_DENIED
+                )
+                self.assertEqual(
+                    result.error_code,
+                    ShellExecutionErrorCode.POLICY_DENIED,
+                )
+                self.assertIn("isolated", result.error_message or "")
 
     def test_executor_source_uses_only_exec_subprocess_api(self) -> None:
         source = Path("src/avalan/tool/shell/executor.py").read_text()
@@ -381,7 +408,11 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         self.assertGreaterEqual(result.duration_ms, 0)
         self.assertEqual(
             result.metadata,
-            {"source": "test", "exit_code_statuses": {1: "no_matches"}},
+            {
+                "source": "test",
+                "local_host_approval": "required",
+                "exit_code_statuses": {1: "no_matches"},
+            },
         )
 
     async def test_spawn_uses_pipe_for_trusted_stdin(self) -> None:
@@ -3044,6 +3075,7 @@ def _request(
 
 def _direct_spec(
     *,
+    backend: Literal["local", "sandbox", "container"] = "local",
     executable: str,
     argv: tuple[str, ...],
     display_argv: tuple[str, ...] | None = None,
@@ -3061,7 +3093,7 @@ def _direct_spec(
     env: dict[str, str] | None = None,
 ) -> ExecutionSpec:
     return ExecutionPolicy().create_execution_spec(
-        backend="local",
+        backend=backend,
         tool_name=tool_name,
         command=command,
         executable=executable,

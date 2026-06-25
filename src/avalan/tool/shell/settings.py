@@ -1,4 +1,5 @@
 from ...container import ContainerProfileSelection
+from ...isolation import SandboxProfileSelection
 from ...types import (
     assert_absolute_path_mapping as _assert_absolute_path_mapping,
 )
@@ -29,13 +30,14 @@ from ...types import (
 from ...types import (
     assert_positive_int as _assert_positive_int,
 )
+from .entities import ShellExecutionModeValue
 from .registry import SHELL_COMMAND_IDS
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from re import compile as compile_pattern
 from types import MappingProxyType
-from typing import ClassVar, Literal, final
+from typing import ClassVar, cast, final
 
 _TESSERACT_LANGUAGE_PATTERN = compile_pattern(r"^[A-Za-z0-9_]+$")
 
@@ -45,6 +47,7 @@ _TESSERACT_LANGUAGE_PATTERN = compile_pattern(r"^[A-Za-z0-9_]+$")
 class ShellToolSettings:
     CLI_SCALAR_FIELDS: ClassVar[tuple[str, ...]] = (
         "backend",
+        "execution_mode",
         "workspace_root",
         "cwd",
         "default_timeout_seconds",
@@ -101,7 +104,8 @@ class ShellToolSettings:
         "allow_hidden",
     )
 
-    backend: Literal["local", "container"] = "local"
+    backend: ShellExecutionModeValue | None = None
+    execution_mode: ShellExecutionModeValue | None = None
     workspace_root: str = "."
     cwd: str = "."
     default_timeout_seconds: float = 10.0
@@ -175,12 +179,15 @@ class ShellToolSettings:
     executable_paths: Mapping[str, str] = field(default_factory=dict)
     executable_search_paths: Sequence[str] = field(default_factory=tuple)
     container: ContainerProfileSelection | None = None
+    sandbox: SandboxProfileSelection | None = None
 
     def __post_init__(self) -> None:
-        assert self.backend in {
-            "local",
-            "container",
-        }, "backend must be local or container"
+        execution_mode = _normalized_execution_mode(
+            self.execution_mode,
+            self.backend,
+        )
+        object.__setattr__(self, "execution_mode", execution_mode)
+        object.__setattr__(self, "backend", execution_mode)
         _assert_non_empty_string(self.workspace_root, "workspace_root")
         _assert_non_empty_string(self.cwd, "cwd")
         _assert_positive_timeout_order(
@@ -249,6 +256,20 @@ class ShellToolSettings:
         )
         if self.container is not None:
             assert isinstance(self.container, ContainerProfileSelection)
+        if self.sandbox is not None:
+            assert isinstance(self.sandbox, SandboxProfileSelection)
+        assert not (
+            execution_mode != "container" and self.container is not None
+        ), "container policy requires shell execution mode container"
+        assert not (
+            execution_mode != "sandbox" and self.sandbox is not None
+        ), "sandbox policy requires shell execution mode sandbox"
+        assert not (
+            execution_mode == "container" and self.sandbox is not None
+        ), "container mode cannot carry sandbox policy"
+        assert not (
+            execution_mode == "sandbox" and self.container is not None
+        ), "sandbox mode cannot carry container policy"
         object.__setattr__(
             self,
             "allowed_commands",
@@ -343,6 +364,30 @@ _BOOLEAN_FIELDS = (
     "allow_symlinks",
     "allow_hidden",
 )
+
+
+def _normalized_execution_mode(
+    execution_mode: object,
+    backend: object,
+) -> ShellExecutionModeValue:
+    if execution_mode is None and backend is None:
+        return "local"
+    if execution_mode is None:
+        execution_mode = backend
+    elif backend is not None:
+        assert (
+            execution_mode == backend
+        ), "execution_mode and backend must match"
+    assert isinstance(
+        execution_mode,
+        str,
+    ), "execution_mode must be a string"
+    assert execution_mode in (
+        "local",
+        "sandbox",
+        "container",
+    ), "execution_mode must be local, sandbox, or container"
+    return cast(ShellExecutionModeValue, execution_mode)
 
 
 def _assert_positive_timeout_order(
