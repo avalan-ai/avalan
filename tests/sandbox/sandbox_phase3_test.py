@@ -246,7 +246,7 @@ class SandboxPhase3Test(TestCase):
             (sandbox_backend_probe_from_profile("bubblewrap-linux"),),
         )
         seatbelt_selection = select_sandbox_backend(
-            _plan("seatbelt"),
+            _plan("seatbelt", pids=32),
             (
                 sandbox_backend_probe_from_profile(
                     "seatbelt-darwin", available=True
@@ -254,7 +254,7 @@ class SandboxPhase3Test(TestCase):
             ),
         )
         reduced = select_sandbox_backend(
-            bubblewrap_plan,
+            _plan("bubblewrap", pids=32),
             (_probe_with_reduced_controls(),),
         )
         unenforceable_network = select_sandbox_backend(
@@ -858,7 +858,7 @@ def _effective(
     *,
     network: str = "loopback",
     egress: tuple[str, ...] = (),
-    pids: int | None = 32,
+    pids: int | None = None,
     child_processes: str = "allow",
     inherited_fds: str = "explicit",
     cleanup: str = "delete",
@@ -892,7 +892,7 @@ def _settings_raw(
     *,
     network: str = "loopback",
     egress: tuple[str, ...] = (),
-    pids: int | None = 32,
+    pids: int | None = None,
     child_processes: str = "allow",
     inherited_fds: str = "explicit",
     cleanup: str = "delete",
@@ -952,11 +952,13 @@ def _plan(
     stream_buffer_bytes: int = 4096,
     cleanup_budget_seconds: float = 0.5,
     timeout_seconds: int | None = 1,
+    pids: int | None = None,
 ) -> SandboxExecutionPlan:
     effective = _effective(
         backend,
         network=network,
         egress=egress,
+        pids=pids,
         timeout_seconds=timeout_seconds,
     )
     assert effective is not None

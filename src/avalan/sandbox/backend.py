@@ -22,16 +22,50 @@ from .planning import (
 )
 
 from abc import ABC, abstractmethod
-from asyncio import CancelledError, Lock, Semaphore, TimeoutError, wait_for
+from asyncio import (
+    CancelledError,
+    Lock,
+    Semaphore,
+    StreamReader,
+    TimeoutError,
+    create_subprocess_exec,
+    gather,
+    wait_for,
+)
 from asyncio import sleep as async_sleep
-from collections.abc import Mapping, Sequence
+from asyncio.subprocess import PIPE, Process
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from os import X_OK, access
+from pathlib import Path
+from platform import machine, system
 from posixpath import normpath as normalize_posix_path
+from shutil import rmtree, which
+from tempfile import mkdtemp
 from types import MappingProxyType
 from typing import TypeVar, cast, final
 
 EnumValue = TypeVar("EnumValue", bound=StrEnum)
+ResourceGetLimit = Callable[[int], tuple[int, int]]
+ResourceSetLimit = Callable[[int, tuple[int, int]], None]
+
+_RESOURCE_RLIMIT_NPROC: int
+_RESOURCE_GETRLIMIT: ResourceGetLimit | None
+_RESOURCE_SETRLIMIT: ResourceSetLimit | None
+
+try:
+    from resource import RLIMIT_NPROC as _IMPORTED_RLIMIT_NPROC
+    from resource import getrlimit as _imported_getrlimit
+    from resource import setrlimit as _imported_setrlimit
+except ImportError:
+    _RESOURCE_RLIMIT_NPROC = -1
+    _RESOURCE_GETRLIMIT = None
+    _RESOURCE_SETRLIMIT = None
+else:
+    _RESOURCE_RLIMIT_NPROC = _IMPORTED_RLIMIT_NPROC
+    _RESOURCE_GETRLIMIT = _imported_getrlimit
+    _RESOURCE_SETRLIMIT = _imported_setrlimit
 
 
 class SandboxBackendOperation(StrEnum):
@@ -440,6 +474,107 @@ class SandboxExecutionResult:
             "stream_truncated": self.stream_truncated,
             "cleanup_uncertain": self.cleanup_uncertain,
         }
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class SandboxSubprocessRequest:
+    operation: SandboxBackendOperation | str
+    label: str
+    argv: Sequence[str]
+    environment: Mapping[str, str] = field(default_factory=dict)
+    cwd: str | None = None
+    timeout_seconds: float | None = None
+    stdout_limit_bytes: int = 65536
+    stderr_limit_bytes: int = 32768
+    process_limit: int | None = None
+    close_fds: bool = True
+    pass_fds: Sequence[int] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "operation",
+            _enum_value(self.operation, SandboxBackendOperation, "operation"),
+        )
+        _assert_non_empty_string(self.label, "label")
+        object.__setattr__(self, "argv", _string_tuple(self.argv, "argv"))
+        object.__setattr__(
+            self,
+            "environment",
+            MappingProxyType(_string_mapping(self.environment, "environment")),
+        )
+        if self.cwd is not None:
+            _assert_non_empty_string(self.cwd, "cwd")
+            assert self.cwd.startswith("/"), "cwd must be absolute"
+            assert "\x00" not in self.cwd, "cwd must not contain NUL"
+            object.__setattr__(
+                self,
+                "cwd",
+                normalize_posix_path(self.cwd),
+            )
+        _assert_optional_positive_number(
+            self.timeout_seconds,
+            "timeout_seconds",
+        )
+        assert (
+            self.stdout_limit_bytes > 0
+        ), "stdout_limit_bytes must be positive"
+        assert (
+            self.stderr_limit_bytes > 0
+        ), "stderr_limit_bytes must be positive"
+        if self.process_limit is not None:
+            assert self.process_limit > 0, "process_limit must be positive"
+        _assert_bool(self.close_fds, "close_fds")
+        pass_fds: list[int] = []
+        for fd in self.pass_fds:
+            assert isinstance(fd, int), "pass_fds must contain integers"
+            assert fd >= 0, "pass_fds must not contain negative integers"
+            pass_fds.append(fd)
+        object.__setattr__(self, "pass_fds", tuple(pass_fds))
+
+    def to_dict(self) -> dict[str, object]:
+        operation = cast(SandboxBackendOperation, self.operation)
+        return {
+            "operation": operation.value,
+            "label": self.label,
+            "argv": list(self.argv),
+            "environment": dict(self.environment),
+            "cwd": self.cwd,
+            "timeout_seconds": self.timeout_seconds,
+            "stdout_limit_bytes": self.stdout_limit_bytes,
+            "stderr_limit_bytes": self.stderr_limit_bytes,
+            "process_limit": self.process_limit,
+            "close_fds": self.close_fds,
+            "pass_fds": list(self.pass_fds),
+        }
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class SandboxSubprocessResult:
+    exit_code: int
+    stdout: bytes = b""
+    stderr: bytes = b""
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.exit_code, int), "exit_code must be integer"
+        assert isinstance(self.stdout, bytes), "stdout must be bytes"
+        assert isinstance(self.stderr, bytes), "stderr must be bytes"
+        _assert_bool(self.stdout_truncated, "stdout_truncated")
+        _assert_bool(self.stderr_truncated, "stderr_truncated")
+
+
+SandboxCommandRunner = Callable[
+    [SandboxSubprocessRequest],
+    Awaitable[SandboxSubprocessResult],
+]
+SandboxCleanupHandler = Callable[
+    [Sequence[str]],
+    Awaitable[bool],
+]
 
 
 @final
@@ -1051,6 +1186,567 @@ class SandboxFakeBackend(SandboxAsyncBackend):
         self._operations.append(operation)
 
 
+@final
+class SeatbeltSandboxBackend(SandboxAsyncBackend):
+    def __init__(
+        self,
+        *,
+        sandbox_executable: str | None = None,
+        host_os: str | None = None,
+        architecture: str | None = None,
+        executable_available: bool | None = None,
+        command_runner: SandboxCommandRunner | None = None,
+        cleanup_handler: SandboxCleanupHandler | None = None,
+    ) -> None:
+        self._sandbox_executable = (
+            sandbox_executable
+            or which("sandbox-exec")
+            or "/usr/bin/sandbox-exec"
+        )
+        self._host_os = (host_os or system()).lower()
+        self._architecture = architecture or machine()
+        self._executable_available = executable_available
+        self._command_runner = command_runner or _default_command_runner
+        self._cleanup_handler = cleanup_handler or _default_cleanup_handler
+
+    async def probe(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> SandboxBackendProbeResult:
+        _assert_optional_positive_number(timeout_seconds, "timeout_seconds")
+        try:
+            if timeout_seconds is None:
+                return await self._probe_once()
+            return await wait_for(self._probe_once(), timeout_seconds)
+        except TimeoutError:
+            return SandboxBackendProbeResult(
+                backend=SandboxBackend.SEATBELT,
+                available=False,
+                diagnostics=(
+                    _diagnostic(
+                        SandboxBackendDiagnosticCode.TIMEOUT,
+                        SandboxBackendOperation.PROBE,
+                        SandboxBackend.SEATBELT,
+                        "seatbelt probe exceeded timeout",
+                        retryable=True,
+                    ),
+                ),
+            )
+
+    async def execute(
+        self,
+        plan: SandboxExecutionPlan,
+    ) -> SandboxExecutionResult:
+        assert isinstance(plan, SandboxExecutionPlan)
+        if plan.settings.backend is not SandboxBackend.SEATBELT:
+            return _backend_mismatch_result(
+                SandboxBackend.SEATBELT,
+                "sandbox plan backend does not match seatbelt backend",
+            )
+        probe = await self.probe()
+        selection = select_sandbox_backend(plan, (probe,))
+        if not selection.ok:
+            return _selection_failure_result(selection)
+        assert selection.capabilities is not None
+        path_diagnostic = _prepare_and_validate_paths(
+            plan,
+            SandboxBackend.SEATBELT,
+        )
+        if path_diagnostic is not None:
+            result = _result(
+                SandboxResultStatus.DENIED,
+                diagnostics=(path_diagnostic,),
+            )
+            return await _finish_with_cleanup(
+                result,
+                SandboxBackend.SEATBELT,
+                self._cleanup_handler,
+                _cleanup_paths(plan),
+                plan.cleanup_budget_seconds,
+            )
+        request = SandboxSubprocessRequest(
+            operation=SandboxBackendOperation.START,
+            label="seatbelt_execute",
+            argv=(
+                self._sandbox_executable,
+                "-p",
+                generate_seatbelt_profile(plan),
+                "--",
+            )
+            + tuple(plan.request.argv),
+            environment=_execution_environment(plan),
+            cwd=plan.request.cwd,
+            timeout_seconds=plan.settings.profile.resources.timeout_seconds,
+            stdout_limit_bytes=_stdout_limit(plan),
+            stderr_limit_bytes=_stderr_limit(plan),
+            close_fds=True,
+            pass_fds=(),
+        )
+        cleanup_paths = _cleanup_paths(plan)
+        return await _execute_subprocess_request(
+            plan,
+            SandboxBackend.SEATBELT,
+            request,
+            self._command_runner,
+            self._cleanup_handler,
+            cleanup_paths,
+        )
+
+    async def _probe_once(self) -> SandboxBackendProbeResult:
+        if self._host_os != "darwin":
+            return _unavailable_probe(
+                SandboxBackend.SEATBELT,
+                "seatbelt is only available on macOS",
+            )
+        if not self._is_executable_available():
+            return _unavailable_probe(
+                SandboxBackend.SEATBELT,
+                "sandbox-exec executable is unavailable",
+            )
+        try:
+            result = await self._command_runner(
+                SandboxSubprocessRequest(
+                    operation=SandboxBackendOperation.PROBE,
+                    label="seatbelt_basic_profile",
+                    argv=(
+                        self._sandbox_executable,
+                        "-p",
+                        "(version 1)\n(allow default)\n",
+                        "/usr/bin/true",
+                    ),
+                    environment=_probe_environment(),
+                    timeout_seconds=2,
+                )
+            )
+        except TimeoutError:
+            return _unavailable_probe(
+                SandboxBackend.SEATBELT,
+                "seatbelt probe command timed out",
+                code=SandboxBackendDiagnosticCode.TIMEOUT,
+                retryable=True,
+            )
+        except OSError as exc:
+            return _unavailable_probe(
+                SandboxBackend.SEATBELT,
+                f"seatbelt probe command failed: {exc}",
+            )
+        if result.exit_code != 0:
+            return _unavailable_probe(
+                SandboxBackend.SEATBELT,
+                "seatbelt rejected the basic probe profile",
+            )
+        return SandboxBackendProbeResult(
+            backend=SandboxBackend.SEATBELT,
+            available=True,
+            capabilities=SandboxBackendCapabilities(
+                backend=SandboxBackend.SEATBELT,
+                host_os="darwin",
+                architecture=self._architecture,
+                runtime_name="Apple sandbox-exec",
+                sandbox_executable=self._sandbox_executable,
+                sandbox_executable_available=True,
+                filesystem=SandboxFilesystemControls(
+                    read_roots=True,
+                    write_roots=True,
+                    deny_roots=True,
+                ),
+                network_modes=(
+                    SandboxNetworkMode.NONE,
+                    SandboxNetworkMode.LOOPBACK,
+                ),
+                process=SandboxProcessControls(
+                    process_limits=False,
+                    child_processes=False,
+                    inherited_fds=False,
+                ),
+                temp_output=SandboxTempOutputMapping(
+                    temp_dirs=True,
+                    output_dirs=True,
+                    cleanup_budget=True,
+                ),
+                unsupported_controls=(
+                    "cpu_limits",
+                    "memory_limits",
+                    "network_allowlist",
+                    "pid_limits",
+                    "inherited_fds",
+                ),
+            ),
+        )
+
+    def _is_executable_available(self) -> bool:
+        if self._executable_available is not None:
+            return self._executable_available
+        path = Path(self._sandbox_executable)
+        return path.is_file() and access(path, X_OK)
+
+
+@final
+class BubblewrapSandboxBackend(SandboxAsyncBackend):
+    def __init__(
+        self,
+        *,
+        sandbox_executable: str | None = None,
+        host_os: str | None = None,
+        architecture: str | None = None,
+        executable_available: bool | None = None,
+        process_limits_supported: bool | None = None,
+        command_runner: SandboxCommandRunner | None = None,
+        cleanup_handler: SandboxCleanupHandler | None = None,
+    ) -> None:
+        self._sandbox_executable = (
+            sandbox_executable or which("bwrap") or "/usr/bin/bwrap"
+        )
+        self._host_os = (host_os or system()).lower()
+        self._architecture = architecture or machine()
+        self._executable_available = executable_available
+        self._process_limits_supported = process_limits_supported
+        self._command_runner = command_runner or _default_command_runner
+        self._cleanup_handler = cleanup_handler or _default_cleanup_handler
+
+    async def probe(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> SandboxBackendProbeResult:
+        _assert_optional_positive_number(timeout_seconds, "timeout_seconds")
+        try:
+            if timeout_seconds is None:
+                return await self._probe_once()
+            return await wait_for(self._probe_once(), timeout_seconds)
+        except TimeoutError:
+            return SandboxBackendProbeResult(
+                backend=SandboxBackend.BUBBLEWRAP,
+                available=False,
+                diagnostics=(
+                    _diagnostic(
+                        SandboxBackendDiagnosticCode.TIMEOUT,
+                        SandboxBackendOperation.PROBE,
+                        SandboxBackend.BUBBLEWRAP,
+                        "bubblewrap probe exceeded timeout",
+                        retryable=True,
+                    ),
+                ),
+            )
+
+    async def execute(
+        self,
+        plan: SandboxExecutionPlan,
+    ) -> SandboxExecutionResult:
+        assert isinstance(plan, SandboxExecutionPlan)
+        if plan.settings.backend is not SandboxBackend.BUBBLEWRAP:
+            return _backend_mismatch_result(
+                SandboxBackend.BUBBLEWRAP,
+                "sandbox plan backend does not match bubblewrap backend",
+            )
+        probe = await self.probe()
+        selection = select_sandbox_backend(plan, (probe,))
+        if not selection.ok:
+            return _selection_failure_result(selection)
+        assert selection.capabilities is not None
+        path_diagnostic = _prepare_and_validate_paths(
+            plan,
+            SandboxBackend.BUBBLEWRAP,
+        )
+        if path_diagnostic is not None:
+            result = _result(
+                SandboxResultStatus.DENIED,
+                diagnostics=(path_diagnostic,),
+            )
+            return await _finish_with_cleanup(
+                result,
+                SandboxBackend.BUBBLEWRAP,
+                self._cleanup_handler,
+                _cleanup_paths(plan),
+                plan.cleanup_budget_seconds,
+            )
+        runtime_dir = mkdtemp(prefix="avalan-bwrap-")
+        Path(runtime_dir, "deny-empty").mkdir()
+        cleanup_paths = (runtime_dir,) + _cleanup_paths(plan)
+        request = SandboxSubprocessRequest(
+            operation=SandboxBackendOperation.START,
+            label="bubblewrap_execute",
+            argv=generate_bubblewrap_arguments(
+                plan,
+                sandbox_executable=self._sandbox_executable,
+                private_runtime_dir=runtime_dir,
+            ),
+            environment=_execution_environment(plan),
+            timeout_seconds=plan.settings.profile.resources.timeout_seconds,
+            stdout_limit_bytes=_stdout_limit(plan),
+            stderr_limit_bytes=_stderr_limit(plan),
+            close_fds=True,
+            pass_fds=(),
+        )
+        return await _execute_subprocess_request(
+            plan,
+            SandboxBackend.BUBBLEWRAP,
+            request,
+            self._command_runner,
+            self._cleanup_handler,
+            cleanup_paths,
+        )
+
+    async def _probe_once(self) -> SandboxBackendProbeResult:
+        if self._host_os != "linux":
+            return _unavailable_probe(
+                SandboxBackend.BUBBLEWRAP,
+                "bubblewrap is only available on Linux",
+            )
+        if not self._is_executable_available():
+            return _unavailable_probe(
+                SandboxBackend.BUBBLEWRAP,
+                "bwrap executable is unavailable",
+            )
+        controls = await self._probe_controls()
+        if not controls["user_namespace"]:
+            return _unavailable_probe(
+                SandboxBackend.BUBBLEWRAP,
+                "bubblewrap user namespaces are unavailable",
+            )
+        if not controls["mount"]:
+            return _unavailable_probe(
+                SandboxBackend.BUBBLEWRAP,
+                "bubblewrap bind mounts are unavailable",
+            )
+        if not controls["proc"]:
+            return _unavailable_probe(
+                SandboxBackend.BUBBLEWRAP,
+                "bubblewrap /proc mounting is unavailable",
+            )
+        network_modes: tuple[SandboxNetworkMode, ...] = (
+            (
+                SandboxNetworkMode.NONE,
+                SandboxNetworkMode.LOOPBACK,
+                SandboxNetworkMode.FULL,
+            )
+            if controls["network_namespace"]
+            else (SandboxNetworkMode.FULL,)
+        )
+        unsupported_controls = ["cpu_limits", "memory_limits"]
+        if not controls["network_namespace"]:
+            unsupported_controls.append("network_namespaces")
+        unsupported_controls.append("network_allowlist")
+        unsupported_controls.append("pid_limits")
+        unsupported_controls.append("child_process_denial")
+        if self._supports_process_limits():
+            unsupported_controls.append("pid_limits_best_effort_rlimit")
+        return SandboxBackendProbeResult(
+            backend=SandboxBackend.BUBBLEWRAP,
+            available=True,
+            capabilities=SandboxBackendCapabilities(
+                backend=SandboxBackend.BUBBLEWRAP,
+                host_os="linux",
+                architecture=self._architecture,
+                runtime_name="bubblewrap",
+                sandbox_executable=self._sandbox_executable,
+                sandbox_executable_available=True,
+                filesystem=SandboxFilesystemControls(
+                    read_roots=True,
+                    write_roots=True,
+                    deny_roots=True,
+                ),
+                network_modes=network_modes,
+                process=SandboxProcessControls(
+                    process_limits=False,
+                    child_processes=True,
+                    inherited_fds=True,
+                ),
+                temp_output=SandboxTempOutputMapping(
+                    temp_dirs=True,
+                    output_dirs=True,
+                    cleanup_budget=True,
+                ),
+                unsupported_controls=tuple(unsupported_controls),
+            ),
+        )
+
+    async def _probe_controls(self) -> dict[str, bool]:
+        labels = {
+            "user_namespace": (
+                self._sandbox_executable,
+                "--unshare-user",
+                "--uid",
+                "0",
+                "--gid",
+                "0",
+                "--ro-bind",
+                "/",
+                "/",
+                "/bin/true",
+            ),
+            "mount": (
+                self._sandbox_executable,
+                "--ro-bind",
+                "/",
+                "/",
+                "/bin/true",
+            ),
+            "network_namespace": (
+                self._sandbox_executable,
+                "--unshare-net",
+                "--ro-bind",
+                "/",
+                "/",
+                "/bin/true",
+            ),
+            "proc": (
+                self._sandbox_executable,
+                "--ro-bind",
+                "/",
+                "/",
+                "--proc",
+                "/proc",
+                "/bin/test",
+                "-r",
+                "/proc/self/status",
+            ),
+        }
+        results: dict[str, bool] = {}
+        for label, argv in labels.items():
+            try:
+                result = await self._command_runner(
+                    SandboxSubprocessRequest(
+                        operation=SandboxBackendOperation.PROBE,
+                        label=f"bubblewrap_{label}",
+                        argv=argv,
+                        environment=_probe_environment(),
+                        timeout_seconds=2,
+                    )
+                )
+                results[label] = result.exit_code == 0
+            except (OSError, TimeoutError):
+                results[label] = False
+        return results
+
+    def _is_executable_available(self) -> bool:
+        if self._executable_available is not None:
+            return self._executable_available
+        path = Path(self._sandbox_executable)
+        return path.is_file() and access(path, X_OK)
+
+    def _supports_process_limits(self) -> bool:
+        if self._process_limits_supported is not None:
+            return self._process_limits_supported
+        return _process_limits_supported()
+
+
+def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
+    assert isinstance(plan, SandboxExecutionPlan)
+    assert (
+        plan.settings.backend is SandboxBackend.SEATBELT
+    ), "seatbelt profiles require a seatbelt plan"
+    _assert_policy_roots_safe(plan)
+    profile = plan.settings.profile
+    lines = [
+        "(version 1)",
+        "(deny default)",
+        "(allow process*)",
+        "(allow file-read-metadata)",
+    ]
+    for path in _ordered_unique(
+        tuple(profile.executable_search_roots)
+        + tuple(profile.trusted_executables)
+        + tuple(profile.read_roots)
+        + tuple(profile.write_roots)
+        + _optional_path_tuple(plan.temp_dir)
+        + _optional_path_tuple(plan.output_dir)
+    ):
+        lines.append(_seatbelt_allow_read(path))
+    for path in _ordered_unique(
+        tuple(profile.write_roots)
+        + _optional_path_tuple(plan.temp_dir)
+        + _optional_path_tuple(plan.output_dir)
+    ):
+        lines.append(_seatbelt_allow_write(path))
+    for path in _ordered_unique(profile.deny_roots):
+        lines.append(_seatbelt_deny_read(path))
+        lines.append(_seatbelt_deny_write(path))
+    network_mode = cast(SandboxNetworkMode, profile.network.mode)
+    match network_mode:
+        case SandboxNetworkMode.NONE:
+            lines.append("(deny network*)")
+        case SandboxNetworkMode.LOOPBACK:
+            lines.append("(deny network*)")
+            lines.append('(allow network-outbound (remote ip "127.0.0.1:*"))')
+            lines.append('(allow network-inbound (local ip "127.0.0.1:*"))')
+        case SandboxNetworkMode.ALLOWLIST:
+            raise AssertionError("seatbelt network allowlists are unsupported")
+        case SandboxNetworkMode.FULL:
+            raise AssertionError("seatbelt full network is unsupported")
+    if profile.child_processes is SandboxChildProcessPolicy.DENY:
+        lines.append("(deny process-fork*)")
+    return "\n".join(lines) + "\n"
+
+
+def generate_bubblewrap_arguments(
+    plan: SandboxExecutionPlan,
+    *,
+    sandbox_executable: str = "/usr/bin/bwrap",
+    private_runtime_dir: str = "/tmp/avalan-bwrap",
+) -> tuple[str, ...]:
+    assert isinstance(plan, SandboxExecutionPlan)
+    assert (
+        plan.settings.backend is SandboxBackend.BUBBLEWRAP
+    ), "bubblewrap arguments require a bubblewrap plan"
+    _assert_non_empty_string(sandbox_executable, "sandbox_executable")
+    _assert_non_empty_string(private_runtime_dir, "private_runtime_dir")
+    assert sandbox_executable.startswith("/"), "sandbox_executable is absolute"
+    assert private_runtime_dir.startswith(
+        "/"
+    ), "private_runtime_dir is absolute"
+    _assert_policy_roots_safe(plan)
+    profile = plan.settings.profile
+    args: list[str] = [
+        sandbox_executable,
+        "--die-with-parent",
+        "--unshare-user",
+        "--uid",
+        "0",
+        "--gid",
+        "0",
+        "--unshare-pid",
+        "--unshare-ipc",
+        "--unshare-uts",
+        "--new-session",
+        "--clearenv",
+    ]
+    for name, value in sorted(_execution_environment(plan).items()):
+        args.extend(("--setenv", name, value))
+    network_mode = cast(SandboxNetworkMode, profile.network.mode)
+    match network_mode:
+        case SandboxNetworkMode.NONE | SandboxNetworkMode.LOOPBACK:
+            args.append("--unshare-net")
+        case SandboxNetworkMode.FULL:
+            args.append("--share-net")
+        case SandboxNetworkMode.ALLOWLIST:
+            raise AssertionError(
+                "bubblewrap network allowlists are unsupported"
+            )
+    for path in _ordered_unique(
+        tuple(profile.executable_search_roots)
+        + tuple(profile.trusted_executables)
+        + tuple(profile.read_roots)
+    ):
+        args.extend(("--ro-bind", path, path))
+    for path in _ordered_unique(
+        tuple(profile.write_roots)
+        + _optional_path_tuple(plan.temp_dir)
+        + _optional_path_tuple(plan.output_dir)
+    ):
+        args.extend(("--bind", path, path))
+    if not _path_inside_any("/proc", profile.deny_roots):
+        args.extend(("--proc", "/proc"))
+    args.extend(("--dev", "/dev"))
+    deny_dir = normalize_posix_path(f"{private_runtime_dir}/deny-empty")
+    for path in _ordered_unique(profile.deny_roots):
+        args.extend(("--ro-bind", deny_dir, path))
+    args.extend(("--chdir", plan.request.cwd, "--"))
+    args.extend(plan.request.argv)
+    return tuple(args)
+
+
 def sandbox_backend_capability_profiles(
     backend: SandboxBackend | str | None = None,
 ) -> tuple[SandboxBackendCapabilityProfile, ...]:
@@ -1161,6 +1857,16 @@ def _capability_diagnostics(
     if profile.resources.pids is not None and not process.process_limits:
         diagnostics.append(
             _capability_mismatch(backend, "pid limits unsupported")
+        )
+    if (
+        backend is SandboxBackend.BUBBLEWRAP
+        and profile.child_processes is SandboxChildProcessPolicy.DENY
+    ):
+        diagnostics.append(
+            _capability_mismatch(
+                backend,
+                "child process denial unsupported",
+            )
         )
     if (
         profile.child_processes is SandboxChildProcessPolicy.ALLOW
@@ -1343,9 +2049,759 @@ def _path_inside(path: str, root: str) -> bool:
     )
 
 
+def _path_inside_any(path: str, roots: Sequence[str]) -> bool:
+    return any(_path_inside(path, root) for root in roots)
+
+
 def _path_parts(path: str) -> tuple[str, ...]:
     normalized = normalize_posix_path(path)
     return tuple(part for part in normalized.split("/") if part)
+
+
+def _string_mapping(
+    value: Mapping[str, str],
+    field_name: str,
+) -> dict[str, str]:
+    assert isinstance(value, Mapping), f"{field_name} must be a mapping"
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        _assert_non_empty_string(key, f"{field_name} key")
+        _assert_non_empty_string(item, f"{field_name}.{key}")
+        normalized[key] = item
+    return normalized
+
+
+def _ordered_unique(paths: Sequence[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for path in paths:
+        normalized = normalize_posix_path(path)
+        if normalized not in seen:
+            ordered.append(normalized)
+            seen.add(normalized)
+    return tuple(ordered)
+
+
+def _optional_path_tuple(path: str | None) -> tuple[str, ...]:
+    if path is None:
+        return ()
+    return (path,)
+
+
+def _seatbelt_allow_read(path: str) -> str:
+    return f"(allow file-read* (subpath {_seatbelt_string(path)}))"
+
+
+def _seatbelt_allow_write(path: str) -> str:
+    return f"(allow file-write* (subpath {_seatbelt_string(path)}))"
+
+
+def _seatbelt_deny_read(path: str) -> str:
+    return f"(deny file-read* (subpath {_seatbelt_string(path)}))"
+
+
+def _seatbelt_deny_write(path: str) -> str:
+    return f"(deny file-write* (subpath {_seatbelt_string(path)}))"
+
+
+def _seatbelt_string(value: str) -> str:
+    _assert_non_empty_string(value, "seatbelt value")
+    assert "\x00" not in value, "seatbelt values must not contain NUL"
+    assert "\n" not in value, "seatbelt values must not contain newlines"
+    assert "\r" not in value, "seatbelt values must not contain newlines"
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _execution_environment(plan: SandboxExecutionPlan) -> dict[str, str]:
+    profile_environment = plan.settings.profile.environment
+    environment = dict(profile_environment.variables)
+    environment.update(plan.environment)
+    return environment
+
+
+def _stdout_limit(plan: SandboxExecutionPlan) -> int:
+    return min(
+        plan.stream_buffer_bytes,
+        plan.settings.profile.output.max_stdout_bytes,
+    )
+
+
+def _stderr_limit(plan: SandboxExecutionPlan) -> int:
+    return min(
+        plan.stream_buffer_bytes,
+        plan.settings.profile.output.max_stderr_bytes,
+    )
+
+
+def _probe_environment() -> dict[str, str]:
+    return {"PATH": "/usr/bin:/bin"}
+
+
+def _cleanup_paths(plan: SandboxExecutionPlan) -> tuple[str, ...]:
+    cleanup = cast(SandboxCleanupPolicy, plan.settings.profile.cleanup)
+    if cleanup is not SandboxCleanupPolicy.DELETE:
+        return ()
+    return _optional_path_tuple(plan.temp_dir)
+
+
+def _prepare_and_validate_paths(
+    plan: SandboxExecutionPlan,
+    backend: SandboxBackend,
+) -> SandboxBackendDiagnostic | None:
+    try:
+        _assert_policy_roots_safe(plan)
+        _prepare_mapped_directories(plan)
+        _assert_backend_paths_allowed(plan)
+    except AssertionError as exc:
+        return _diagnostic(
+            SandboxBackendDiagnosticCode.PATH_DENIED,
+            SandboxBackendOperation.PREPARE_PROFILE,
+            backend,
+            str(exc) or "sandbox path is denied",
+        )
+    return None
+
+
+def _assert_policy_roots_safe(plan: SandboxExecutionPlan) -> None:
+    profile = plan.settings.profile
+    roots: tuple[tuple[str, Sequence[str]], ...] = (
+        ("read_roots", profile.read_roots),
+        ("write_roots", profile.write_roots),
+        ("deny_roots", profile.deny_roots),
+        ("scratch_roots", profile.scratch_roots),
+        ("output_roots", profile.output_roots),
+        ("temp_dir", _optional_path_tuple(plan.temp_dir)),
+        ("output_dir", _optional_path_tuple(plan.output_dir)),
+    )
+    for field_name, paths in roots:
+        for path in paths:
+            _assert_path_has_no_symlink_escape(path, field_name)
+
+
+def _assert_path_has_no_symlink_escape(
+    path: str,
+    field_name: str,
+) -> None:
+    normalized = normalize_posix_path(path)
+    resolved = _real_path(normalized)
+    assert normalized == resolved or _system_prefix_resolves_equivalently(
+        normalized, resolved
+    ), f"{field_name} must not traverse symlink escape: {path}"
+
+
+def _system_prefix_resolves_equivalently(path: str, resolved: str) -> bool:
+    for lexical_prefix, real_prefix in (
+        ("/tmp", "/private/tmp"),
+        ("/var", "/private/var"),
+        ("/etc", "/private/etc"),
+    ):
+        equivalent = _replace_path_prefix(path, lexical_prefix, real_prefix)
+        if equivalent == resolved:
+            return True
+    return False
+
+
+def _replace_path_prefix(
+    path: str,
+    lexical_prefix: str,
+    real_prefix: str,
+) -> str | None:
+    if path == lexical_prefix:
+        return real_prefix
+    prefix = f"{lexical_prefix}/"
+    if path.startswith(prefix):
+        return f"{real_prefix}/{path[len(prefix) :]}"
+    return None
+
+
+def _prepare_mapped_directories(plan: SandboxExecutionPlan) -> None:
+    for path in (
+        tuple(plan.settings.profile.write_roots)
+        + _optional_path_tuple(plan.temp_dir)
+        + _optional_path_tuple(plan.output_dir)
+    ):
+        directory = Path(path)
+        directory.mkdir(parents=True, exist_ok=True)
+
+
+def _assert_backend_paths_allowed(plan: SandboxExecutionPlan) -> None:
+    profile = plan.settings.profile
+    allowed_roots = _real_roots(
+        tuple(profile.executable_search_roots)
+        + tuple(profile.trusted_executables)
+        + tuple(profile.read_roots)
+        + tuple(profile.write_roots)
+        + _optional_path_tuple(plan.temp_dir)
+        + _optional_path_tuple(plan.output_dir),
+        "allowed roots",
+    )
+    denied_roots = _real_roots(profile.deny_roots, "deny_roots")
+    for root in allowed_roots:
+        assert not _path_inside_any(
+            root,
+            denied_roots,
+        ), f"sandbox root is denied: {root}"
+    for candidate in _execution_path_candidates(plan):
+        assert _real_path_allowed(
+            candidate,
+            allowed_roots,
+            denied_roots,
+        ), f"sandbox path escapes allowed roots: {candidate}"
+
+
+def _execution_path_candidates(
+    plan: SandboxExecutionPlan,
+) -> tuple[str, ...]:
+    candidates = [plan.request.command, plan.request.cwd]
+    for argument in plan.request.argv:
+        if argument.startswith("/"):
+            candidates.append(argument)
+    return tuple(candidates)
+
+
+def _real_roots(roots: Sequence[str], field_name: str) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for root in roots:
+        assert Path(root).exists(), f"{field_name} must exist: {root}"
+        normalized.append(_real_path(root))
+    return tuple(_ordered_unique(tuple(normalized)))
+
+
+def _real_path_allowed(
+    path: str,
+    allowed_roots: Sequence[str],
+    denied_roots: Sequence[str],
+) -> bool:
+    real_path = _real_path(path)
+    if _path_inside_any(real_path, denied_roots):
+        return False
+    return _path_inside_any(real_path, allowed_roots)
+
+
+def _real_path(path: str) -> str:
+    resolved = Path(path).resolve(strict=False)
+    return normalize_posix_path(str(resolved))
+
+
+async def _execute_subprocess_request(
+    plan: SandboxExecutionPlan,
+    backend: SandboxBackend,
+    request: SandboxSubprocessRequest,
+    command_runner: SandboxCommandRunner,
+    cleanup_handler: SandboxCleanupHandler,
+    cleanup_paths: Sequence[str],
+) -> SandboxExecutionResult:
+    try:
+        completed = await command_runner(request)
+    except TimeoutError:
+        result = _result(
+            SandboxResultStatus.TIMED_OUT,
+            diagnostics=(
+                _diagnostic(
+                    SandboxBackendDiagnosticCode.TIMEOUT,
+                    SandboxBackendOperation.WAIT,
+                    backend,
+                    "sandbox execution exceeded timeout",
+                    retryable=True,
+                ),
+            ),
+        )
+        return await _finish_with_cleanup(
+            result,
+            backend,
+            cleanup_handler,
+            cleanup_paths,
+            plan.cleanup_budget_seconds,
+        )
+    except CancelledError:
+        result = _result(
+            SandboxResultStatus.CANCELLED,
+            diagnostics=(
+                _diagnostic(
+                    SandboxBackendDiagnosticCode.CANCELLED,
+                    SandboxBackendOperation.WAIT,
+                    backend,
+                    "sandbox execution was cancelled",
+                    retryable=True,
+                ),
+            ),
+        )
+        return await _finish_with_cleanup(
+            result,
+            backend,
+            cleanup_handler,
+            cleanup_paths,
+            plan.cleanup_budget_seconds,
+        )
+    except FileNotFoundError:
+        result = _result(
+            SandboxResultStatus.FAILED,
+            diagnostics=(
+                _diagnostic(
+                    SandboxBackendDiagnosticCode.BACKEND_UNAVAILABLE,
+                    SandboxBackendOperation.START,
+                    backend,
+                    "sandbox executable is unavailable",
+                    retryable=True,
+                ),
+            ),
+        )
+        return await _finish_with_cleanup(
+            result,
+            backend,
+            cleanup_handler,
+            cleanup_paths,
+            plan.cleanup_budget_seconds,
+        )
+    except PermissionError as exc:
+        result = _result(
+            SandboxResultStatus.FAILED,
+            diagnostics=(
+                _diagnostic(
+                    SandboxBackendDiagnosticCode.EXECUTION_FAILED,
+                    SandboxBackendOperation.START,
+                    backend,
+                    f"sandbox executable permission denied: {exc}",
+                ),
+            ),
+        )
+        return await _finish_with_cleanup(
+            result,
+            backend,
+            cleanup_handler,
+            cleanup_paths,
+            plan.cleanup_budget_seconds,
+        )
+    except OSError as exc:
+        result = _result(
+            SandboxResultStatus.FAILED,
+            diagnostics=(
+                _diagnostic(
+                    SandboxBackendDiagnosticCode.EXECUTION_FAILED,
+                    SandboxBackendOperation.START,
+                    backend,
+                    f"sandbox process failed to start: {exc}",
+                ),
+            ),
+        )
+        return await _finish_with_cleanup(
+            result,
+            backend,
+            cleanup_handler,
+            cleanup_paths,
+            plan.cleanup_budget_seconds,
+        )
+    stdout, stderr, chunks, stream_diagnostic = _bounded_completed_streams(
+        plan,
+        completed,
+        backend,
+    )
+    status = (
+        SandboxResultStatus.COMPLETED
+        if completed.exit_code == 0
+        else SandboxResultStatus.FAILED
+    )
+    diagnostics: tuple[SandboxBackendDiagnostic, ...] = ()
+    if completed.exit_code != 0:
+        diagnostics = (
+            _diagnostic(
+                SandboxBackendDiagnosticCode.EXECUTION_FAILED,
+                SandboxBackendOperation.WAIT,
+                backend,
+                f"sandbox process exited with {completed.exit_code}",
+            ),
+        )
+    if stream_diagnostic is not None:
+        diagnostics = diagnostics + (stream_diagnostic,)
+    artifacts, output_diagnostic = _collect_real_outputs(plan, backend)
+    if output_diagnostic is not None:
+        status = SandboxResultStatus.FAILED
+        diagnostics = diagnostics + (output_diagnostic,)
+    result = SandboxExecutionResult(
+        status=status,
+        exit_code=completed.exit_code,
+        stdout=stdout,
+        stderr=stderr,
+        diagnostics=diagnostics,
+        stream_chunks=chunks,
+        output_artifacts=artifacts,
+        stream_truncated=stream_diagnostic is not None,
+    )
+    return await _finish_with_cleanup(
+        result,
+        backend,
+        cleanup_handler,
+        cleanup_paths,
+        plan.cleanup_budget_seconds,
+    )
+
+
+def _bounded_completed_streams(
+    plan: SandboxExecutionPlan,
+    completed: SandboxSubprocessResult,
+    backend: SandboxBackend,
+) -> tuple[
+    bytes,
+    bytes,
+    tuple[SandboxStreamChunk, ...],
+    SandboxBackendDiagnostic | None,
+]:
+    stdout = bytearray()
+    stderr = bytearray()
+    stdout_truncated = (
+        _append_bounded(stdout, completed.stdout, _stdout_limit(plan))
+        or completed.stdout_truncated
+    )
+    stderr_truncated = (
+        _append_bounded(stderr, completed.stderr, _stderr_limit(plan))
+        or completed.stderr_truncated
+    )
+    chunks: list[SandboxStreamChunk] = []
+    if completed.stdout:
+        chunks.append(
+            SandboxStreamChunk(
+                stream=SandboxBackendStream.STDOUT,
+                content=bytes(stdout),
+                sequence=0,
+            )
+        )
+    if completed.stderr:
+        chunks.append(
+            SandboxStreamChunk(
+                stream=SandboxBackendStream.STDERR,
+                content=bytes(stderr),
+                sequence=len(chunks),
+            )
+        )
+    diagnostic = (
+        _diagnostic(
+            SandboxBackendDiagnosticCode.STREAM_TRUNCATED,
+            SandboxBackendOperation.STREAM,
+            backend,
+            "sandbox stream exceeded configured buffer",
+        )
+        if stdout_truncated or stderr_truncated
+        else None
+    )
+    return bytes(stdout), bytes(stderr), tuple(chunks), diagnostic
+
+
+def _collect_real_outputs(
+    plan: SandboxExecutionPlan,
+    backend: SandboxBackend,
+) -> tuple[
+    tuple[SandboxOutputArtifact, ...],
+    SandboxBackendDiagnostic | None,
+]:
+    if not plan.collect_outputs:
+        return (), None
+    output_policy = plan.settings.profile.output
+    if not output_policy.allow_artifacts:
+        return (), _diagnostic(
+            SandboxBackendDiagnosticCode.OUTPUT_REJECTED,
+            SandboxBackendOperation.COLLECT_OUTPUTS,
+            backend,
+            "sandbox output collection is disabled",
+        )
+    if plan.output_dir is None:
+        return (), _diagnostic(
+            SandboxBackendDiagnosticCode.OUTPUT_REJECTED,
+            SandboxBackendOperation.COLLECT_OUTPUTS,
+            backend,
+            "sandbox output directory is not mapped",
+        )
+    output_root = Path(plan.output_dir)
+    if not output_root.exists():
+        return (), None
+    artifacts: list[SandboxOutputArtifact] = []
+    total_bytes = 0
+    for path in output_root.rglob("*"):
+        relative_path = path.relative_to(output_root).as_posix()
+        if path.is_symlink() or _unsafe_output_path(relative_path):
+            return (), _diagnostic(
+                SandboxBackendDiagnosticCode.OUTPUT_REJECTED,
+                SandboxBackendOperation.COLLECT_OUTPUTS,
+                backend,
+                f"sandbox output path is unsafe: {relative_path}",
+            )
+        if not path.is_file():
+            continue
+        remaining_bytes = output_policy.max_artifact_bytes - total_bytes
+        content = _read_artifact_bounded(path, remaining_bytes)
+        if content is None:
+            return (), _diagnostic(
+                SandboxBackendDiagnosticCode.OUTPUT_REJECTED,
+                SandboxBackendOperation.COLLECT_OUTPUTS,
+                backend,
+                "sandbox outputs exceed artifact byte limit",
+            )
+        total_bytes += len(content)
+        artifacts.append(
+            SandboxOutputArtifact(path=relative_path, content=content)
+        )
+    return tuple(artifacts), None
+
+
+def _read_artifact_bounded(path: Path, remaining_bytes: int) -> bytes | None:
+    assert remaining_bytes >= 0, "remaining_bytes must not be negative"
+    content = bytearray()
+    with path.open("rb") as source:
+        while True:
+            read_size = min(8192, remaining_bytes - len(content) + 1)
+            chunk = source.read(read_size)
+            if not chunk:
+                return bytes(content)
+            if len(content) + len(chunk) > remaining_bytes:
+                return None
+            content.extend(chunk)
+
+
+async def _finish_with_cleanup(
+    result: SandboxExecutionResult,
+    backend: SandboxBackend,
+    cleanup_handler: SandboxCleanupHandler,
+    cleanup_paths: Sequence[str],
+    cleanup_budget_seconds: float,
+) -> SandboxExecutionResult:
+    cleanup_diagnostic = await _cleanup_with_budget(
+        cleanup_handler,
+        cleanup_paths,
+        cleanup_budget_seconds,
+        backend,
+    )
+    if cleanup_diagnostic is None:
+        return result
+    return replace(
+        result,
+        status=SandboxResultStatus.FAILED,
+        diagnostics=tuple(result.diagnostics) + (cleanup_diagnostic,),
+        cleanup_uncertain=True,
+    )
+
+
+async def _cleanup_with_budget(
+    cleanup_handler: SandboxCleanupHandler,
+    cleanup_paths: Sequence[str],
+    cleanup_budget_seconds: float,
+    backend: SandboxBackend,
+) -> SandboxBackendDiagnostic | None:
+    if not cleanup_paths:
+        return None
+    try:
+        cleaned = await wait_for(
+            cleanup_handler(tuple(cleanup_paths)),
+            cleanup_budget_seconds,
+        )
+    except TimeoutError:
+        return _diagnostic(
+            SandboxBackendDiagnosticCode.CLEANUP_FAILED,
+            SandboxBackendOperation.CLEANUP,
+            backend,
+            "sandbox cleanup exceeded cleanup budget",
+            retryable=True,
+        )
+    except CancelledError:
+        return _diagnostic(
+            SandboxBackendDiagnosticCode.CANCELLED,
+            SandboxBackendOperation.CLEANUP,
+            backend,
+            "sandbox cleanup was cancelled",
+            retryable=True,
+        )
+    if cleaned:
+        return None
+    return _diagnostic(
+        SandboxBackendDiagnosticCode.CLEANUP_FAILED,
+        SandboxBackendOperation.CLEANUP,
+        backend,
+        "sandbox cleanup state is uncertain",
+        retryable=True,
+    )
+
+
+async def _default_cleanup_handler(paths: Sequence[str]) -> bool:
+    try:
+        for path in paths:
+            target = Path(path)
+            if target.is_symlink() or target.is_file():
+                target.unlink()
+            elif target.exists():
+                rmtree(target)
+    except OSError:
+        return False
+    return True
+
+
+async def _default_command_runner(
+    request: SandboxSubprocessRequest,
+) -> SandboxSubprocessResult:
+    preexec_fn = _process_limit_preexec(request.process_limit)
+    process = await create_subprocess_exec(
+        *request.argv,
+        stdin=PIPE,
+        stdout=PIPE,
+        stderr=PIPE,
+        cwd=request.cwd,
+        env=dict(request.environment),
+        close_fds=request.close_fds,
+        pass_fds=tuple(request.pass_fds),
+        preexec_fn=preexec_fn,
+    )
+    try:
+        if process.stdin is not None:
+            process.stdin.close()
+        if request.timeout_seconds is None:
+            (
+                stdout,
+                stdout_truncated,
+                stderr,
+                stderr_truncated,
+            ) = await _wait_for_bounded_process_output(process, request)
+        else:
+            (
+                stdout,
+                stdout_truncated,
+                stderr,
+                stderr_truncated,
+            ) = await wait_for(
+                _wait_for_bounded_process_output(process, request),
+                request.timeout_seconds,
+            )
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        raise
+    except CancelledError:
+        process.kill()
+        await process.wait()
+        raise
+    return SandboxSubprocessResult(
+        exit_code=process.returncode or 0,
+        stdout=stdout,
+        stderr=stderr,
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
+    )
+
+
+async def _wait_for_bounded_process_output(
+    process: Process,
+    request: SandboxSubprocessRequest,
+) -> tuple[bytes, bool, bytes, bool]:
+    stdout_reader = process.stdout
+    stderr_reader = process.stderr
+    assert stdout_reader is not None
+    assert stderr_reader is not None
+    stdout_result, stderr_result, _exit_code = await gather(
+        _read_stream_bounded(stdout_reader, request.stdout_limit_bytes),
+        _read_stream_bounded(stderr_reader, request.stderr_limit_bytes),
+        process.wait(),
+    )
+    stdout, stdout_truncated = stdout_result
+    stderr, stderr_truncated = stderr_result
+    return stdout, stdout_truncated, stderr, stderr_truncated
+
+
+async def _read_stream_bounded(
+    reader: StreamReader,
+    limit: int,
+) -> tuple[bytes, bool]:
+    assert limit > 0, "limit must be positive"
+    content = bytearray()
+    truncated = False
+    while True:
+        chunk = await reader.read(8192)
+        if not chunk:
+            return bytes(content), truncated
+        remaining = limit - len(content)
+        if remaining > 0:
+            content.extend(chunk[:remaining])
+        if len(chunk) > remaining:
+            truncated = True
+
+
+def _process_limit_preexec(
+    process_limit: int | None,
+) -> Callable[[], None] | None:
+    if process_limit is None:
+        return None
+    assert _process_limits_supported(), "process limits are unsupported"
+
+    def apply_process_limit() -> None:
+        get_limit = _RESOURCE_GETRLIMIT
+        set_limit = _RESOURCE_SETRLIMIT
+        assert get_limit is not None
+        assert set_limit is not None
+        _soft_limit, hard_limit = get_limit(_RESOURCE_RLIMIT_NPROC)
+        limit = process_limit
+        if hard_limit > 0:
+            limit = min(limit, hard_limit)
+        set_limit(_RESOURCE_RLIMIT_NPROC, (limit, hard_limit))
+
+    return apply_process_limit
+
+
+def _process_limits_supported() -> bool:
+    return (
+        _RESOURCE_RLIMIT_NPROC >= 0
+        and _RESOURCE_GETRLIMIT is not None
+        and _RESOURCE_SETRLIMIT is not None
+    )
+
+
+def _backend_mismatch_result(
+    backend: SandboxBackend,
+    message: str,
+) -> SandboxExecutionResult:
+    return _result(
+        SandboxResultStatus.DENIED,
+        diagnostics=(
+            _diagnostic(
+                SandboxBackendDiagnosticCode.CAPABILITY_MISMATCH,
+                SandboxBackendOperation.START,
+                backend,
+                message,
+            ),
+        ),
+    )
+
+
+def _selection_failure_result(
+    selection: SandboxBackendSelection,
+) -> SandboxExecutionResult:
+    status = (
+        SandboxResultStatus.FAILED
+        if any(
+            diagnostic.code is SandboxBackendDiagnosticCode.BACKEND_UNAVAILABLE
+            for diagnostic in selection.diagnostics
+        )
+        else SandboxResultStatus.DENIED
+    )
+    return _result(status, diagnostics=selection.diagnostics)
+
+
+def _unavailable_probe(
+    backend: SandboxBackend,
+    message: str,
+    *,
+    code: SandboxBackendDiagnosticCode = (
+        SandboxBackendDiagnosticCode.BACKEND_UNAVAILABLE
+    ),
+    retryable: bool = True,
+) -> SandboxBackendProbeResult:
+    return SandboxBackendProbeResult(
+        backend=backend,
+        available=False,
+        diagnostics=(
+            _diagnostic(
+                code,
+                SandboxBackendOperation.PROBE,
+                backend,
+                message,
+                retryable=retryable,
+            ),
+        ),
+    )
 
 
 def _retryable(code: SandboxBackendDiagnosticCode) -> bool:
@@ -1414,7 +2870,7 @@ _SANDBOX_BACKEND_CAPABILITY_PROFILES = (
                 SandboxNetworkMode.FULL,
             ),
             process=SandboxProcessControls(
-                process_limits=True,
+                process_limits=False,
                 child_processes=True,
                 inherited_fds=True,
             ),
@@ -1423,7 +2879,14 @@ _SANDBOX_BACKEND_CAPABILITY_PROFILES = (
                 output_dirs=True,
                 cleanup_budget=True,
             ),
-            unsupported_controls=("network_allowlist",),
+            unsupported_controls=(
+                "cpu_limits",
+                "memory_limits",
+                "network_allowlist",
+                "pid_limits",
+                "pid_limits_best_effort_rlimit",
+                "child_process_denial",
+            ),
         ),
     ),
 )
