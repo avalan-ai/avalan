@@ -205,12 +205,14 @@ async def _kill_process(
         try:
             kill()
         except ProcessLookupError:
+            # The process may have exited between timeout and cleanup.
             pass
     wait = getattr(process, "wait", None)
     if callable(wait):
         try:
             await wait_for(wait(), timeout=_DOCKER_KILL_GRACE_SECONDS)
         except TimeoutError:
+            # Cleanup continues even if the process ignores the kill signal.
             pass
     stdout_task.cancel()
     stderr_task.cancel()

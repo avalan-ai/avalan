@@ -1086,6 +1086,7 @@ class IsolationSettings:
                         )
                     ),
                 )
+        raise AssertionError(f"unsupported isolation mode: {mode!r}")
 
     def to_dict(self) -> dict[str, object]:
         mode = cast(IsolationMode, self.mode)
