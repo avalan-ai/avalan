@@ -159,11 +159,13 @@ class AstGrepTool(Tool):
         container_settings: ContainerEffectiveSettings | None = None,
         container_backend: ContainerAsyncBackend | None = None,
         container_opt_in_backends: Sequence[ContainerBackend | str] = (),
+        container_rootful_authorized: bool = False,
     ) -> None:
         if container_settings is not None:
             assert isinstance(container_settings, ContainerEffectiveSettings)
         if container_backend is not None:
             assert isinstance(container_backend, ContainerAsyncBackend)
+        assert isinstance(container_rootful_authorized, bool)
         opt_in_backends = tuple(
             ContainerBackend(backend) for backend in container_opt_in_backends
         )
@@ -172,6 +174,7 @@ class AstGrepTool(Tool):
         self._container_settings = container_settings
         self._container_backend = container_backend
         self._container_opt_in_backends = opt_in_backends
+        self._container_rootful_authorized = container_rootful_authorized
 
     def tool_display_projector(
         self,
@@ -258,6 +261,7 @@ class AstGrepTool(Tool):
             plan,
             self._container_backend,
             opt_in_backends=self._container_opt_in_backends,
+            rootful_authorized=self._container_rootful_authorized,
         )
         if not selection.ok:
             raise AstGrepContainerExecutionError(
@@ -317,7 +321,9 @@ class CodeToolSet(ToolSet):
         container_settings: ContainerEffectiveSettings | None = None,
         container_backend: ContainerAsyncBackend | None = None,
         container_opt_in_backends: Sequence[ContainerBackend | str] = (),
+        container_rootful_authorized: bool = False,
     ) -> None:
+        assert isinstance(container_rootful_authorized, bool)
         if container_runtime is not None:
             assert isinstance(container_runtime, ContainerToolRuntimeSettings)
             container_settings = (
@@ -327,12 +333,17 @@ class CodeToolSet(ToolSet):
             container_opt_in_backends = (
                 container_opt_in_backends or container_runtime.opt_in_backends
             )
+            container_rootful_authorized = (
+                container_rootful_authorized
+                or container_runtime.rootful_authorized
+            )
         tools = [
             CodeTool(),
             AstGrepTool(
                 container_settings=container_settings,
                 container_backend=container_backend,
                 container_opt_in_backends=container_opt_in_backends,
+                container_rootful_authorized=container_rootful_authorized,
             ),
         ]
         super().__init__(
@@ -431,12 +442,13 @@ async def _select_container_backend(
     backend: ContainerAsyncBackend,
     *,
     opt_in_backends: Sequence[ContainerBackend | str] = (),
+    rootful_authorized: bool,
 ) -> ContainerBackendSelection:
     probe = await backend.probe()
     return select_container_backend(
         plan.run_plan,
         (probe,),
-        rootful_authorized=False,
+        rootful_authorized=rootful_authorized,
         opt_in_backends=opt_in_backends,
     )
 

@@ -470,7 +470,8 @@ class OrchestratorLoader:
         return ContainerToolRuntimeSettings(
             effective_settings=container_settings.select_profile(
                 shell_selection
-            )
+            ),
+            rootful_authorized=source.can_define_runtime_authority,
         )
 
     @staticmethod

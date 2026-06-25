@@ -208,6 +208,21 @@ from .conformance import (
 from .conformance import (
     resolve_container_backend as resolve_container_backend,
 )
+from .docker import (
+    DockerCommandResult as DockerCommandResult,
+)
+from .docker import (
+    DockerCommandRunner as DockerCommandRunner,
+)
+from .docker import (
+    DockerContainerBackend as DockerContainerBackend,
+)
+from .docker import (
+    DockerSubprocessRunner as DockerSubprocessRunner,
+)
+from .docker import (
+    docker_container_capabilities as docker_container_capabilities,
+)
 from .integration import (
     ContainerToolRuntimeSettings as ContainerToolRuntimeSettings,
 )

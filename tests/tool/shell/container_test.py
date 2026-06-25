@@ -36,6 +36,7 @@ from avalan.container import (
     ContainerSettingsSource,
     ContainerSurface,
     ContainerTrustLevel,
+    DockerContainerBackend,
     container_selection_from_mapping,
     trusted_container_runtime_from_mapping,
     trusted_container_source,
@@ -386,10 +387,17 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
         )
         assert cli_settings.container is not None
         assert agent_runtime is not None
+        self.assertIsInstance(
+            cli_settings.container.backend,
+            DockerContainerBackend,
+        )
         runtimes = (
             sdk_runtime,
             cli_settings.container,
             agent_runtime,
+        )
+        self.assertTrue(
+            all(runtime.rootful_authorized for runtime in runtimes)
         )
         canonical = [
             runtime.effective_settings.canonical_policy_input()

@@ -35,9 +35,9 @@ site = "src/avalan/container/apple.py::AppleContainerBackend"
 notes = "Apple Container has a concrete async backend adapter and fake/live tests."
 
 [current_reality.docker]
-status = "target-only"
-concrete_backend_exists = false
-notes = "Docker exists today as enum/catalog/settings/test data only. No DockerContainerBackend exists yet."
+status = "implemented"
+concrete_backend_exists = true
+notes = "Docker has a concrete async backend adapter and fake/live-gated tests."
 
 [ci.default]
 jobs = [
@@ -53,7 +53,7 @@ jobs = [
 runtime = "docker"
 job = "isolation real Docker e2e"
 gate = "AVALAN_CONTAINER_DOCKER_E2E=1"
-status = "blocked until DockerContainerBackend exists"
+status = "optional gated by Docker availability and digest-pinned image"
 
 [[ci.optional_real_runtime_jobs]]
 runtime = "apple-container"
@@ -175,7 +175,7 @@ path = "docs/CONTAINERS.md"
 surface = "docs"
 values = ["container", "local"]
 classification = "update-phase1"
-action = "Remove legacy runtime claims and document Docker as target-only until implemented."
+action = "Remove legacy runtime claims and document Docker as an implemented backend."
 
 [[local_container_shell_mode_sites]]
 path = "docs/containers/shell-code/README.md"
@@ -359,7 +359,7 @@ action = "Remove auto backend coverage for ast-grep container execution when pub
 path = "docs/CONTAINERS.md"
 surface = "docs"
 terms = ["Podman", "nerdctl", "Windows Docker", "WSL2", "Hyper-V", "AVALAN_CONTAINER_PODMAN_E2E", "AVALAN_CONTAINER_NERDCTL_E2E", "AVALAN_CONTAINER_WINDOWS_DOCKER_E2E"]
-action = "Remove public release claims for legacy runtimes and document Docker as target-only until implemented."
+action = "Remove public release claims for legacy runtimes and document Docker as an implemented backend."
 
 [[removal_references]]
 path = "docs/INSTALL.md"

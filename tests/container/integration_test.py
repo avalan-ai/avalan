@@ -43,12 +43,14 @@ class ContainerIntegrationTest(TestCase):
         runtime = ContainerToolRuntimeSettings(
             effective_settings=disabled_required_container_settings("sdk"),
             backend=backend,
+            rootful_authorized=True,
             authorization_provider=authorize,
             secret_resolver=resolve_secret,
             audit_listeners=(audit,),
         )
 
         self.assertIs(runtime.backend, backend)
+        self.assertTrue(runtime.rootful_authorized)
         assert runtime.effective_settings is not None
         self.assertFalse(runtime.effective_settings.enabled)
         self.assertTrue(runtime.effective_settings.required)
@@ -61,6 +63,10 @@ class ContainerIntegrationTest(TestCase):
         with self.assertRaises(AssertionError):
             ContainerToolRuntimeSettings(
                 audit_listeners=(object(),),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            ContainerToolRuntimeSettings(
+                rootful_authorized="yes",  # type: ignore[arg-type]
             )
 
     def test_trusted_mapping_normalizes_toml_friendly_profile(self) -> None:
@@ -115,6 +121,7 @@ class ContainerIntegrationTest(TestCase):
         effective = runtime.effective_settings
 
         self.assertIsInstance(effective, ContainerEffectiveSettings)
+        self.assertTrue(runtime.rootful_authorized)
         assert effective is not None
         self.assertEqual(effective.backend, ContainerBackend.DOCKER)
         self.assertTrue(effective.required)

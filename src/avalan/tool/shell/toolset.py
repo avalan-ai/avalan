@@ -49,8 +49,10 @@ class ShellToolSet(ToolSet):
         container_settings: ContainerEffectiveSettings | None = None,
         container_backend: ContainerAsyncBackend | None = None,
         container_opt_in_backends: Sequence[ContainerBackend | str] = (),
+        container_rootful_authorized: bool = False,
     ) -> None:
         assert namespace == SHELL_TOOL_NAMESPACE, "namespace must be shell"
+        assert isinstance(container_rootful_authorized, bool)
         self._settings = settings or ShellToolSettings()
         if (
             container_runtime is not None
@@ -63,6 +65,10 @@ class ShellToolSet(ToolSet):
             container_backend = container_backend or container_runtime.backend
             container_opt_in_backends = (
                 container_opt_in_backends or container_runtime.opt_in_backends
+            )
+            container_rootful_authorized = (
+                container_rootful_authorized
+                or container_runtime.rootful_authorized
             )
         if (
             container_settings is None
@@ -80,6 +86,7 @@ class ShellToolSet(ToolSet):
                     container_backend=container_backend,
                     opt_in_backends=container_opt_in_backends,
                     local_executor=local_executor,
+                    rootful_authorized=container_rootful_authorized,
                 )
             )
         formatter = formatter or (

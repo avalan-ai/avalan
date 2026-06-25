@@ -47,6 +47,7 @@ class ContainerToolRuntimeSettings:
     opt_in_backends: Sequence[ContainerBackend | str] = field(
         default_factory=tuple,
     )
+    rootful_authorized: bool = False
     authorization_provider: Callable[[object], object] | None = None
     secret_resolver: Callable[[str], object] | None = None
     audit_listeners: Sequence[Callable[[object], object]] = field(
@@ -68,14 +69,15 @@ class ContainerToolRuntimeSettings:
                 ContainerBackend(backend) for backend in self.opt_in_backends
             ),
         )
+        _assert_bool(self.rootful_authorized, "rootful_authorized")
         if self.authorization_provider is not None:
-            assert callable(self.authorization_provider), (
-                "authorization_provider must be callable"
-            )
+            assert callable(
+                self.authorization_provider
+            ), "authorization_provider must be callable"
         if self.secret_resolver is not None:
-            assert callable(self.secret_resolver), (
-                "secret_resolver must be callable"
-            )
+            assert callable(
+                self.secret_resolver
+            ), "secret_resolver must be callable"
         for listener in self.audit_listeners:
             assert callable(listener), "audit listeners must be callable"
         object.__setattr__(
@@ -131,7 +133,10 @@ def trusted_container_runtime_from_mapping(
     effective = settings.select_profile(
         selection or ContainerProfileSelection()
     )
-    return ContainerToolRuntimeSettings(effective_settings=effective)
+    return ContainerToolRuntimeSettings(
+        effective_settings=effective,
+        rootful_authorized=source.can_define_runtime_authority,
+    )
 
 
 def trusted_container_source(
@@ -218,9 +223,9 @@ def _normalize_profile_mapping(
     raw = _mapping(value, f"container.profiles.{name}")
     _assert_known_keys(raw, _PROFILE_KEYS, f"container.profiles.{name}")
     if "name" in raw:
-        assert raw["name"] == profile_name, (
-            "profile table name must match name"
-        )
+        assert (
+            raw["name"] == profile_name
+        ), "profile table name must match name"
     workspace = _workspace_mapping(raw)
     return ContainerProfile(
         name=profile_name,
@@ -289,13 +294,13 @@ def _workspace_mapping(
     if isinstance(workspace, Mapping):
         return ContainerWorkspaceMapping.from_dict(workspace)
     if workspace is not None:
-        assert isinstance(workspace, str), (
-            "workspace must be string or mapping"
-        )
+        assert isinstance(
+            workspace, str
+        ), "workspace must be string or mapping"
     container_path = workspace or raw.get("container_workspace", "/workspace")
-    assert isinstance(container_path, str), (
-        "container workspace must be string"
-    )
+    assert isinstance(
+        container_path, str
+    ), "container workspace must be string"
     return ContainerWorkspaceMapping(
         host_root=_optional_string(raw, "workspace_root", "."),
         container_path=container_path,
