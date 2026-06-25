@@ -69,7 +69,7 @@ class RemoteContainerProfileSelectionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(exc.exception.status_code, 400)
         self.assertIn("can only select a profile", str(exc.exception.detail))
 
-    async def test_leaves_broad_container_policy_to_request_validation(
+    async def test_rejects_broad_container_policy_before_request_validation(
         self,
     ) -> None:
         request = _Request(
@@ -84,9 +84,20 @@ class RemoteContainerProfileSelectionTestCase(IsolatedAsyncioTestCase):
             }
         )
 
-        await validate_remote_container_profile_selection(request)
+        with self.assertRaises(HTTPException) as exc:
+            await validate_remote_container_profile_selection(request)
 
-        self.assertFalse(hasattr(request.state, "remote_container_profile"))
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertIn("runtime authority", str(exc.exception.detail))
+
+    async def test_rejects_remote_sandbox_profile_selector(self) -> None:
+        request = _Request({"sandboxProfile": "workspace-readonly"})
+
+        with self.assertRaises(HTTPException) as exc:
+            await validate_remote_container_profile_selection(request)
+
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertIn("runtime authority", str(exc.exception.detail))
 
 
 class _Request:

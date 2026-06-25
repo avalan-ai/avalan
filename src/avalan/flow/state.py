@@ -1,8 +1,10 @@
 from .diagnostics import FlowDiagnostic
-from .plan import FlowExecutionPlan
+from .plan import FlowExecutionPlan, flow_resume_isolation_metadata
 
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from types import MappingProxyType
 
 
 class FlowNodeState(StrEnum):
@@ -44,6 +46,27 @@ def _assert_diagnostics(value: tuple[FlowDiagnostic, ...]) -> None:
     assert isinstance(value, tuple), "diagnostics must be a tuple"
     for diagnostic in value:
         assert isinstance(diagnostic, FlowDiagnostic)
+
+
+def _empty_metadata() -> Mapping[str, object]:
+    return MappingProxyType({})
+
+
+def _freeze_metadata(value: Mapping[str, object]) -> Mapping[str, object]:
+    assert isinstance(value, Mapping), "metadata must be a mapping"
+    frozen: dict[str, object] = {}
+    for key, item in value.items():
+        _assert_string(key, "metadata key")
+        frozen[key] = _freeze_metadata_value(item)
+    return MappingProxyType(frozen)
+
+
+def _freeze_metadata_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _freeze_metadata(value)
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_metadata_value(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -129,6 +152,7 @@ class FlowEdgeTrace:
 class FlowExecutionTrace:
     nodes: tuple[FlowNodeTrace, ...]
     edges: tuple[FlowEdgeTrace, ...] = ()
+    metadata: Mapping[str, object] = field(default_factory=_empty_metadata)
 
     def __post_init__(self) -> None:
         assert isinstance(self.nodes, tuple)
@@ -143,6 +167,7 @@ class FlowExecutionTrace:
             assert isinstance(edge, FlowEdgeTrace)
             assert edge.index not in edge_indexes, "edge traces must be unique"
             edge_indexes.add(edge.index)
+        object.__setattr__(self, "metadata", _freeze_metadata(self.metadata))
 
     @classmethod
     def from_plan(cls, plan: FlowExecutionPlan) -> "FlowExecutionTrace":
@@ -157,6 +182,7 @@ class FlowExecutionTrace:
                 )
                 for edge in plan.edges
             ),
+            metadata=flow_resume_isolation_metadata(plan),
         )
 
     def with_node_state(
@@ -218,7 +244,10 @@ class FlowExecutionTrace:
         return replace(self, edges=tuple(replacements))
 
     def as_public_dict(self) -> dict[str, object]:
-        return {
+        value: dict[str, object] = {
             "nodes": tuple(node.as_public_dict() for node in self.nodes),
             "edges": tuple(edge.as_public_dict() for edge in self.edges),
         }
+        if self.metadata:
+            value["metadata"] = self.metadata
+        return value

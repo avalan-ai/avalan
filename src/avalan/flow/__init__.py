@@ -179,6 +179,7 @@ from .node import Node as Node
 from .plan import FlowConditionPlan as FlowConditionPlan
 from .plan import FlowEdgePlan as FlowEdgePlan
 from .plan import FlowExecutionPlan as FlowExecutionPlan
+from .plan import FlowIsolationMetadata as FlowIsolationMetadata
 from .plan import FlowJoinPlan as FlowJoinPlan
 from .plan import FlowLoopPlan as FlowLoopPlan
 from .plan import FlowMappingPlan as FlowMappingPlan
@@ -189,6 +190,9 @@ from .plan import FlowTimeoutPlan as FlowTimeoutPlan
 from .plan import compile_flow_definition as compile_flow_definition
 from .plan import (
     flow_node_container_fingerprint as flow_node_container_fingerprint,
+)
+from .plan import (
+    flow_resume_isolation_metadata as flow_resume_isolation_metadata,
 )
 from .registry import FLOW_INPUT_KEY as FLOW_INPUT_KEY
 from .registry import FLOW_TOOL_NODE_TYPE as FLOW_TOOL_NODE_TYPE

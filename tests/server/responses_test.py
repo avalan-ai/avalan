@@ -238,6 +238,37 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_response_endpoint_accepts_schema_mode_property(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        resp = client.post(
+            "/responses",
+            json={
+                "input": "hi",
+                "response_format": {
+                    "type": "json_schema",
+                    "name": "mode_response",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "mode": {
+                                "title": "Mode",
+                                "type": "string",
+                            }
+                        },
+                        "required": ["mode"],
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNotNone(orchestrator.last_messages)
+
     async def test_response_endpoint_rejects_remote_runtime_authority(self):
         app = self.FastAPI()
         orchestrator = SimpleOrchestrator()
@@ -259,7 +290,48 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertEqual(resp.status_code, 422)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("runtime authority", resp.text)
+        self.assertIsNone(orchestrator.last_messages)
+
+    async def test_response_endpoint_rejects_remote_isolation_authority(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        resp = client.post(
+            "/responses",
+            json={
+                "input": "hi",
+                "sandboxProfile": "workspace-readonly",
+            },
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("runtime authority", resp.text)
+        self.assertIsNone(orchestrator.last_messages)
+
+    async def test_response_endpoint_rejects_metadata_schema_smuggling(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        resp = client.post(
+            "/responses",
+            json={
+                "input": "hi",
+                "metadata": {
+                    "type": "event",
+                    "properties": {"sandboxProfile": "debug"},
+                },
+            },
+        )
+
+        self.assertEqual(resp.status_code, 400)
         self.assertIn("runtime authority", resp.text)
         self.assertIsNone(orchestrator.last_messages)
 

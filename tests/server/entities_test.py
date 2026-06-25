@@ -154,6 +154,70 @@ class ChatEntitiesTestCase(TestCase):
 
         self.assertEqual(req.model, "m")
 
+    def test_chat_request_allows_tool_schema_mode_property(self) -> None:
+        req = ChatCompletionRequest.model_validate(
+            {
+                "model": "m",
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "set_mode",
+                            "parameters": {
+                                "type": "object",
+                                "$defs": {
+                                    "Resources": {
+                                        "type": "object",
+                                        "properties": {
+                                            "environment": {
+                                                "title": "Environment",
+                                                "type": "string",
+                                            },
+                                        },
+                                    },
+                                },
+                                "patternProperties": {
+                                    "^mode$": {
+                                        "title": "Mode Pattern",
+                                        "type": "string",
+                                    },
+                                },
+                                "properties": {
+                                    "mode": {
+                                        "title": "Mode",
+                                        "type": "string",
+                                    }
+                                },
+                                "required": ["mode"],
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+
+        assert req.tools is not None
+        self.assertIn("mode", req.tools[0].function.parameters.properties)
+        self.assertIn("$defs", req.tools[0].function.parameters.model_extra)
+        self.assertIn(
+            "patternProperties",
+            req.tools[0].function.parameters.model_extra,
+        )
+
+    def test_chat_request_rejects_metadata_schema_smuggling(self) -> None:
+        with self.assertRaisesRegex(ValidationError, "runtime authority"):
+            ChatCompletionRequest.model_validate(
+                {
+                    "model": "m",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "metadata": {
+                        "type": "event",
+                        "properties": {"sandboxProfile": "debug"},
+                    },
+                }
+            )
+
     def test_chat_message_accepts_input_text_blocks(self) -> None:
         msg = ChatMessage(
             role=MessageRole.USER,
@@ -602,3 +666,62 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(req.messages[0].content, "hi")
+
+    def test_responses_request_allows_schema_mode_property(self) -> None:
+        req = ResponsesRequest.model_validate(
+            {
+                "input": "hi",
+                "response_format": {
+                    "type": "json_schema",
+                    "name": "mode_response",
+                    "schema": {
+                        "type": "object",
+                        "$defs": {
+                            "Resources": {
+                                "type": "object",
+                                "properties": {
+                                    "environment": {
+                                        "title": "Environment",
+                                        "type": "string",
+                                    },
+                                },
+                            },
+                        },
+                        "patternProperties": {
+                            "^mode$": {
+                                "title": "Mode Pattern",
+                                "type": "string",
+                            },
+                        },
+                        "properties": {
+                            "mode": {
+                                "title": "Mode",
+                                "type": "string",
+                            }
+                        },
+                        "required": ["mode"],
+                    },
+                },
+            }
+        )
+
+        assert isinstance(req.response_format, ResponseFormatJSONSchema)
+        assert req.response_format.schema_ is not None
+        self.assertIn("mode", req.response_format.schema_.properties)
+        self.assertIn("$defs", req.response_format.schema_.model_extra)
+        self.assertIn(
+            "patternProperties",
+            req.response_format.schema_.model_extra,
+        )
+
+    def test_responses_request_rejects_metadata_schema_smuggling(self) -> None:
+        with self.assertRaisesRegex(ValidationError, "runtime authority"):
+            ResponsesRequest.model_validate(
+                {
+                    "input": "hi",
+                    "metadata": {
+                        "type": "event",
+                        "properties": {"sandboxProfile": "debug"},
+                    },
+                }
+            )

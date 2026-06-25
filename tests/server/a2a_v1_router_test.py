@@ -919,12 +919,17 @@ def test_a2a_part_authority_allows_exposed_profile_selector() -> None:
 
 
 def test_a2a_part_authority_rejects_direct_runtime_key() -> None:
-    with pytest.raises(ValueError, match="runtime authority"):
-        a2a_router._reject_a2a_remote_runtime_authority(
-            {"runtime": "container"},
-            path="a2a.parts[0]",
-            part_payload=True,
-        )
+    for payload in (
+        {"runtime": "container"},
+        {"sandboxProfile": "workspace-readonly"},
+        {"isolation": {"mode": "sandbox"}},
+    ):
+        with pytest.raises(ValueError, match="runtime authority"):
+            a2a_router._reject_a2a_remote_runtime_authority(
+                payload,
+                path="a2a.parts[0]",
+                part_payload=True,
+            )
 
 
 def test_a2a_part_authority_rejects_nested_content_wrappers() -> None:

@@ -538,7 +538,11 @@ def flow_trace_from_snapshot(value: object) -> FlowExecutionTrace:
         _edge_trace_from_snapshot(item)
         for item in _sequence(payload.get("edges", ()), "trace.edges")
     )
-    return FlowExecutionTrace(nodes=nodes, edges=edges)
+    return FlowExecutionTrace(
+        nodes=nodes,
+        edges=edges,
+        metadata=_snapshot_mapping(payload.get("metadata", {}), "metadata"),
+    )
 
 
 def flow_execution_record_from_snapshot(

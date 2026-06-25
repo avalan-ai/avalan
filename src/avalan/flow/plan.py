@@ -9,6 +9,12 @@ from ..container import (
     ContainerSettings,
     normalize_runtime_envelope_plan,
 )
+from ..isolation import (
+    IsolationEffectiveSettings,
+    IsolationMode,
+    IsolationSettingsSurface,
+    trusted_isolation_source,
+)
 from .condition import (
     FlowCondition,
     FlowConditionOperator,
@@ -52,6 +58,10 @@ from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from json import dumps
 from types import MappingProxyType
+from typing import cast
+
+FLOW_RESUME_ISOLATION_METADATA_KEY = "isolation"
+_FLOW_RESUME_ISOLATION_METADATA_VERSION = "phase9"
 
 
 def _empty_mapping() -> Mapping[str, object]:
@@ -95,6 +105,11 @@ def _assert_string(value: str, field_name: str) -> None:
     assert (
         isinstance(value, str) and value.strip()
     ), f"{field_name} must be a non-empty string"
+
+
+def _assert_optional_string(value: str | None, field_name: str) -> None:
+    if value is not None:
+        _assert_string(value, field_name)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -244,6 +259,48 @@ class FlowLoopPlan:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class FlowIsolationMetadata:
+    mode: IsolationMode | str
+    backend: str | None
+    profile_registry_id: str | None
+    profile_name: str | None
+    policy_version: str | None
+    scope: str | None
+    plan_fingerprint: str
+    container_fingerprint: str | None = None
+
+    def __post_init__(self) -> None:
+        mode = IsolationMode(self.mode)
+        _assert_optional_string(self.backend, "backend")
+        _assert_optional_string(
+            self.profile_registry_id,
+            "profile_registry_id",
+        )
+        _assert_optional_string(self.profile_name, "profile_name")
+        _assert_optional_string(self.policy_version, "policy_version")
+        _assert_optional_string(self.scope, "scope")
+        _assert_string(self.plan_fingerprint, "plan_fingerprint")
+        _assert_optional_string(
+            self.container_fingerprint,
+            "container_fingerprint",
+        )
+        object.__setattr__(self, "mode", mode)
+
+    def to_dict(self) -> dict[str, object]:
+        mode = cast(IsolationMode, self.mode)
+        return {
+            "mode": mode.value,
+            "backend": self.backend,
+            "profile_registry_id": self.profile_registry_id,
+            "profile_name": self.profile_name,
+            "policy_version": self.policy_version,
+            "scope": self.scope,
+            "plan_fingerprint": self.plan_fingerprint,
+            "container_fingerprint": self.container_fingerprint,
+        }
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FlowNodePlan:
     name: str
     type: str
@@ -258,6 +315,7 @@ class FlowNodePlan:
     timeout: FlowTimeoutPlan | None = None
     loop: FlowLoopPlan | None = None
     container: ContainerEffectiveSettings | None = None
+    isolation: FlowIsolationMetadata | None = None
     config: Mapping[str, object] = field(default_factory=_empty_mapping)
     metadata: Mapping[str, object] = field(default_factory=_empty_mapping)
 
@@ -285,6 +343,8 @@ class FlowNodePlan:
             assert isinstance(self.loop, FlowLoopPlan)
         if self.container is not None:
             assert isinstance(self.container, ContainerEffectiveSettings)
+        if self.isolation is not None:
+            assert isinstance(self.isolation, FlowIsolationMetadata)
         object.__setattr__(self, "config", _freeze_mapping(self.config))
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
 
@@ -330,6 +390,7 @@ class FlowExecutionPlan:
     nodes: tuple[FlowNodePlan, ...]
     edges: tuple[FlowEdgePlan, ...] = ()
     container: ContainerEffectiveSettings | None = None
+    isolation: FlowIsolationMetadata | None = None
     runtime_envelope: ContainerNormalizedRuntimeEnvelopePlan | None = None
 
     def __post_init__(self) -> None:
@@ -354,11 +415,14 @@ class FlowExecutionPlan:
             assert isinstance(edge, FlowEdgePlan)
         if self.container is not None:
             assert isinstance(self.container, ContainerEffectiveSettings)
+        if self.isolation is not None:
+            assert isinstance(self.isolation, FlowIsolationMetadata)
         if self.runtime_envelope is not None:
             assert isinstance(
                 self.runtime_envelope,
                 ContainerNormalizedRuntimeEnvelopePlan,
             )
+        _finalize_flow_isolation_metadata(self)
 
     @property
     def node_map(self) -> Mapping[str, FlowNodePlan]:
@@ -381,6 +445,128 @@ class FlowExecutionPlan:
         return MappingProxyType(
             {target: tuple(edges) for target, edges in sorted(grouped.items())}
         )
+
+
+def flow_resume_isolation_metadata(
+    plan: FlowExecutionPlan,
+) -> Mapping[str, object]:
+    assert isinstance(plan, FlowExecutionPlan)
+    flow_metadata = (
+        plan.isolation.to_dict() if plan.isolation is not None else None
+    )
+    runtime_envelope_metadata = _runtime_envelope_isolation_metadata(
+        plan.runtime_envelope
+    )
+    node_metadata = {
+        node.name: node.isolation.to_dict()
+        for node in plan.nodes
+        if node.isolation is not None
+    }
+    if (
+        flow_metadata is None
+        and runtime_envelope_metadata is None
+        and not node_metadata
+    ):
+        return MappingProxyType({})
+    return _freeze_mapping(
+        {
+            FLOW_RESUME_ISOLATION_METADATA_KEY: {
+                "version": _FLOW_RESUME_ISOLATION_METADATA_VERSION,
+                "flow": flow_metadata,
+                "runtime_envelope": runtime_envelope_metadata,
+                "nodes": node_metadata,
+            }
+        }
+    )
+
+
+def _runtime_envelope_isolation_metadata(
+    runtime_envelope: ContainerNormalizedRuntimeEnvelopePlan | None,
+) -> dict[str, object] | None:
+    if runtime_envelope is None:
+        return None
+    return {"plan_fingerprint": runtime_envelope.plan_fingerprint}
+
+
+def _finalize_flow_isolation_metadata(plan: FlowExecutionPlan) -> None:
+    expected_plan_isolation = _flow_plan_isolation_metadata(plan)
+    if plan.isolation is None:
+        object.__setattr__(plan, "isolation", expected_plan_isolation)
+    elif expected_plan_isolation is None:
+        raise AssertionError("flow plan cannot carry stale isolation metadata")
+    else:
+        assert (
+            plan.isolation.to_dict() == expected_plan_isolation.to_dict()
+        ), "flow plan isolation metadata changed"
+    finalized_nodes: list[FlowNodePlan] = []
+    changed = False
+    for node in plan.nodes:
+        expected_node_isolation = _flow_node_isolation_metadata(plan, node)
+        if node.isolation is None:
+            finalized_nodes.append(
+                replace(node, isolation=expected_node_isolation)
+                if expected_node_isolation is not None
+                else node
+            )
+            changed = changed or expected_node_isolation is not None
+            continue
+        if expected_node_isolation is None:
+            raise AssertionError(
+                "flow node cannot carry stale isolation metadata"
+            )
+        assert (
+            node.isolation.to_dict() == expected_node_isolation.to_dict()
+        ), "flow node isolation metadata changed"
+        finalized_nodes.append(node)
+    if changed:
+        object.__setattr__(plan, "nodes", tuple(finalized_nodes))
+
+
+def _flow_plan_isolation_metadata(
+    plan: FlowExecutionPlan,
+) -> FlowIsolationMetadata | None:
+    if plan.container is None or not plan.container.enabled:
+        return None
+    return _container_effective_isolation_metadata(plan.container)
+
+
+def _flow_node_isolation_metadata(
+    plan: FlowExecutionPlan,
+    node: FlowNodePlan,
+) -> FlowIsolationMetadata | None:
+    if node.container is None or not node.container.enabled:
+        return None
+    return _container_effective_isolation_metadata(
+        node.container,
+        container_fingerprint=flow_node_container_fingerprint(plan, node),
+    )
+
+
+def _container_effective_isolation_metadata(
+    settings: ContainerEffectiveSettings,
+    *,
+    container_fingerprint: str | None = None,
+) -> FlowIsolationMetadata:
+    isolation = IsolationEffectiveSettings(
+        mode=IsolationMode.CONTAINER,
+        source=trusted_isolation_source(IsolationSettingsSurface.FLOW_TOML),
+        container=settings,
+    )
+    return FlowIsolationMetadata(
+        mode=IsolationMode.CONTAINER,
+        backend=_enum_value(settings.backend),
+        profile_registry_id=settings.profile_registry_id,
+        profile_name=settings.profile_name,
+        policy_version=settings.policy_version,
+        scope=_enum_value(settings.scope),
+        plan_fingerprint=_fingerprint(isolation.canonical_policy_input()),
+        container_fingerprint=container_fingerprint,
+    )
+
+
+def _fingerprint(value: Mapping[str, object]) -> str:
+    encoded = dumps(value, sort_keys=True, separators=(",", ":"))
+    return sha256(encoded.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -562,6 +562,54 @@ class TaskDefinitionLoaderTest(TestCase):
         self.assertEqual(result.issues[0].path, "execution.container")
         self.assertEqual(result.issues[0].category.value, "unsupported")
 
+    def test_task_toml_isolation_authority_aliases_are_rejected(
+        self,
+    ) -> None:
+        result = loads_task_definition_result("""
+            [task]
+            name = "sandbox_task"
+            version = "1"
+
+            [input]
+            type = "string"
+
+            [output]
+            type = "text"
+
+            [execution]
+            type = "agent"
+            ref = "agents/a.toml"
+
+            [isolation]
+            mode = "sandbox"
+
+            [sandboxProfile]
+            backend = "bubblewrap"
+
+            [execution.sandboxPolicy]
+            network = "full"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            {issue.path for issue in result.issues},
+            {
+                "isolation",
+                "sandboxProfile",
+                "execution.sandboxPolicy",
+            },
+        )
+        self.assertEqual(
+            {issue.code for issue in result.issues},
+            {"isolation.unsupported_syntax"},
+        )
+        self.assertTrue(
+            all(
+                issue.category is TaskLoadIssueCategory.UNSUPPORTED
+                for issue in result.issues
+            )
+        )
+
     def test_non_string_required_values_return_type_issues(self) -> None:
         result = loads_task_definition_result("""
             [task]

@@ -1,5 +1,6 @@
 from ..container import (
     ContainerBackend,
+    ContainerDurablePlanKind,
     ContainerExecutionScope,
     ContainerMountAccess,
     ContainerMountDeclaration,
@@ -42,8 +43,26 @@ TASK_CONTAINER_ATTEMPT_KEY = "attempt"
 TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY = "attempt_lifecycle"
 TASK_CONTAINER_WORKER_ENVELOPE_KEY = "worker_envelope"
 TASK_CONTAINER_INPUT_MOUNTS_KEY = "input_mounts"
+TASK_CONTAINER_ISOLATION_KEY = "isolation"
 TASK_CONTAINER_CANONICAL_ATTEMPT_ID = "canonical"
 TASK_CONTAINER_CANONICAL_REQUEST_ID = "canonical"
+TASK_CONTAINER_ISOLATION_MODE = "container"
+TASK_CONTAINER_ISOLATION_PLAN_FIELDS: frozenset[str] = frozenset(
+    {
+        "backend",
+        "effective_mode",
+        "elevation_rung",
+        "mode",
+        "plan_fingerprint",
+        "plan_kind",
+        "policy_version",
+        "profile_name",
+        "profile_registry_id",
+        "request_kind",
+        "requested_mode",
+        "scope",
+    }
+)
 
 
 class TaskContainerVerificationError(RuntimeError):
@@ -84,6 +103,13 @@ class TaskContainerPlans:
             metadata[TASK_CONTAINER_WORKER_ENVELOPE_KEY] = (
                 self.worker_envelope.to_metadata().to_dict()
             )
+        isolation = _isolation_metadata(
+            attempt=self.attempt,
+            attempt_lifecycle=None,
+            worker_envelope=self.worker_envelope,
+        )
+        if isolation:
+            metadata[TASK_CONTAINER_ISOLATION_KEY] = isolation
         return metadata
 
 
@@ -93,18 +119,21 @@ def task_container_canonical_value(
     assert isinstance(definition, TaskDefinition)
     container = definition.container
     value = container.to_dict()
-    value["attempt_spec"] = _plan_spec(
-        _attempt_plan(
-            definition,
-            request_id=TASK_CONTAINER_CANONICAL_REQUEST_ID,
-            attempt_id=TASK_CONTAINER_CANONICAL_ATTEMPT_ID,
-        )
+    attempt = _attempt_plan(
+        definition,
+        request_id=TASK_CONTAINER_CANONICAL_REQUEST_ID,
+        attempt_id=TASK_CONTAINER_CANONICAL_ATTEMPT_ID,
     )
-    value["worker_envelope_spec"] = _plan_spec(
-        _worker_envelope_plan(
-            definition,
-            request_id=TASK_CONTAINER_CANONICAL_REQUEST_ID,
-        )
+    worker_envelope = _worker_envelope_plan(
+        definition,
+        request_id=TASK_CONTAINER_CANONICAL_REQUEST_ID,
+    )
+    value["attempt_spec"] = _plan_spec(attempt)
+    value["worker_envelope_spec"] = _plan_spec(worker_envelope)
+    value["isolation_spec"] = _isolation_metadata(
+        attempt=attempt,
+        attempt_lifecycle=None,
+        worker_envelope=worker_envelope,
     )
     return value
 
@@ -136,6 +165,17 @@ def task_container_request_metadata(
         metadata[TASK_CONTAINER_WORKER_ENVELOPE_KEY] = _plan_spec(
             worker_envelope
         )
+    isolation = _isolation_metadata(
+        attempt=attempt,
+        attempt_lifecycle=(
+            _attempt_lifecycle_plan(attempt, input_mounts)
+            if attempt is not None and input_mounts
+            else None
+        ),
+        worker_envelope=worker_envelope,
+    )
+    if isolation:
+        metadata[TASK_CONTAINER_ISOLATION_KEY] = isolation
     return freeze_snapshot_metadata(metadata)
 
 
@@ -217,16 +257,27 @@ def verify_task_container_request(
         TASK_CONTAINER_WORKER_ENVELOPE_KEY,
         plans.worker_envelope,
     )
-    if not (allow_dynamic_input_mounts and input_mounts):
+    attempt_lifecycle = (
+        _attempt_lifecycle_plan(plans.attempt, input_mounts)
+        if input_mounts
+        else None
+    )
+    validate_attempt_lifecycle = not (
+        allow_dynamic_input_mounts and input_mounts
+    )
+    if validate_attempt_lifecycle:
         _assert_metadata_matches_plan(
             raw,
             TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY,
-            (
-                _attempt_lifecycle_plan(plans.attempt, input_mounts)
-                if input_mounts
-                else None
-            ),
+            attempt_lifecycle,
         )
+    _assert_isolation_metadata_matches_plans(
+        raw,
+        attempt=plans.attempt,
+        attempt_lifecycle=attempt_lifecycle,
+        worker_envelope=plans.worker_envelope,
+        validate_attempt_lifecycle=validate_attempt_lifecycle,
+    )
     return plans
 
 
@@ -544,6 +595,59 @@ def _attempt_lifecycle_plan_spec(
     return _plan_spec(_attempt_lifecycle_plan(plan, input_mounts))
 
 
+def _isolation_metadata(
+    *,
+    attempt: ContainerNormalizedRunPlan | None,
+    attempt_lifecycle: ContainerNormalizedRunPlan | None,
+    worker_envelope: ContainerNormalizedRuntimeEnvelopePlan | None,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    if attempt is not None:
+        metadata[TASK_CONTAINER_ATTEMPT_KEY] = _isolation_plan_spec(attempt)
+    if attempt_lifecycle is not None:
+        metadata[TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY] = _isolation_plan_spec(
+            attempt_lifecycle
+        )
+    if worker_envelope is not None:
+        metadata[TASK_CONTAINER_WORKER_ENVELOPE_KEY] = _isolation_plan_spec(
+            worker_envelope
+        )
+    return metadata
+
+
+def _isolation_plan_spec(
+    plan: ContainerNormalizedRunPlan | ContainerNormalizedRuntimeEnvelopePlan,
+) -> dict[str, object]:
+    if isinstance(plan, ContainerNormalizedRuntimeEnvelopePlan):
+        run_plan = plan.run_plan
+        plan_fingerprint = plan.plan_fingerprint
+        plan_kind = ContainerDurablePlanKind.RUNTIME_ENVELOPE
+        scope = cast(ContainerExecutionScope, plan.envelope_plan.scope)
+    else:
+        run_plan = plan
+        plan_fingerprint = plan.plan_fingerprint
+        plan_kind = ContainerDurablePlanKind.RUN
+        scope = cast(ContainerExecutionScope, run_plan.request.scope)
+    backend = cast(ContainerBackend, run_plan.run_plan.backend)
+    request_kind = cast(
+        ContainerPlanRequestKind, run_plan.request.request_kind
+    )
+    return {
+        "mode": TASK_CONTAINER_ISOLATION_MODE,
+        "backend": backend.value,
+        "profile_name": run_plan.run_plan.profile_name,
+        "profile_registry_id": run_plan.profile_registry_id,
+        "policy_version": run_plan.run_plan.policy_version,
+        "scope": scope.value,
+        "plan_fingerprint": plan_fingerprint,
+        "requested_mode": TASK_CONTAINER_ISOLATION_MODE,
+        "effective_mode": TASK_CONTAINER_ISOLATION_MODE,
+        "elevation_rung": TASK_CONTAINER_ISOLATION_MODE,
+        "plan_kind": plan_kind.value,
+        "request_kind": request_kind.value,
+    }
+
+
 def _assert_metadata_matches_plan(
     raw: Mapping[str, object],
     key: str,
@@ -580,6 +684,126 @@ def _assert_metadata_matches_plan(
                 "Re-enqueue the task with the current trusted container "
                 "policy.",
             )
+
+
+def _assert_isolation_metadata_matches_plan(
+    raw_isolation: Mapping[str, object],
+    key: str,
+    plan: ContainerNormalizedRunPlan | ContainerNormalizedRuntimeEnvelopePlan,
+) -> None:
+    expected = _isolation_plan_spec(plan)
+    actual = raw_isolation.get(key)
+    path = (
+        f"{TASK_CONTAINER_METADATA_KEY}.{TASK_CONTAINER_ISOLATION_KEY}.{key}"
+    )
+    if not isinstance(actual, Mapping):
+        raise _verification_error(
+            "container.plan_missing",
+            path,
+            "Queued task isolation plan metadata is missing.",
+            "Enqueue the task through a trusted isolation-aware task client.",
+        )
+    for field_name, expected_value in expected.items():
+        if actual.get(field_name) != expected_value:
+            raise _verification_error(
+                "container.plan_mismatch",
+                f"{path}.{field_name}",
+                "Queued task isolation metadata is stale.",
+                "Re-enqueue the task with the current trusted isolation "
+                "policy.",
+            )
+    extra = set(actual) - set(expected)
+    if extra:
+        field_name = sorted(extra, key=str)[0]
+        raise _verification_error(
+            "container.plan_unexpected",
+            f"{path}.{field_name}",
+            "Queued task isolation metadata includes unsupported authority.",
+            "Remove untrusted isolation metadata from the task request.",
+        )
+
+
+def _assert_isolation_metadata_matches_plans(
+    raw: Mapping[str, object],
+    *,
+    attempt: ContainerNormalizedRunPlan | None,
+    attempt_lifecycle: ContainerNormalizedRunPlan | None,
+    worker_envelope: ContainerNormalizedRuntimeEnvelopePlan | None,
+    validate_attempt_lifecycle: bool,
+) -> None:
+    raw_isolation = raw.get(TASK_CONTAINER_ISOLATION_KEY)
+    if raw_isolation is None:
+        return
+    if not isinstance(raw_isolation, Mapping):
+        raise _verification_error(
+            "container.plan_missing",
+            f"{TASK_CONTAINER_METADATA_KEY}.{TASK_CONTAINER_ISOLATION_KEY}",
+            "Queued task isolation metadata is missing.",
+            "Enqueue the task through a trusted isolation-aware task client.",
+        )
+
+    expected: dict[
+        str,
+        ContainerNormalizedRunPlan | ContainerNormalizedRuntimeEnvelopePlan,
+    ] = {}
+    if attempt is not None:
+        expected[TASK_CONTAINER_ATTEMPT_KEY] = attempt
+    if worker_envelope is not None:
+        expected[TASK_CONTAINER_WORKER_ENVELOPE_KEY] = worker_envelope
+    if validate_attempt_lifecycle and attempt_lifecycle is not None:
+        expected[TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY] = attempt_lifecycle
+
+    allowed_keys = set(expected)
+    if not validate_attempt_lifecycle and attempt_lifecycle is not None:
+        allowed_keys.add(TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY)
+    extra = set(raw_isolation) - allowed_keys
+    if extra:
+        key = sorted(extra, key=str)[0]
+        raise _verification_error(
+            "container.plan_unexpected",
+            f"{TASK_CONTAINER_METADATA_KEY}."
+            f"{TASK_CONTAINER_ISOLATION_KEY}.{key}",
+            "Queued task isolation metadata includes an unexpected plan.",
+            "Remove untrusted isolation metadata from the task request.",
+        )
+
+    for key, plan in expected.items():
+        _assert_isolation_metadata_matches_plan(raw_isolation, key, plan)
+    if (
+        not validate_attempt_lifecycle
+        and attempt_lifecycle is not None
+        and raw_isolation.get(TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY) is not None
+    ):
+        _assert_isolation_plan_metadata_supported(
+            raw_isolation,
+            TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY,
+        )
+
+
+def _assert_isolation_plan_metadata_supported(
+    raw_isolation: Mapping[str, object],
+    key: str,
+) -> None:
+    path = (
+        f"{TASK_CONTAINER_METADATA_KEY}.{TASK_CONTAINER_ISOLATION_KEY}.{key}"
+    )
+    actual = raw_isolation.get(key)
+    if not isinstance(actual, Mapping):
+        raise _verification_error(
+            "container.plan_missing",
+            path,
+            "Queued task isolation plan metadata is missing.",
+            "Enqueue the task through a trusted isolation-aware task client.",
+        )
+    extra = set(actual) - TASK_CONTAINER_ISOLATION_PLAN_FIELDS
+    if extra:
+        field_name = sorted(extra, key=str)[0]
+        raise _verification_error(
+            "container.plan_unexpected",
+            f"{path}.{field_name}",
+            "Queued task isolation metadata includes unsupported authority.",
+            "Remove untrusted isolation metadata from the task request.",
+        )
 
 
 def _safe_plan_payload(plan: ContainerNormalizedRunPlan) -> dict[str, object]:

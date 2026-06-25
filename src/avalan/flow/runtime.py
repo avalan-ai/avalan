@@ -30,6 +30,7 @@ from .diagnostics import (
 )
 from .node import CancellationChecker, Node
 from .plan import (
+    FLOW_RESUME_ISOLATION_METADATA_KEY,
     FlowConditionPlan,
     FlowEdgePlan,
     FlowExecutionPlan,
@@ -37,6 +38,7 @@ from .plan import (
     FlowNodePlan,
     FlowRetryPlan,
     flow_node_container_fingerprint,
+    flow_resume_isolation_metadata,
 )
 from .registry import (
     FlowNodeConfigurationError,
@@ -444,6 +446,16 @@ async def execute_flow_plan(
     )
     assert concurrency_limit > 0
     flow_run_id = _flow_event_id(plan)
+    resume_isolation_diagnostics = _resume_isolation_metadata_diagnostics(
+        plan,
+        resume_trace,
+    )
+    if resume_isolation_diagnostics:
+        return FlowPlanExecutionResult(
+            trace=resume_trace or FlowExecutionTrace.from_plan(plan),
+            diagnostics=resume_isolation_diagnostics,
+            node_outputs=resume_node_outputs or {},
+        )
     if plan.runtime_envelope is not None:
         if runtime_envelope_runner is not None:
             return await runtime_envelope_runner.run_flow_runtime_envelope(
@@ -798,6 +810,73 @@ async def execute_flow_plan(
         trace=trace,
         diagnostics=tuple(diagnostics),
         node_outputs=node_outputs,
+    )
+
+
+def _resume_isolation_metadata_diagnostics(
+    plan: FlowExecutionPlan,
+    resume_trace: FlowExecutionTrace | None,
+) -> tuple[FlowDiagnostic, ...]:
+    if resume_trace is None:
+        return ()
+    expected = flow_resume_isolation_metadata(plan)
+    actual = resume_trace.metadata
+    if not expected:
+        if FLOW_RESUME_ISOLATION_METADATA_KEY in actual:
+            return (_stale_resume_isolation_diagnostic(),)
+        return ()
+    expected_isolation = expected.get(FLOW_RESUME_ISOLATION_METADATA_KEY)
+    actual_isolation = actual.get(FLOW_RESUME_ISOLATION_METADATA_KEY)
+    if not isinstance(expected_isolation, Mapping):
+        return ()
+    if not isinstance(actual_isolation, Mapping):
+        return (_widened_resume_isolation_diagnostic(),)
+    expected_nodes = _resume_isolation_node_names(expected_isolation)
+    actual_nodes = _resume_isolation_node_names(actual_isolation)
+    if expected_nodes is None or actual_nodes is None:
+        return (_stale_resume_isolation_diagnostic(),)
+    if expected_nodes - actual_nodes:
+        return (_widened_resume_isolation_diagnostic(),)
+    if actual_isolation != expected_isolation:
+        return (_stale_resume_isolation_diagnostic(),)
+    return ()
+
+
+def _resume_isolation_node_names(
+    value: Mapping[str, object],
+) -> set[str] | None:
+    nodes = value.get("nodes")
+    if not isinstance(nodes, Mapping):
+        return None
+    names: set[str] = set()
+    for node_name in nodes:
+        if not isinstance(node_name, str) or not node_name.strip():
+            return None
+        names.add(node_name)
+    return names
+
+
+def _widened_resume_isolation_diagnostic() -> FlowDiagnostic:
+    return _execution_diagnostic(
+        code="flow.execution.isolation_resume_metadata_widened",
+        path="trace.metadata.isolation",
+        message="Flow resume isolation metadata is missing or narrower.",
+        hint=(
+            "Resume with metadata captured from the exact paused isolation "
+            "plan."
+        ),
+    )
+
+
+def _stale_resume_isolation_diagnostic() -> FlowDiagnostic:
+    return _execution_diagnostic(
+        code="flow.execution.isolation_resume_metadata_stale",
+        path="trace.metadata.isolation",
+        message="Flow resume isolation metadata does not match this plan.",
+        hint=(
+            "Recompile the original strict flow or restart after policy "
+            "changes."
+        ),
     )
 
 

@@ -192,6 +192,17 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(resp.model, "server-model")
 
+    async def test_chat_request_rejects_remote_isolation_authority(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "runtime authority"):
+            ChatCompletionRequest.model_validate(
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "sandboxProfile": "workspace-readonly",
+                }
+            )
+
     async def test_create_chat_completion_prefers_request_model(
         self,
     ) -> None:
