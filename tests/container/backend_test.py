@@ -583,6 +583,52 @@ class ContainerBackendTest(TestCase):
             (invalid_prefixes_then_root,),
             rootful_authorized=True,
         )
+        windows_drive_source = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="C:\\Users\\Project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                _probe(
+                    _capabilities(
+                        backend=ContainerBackend.DOCKER,
+                        rootless=False,
+                        vm_backed=True,
+                        shared_mount_prefixes=("c:\\users",),
+                    )
+                ),
+            ),
+            rootful_authorized=True,
+        )
+        unc_source = select_container_backend(
+            _run_plan(
+                backend=ContainerBackend.DOCKER,
+                mounts=(
+                    ContainerMountDeclaration(
+                        source="\\\\server\\share\\Project",
+                        target="/workspace",
+                        mount_type=ContainerMountType.WORKSPACE,
+                    ),
+                ),
+            ),
+            (
+                _probe(
+                    _capabilities(
+                        backend=ContainerBackend.DOCKER,
+                        rootless=False,
+                        vm_backed=True,
+                        shared_mount_prefixes=("//server/share",),
+                    )
+                ),
+            ),
+            rootful_authorized=True,
+        )
 
         self.assertFalse(invalid_source.ok)
         self.assertIn(
@@ -590,6 +636,8 @@ class ContainerBackendTest(TestCase):
             {diagnostic.message for diagnostic in invalid_source.diagnostics},
         )
         self.assertTrue(skipped_invalid_prefixes.ok)
+        self.assertTrue(windows_drive_source.ok)
+        self.assertTrue(unc_source.ok)
 
     def test_selection_rejects_unavailable_and_capability_mismatch(
         self,
