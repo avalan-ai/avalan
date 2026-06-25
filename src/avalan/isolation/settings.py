@@ -100,6 +100,18 @@ class SandboxChildProcessPolicy(StrEnum):
     ALLOW = "allow"
 
 
+class SandboxInheritedFdPolicy(StrEnum):
+    DENY = "deny"
+    STDIO = "stdio"
+    EXPLICIT = "explicit"
+
+
+class SandboxCleanupPolicy(StrEnum):
+    DELETE = "delete"
+    QUARANTINE = "quarantine"
+    PRESERVE = "preserve"
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class IsolationDiagnostic:
@@ -341,6 +353,9 @@ class SandboxNetworkPolicy:
         assert not (
             mode is SandboxNetworkMode.NONE and egress_allowlist
         ), "network none cannot define egress"
+        assert not (
+            mode is not SandboxNetworkMode.ALLOWLIST and egress_allowlist
+        ), "network egress allowlist requires allowlist mode"
         object.__setattr__(self, "mode", mode)
         object.__setattr__(self, "egress_allowlist", egress_allowlist)
 
@@ -469,6 +484,10 @@ class SandboxProfile:
     child_processes: SandboxChildProcessPolicy | str = (
         SandboxChildProcessPolicy.DENY
     )
+    inherited_fds: SandboxInheritedFdPolicy | str = (
+        SandboxInheritedFdPolicy.STDIO
+    )
+    cleanup: SandboxCleanupPolicy | str = SandboxCleanupPolicy.DELETE
 
     def __post_init__(self) -> None:
         _assert_profile_name(self.name, "name")
@@ -479,12 +498,15 @@ class SandboxProfile:
         object.__setattr__(
             self,
             "trusted_executables",
-            _path_tuple(self.trusted_executables, "trusted_executables"),
+            _absolute_path_tuple(
+                self.trusted_executables,
+                "trusted_executables",
+            ),
         )
         object.__setattr__(
             self,
             "executable_search_roots",
-            _path_tuple(
+            _absolute_path_tuple(
                 self.executable_search_roots,
                 "executable_search_roots",
             ),
@@ -492,27 +514,27 @@ class SandboxProfile:
         object.__setattr__(
             self,
             "read_roots",
-            _path_tuple(self.read_roots, "read_roots"),
+            _absolute_path_tuple(self.read_roots, "read_roots"),
         )
         object.__setattr__(
             self,
             "write_roots",
-            _path_tuple(self.write_roots, "write_roots"),
+            _absolute_path_tuple(self.write_roots, "write_roots"),
         )
         object.__setattr__(
             self,
             "deny_roots",
-            _path_tuple(self.deny_roots, "deny_roots"),
+            _absolute_path_tuple(self.deny_roots, "deny_roots"),
         )
         object.__setattr__(
             self,
             "scratch_roots",
-            _path_tuple(self.scratch_roots, "scratch_roots"),
+            _absolute_path_tuple(self.scratch_roots, "scratch_roots"),
         )
         object.__setattr__(
             self,
             "output_roots",
-            _path_tuple(self.output_roots, "output_roots"),
+            _absolute_path_tuple(self.output_roots, "output_roots"),
         )
         object.__setattr__(
             self,
@@ -523,12 +545,32 @@ class SandboxProfile:
                 "child_processes",
             ),
         )
+        object.__setattr__(
+            self,
+            "inherited_fds",
+            _enum_value(
+                self.inherited_fds,
+                SandboxInheritedFdPolicy,
+                "inherited_fds",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "cleanup",
+            _enum_value(
+                self.cleanup,
+                SandboxCleanupPolicy,
+                "cleanup",
+            ),
+        )
 
     def to_dict(self) -> dict[str, object]:
         child_processes = cast(
             SandboxChildProcessPolicy,
             self.child_processes,
         )
+        inherited_fds = cast(SandboxInheritedFdPolicy, self.inherited_fds)
+        cleanup = cast(SandboxCleanupPolicy, self.cleanup)
         return {
             "name": self.name,
             "trusted_executables": list(self.trusted_executables),
@@ -543,6 +585,8 @@ class SandboxProfile:
             "resources": self.resources.to_dict(),
             "output": self.output.to_dict(),
             "child_processes": child_processes.value,
+            "inherited_fds": inherited_fds.value,
+            "cleanup": cleanup.value,
         }
 
     @classmethod
@@ -588,6 +632,16 @@ class SandboxProfile:
                 raw,
                 "child_processes",
                 SandboxChildProcessPolicy.DENY.value,
+            ),
+            inherited_fds=_optional_str_or_default(
+                raw,
+                "inherited_fds",
+                SandboxInheritedFdPolicy.STDIO.value,
+            ),
+            cleanup=_optional_str_or_default(
+                raw,
+                "cleanup",
+                SandboxCleanupPolicy.DELETE.value,
             ),
         )
 
@@ -1281,6 +1335,8 @@ _SANDBOX_PROFILE_FIELDS = {
     "resources",
     "output",
     "child_processes",
+    "inherited_fds",
+    "cleanup",
 }
 _SANDBOX_SELECTION_FIELDS = {"profile", "required"}
 _SANDBOX_SETTINGS_FIELDS = {
@@ -1500,6 +1556,15 @@ def _path_tuple(value: object, field_name: str) -> tuple[str, ...]:
         _assert_path(item, field_name)
         normalized.append(cast(str, item))
     return tuple(normalized)
+
+
+def _absolute_path_tuple(value: object, field_name: str) -> tuple[str, ...]:
+    paths = _path_tuple(value, field_name)
+    for path in paths:
+        assert path.startswith(
+            "/"
+        ), f"{field_name} must contain absolute paths"
+    return paths
 
 
 def _string_mapping(

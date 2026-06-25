@@ -41,10 +41,16 @@ from .settings import (
     SandboxChildProcessPolicy as SandboxChildProcessPolicy,
 )
 from .settings import (
+    SandboxCleanupPolicy as SandboxCleanupPolicy,
+)
+from .settings import (
     SandboxEffectiveSettings as SandboxEffectiveSettings,
 )
 from .settings import (
     SandboxEnvironmentPolicy as SandboxEnvironmentPolicy,
+)
+from .settings import (
+    SandboxInheritedFdPolicy as SandboxInheritedFdPolicy,
 )
 from .settings import (
     SandboxNetworkMode as SandboxNetworkMode,
