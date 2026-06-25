@@ -381,6 +381,51 @@ class CliDatabaseToolOptionTestCase(TestCase):
         )
 
 
+class CliToolNamePolicyOptionTestCase(TestCase):
+    def _cli(self) -> CLI:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            return CLI(logger)
+
+    def test_tool_name_policy_arguments_parse_for_agent_and_flow(
+        self,
+    ) -> None:
+        cli = self._cli()
+        cases = [
+            ["agent", "run"],
+            ["agent", "serve"],
+            ["agent", "proxy"],
+            ["agent", "init"],
+            ["flow", "run", "flow.toml"],
+        ]
+
+        for prefix in cases:
+            with self.subTest(command=prefix):
+                args = cli._parser.parse_args(
+                    prefix
+                    + [
+                        "--tool-name-policy",
+                        "sanitized",
+                        "--tool-name-prefix",
+                        "tool_",
+                        "--tool-name-replacement",
+                        "__",
+                        "--tool-name-no-collapse-replacement",
+                        "--tool-name-map",
+                        "shell.pdfinfo=my_pdfinfo",
+                    ]
+                )
+
+                self.assertEqual(args.tool_name_policy, "sanitized")
+                self.assertEqual(args.tool_name_prefix, "tool_")
+                self.assertEqual(args.tool_name_replacement, "__")
+                self.assertFalse(args.tool_name_collapse_replacement)
+                self.assertEqual(
+                    args.tool_name_map,
+                    ["shell.pdfinfo=my_pdfinfo"],
+                )
+
+
 class CliShellToolOptionTestCase(TestCase):
     def _cli(self) -> CLI:
         logger = MagicMock()

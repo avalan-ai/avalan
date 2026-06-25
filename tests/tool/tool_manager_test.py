@@ -24,12 +24,15 @@ from avalan.entities import (
     ToolManagerExecutionMode,
     ToolManagerMissingCallMode,
     ToolManagerSettings,
+    ToolNamePolicyMode,
+    ToolNamePolicySettings,
     ToolNameResolutionStatus,
     ToolParserReturnMode,
     ToolProviderArgumentsMode,
     ToolTransformer,
     ToolTransformerResult,
 )
+from avalan.model.provider import ProviderFamily
 from avalan.model.vendor import TextGenerationVendor
 from avalan.tool import Tool, ToolSet
 from avalan.tool.manager import ToolManager
@@ -61,6 +64,11 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertIsNone(settings.maximum_parser_payload_size)
         self.assertFalse(settings.parallel_tool_calls)
         self.assertEqual(settings.maximum_parallel_tool_calls, 4)
+        self.assertIs(
+            settings.tool_name_policy.mode,
+            ToolNamePolicyMode.ENCODED,
+        )
+        self.assertEqual(settings.tool_name_policy.prefix, "avl_")
         self.assertEqual(settings.recovery_formats, [])
 
     def test_settings_accept_outcome_compatibility_modes(self):
@@ -121,6 +129,7 @@ class ToolManagerCreationTestCase(TestCase):
             {"maximum_parser_payload_size": 0},
             {"parallel_tool_calls": 1},
             {"maximum_parallel_tool_calls": 0},
+            {"tool_name_policy": object()},
             {"recovery_formats": "fenced"},
             {"recovery_formats": ["fenced"]},
         )
@@ -4035,6 +4044,201 @@ class ToolManagerSchemasTestCase(TestCase):
         schemas = manager.json_schemas()
         self.assertEqual(len(schemas), 1)
         self.assertEqual(schemas[0]["function"]["name"], "math.calculator")
+
+
+class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
+    def test_provider_json_schemas_use_sanitized_names(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math.adder"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[DummyAdder()])
+            ],
+            settings=ToolManagerSettings(
+                tool_name_policy=ToolNamePolicySettings(
+                    mode=ToolNamePolicyMode.SANITIZED
+                )
+            ),
+        )
+
+        canonical_schemas = manager.json_schemas()
+        provider_schemas = manager.provider_json_schemas(
+            provider_family=ProviderFamily.OPENAI.value
+        )
+        descriptor = manager.describe_tool("math.adder")
+
+        assert canonical_schemas is not None
+        assert provider_schemas is not None
+        assert descriptor is not None
+        self.assertEqual(
+            canonical_schemas[0]["function"]["name"],
+            "math.adder",
+        )
+        self.assertEqual(
+            provider_schemas[0]["function"]["name"],
+            "math_adder",
+        )
+        assert descriptor.provider_safe_schema is not None
+        self.assertEqual(
+            descriptor.provider_safe_schema["function"]["name"],
+            "math_adder",
+        )
+
+    def test_provider_originated_resolution_uses_policy(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math.adder"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[DummyAdder()])
+            ],
+            settings=ToolManagerSettings(
+                tool_name_policy=ToolNamePolicySettings(
+                    mode=ToolNamePolicyMode.SANITIZED
+                )
+            ),
+        )
+
+        resolution = manager.resolve_tool_name(
+            "math_adder",
+            provider_originated=True,
+        )
+
+        self.assertIs(resolution.status, ToolNameResolutionStatus.EXACT)
+        self.assertEqual(resolution.canonical_name, "math.adder")
+        self.assertEqual(
+            manager.provider_tool_name(
+                "math.adder",
+                provider_family=ProviderFamily.OPENAI.value,
+            ),
+            "math_adder",
+        )
+        self.assertEqual(
+            manager.canonical_tool_name(
+                "math_adder",
+                provider_family=ProviderFamily.OPENAI.value,
+            ),
+            "math.adder",
+        )
+
+    def test_mapped_provider_names_parse_before_canonical_validation(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math.adder"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[DummyAdder()])
+            ],
+            settings=ToolManagerSettings(
+                tool_name_policy=ToolNamePolicySettings(
+                    mode=ToolNamePolicyMode.MAPPED,
+                    map={"math.adder": "1tool-name"},
+                )
+            ),
+        )
+
+        calls = manager.get_calls(
+            '<tool_call>{"name": "1tool-name", '
+            '"arguments": {"a": 1, "b": 2}}</tool_call>'
+        )
+
+        assert calls is not None
+        self.assertEqual(calls[0].name, "math.adder")
+        self.assertEqual(calls[0].provider_name, "1tool-name")
+
+    async def test_malformed_provider_name_does_not_execute_canonical_tool(
+        self,
+    ):
+        class PrefixNamedTool:
+            def __init__(self) -> None:
+                self.__name__ = "avl_notbase64"
+
+            async def __call__(self) -> str:
+                """Return a value that must not be reached."""
+                return "executed"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["avl_notbase64"],
+            available_toolsets=[ToolSet(tools=[PrefixNamedTool()])],
+            settings=ToolManagerSettings(),
+        )
+        calls = manager.get_calls(
+            '<tool_call>{"name": "avl_notbase64", "arguments": {}}</tool_call>'
+        )
+
+        assert calls is not None
+        result = await manager.prepare_call(calls[0], ToolCallContext())
+
+        self.assertIsInstance(result, ToolCallDiagnostic)
+        assert isinstance(result, ToolCallDiagnostic)
+        self.assertIs(result.code, ToolCallDiagnosticCode.MALFORMED_CALL)
+
+    def test_sanitized_collision_fails_during_initialization(self):
+        def b() -> str:
+            """Return a namespaced value."""
+            return "b"
+
+        def a_b() -> str:
+            """Return an underscored value."""
+            return "a_b"
+
+        with self.assertRaisesRegex(AssertionError, "collision"):
+            ToolManager.create_instance(
+                enable_tools=["a.b", "a_b"],
+                available_toolsets=[
+                    ToolSet(namespace="a", tools=[b]),
+                    ToolSet(tools=[a_b]),
+                ],
+                settings=ToolManagerSettings(
+                    tool_name_policy=ToolNamePolicySettings(
+                        mode=ToolNamePolicyMode.SANITIZED
+                    )
+                ),
+            )
+
+    def test_raw_policy_fails_for_openai_provider_schemas(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math.adder"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[DummyAdder()])
+            ],
+            settings=ToolManagerSettings(
+                tool_name_policy=ToolNamePolicySettings(
+                    mode=ToolNamePolicyMode.RAW
+                )
+            ),
+        )
+
+        with self.assertRaisesRegex(AssertionError, "openai"):
+            manager.provider_json_schemas(
+                provider_family=ProviderFamily.OPENAI.value
+            )
+
+    async def test_sanitized_call_parses_and_executes_canonically(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math.calculator"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[CalculatorTool()])
+            ],
+            settings=ToolManagerSettings(
+                tool_name_policy=ToolNamePolicySettings(
+                    mode=ToolNamePolicyMode.SANITIZED
+                )
+            ),
+        )
+        call_id = _uuid4()
+        result_id = _uuid4()
+
+        with (
+            patch("avalan.tool.parser.uuid4", return_value=call_id),
+            patch("avalan.tool.manager.uuid4", return_value=result_id),
+        ):
+            calls = manager.get_calls(
+                '<tool_call>{"name": "math_calculator", '
+                '"arguments": {"expression": "1 + 2"}}</tool_call>'
+            )
+            assert calls is not None
+            result = await manager(calls[0], context=ToolCallContext())
+
+        self.assertEqual(calls[0].name, "math.calculator")
+        self.assertEqual(calls[0].provider_name, "math_calculator")
+        self.assertEqual(result.name, "math.calculator")
+        self.assertEqual(result.result, "3")
 
 
 class ToolManagerExtraCallTestCase(IsolatedAsyncioTestCase):

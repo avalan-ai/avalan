@@ -1,4 +1,5 @@
 from ...cli.theme import Theme
+from ...entities import ToolManagerSettings, ToolNamePolicySettings
 from ...filesystem import DEFAULT_TEXT_ENCODING, read_text, write_text
 from ...flow import (
     FlowDefinition,
@@ -100,6 +101,7 @@ from ...tool.shell import (
 from .agent import (
     _agent_container_runtime_settings,
     _agent_isolation_runtime_settings,
+    _agent_tool_name_policy,
     get_tool_settings,
 )
 from .task import (
@@ -2426,6 +2428,11 @@ def _flow_tool_manager(args: Namespace) -> ToolManager | None:
     return ToolManager.create_instance(
         available_toolsets=available_toolsets,
         enable_tools=enabled_tools,
+        settings=ToolManagerSettings(
+            tool_name_policy=(
+                _agent_tool_name_policy(args) or ToolNamePolicySettings()
+            )
+        ),
     )
 
 

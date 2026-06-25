@@ -119,12 +119,19 @@ class BedrockStream(TextGenerationVendorStream):
     _canonical_tool_blocks: dict[int, dict[str, Any]]
     _canonical_ready_tool_call_ids: set[str]
     _canonical_done_tool_call_ids: set[str]
+    _tool_manager: ToolManager | None
 
-    def __init__(self, events: AsyncIterator[Any]):
+    def __init__(
+        self,
+        events: AsyncIterator[Any],
+        *,
+        tool: ToolManager | None = None,
+    ):
         self._events = events
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
+        self._tool_manager = tool
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -442,11 +449,24 @@ class BedrockStream(TextGenerationVendorStream):
         if call_id in self._canonical_ready_tool_call_ids:
             return ()
         self._canonical_ready_tool_call_ids.add(call_id)
+        canonical_name = (
+            TextGenerationVendor.canonical_tool_name(
+                name,
+                tool=self._tool_manager,
+                provider_family=ProviderFamily.BEDROCK,
+            )
+            if isinstance(name, str)
+            else name
+        )
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_READY,
                 correlation=StreamItemCorrelation(tool_call_id=call_id),
-                data={"name": name} if isinstance(name, str) else {},
+                data=(
+                    {"name": canonical_name}
+                    if isinstance(canonical_name, str)
+                    else {}
+                ),
                 provider_payload=provider_payload,
                 provider_event_type="contentBlockStop",
             ),
@@ -525,7 +545,11 @@ class BedrockClient(TextGenerationVendor):
         ), "Amazon Bedrock does not support provider instructions"
         client = await self._client_instance()
         system_prompt = self._system_prompt(messages)
-        template_messages = self._template_messages(messages, ["system"])
+        template_messages = self._template_messages(
+            messages,
+            ["system"],
+            tool=tool,
+        )
         payload: dict[str, Any] = {
             "modelId": model_id,
             "messages": template_messages,
@@ -555,14 +579,17 @@ class BedrockClient(TextGenerationVendor):
                     if hasattr(stream, "__aenter__")
                     else stream
                 )
-                return BedrockStream(events=events)
+                stream_kwargs: dict[str, Any] = {}
+                if isinstance(tool, ToolManager):
+                    stream_kwargs["tool"] = tool
+                return BedrockStream(events=events, **stream_kwargs)
 
             response = await client.converse(**payload)
             usage = (
                 response.get("usage") if isinstance(response, dict) else None
             )
             return TextGenerationSingleStream(
-                self._response_text(response),
+                self._response_text(response, tool=tool),
                 provider_family=ProviderFamily.BEDROCK,
                 usage=usage,
             )
@@ -747,7 +774,12 @@ class BedrockClient(TextGenerationVendor):
             return None
         return {"tools": schemas, "toolChoice": {"auto": {}}}
 
-    def _response_text(self, response: dict[str, Any]) -> str:
+    def _response_text(
+        self,
+        response: dict[str, Any],
+        *,
+        tool: ToolManager | None = None,
+    ) -> str:
         output = response.get("output") if isinstance(response, dict) else None
         message = output.get("message") if isinstance(output, dict) else None
         content = message.get("content") if isinstance(message, dict) else None
@@ -761,12 +793,38 @@ class BedrockClient(TextGenerationVendor):
             text_value = _string(text_block)
             if text_value:
                 parts.append(text_value)
+                continue
+            tool_use = block.get("toolUse")
+            if not isinstance(tool_use, dict):
+                continue
+            provider_name = tool_use.get("name")
+            canonical_name = (
+                TextGenerationVendor.canonical_tool_name(
+                    provider_name,
+                    tool=tool,
+                    provider_family=ProviderFamily.BEDROCK,
+                )
+                if isinstance(provider_name, str)
+                and isinstance(tool, ToolManager)
+                else provider_name
+            )
+            parts.append(
+                TextGenerationVendor.build_tool_call_text(
+                    tool_use.get("toolUseId"),
+                    canonical_name,
+                    tool_use.get("input"),
+                    tool_name_is_canonical=isinstance(canonical_name, str)
+                    and isinstance(tool, ToolManager),
+                )
+            )
         return "".join(parts)
 
     def _template_messages(
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
+        *,
+        tool: ToolManager | None = None,
     ) -> list[dict[str, Any]]:
         templated: list[dict[str, Any]] = []
         for message in messages:
@@ -798,24 +856,31 @@ class BedrockClient(TextGenerationVendor):
                 if result:
                     templated.append(self._tool_result_message(result))
                 continue
-            templated.append(self._format_message(message))
+            templated.append(self._format_message(message, tool=tool))
         return templated
 
-    def _format_message(self, message: Message) -> dict[str, Any]:
+    def _format_message(
+        self,
+        message: Message,
+        *,
+        tool: ToolManager | None = None,
+    ) -> dict[str, Any]:
         role = str(message.role)
         if role == str(MessageRole.DEVELOPER):
             role = str(MessageRole.USER)
         content_blocks = self._format_content(message.content)
         if message.tool_calls:
             for tool_call in message.tool_calls:
-                encoded_name = TextGenerationVendor.encode_tool_name(
-                    tool_call.name
+                provider_name = TextGenerationVendor.provider_tool_name(
+                    tool_call.name,
+                    tool=tool,
+                    provider_family=ProviderFamily.BEDROCK,
                 )
                 content_blocks.append(
                     {
                         "toolUse": {
                             "toolUseId": tool_call.id,
-                            "name": encoded_name,
+                            "name": provider_name,
                             "input": tool_call.arguments or [],
                         }
                     }
@@ -1029,7 +1094,14 @@ class BedrockClient(TextGenerationVendor):
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
-        schemas = tool.json_schemas()
+        provider_ready = isinstance(tool, ToolManager)
+        schemas = (
+            tool.provider_json_schemas(
+                provider_family=ProviderFamily.BEDROCK.value
+            )
+            if provider_ready
+            else tool.json_schemas()
+        )
         if not schemas:
             return None
         tools: list[dict[str, Any]] = []
@@ -1037,13 +1109,13 @@ class BedrockClient(TextGenerationVendor):
             if schema.get("type") != "function":
                 continue
             function = schema.get("function") or {}
-            encoded_name = TextGenerationVendor.encode_tool_name(
-                function.get("name", "")
-            )
+            name = function.get("name", "")
+            if not provider_ready:
+                name = TextGenerationVendor.encode_tool_name(name)
             tools.append(
                 {
                     "toolSpec": {
-                        "name": encoded_name,
+                        "name": name,
                         "description": function.get("description", ""),
                         "inputSchema": {
                             "json": function.get("parameters", {})

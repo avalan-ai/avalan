@@ -29,6 +29,8 @@ from ...entities import (
     ToolCall,
     ToolCallRecoveryFormat,
     ToolFormat,
+    ToolNamePolicyMode,
+    ToolNamePolicySettings,
 )
 from ...event import EventStats, EventType
 from ...event.manager import EventManagerMode
@@ -762,6 +764,50 @@ def _agent_tool_format(args: Namespace) -> ToolFormat | None:
     return None
 
 
+def _agent_tool_name_policy(args: Namespace) -> ToolNamePolicySettings | None:
+    mode = getattr(args, "tool_name_policy", None)
+    prefix = getattr(args, "tool_name_prefix", None)
+    replacement = getattr(args, "tool_name_replacement", None)
+    collapse = getattr(args, "tool_name_collapse_replacement", None)
+    map_entries = getattr(args, "tool_name_map", None)
+    if (
+        mode is None
+        and prefix is None
+        and replacement is None
+        and collapse is None
+        and not map_entries
+    ):
+        return None
+
+    name_map: dict[str, str] = {}
+    for entry in map_entries or []:
+        assert isinstance(entry, str)
+        canonical_name, separator, provider_name = entry.partition("=")
+        assert separator, "tool name map entries must be CANONICAL=PROVIDER"
+        assert canonical_name.strip(), "tool name map canonical name is empty"
+        assert provider_name.strip(), "tool name map provider name is empty"
+        name_map[canonical_name] = provider_name
+
+    return ToolNamePolicySettings(
+        mode=(
+            ToolNamePolicyMode(mode)
+            if mode is not None
+            else ToolNamePolicyMode.ENCODED
+        ),
+        prefix="avl_" if prefix is None else prefix,
+        replacement="_" if replacement is None else replacement,
+        collapse_replacement=True if collapse is None else collapse,
+        map=name_map,
+    )
+
+
+def _agent_tool_name_policy_kwargs(
+    args: Namespace,
+) -> dict[str, Any]:
+    policy = _agent_tool_name_policy(args)
+    return {"tool_name_policy": policy} if policy is not None else {}
+
+
 def _agent_container_runtime_settings(
     args: Namespace,
     shell_settings: ShellToolSettings | None,
@@ -1313,6 +1359,7 @@ async def agent_message_search(
                     specs_path,
                     agent_id=agent_id,
                     tool_settings=_agent_tool_settings(args),
+                    **_agent_tool_name_policy_kwargs(args),
                     event_manager_mode=EventManagerMode.CLI,
                 )
             else:
@@ -1335,6 +1382,7 @@ async def agent_message_search(
                 orchestrator = await loader.from_settings(
                     settings,
                     tool_settings=tool_settings,
+                    **_agent_tool_name_policy_kwargs(args),
                     event_manager_mode=EventManagerMode.CLI,
                 )
             orchestrator = await stack.enter_async_context(orchestrator)
@@ -1464,6 +1512,7 @@ async def agent_run(
                 agent_id=agent_id,
                 disable_memory=args.no_session,
                 tool_settings=_agent_tool_settings(args),
+                **_agent_tool_name_policy_kwargs(args),
                 event_manager_mode=EventManagerMode.CLI,
             )
         else:
@@ -1491,6 +1540,7 @@ async def agent_run(
             )
             logger.debug("Loading agent from inline settings")
             tool_format = _agent_tool_format(args)
+            tool_name_policy_kwargs = _agent_tool_name_policy_kwargs(args)
             tool_recovery_formats = [
                 ToolCallRecoveryFormat(value)
                 for value in getattr(args, "tool_recovery_format", None) or []
@@ -1500,6 +1550,7 @@ async def agent_run(
                     settings,
                     tool_settings=tool_settings,
                     tool_format=tool_format,
+                    **tool_name_policy_kwargs,
                     tool_recovery_formats=tool_recovery_formats,
                     event_manager_mode=EventManagerMode.CLI,
                 )
@@ -1508,6 +1559,7 @@ async def agent_run(
                     settings,
                     tool_settings=tool_settings,
                     tool_format=tool_format,
+                    **tool_name_policy_kwargs,
                     event_manager_mode=EventManagerMode.CLI,
                 )
         event_manager = orchestrator.event_manager
@@ -1774,6 +1826,7 @@ async def agent_serve(
         specs_path=specs_path,
         settings=settings,
         tool_settings=tool_settings,
+        tool_name_policy=_agent_tool_name_policy(args),
         host=args.host,
         port=args.port,
         reload=args.reload,
@@ -1912,6 +1965,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
     template = env.get_template("blueprint.toml")
     tool_format = getattr(args, "tool_format", None)
     tool_recovery_formats = getattr(args, "tool_recovery_format", None) or []
+    tool_name_policy = _agent_tool_name_policy(args)
     rendered = template.render(
         orchestrator=settings,
         browser_tool=browser_tool,
@@ -1923,6 +1977,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         shell_container=_shell_container_template_settings(args),
         shell_sandbox=_shell_sandbox_template_settings(args),
         tool_format=tool_format,
+        tool_name_policy=tool_name_policy,
         tool_recovery_formats=tool_recovery_formats,
     )
     console.print(Syntax(rendered, "toml"))

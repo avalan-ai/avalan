@@ -20,6 +20,7 @@ from ..entities import (
     TimestepSpacing,
     ToolCallRecoveryFormat,
     ToolFormat,
+    ToolNamePolicyMode,
     User,
     VisionColorModel,
     VisionImageFormat,
@@ -1435,6 +1436,7 @@ class CLI:
             choices=[t.value for t in ToolCallRecoveryFormat],
             help="Enable a tool-call recovery format",
         )
+        CLI._add_tool_name_policy_arguments(agent_run_parser)
         agent_run_parser.add_argument(
             "--reasoning-tag",
             type=str,
@@ -1472,6 +1474,7 @@ class CLI:
         )
         CLI._add_agent_server_arguments(agent_serve_parser)
         CLI._add_agent_settings_arguments(agent_serve_parser)
+        CLI._add_tool_name_policy_arguments(agent_serve_parser)
         CLI._add_tool_settings_arguments(
             agent_serve_parser,
             prefix="browser",
@@ -1500,6 +1503,7 @@ class CLI:
         )
         CLI._add_agent_server_arguments(agent_proxy_parser)
         CLI._add_agent_settings_arguments(agent_proxy_parser)
+        CLI._add_tool_name_policy_arguments(agent_proxy_parser)
         CLI._add_tool_settings_arguments(
             agent_proxy_parser,
             prefix="browser",
@@ -1527,6 +1531,7 @@ class CLI:
             parents=[global_parser],
         )
         CLI._add_agent_settings_arguments(agent_init_parser)
+        CLI._add_tool_name_policy_arguments(agent_init_parser)
         CLI._add_tool_settings_arguments(
             agent_init_parser,
             prefix="graph",
@@ -1706,6 +1711,7 @@ class CLI:
                 "Enable tools matching a namespace for strict flow tool nodes."
             ),
         )
+        CLI._add_tool_name_policy_arguments(flow_run_parser)
         CLI._add_tool_settings_arguments(
             flow_run_parser,
             prefix="browser",
@@ -4071,6 +4077,43 @@ class CLI:
                 help="Fail closed instead of falling back to local shell.",
             )
 
+        return group
+
+    @staticmethod
+    def _add_tool_name_policy_arguments(
+        parser: ArgumentParser,
+    ) -> _ArgumentGroup:
+        group = parser.add_argument_group("tool name policy")
+        group.add_argument(
+            "--tool-name-policy",
+            choices=[mode.value for mode in ToolNamePolicyMode],
+            default=None,
+            help="Provider-facing tool name policy.",
+        )
+        group.add_argument(
+            "--tool-name-prefix",
+            default=None,
+            help="Prefix for encoded provider-facing tool names.",
+        )
+        group.add_argument(
+            "--tool-name-replacement",
+            default=None,
+            help="Replacement text for sanitized provider-facing tool names.",
+        )
+        group.add_argument(
+            "--tool-name-no-collapse-replacement",
+            dest="tool_name_collapse_replacement",
+            action="store_false",
+            default=None,
+            help="Do not collapse repeated sanitized-name replacements.",
+        )
+        group.add_argument(
+            "--tool-name-map",
+            action="append",
+            default=None,
+            metavar="CANONICAL=PROVIDER",
+            help="Map a canonical tool name to a provider-facing name.",
+        )
         return group
 
     @staticmethod

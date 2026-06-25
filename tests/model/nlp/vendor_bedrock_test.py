@@ -16,12 +16,16 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    MessageToolCall,
     ToolCall,
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
+    ToolManagerSettings,
+    ToolNamePolicyMode,
+    ToolNamePolicySettings,
     TransformerEngineSettings,
 )
 from avalan.model.stream import (
@@ -34,6 +38,8 @@ from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
 )
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
 
 
 class AsyncIter:
@@ -48,6 +54,27 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
+
+
+class PolicyAdder:
+    def __init__(self) -> None:
+        self.__name__ = "adder"
+
+    async def __call__(self, a: int, b: int) -> int:
+        """Return the sum of two integers."""
+        return a + b
+
+
+def _sanitized_policy_manager() -> ToolManager:
+    return ToolManager.create_instance(
+        enable_tools=["math.adder"],
+        available_toolsets=[ToolSet(namespace="math", tools=[PolicyAdder()])],
+        settings=ToolManagerSettings(
+            tool_name_policy=ToolNamePolicySettings(
+                mode=ToolNamePolicyMode.SANITIZED
+            )
+        ),
+    )
 
 
 class FakeBedrockError(Exception):
@@ -227,6 +254,46 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             if item.kind is StreamItemKind.TOOL_CALL_READY
         )
         self.assertEqual(ready.data, {"name": "pkg__tool"})
+
+    async def test_stream_processing_uses_tool_name_policy(self):
+        events = [
+            {
+                "contentBlockStart": {
+                    "contentBlockIndex": 0,
+                    "contentBlock": {
+                        "toolUse": {
+                            "toolUseId": "id1",
+                            "name": "math_adder",
+                        }
+                    },
+                }
+            },
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"toolUse": {"input": '{"a":1}'}},
+                }
+            },
+            {"contentBlockStop": {"contentBlockIndex": 0}},
+            {"messageStop": {"reason": "finished"}},
+        ]
+        stream = self.mod.BedrockStream(
+            AsyncIter(events),
+            tool=_sanitized_policy_manager(),
+        )
+
+        items = [item async for item in stream]
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+
+        self.assertEqual(ready.data, {"name": "math.adder"})
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).tool_call_arguments,
+            {"id1": '{"a":1}'},
+        )
 
     async def test_stream_public_iterator_yields_canonical_items(self):
         stream = self.mod.BedrockStream(
@@ -1009,6 +1076,21 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertIs(result, StreamMock.return_value)
         await exit_stack.aclose()
 
+    async def test_client_stream_passes_tool_manager_to_stream(self):
+        self.client.converse_stream.return_value = {"stream": AsyncIter([])}
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(exit_stack=exit_stack)
+        manager = _sanitized_policy_manager()
+
+        with patch.object(self.mod, "BedrockStream") as StreamMock:
+            result = await client(
+                "model", [], GenerationSettings(), tool=manager
+            )
+
+        self.assertIs(result, StreamMock.return_value)
+        self.assertIs(StreamMock.call_args.kwargs["tool"], manager)
+        await exit_stack.aclose()
+
     async def test_provider_instructions_are_rejected_before_api_call(self):
         exit_stack = AsyncExitStack()
         client = self.mod.BedrockClient(exit_stack=exit_stack)
@@ -1334,8 +1416,41 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
     def test_response_text_handles_missing_content(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
         self.assertEqual(client._response_text({}), "")
-        response = {"output": {"message": {"content": ["invalid"]}}}
-        self.assertEqual(client._response_text(response), "")
+        response = {
+            "output": {
+                "message": {
+                    "content": ["invalid", {"unknown": True}, {"text": "ok"}]
+                }
+            }
+        }
+        self.assertEqual(client._response_text(response), "ok")
+
+    def test_response_text_uses_tool_name_policy_for_tool_use(self):
+        client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
+        response = {
+            "output": {
+                "message": {
+                    "content": [
+                        {"text": "before"},
+                        {
+                            "toolUse": {
+                                "toolUseId": "call-1",
+                                "name": "math_adder",
+                                "input": {"a": 1, "b": 2},
+                            }
+                        },
+                    ]
+                }
+            }
+        }
+
+        text = client._response_text(
+            response,
+            tool=_sanitized_policy_manager(),
+        )
+
+        self.assertIn("before", text)
+        self.assertIn('"name": "math.adder"', text)
 
     def test_template_messages_excludes_roles_and_tool_calls(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
@@ -1482,6 +1597,18 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         tool.json_schemas.return_value = [{"type": "noop"}]
         self.assertIsNone(client._tool_schemas(tool))
 
+    def test_tool_schemas_use_tool_manager_name_policy(self):
+        client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
+
+        schemas = client._tool_schemas(_sanitized_policy_manager())
+
+        self.assertIsNotNone(schemas)
+        assert schemas is not None
+        self.assertEqual(
+            schemas[0]["toolSpec"]["name"],
+            "math_adder",
+        )
+
     def test_template_messages_and_tool_config(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
 
@@ -1562,6 +1689,26 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             config["tools"][0]["toolSpec"]["name"],
             "avl_cGtnLnRvb2w",
+        )
+
+        policy_templated = client._template_messages(
+            [
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=[
+                        MessageToolCall(
+                            id="id2",
+                            name="math.adder",
+                            arguments={"a": 1, "b": 2},
+                        )
+                    ],
+                )
+            ],
+            tool=_sanitized_policy_manager(),
+        )
+        self.assertEqual(
+            policy_templated[0]["content"][0]["toolUse"]["name"],
+            "math_adder",
         )
 
     def test_template_messages_tool_diagnostic(self):

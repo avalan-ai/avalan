@@ -54,6 +54,7 @@ class OrchestratorDiTestCase(IsolatedAsyncioTestCase):
             "agent.yaml",
             agent_id=None,
             tool_settings=None,
+            tool_name_policy=None,
             event_manager_mode=EventManagerMode.SERVER,
         )
 
@@ -89,6 +90,7 @@ class OrchestratorDiTestCase(IsolatedAsyncioTestCase):
         loader.from_settings.assert_called_once_with(
             ctx.settings,
             tool_settings=None,
+            tool_name_policy=None,
             event_manager_mode=EventManagerMode.SERVER,
         )
 

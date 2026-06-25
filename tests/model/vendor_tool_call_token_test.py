@@ -495,6 +495,20 @@ class VendorBuildToolCallTextTestCase(TestCase):
             ' 1}, "id": "1"}</tool_call>',
         )
 
+    def test_build_tool_call_text_accepts_canonical_tool_name(self) -> None:
+        text = TextGenerationVendor.build_tool_call_text(
+            call_id="1",
+            tool_name="pkg.tool",
+            arguments='{"a": 1}',
+            tool_name_is_canonical=True,
+        )
+
+        self.assertEqual(
+            text,
+            '<tool_call>{"name": "pkg.tool", "arguments": {"a":'
+            ' 1}, "id": "1"}</tool_call>',
+        )
+
     def test_build_tool_call_text_keeps_executable_boundary(
         self,
     ) -> None:

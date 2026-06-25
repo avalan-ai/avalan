@@ -13,6 +13,7 @@ from ....entities import (
 )
 from ....model.engine import Engine
 from ....model.nlp import BaseNLPModel
+from ....model.provider import ProviderFamily
 from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
     CanonicalStreamItem,
@@ -855,7 +856,13 @@ class TextGenerationModel(BaseNLPModel):
             inputs = self._tokenizer.apply_chat_template(
                 template_messages,
                 chat_template=chat_template,
-                tools=tool.json_schemas() if tool else None,
+                tools=(
+                    tool.provider_json_schemas(
+                        provider_family=ProviderFamily.LOCAL.value
+                    )
+                    if tool
+                    else None
+                ),
                 **(chat_template_settings or {}),
                 return_tensors=tensor_format,
             )

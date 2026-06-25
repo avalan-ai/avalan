@@ -95,7 +95,7 @@ cache_strategy = "{{ orchestrator.call_options['cache_strategy'] }}"
 {% endfor %}
 {% endif %}
 
-{% if orchestrator.tools or tool_format or tool_recovery_formats %}
+{% if orchestrator.tools or tool_format or tool_recovery_formats or tool_name_policy %}
 [tool]
 {% if tool_format %}format = "{{ tool_format }}"
 {% endif %}
@@ -108,6 +108,22 @@ cache_strategy = "{{ orchestrator.call_options['cache_strategy'] }}"
 {% for tool in orchestrator.tools %}    "{{ tool }}"{% if not loop.last %},{% endif %}
 {% endfor %}
 ]
+{% endif %}
+{% endif %}
+{% if tool_name_policy %}
+
+[tool.name_policy]
+mode = "{{ tool_name_policy.mode }}"
+prefix = "{{ tool_name_policy.prefix }}"
+replacement = "{{ tool_name_policy.replacement }}"
+collapse_replacement = {{ tool_name_policy.collapse_replacement | lower }}
+{% if tool_name_policy.provider_family %}provider_family = "{{ tool_name_policy.provider_family }}"
+{% endif %}
+{% if tool_name_policy.map %}
+
+[tool.name_policy.map]
+{% for canonical, provider in tool_name_policy.map.items() %}"{{ canonical }}" = "{{ provider }}"
+{% endfor %}
 {% endif %}
 {% endif %}
 

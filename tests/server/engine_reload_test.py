@@ -51,6 +51,7 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
             agent_id=original_agent_id,
             uri="new",
             tool_settings=None,
+            tool_name_policy=None,
             event_manager_mode=EventManagerMode.SERVER,
         )
         stack.enter_async_context.assert_called_once_with(orchestrator_cm)
@@ -112,6 +113,7 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         loader.from_settings.assert_called_once_with(
             new_settings,
             tool_settings=tool_settings,
+            tool_name_policy=None,
             event_manager_mode=EventManagerMode.SERVER,
         )
         stack.enter_async_context.assert_called_once_with(orchestrator_cm)

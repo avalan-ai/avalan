@@ -3137,8 +3137,9 @@ class FlowRunCommandTestCase(TestCase):
             *,
             tool_settings: object | None = None,
             tool_format: object | None = None,
+            **kwargs: object,
         ) -> _FlowCliAgentOrchestrator:
-            _ = loader, settings, tool_settings, tool_format
+            _ = loader, settings, tool_settings, tool_format, kwargs
             return orchestrator
 
         with TemporaryDirectory() as temporary_directory:
@@ -4023,8 +4024,9 @@ class FlowRunCommandTestCase(TestCase):
             *,
             tool_settings: object | None = None,
             tool_format: object | None = None,
+            **kwargs: object,
         ) -> _FlowCliAgentOrchestrator:
-            _ = loader, tool_settings, tool_format
+            _ = loader, tool_settings, tool_format, kwargs
             call_options = cast(Any, settings).call_options
             orchestrator.reasoning_options.append(call_options["reasoning"])
             settings_values.append(settings)
@@ -4113,8 +4115,9 @@ class FlowRunCommandTestCase(TestCase):
             *,
             tool_settings: object | None = None,
             tool_format: object | None = None,
+            **kwargs: object,
         ) -> _FlowCliAgentOrchestrator:
-            _ = loader, settings, tool_settings, tool_format
+            _ = loader, settings, tool_settings, tool_format, kwargs
             return orchestrator
 
         with (
@@ -4378,8 +4381,9 @@ class FlowRunCommandTestCase(TestCase):
             *,
             tool_settings: object | None = None,
             tool_format: object | None = None,
+            **kwargs: object,
         ) -> _FlowCliAgentOrchestrator:
-            _ = loader, settings, tool_settings, tool_format
+            _ = loader, settings, tool_settings, tool_format, kwargs
             return orchestrator
 
         with (
@@ -4414,8 +4418,9 @@ class FlowRunCommandTestCase(TestCase):
             *,
             tool_settings: object | None = None,
             tool_format: object | None = None,
+            **kwargs: object,
         ) -> _FlowCliAgentOrchestrator:
-            _ = loader, settings, tool_settings, tool_format
+            _ = loader, settings, tool_settings, tool_format, kwargs
             return _FlowCliAgentOrchestrator(success_output)
 
         with (
@@ -4550,6 +4555,35 @@ class FlowRunCommandTestCase(TestCase):
         self.assertIn("start", output)
         self.assertIn("succeeded", output)
         self.assertNotIn("\nFlow run completed.\n", output)
+
+    def test_flow_run_strict_task_context_stops_when_writer_fails(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+
+        with (
+            TemporaryDirectory() as temporary_directory,
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            root = Path(temporary_directory)
+            flow_path = _write_strict_constant_flow(root)
+            with patch.object(
+                flow_cmds,
+                "_write_task_run_structured_output",
+                return_value=False,
+            ) as writer:
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json="{}",
+                        task_run_json=True,
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertFalse(result)
+        writer.assert_called_once()
 
     def test_flow_run_stops_when_structured_writer_fails(self) -> None:
         console = Console(record=True, width=160)

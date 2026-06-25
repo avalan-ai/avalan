@@ -2036,8 +2036,9 @@ class CliTaskCommandShellTestCase(TestCase):
                     *,
                     tool_settings: object | None = None,
                     tool_format: object | None = None,
+                    **kwargs: object,
                 ) -> _ExtractionCliOrchestrator:
-                    _ = loader, tool_settings, tool_format
+                    _ = loader, tool_settings, tool_format, kwargs
                     call_options = cast(Any, settings).call_options
                     assert isinstance(call_options, Mapping)
                     response_format = cast(
@@ -2179,8 +2180,9 @@ class CliTaskCommandShellTestCase(TestCase):
             *,
             tool_settings: object | None = None,
             tool_format: object | None = None,
+            **kwargs: object,
         ) -> _ExtractionCliOrchestrator:
-            _ = loader, settings, tool_settings, tool_format
+            _ = loader, settings, tool_settings, tool_format, kwargs
             return orchestrator
 
         with (
@@ -2267,8 +2269,9 @@ class CliTaskCommandShellTestCase(TestCase):
             *,
             tool_settings: object | None = None,
             tool_format: object | None = None,
+            **kwargs: object,
         ) -> _ExtractionCliOrchestrator:
-            _ = loader, settings, tool_settings, tool_format
+            _ = loader, settings, tool_settings, tool_format, kwargs
             return orchestrator
 
         with (

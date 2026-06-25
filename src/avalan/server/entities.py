@@ -1,4 +1,9 @@
-from ..entities import MessageRole, OrchestratorSettings, ReasoningEffort
+from ..entities import (
+    MessageRole,
+    OrchestratorSettings,
+    ReasoningEffort,
+    ToolNamePolicySettings,
+)
 from ..tool.context import ToolSettingsContext
 from .authority import (
     reject_remote_runtime_authority_extra_fields,
@@ -168,6 +173,7 @@ class OrchestratorContext:
     specs_path: str | None = None
     settings: OrchestratorSettings | None = None
     tool_settings: ToolSettingsContext | None = None
+    tool_name_policy: ToolNamePolicySettings | None = None
 
 
 class ResponseFormatText(BaseModel):
