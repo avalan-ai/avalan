@@ -3550,6 +3550,161 @@ class FlowRunCommandTestCase(TestCase):
         self.assertTrue(settings.allow_media_tools)
         self.assertEqual(settings.max_head_lines, 12)
 
+    def test_flow_tool_manager_passes_sandbox_runtime_to_shell_toolset(
+        self,
+    ) -> None:
+        captured_kwargs: list[dict[str, object]] = []
+
+        def shell_toolset_factory(**kwargs: object) -> ToolSet:
+            captured_kwargs.append(kwargs)
+            return ToolSet(
+                namespace=cast(str | None, kwargs.get("namespace")),
+                tools=[],
+            )
+
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+            patch.object(
+                flow_cmds,
+                "ShellToolSet",
+                side_effect=shell_toolset_factory,
+            ),
+            patch.object(
+                flow_cmds.ToolManager,
+                "create_instance",
+                return_value="manager",
+            ),
+        ):
+            manager = flow_cmds._flow_tool_manager(
+                _args(
+                    tool=["shell.cat"],
+                    tool_shell_backend="sandbox",
+                    tool_sandbox_backend="seatbelt",
+                    tool_sandbox_profile="host-tools",
+                    tool_sandbox_trusted_executables=["/bin/cat"],
+                    tool_sandbox_network_mode="none",
+                    tool_shell_sandbox_required=True,
+                )
+            )
+
+        self.assertEqual(manager, "manager")
+        self.assertEqual(len(captured_kwargs), 1)
+        shell_kwargs = captured_kwargs[0]
+        self.assertIn("isolation_runtime", shell_kwargs)
+        self.assertNotIn("container_runtime", shell_kwargs)
+        settings = cast(ShellToolSettings, shell_kwargs["settings"])
+        self.assertEqual(settings.backend, "sandbox")
+        runtime = shell_kwargs["isolation_runtime"]
+        self.assertIsNotNone(getattr(runtime, "sandbox_backend"))
+        mode = getattr(getattr(runtime, "effective_settings"), "mode")
+        self.assertEqual(getattr(mode, "value", mode), "sandbox")
+
+    def test_flow_tool_manager_passes_container_runtime_to_shell_toolset(
+        self,
+    ) -> None:
+        captured_kwargs: list[dict[str, object]] = []
+
+        def shell_toolset_factory(**kwargs: object) -> ToolSet:
+            captured_kwargs.append(kwargs)
+            return ToolSet(
+                namespace=cast(str | None, kwargs.get("namespace")),
+                tools=[],
+            )
+
+        image = "ghcr.io/example/tools@sha256:" + "2" * 64
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+            patch.object(
+                flow_cmds,
+                "ShellToolSet",
+                side_effect=shell_toolset_factory,
+            ),
+            patch.object(
+                flow_cmds.ToolManager,
+                "create_instance",
+                return_value="manager",
+            ),
+        ):
+            manager = flow_cmds._flow_tool_manager(
+                _args(
+                    tool=["shell.cat"],
+                    tool_shell_execution_mode="container",
+                    tool_container_backend="docker",
+                    tool_container_profile="workspace-readonly",
+                    tool_container_image=image,
+                    tool_container_workspace_root=".",
+                    tool_container_pull_policy="never",
+                    tool_container_network_mode="none",
+                    tool_container_review_mode="deny",
+                    tool_shell_container_required=True,
+                )
+            )
+
+        self.assertEqual(manager, "manager")
+        self.assertEqual(len(captured_kwargs), 1)
+        shell_kwargs = captured_kwargs[0]
+        self.assertIn("container_runtime", shell_kwargs)
+        self.assertNotIn("isolation_runtime", shell_kwargs)
+        settings = cast(ShellToolSettings, shell_kwargs["settings"])
+        self.assertEqual(settings.backend, "container")
+        runtime = shell_kwargs["container_runtime"]
+        self.assertIsNotNone(getattr(runtime, "effective_settings"))
+
+    def test_flow_tool_manager_rejects_container_policy_for_sandbox_shell(
+        self,
+    ) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "2" * 64
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+            patch.object(flow_cmds, "ShellToolSet") as shell_toolset,
+        ):
+            with self.assertRaisesRegex(
+                AssertionError,
+                "tool.container requires tool.shell backend container",
+            ):
+                flow_cmds._flow_tool_manager(
+                    _args(
+                        tool=["shell.cat"],
+                        tool_shell_backend="sandbox",
+                        tool_container_backend="docker",
+                        tool_container_profile="workspace-readonly",
+                        tool_container_image=image,
+                    )
+                )
+
+        shell_toolset.assert_not_called()
+
+    def test_flow_tool_manager_rejects_sandbox_policy_without_sandbox_shell(
+        self,
+    ) -> None:
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+            patch.object(flow_cmds, "ShellToolSet") as shell_toolset,
+        ):
+            with self.assertRaisesRegex(
+                AssertionError,
+                "tool.sandbox requires tool.shell backend sandbox",
+            ):
+                flow_cmds._flow_tool_manager(
+                    _args(
+                        tool=["shell.cat"],
+                        tool_shell_backend="local",
+                        tool_sandbox_backend="seatbelt",
+                        tool_sandbox_profile="host-tools",
+                        tool_sandbox_trusted_executables=["/bin/cat"],
+                    )
+                )
+
+        shell_toolset.assert_not_called()
+
     def test_flow_tool_manager_does_not_match_shell_like_namespaces(
         self,
     ) -> None:

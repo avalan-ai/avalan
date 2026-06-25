@@ -3755,7 +3755,19 @@ class CLI:
                 elif origin.__name__ == "Literal":
                     ftype = type(args[0])
 
-            if ftype is bool or isinstance(field.default, bool):
+            if (
+                settings_cls is ShellToolSettings
+                and prefix == "shell"
+                and field.name in {"backend", "execution_mode"}
+            ):
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    choices=("local", "sandbox", "container"),
+                    default=None,
+                    help="Trusted shell execution mode.",
+                )
+            elif ftype is bool or isinstance(field.default, bool):
                 group.add_argument(
                     option, dest=dest, action="store_true", default=None
                 )
@@ -3890,6 +3902,147 @@ class CLI:
                 help="Trusted container escalation review mode.",
             )
             group.add_argument(
+                "--tool-sandbox-backend",
+                dest="tool_sandbox_backend",
+                choices=("seatbelt", "bubblewrap"),
+                default=None,
+                help="Trusted sandbox backend for shell tools.",
+            )
+            group.add_argument(
+                "--tool-sandbox-profile",
+                dest="tool_sandbox_profile",
+                type=str,
+                default=None,
+                help="Trusted default sandbox profile name.",
+            )
+            group.add_argument(
+                "--tool-sandbox-trusted-executable",
+                dest="tool_sandbox_trusted_executables",
+                action="append",
+                type=str,
+                default=None,
+                help="Trusted absolute executable allowed in the sandbox.",
+            )
+            group.add_argument(
+                "--tool-sandbox-executable-search-root",
+                dest="tool_sandbox_executable_search_roots",
+                action="append",
+                type=str,
+                default=None,
+                help="Trusted absolute executable search root.",
+            )
+            group.add_argument(
+                "--tool-sandbox-read-root",
+                dest="tool_sandbox_read_roots",
+                action="append",
+                type=str,
+                default=None,
+                help="Trusted absolute read root for the sandbox.",
+            )
+            group.add_argument(
+                "--tool-sandbox-write-root",
+                dest="tool_sandbox_write_roots",
+                action="append",
+                type=str,
+                default=None,
+                help="Trusted absolute write root for the sandbox.",
+            )
+            group.add_argument(
+                "--tool-sandbox-deny-root",
+                dest="tool_sandbox_deny_roots",
+                action="append",
+                type=str,
+                default=None,
+                help="Trusted absolute deny root for the sandbox.",
+            )
+            group.add_argument(
+                "--tool-sandbox-scratch-root",
+                dest="tool_sandbox_scratch_roots",
+                action="append",
+                type=str,
+                default=None,
+                help="Trusted absolute scratch root for sandbox temp files.",
+            )
+            group.add_argument(
+                "--tool-sandbox-output-root",
+                dest="tool_sandbox_output_roots",
+                action="append",
+                type=str,
+                default=None,
+                help="Trusted absolute output root for generated artifacts.",
+            )
+            group.add_argument(
+                "--tool-sandbox-network-mode",
+                dest="tool_sandbox_network_mode",
+                choices=("none", "loopback", "allowlist", "full"),
+                default=None,
+                help="Trusted sandbox network mode.",
+            )
+            group.add_argument(
+                "--tool-sandbox-network-egress",
+                dest="tool_sandbox_network_egress",
+                action="append",
+                type=str,
+                default=None,
+                help="Trusted sandbox network egress allowlist entry.",
+            )
+            group.add_argument(
+                "--tool-sandbox-timeout-seconds",
+                dest="tool_sandbox_timeout_seconds",
+                type=int,
+                default=None,
+                help="Trusted sandbox execution timeout.",
+            )
+            group.add_argument(
+                "--tool-sandbox-pids",
+                dest="tool_sandbox_pids",
+                type=int,
+                default=None,
+                help="Trusted sandbox process limit.",
+            )
+            group.add_argument(
+                "--tool-sandbox-max-stdout-bytes",
+                dest="tool_sandbox_max_stdout_bytes",
+                type=int,
+                default=None,
+                help="Trusted sandbox stdout byte limit.",
+            )
+            group.add_argument(
+                "--tool-sandbox-max-stderr-bytes",
+                dest="tool_sandbox_max_stderr_bytes",
+                type=int,
+                default=None,
+                help="Trusted sandbox stderr byte limit.",
+            )
+            group.add_argument(
+                "--tool-sandbox-max-artifact-bytes",
+                dest="tool_sandbox_max_artifact_bytes",
+                type=int,
+                default=None,
+                help="Trusted sandbox artifact byte limit.",
+            )
+            group.add_argument(
+                "--tool-sandbox-allow-artifacts",
+                dest="tool_sandbox_allow_artifacts",
+                action="store_true",
+                default=None,
+                help="Allow sandbox generated artifacts.",
+            )
+            group.add_argument(
+                "--tool-sandbox-child-processes",
+                dest="tool_sandbox_child_processes",
+                choices=("deny", "allow"),
+                default=None,
+                help="Trusted sandbox child process policy.",
+            )
+            group.add_argument(
+                "--tool-sandbox-inherited-fds",
+                dest="tool_sandbox_inherited_fds",
+                choices=("deny", "stdio", "explicit"),
+                default=None,
+                help="Trusted sandbox inherited file descriptor policy.",
+            )
+            group.add_argument(
                 "--tool-shell-container-profile",
                 dest="tool_shell_container_profile",
                 type=str,
@@ -3899,6 +4052,20 @@ class CLI:
             group.add_argument(
                 "--tool-shell-container-required",
                 dest="tool_shell_container_required",
+                action="store_true",
+                default=None,
+                help="Fail closed instead of falling back to local shell.",
+            )
+            group.add_argument(
+                "--tool-shell-sandbox-profile",
+                dest="tool_shell_sandbox_profile",
+                type=str,
+                default=None,
+                help="Select an approved sandbox profile for shell tools.",
+            )
+            group.add_argument(
+                "--tool-shell-sandbox-required",
+                dest="tool_shell_sandbox_required",
                 action="store_true",
                 default=None,
                 help="Fail closed instead of falling back to local shell.",

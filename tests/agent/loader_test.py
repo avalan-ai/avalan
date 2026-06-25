@@ -31,6 +31,12 @@ from avalan.entities import (
 )
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManagerMode
+from avalan.isolation import (
+    IsolationProfileSelection,
+    IsolationSettings,
+    IsolationToolRuntimeSettings,
+    trusted_isolation_source,
+)
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.tool import ToolSet
 from avalan.tool.browser import BrowserToolSettings
@@ -701,6 +707,69 @@ profile = "workspace-readonly"
             self.assertIsNone(tool_settings.extra)
             await stack.aclose()
 
+    async def test_sandbox_toml_sections_load_trusted_settings(self) -> None:
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + """
+[tool]
+enable = ["shell.cat"]
+
+[tool.sandbox]
+backend = "seatbelt"
+default_profile = "host-tools"
+
+[tool.sandbox.profiles.host-tools]
+trusted_executables = ["/bin/cat"]
+read_roots = ["/tmp"]
+scratch_roots = ["/tmp"]
+output_roots = ["/tmp"]
+child_processes = "deny"
+inherited_fds = "stdio"
+
+[tool.sandbox.profiles.host-tools.network]
+mode = "none"
+
+[tool.sandbox.profiles.host-tools.resources]
+timeout_seconds = 10
+pids = 16
+
+[tool.shell]
+backend = "sandbox"
+
+[tool.shell.sandbox]
+profile = "host-tools"
+
+""")
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(tmp.name, agent_id=uuid4())
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertEqual(tool_settings.shell.backend, "sandbox")
+            assert tool_settings.shell.sandbox is not None
+            self.assertTrue(tool_settings.shell.sandbox.required)
+            self.assertIsNotNone(tool_settings.isolation)
+            assert tool_settings.isolation is not None
+            effective = tool_settings.isolation.effective_settings
+            self.assertEqual(effective.mode, "sandbox")
+            assert effective.sandbox is not None
+            self.assertEqual(effective.sandbox.profile_name, "host-tools")
+            self.assertTrue(effective.sandbox.required)
+            self.assertIsNone(tool_settings.extra)
+            await stack.aclose()
+
     async def test_runtime_container_requires_envelope_aware_loader(
         self,
     ) -> None:
@@ -924,7 +993,7 @@ mode = "local"
             self.assertIsNone(tool_settings.extra)
             await stack.aclose()
 
-    async def test_tool_container_registry_only_is_accepted(self) -> None:
+    async def test_tool_container_registry_only_is_rejected(self) -> None:
         image = "ghcr.io/example/tools@sha256:" + "4" * 64
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
             tmp.write(_minimal_agent_toml() + f"""
@@ -943,17 +1012,11 @@ image = "{image}"
                 stack=stack,
             )
 
-            with patch.object(
-                loader,
-                "from_settings",
-                new=AsyncMock(return_value="orch"),
-            ) as from_settings:
-                result = await loader.from_file(tmp.name, agent_id=uuid4())
-
-            self.assertEqual(result, "orch")
-            tool_settings = from_settings.call_args.kwargs["tool_settings"]
-            self.assertIsNone(tool_settings.container)
-            self.assertIsNone(tool_settings.extra)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "tool.container requires tool.shell backend container",
+            ):
+                await loader.from_file(tmp.name, agent_id=uuid4())
             await stack.aclose()
 
     def test_validate_agent_config_accepts_container_syntax(self) -> None:
@@ -985,6 +1048,9 @@ image = "{image}"
         cases = (
             (
                 """
+[tool.shell]
+backend = "container"
+
 [tool.container]
 backend = "docker"
 unknown = true
@@ -992,7 +1058,20 @@ unknown = true
                 "Unknown container fields",
             ),
             (
+                """
+[tool.shell]
+backend = "container"
+
+[tool.container]
+backend = "none"
+""",
+                "tool.container backend must be docker or apple-container",
+            ),
+            (
                 f"""
+[tool.shell]
+backend = "container"
+
 [tool.container]
 backend = "docker"
 
@@ -1034,7 +1113,7 @@ image = "{image}"
 [tool.shell.container]
 profile = "workspace-readonly"
 """,
-                "tool.shell.container requires tool.shell backend container",
+                "tool.container requires tool.shell backend container",
             ),
             (
                 """
@@ -1056,6 +1135,134 @@ image = "{image}"
 profile = "missing"
 """,
                 "selected profile must be allowed",
+            ),
+            (
+                """
+[tool.shell]
+execution_mode = 1
+""",
+                "tool.shell execution_mode must be a string",
+            ),
+            (
+                """
+[tool.shell]
+execution_mode = "remote"
+""",
+                (
+                    "tool.shell execution_mode must be local, sandbox, or"
+                    " container"
+                ),
+            ),
+            (
+                """
+[tool.shell]
+backend = "local"
+execution_mode = "sandbox"
+""",
+                "tool.shell backend and execution_mode must match",
+            ),
+            (
+                """
+[tool.shell]
+backend = "sandbox"
+
+[tool.sandbox]
+backend = "seatbelt"
+unknown = true
+""",
+                "Unknown isolation fields",
+            ),
+            (
+                """
+[tool.shell]
+backend = "sandbox"
+
+[tool.sandbox]
+backend = "seatbelt"
+
+[tool.sandbox.profiles.host-tools]
+mounts = []
+""",
+                "Unknown isolation fields",
+            ),
+            (
+                f"""
+[tool.container]
+backend = "docker"
+
+[tool.container.profiles.workspace-readonly]
+image = "{image}"
+""",
+                "tool.container requires tool.shell backend container",
+            ),
+            (
+                """
+[tool.sandbox]
+backend = "seatbelt"
+
+[tool.sandbox.profiles.host-tools]
+trusted_executables = ["/bin/cat"]
+""",
+                "tool.sandbox requires tool.shell backend sandbox",
+            ),
+            (
+                f"""
+[tool.container]
+backend = "docker"
+
+[tool.container.profiles.workspace-readonly]
+image = "{image}"
+
+[tool.sandbox]
+backend = "seatbelt"
+
+[tool.sandbox.profiles.host-tools]
+trusted_executables = ["/bin/cat"]
+""",
+                "tool cannot mix sandbox and container policy",
+            ),
+            (
+                """
+[tool.shell]
+backend = "sandbox"
+
+[tool.shell.sandbox]
+required = false
+""",
+                "requires required=true",
+            ),
+            (
+                """
+[tool.shell]
+backend = "sandbox"
+
+[tool.shell.sandbox]
+profile = "missing"
+""",
+                "required sandbox profile unavailable",
+            ),
+            (
+                """
+[tool.shell]
+backend = "sandbox"
+
+[tool.shell.container]
+profile = "workspace-readonly"
+""",
+                "tool.shell.container requires tool.shell backend container",
+            ),
+            (
+                """
+[tool.shell]
+backend = "sandbox"
+
+[tool.shell.container]
+profile = "workspace-readonly"
+
+[tool.shell.sandbox]
+profile = "host-tools"
+""",
+                "tool.shell cannot mix sandbox and container policy",
             ),
         )
 
@@ -3439,6 +3646,45 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         kwargs = await _from_settings_tool_manager_kwargs(
             _orchestrator_settings(tools=None),
             tool_settings=ToolSettingsContext(shell=ShellToolSettings()),
+        )
+
+        self.assertEqual(_shell_namespaces(kwargs), ["shell"])
+        self.assertIsNone(kwargs["enable_tools"])
+
+    async def test_shell_toolset_uses_isolation_runtime_from_settings_context(
+        self,
+    ):
+        isolation_settings = IsolationSettings.from_dict(
+            {
+                "mode": "sandbox",
+                "sandbox": {
+                    "backend": "seatbelt",
+                    "default_profile": "host-tools",
+                    "allowed_profiles": ["host-tools"],
+                    "profiles": {
+                        "host-tools": {
+                            "trusted_executables": ["/bin/cat"],
+                        },
+                    },
+                },
+            },
+            source=trusted_isolation_source("sdk"),
+        )
+        runtime = IsolationToolRuntimeSettings(
+            effective_settings=isolation_settings.select_profile(
+                IsolationProfileSelection(
+                    mode="sandbox",
+                    profile="host-tools",
+                    required=True,
+                )
+            )
+        )
+        kwargs = await _from_settings_tool_manager_kwargs(
+            _orchestrator_settings(tools=None),
+            tool_settings=ToolSettingsContext(
+                isolation=runtime,
+                shell=ShellToolSettings(execution_mode="sandbox"),
+            ),
         )
 
         self.assertEqual(_shell_namespaces(kwargs), ["shell"])

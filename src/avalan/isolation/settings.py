@@ -1,4 +1,5 @@
 from ..container import (
+    ContainerAsyncBackend,
     ContainerEffectiveSettings,
     ContainerExecutionScope,
     ContainerProfileSelection,
@@ -1150,17 +1151,46 @@ class IsolationEffectiveSettings:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class IsolationToolRuntimeSettings:
     effective_settings: IsolationEffectiveSettings
+    sandbox_backend: object | None = None
+    container_backend: ContainerAsyncBackend | None = None
     authorization_provider: Callable[[object], object] | None = None
+    secret_resolver: Callable[[str], object] | None = None
     audit_listeners: Sequence[Callable[[object], object]] = field(
         default_factory=tuple,
     )
 
     def __post_init__(self) -> None:
         assert isinstance(self.effective_settings, IsolationEffectiveSettings)
+        mode = cast(IsolationMode, self.effective_settings.mode)
+        assert not (
+            mode is not IsolationMode.SANDBOX
+            and self.sandbox_backend is not None
+        ), "sandbox backend requires sandbox isolation mode"
+        assert not (
+            mode is not IsolationMode.CONTAINER
+            and self.container_backend is not None
+        ), "container backend requires container isolation mode"
+        assert not (
+            mode is not IsolationMode.CONTAINER
+            and self.secret_resolver is not None
+        ), "secret_resolver requires container isolation mode"
+        if self.sandbox_backend is not None:
+            assert _is_sandbox_backend(
+                self.sandbox_backend
+            ), "sandbox_backend must implement probe and execute"
+        if self.container_backend is not None:
+            assert isinstance(
+                self.container_backend,
+                ContainerAsyncBackend,
+            )
         if self.authorization_provider is not None:
             assert callable(
                 self.authorization_provider
             ), "authorization_provider must be callable"
+        if self.secret_resolver is not None:
+            assert callable(
+                self.secret_resolver
+            ), "secret_resolver must be callable"
         for listener in self.audit_listeners:
             assert callable(listener), "audit listeners must be callable"
         object.__setattr__(
@@ -1231,6 +1261,11 @@ def trusted_isolation_runtime_from_mapping(
     *,
     source: IsolationSettingsSource,
     selection: IsolationProfileSelection | None = None,
+    sandbox_backend: object | None = None,
+    container_backend: ContainerAsyncBackend | None = None,
+    authorization_provider: Callable[[object], object] | None = None,
+    secret_resolver: Callable[[str], object] | None = None,
+    audit_listeners: Sequence[Callable[[object], object]] = (),
 ) -> IsolationToolRuntimeSettings:
     settings = trusted_isolation_settings_from_mapping(raw, source=source)
     effective = settings.select_profile(
@@ -1239,7 +1274,14 @@ def trusted_isolation_runtime_from_mapping(
             mode=settings.mode,
         )
     )
-    return IsolationToolRuntimeSettings(effective_settings=effective)
+    return IsolationToolRuntimeSettings(
+        effective_settings=effective,
+        sandbox_backend=sandbox_backend,
+        container_backend=container_backend,
+        authorization_provider=authorization_provider,
+        secret_resolver=secret_resolver,
+        audit_listeners=audit_listeners,
+    )
 
 
 def serialize_isolation_effective_settings(
@@ -1436,6 +1478,12 @@ def _assert_fields(
 
 def _assert_mapping(value: object, field_name: str) -> None:
     assert isinstance(value, Mapping), f"{field_name} must be a mapping"
+
+
+def _is_sandbox_backend(value: object) -> bool:
+    return callable(getattr(value, "probe", None)) and callable(
+        getattr(value, "execute", None)
+    )
 
 
 def _assert_profile_name(value: object, field_name: str) -> None:

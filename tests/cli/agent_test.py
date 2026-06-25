@@ -57,6 +57,7 @@ from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import StreamItemKind, StreamProviderEvent
+from avalan.sandbox import BubblewrapSandboxBackend, SeatbeltSandboxBackend
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
@@ -826,6 +827,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             "backend": "transformers",
             "no_repl": False,
             "quiet": False,
+            "tool_shell_execution_mode": None,
             "tool_container_backend": None,
             "tool_container_profile": None,
             "tool_container_image": None,
@@ -840,6 +842,27 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             "tool_container_review_mode": None,
             "tool_shell_container_profile": None,
             "tool_shell_container_required": None,
+            "tool_sandbox_backend": None,
+            "tool_sandbox_profile": None,
+            "tool_sandbox_trusted_executables": None,
+            "tool_sandbox_executable_search_roots": None,
+            "tool_sandbox_read_roots": None,
+            "tool_sandbox_write_roots": None,
+            "tool_sandbox_deny_roots": None,
+            "tool_sandbox_scratch_roots": None,
+            "tool_sandbox_output_roots": None,
+            "tool_sandbox_network_mode": None,
+            "tool_sandbox_network_egress": None,
+            "tool_sandbox_timeout_seconds": None,
+            "tool_sandbox_pids": None,
+            "tool_sandbox_max_stdout_bytes": None,
+            "tool_sandbox_max_stderr_bytes": None,
+            "tool_sandbox_max_artifact_bytes": None,
+            "tool_sandbox_allow_artifacts": None,
+            "tool_sandbox_child_processes": None,
+            "tool_sandbox_inherited_fds": None,
+            "tool_shell_sandbox_profile": None,
+            "tool_shell_sandbox_required": None,
         }
         values.update(overrides)
         return Namespace(**values)
@@ -1277,6 +1300,16 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    def test_shell_tool_template_settings_renders_single_mode_field(self):
+        settings = ShellToolSettings(
+            backend="sandbox",
+            execution_mode="sandbox",
+        )
+
+        rendered = agent_cmds._shell_tool_template_settings(settings)
+
+        self.assertEqual(rendered, {"backend": "sandbox"})
+
     def test_shell_tool_template_settings_rejects_non_simple_sequences(self):
         self.assertFalse(agent_cmds._is_simple_string_sequence("rg"))
         self.assertFalse(agent_cmds._is_simple_string_sequence(1))
@@ -1318,6 +1351,79 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         assert effective.profile is not None
         self.assertEqual(effective.profile.resources.cpu_count, 1)
         self.assertEqual(effective.profile.resources.memory_bytes, 268435456)
+
+    def test_agent_tool_settings_builds_sandbox_runtime_from_cli(self):
+        args = Namespace(
+            tool_shell_backend="sandbox",
+            tool_sandbox_backend="seatbelt",
+            tool_sandbox_profile="host-tools",
+            tool_sandbox_trusted_executables=["/bin/cat"],
+            tool_sandbox_executable_search_roots=["/bin"],
+            tool_sandbox_read_roots=["/workspace"],
+            tool_sandbox_write_roots=["/workspace/out"],
+            tool_sandbox_deny_roots=["/etc/ssh"],
+            tool_sandbox_scratch_roots=["/tmp/avalan"],
+            tool_sandbox_output_roots=["/workspace/out"],
+            tool_sandbox_network_mode="none",
+            tool_sandbox_network_egress=None,
+            tool_sandbox_timeout_seconds=30,
+            tool_sandbox_pids=16,
+            tool_sandbox_max_stdout_bytes=4096,
+            tool_sandbox_max_stderr_bytes=2048,
+            tool_sandbox_max_artifact_bytes=None,
+            tool_sandbox_allow_artifacts=None,
+            tool_sandbox_child_processes="deny",
+            tool_sandbox_inherited_fds="stdio",
+            tool_shell_sandbox_profile="host-tools",
+            tool_shell_sandbox_required=True,
+        )
+
+        settings = agent_cmds._agent_tool_settings(args)
+
+        self.assertIsInstance(settings.shell, ShellToolSettings)
+        self.assertEqual(settings.shell.backend, "sandbox")
+        self.assertIsNotNone(settings.isolation)
+        assert settings.isolation is not None
+        self.assertIsInstance(
+            settings.isolation.sandbox_backend,
+            SeatbeltSandboxBackend,
+        )
+        effective = settings.isolation.effective_settings
+        self.assertEqual(effective.mode, "sandbox")
+        assert effective.sandbox is not None
+        self.assertTrue(effective.sandbox.required)
+        self.assertEqual(effective.sandbox.profile_name, "host-tools")
+        self.assertEqual(
+            effective.sandbox.profile.trusted_executables,
+            ("/bin/cat",),
+        )
+        self.assertEqual(effective.sandbox.profile.resources.pids, 16)
+
+    def test_agent_tool_settings_wires_bubblewrap_sandbox_backend(self):
+        args = self._agent_init_args(
+            tool_shell_backend="sandbox",
+            tool_sandbox_backend="bubblewrap",
+            tool_sandbox_profile="host-tools",
+            tool_sandbox_trusted_executables=["/bin/cat"],
+        )
+
+        settings = agent_cmds._agent_tool_settings(args)
+
+        self.assertIsInstance(settings.shell, ShellToolSettings)
+        self.assertEqual(settings.shell.backend, "sandbox")
+        self.assertIsNotNone(settings.isolation)
+        assert settings.isolation is not None
+        self.assertIsInstance(
+            settings.isolation.sandbox_backend,
+            BubblewrapSandboxBackend,
+        )
+
+    def test_agent_sandbox_backend_from_args_returns_none_without_backend(
+        self,
+    ):
+        args = self._agent_init_args()
+
+        self.assertIsNone(agent_cmds._agent_sandbox_backend_from_args(args))
 
     def test_agent_tool_settings_wires_apple_container_backend(self):
         args = Namespace(
@@ -1458,7 +1564,87 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             AssertionError,
-            "tool.shell.container requires tool.shell backend container",
+            "tool.container requires tool.shell backend container",
+        ):
+            agent_cmds._agent_tool_settings(args)
+
+    def test_agent_tool_settings_rejects_mixed_sandbox_container_policy(
+        self,
+    ):
+        args = Namespace(
+            tool_shell_backend="sandbox",
+            tool_container_backend="docker",
+            tool_container_profile="workspace-readonly",
+            tool_container_image="ghcr.io/example/tools@sha256:" + "2" * 64,
+            tool_container_workspace_root=".",
+            tool_container_pull_policy="never",
+            tool_container_platform="linux/amd64",
+            tool_container_cpu_count=1,
+            tool_container_memory_bytes=268435456,
+            tool_container_pids=64,
+            tool_container_timeout_seconds=30,
+            tool_container_network_mode="none",
+            tool_container_review_mode="deny",
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "tool.container requires tool.shell backend container",
+        ):
+            agent_cmds._agent_tool_settings(args)
+
+    def test_agent_tool_settings_rejects_container_policy_without_shell_mode(
+        self,
+    ):
+        args = Namespace(
+            tool_container_backend="docker",
+            tool_container_profile="workspace-readonly",
+            tool_container_image="ghcr.io/example/tools@sha256:" + "2" * 64,
+            tool_container_workspace_root=".",
+            tool_container_pull_policy="never",
+            tool_container_platform="linux/amd64",
+            tool_container_cpu_count=1,
+            tool_container_memory_bytes=268435456,
+            tool_container_pids=64,
+            tool_container_timeout_seconds=30,
+            tool_container_network_mode="none",
+            tool_container_review_mode="deny",
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "tool.container requires tool.shell backend container",
+        ):
+            agent_cmds._agent_tool_settings(args)
+
+    def test_agent_tool_settings_rejects_sandbox_policy_without_shell_mode(
+        self,
+    ):
+        args = Namespace(
+            tool_sandbox_backend="seatbelt",
+            tool_sandbox_profile="host-tools",
+            tool_sandbox_trusted_executables=["/bin/cat"],
+            tool_sandbox_executable_search_roots=["/bin"],
+            tool_sandbox_read_roots=["/workspace"],
+            tool_sandbox_write_roots=None,
+            tool_sandbox_deny_roots=None,
+            tool_sandbox_scratch_roots=None,
+            tool_sandbox_output_roots=None,
+            tool_sandbox_network_mode="none",
+            tool_sandbox_network_egress=None,
+            tool_sandbox_timeout_seconds=None,
+            tool_sandbox_pids=None,
+            tool_sandbox_max_stdout_bytes=None,
+            tool_sandbox_max_stderr_bytes=None,
+            tool_sandbox_max_artifact_bytes=None,
+            tool_sandbox_allow_artifacts=None,
+            tool_sandbox_child_processes=None,
+            tool_sandbox_inherited_fds=None,
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "tool.sandbox requires tool.shell backend sandbox",
         ):
             agent_cmds._agent_tool_settings(args)
 
@@ -1497,6 +1683,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         output = console.print.call_args.args[0].code
         parsed = tomllib.loads(output)
         self.assertEqual(parsed["tool"]["shell"]["backend"], "container")
+        self.assertNotIn("execution_mode", parsed["tool"]["shell"])
         self.assertEqual(parsed["tool"]["container"]["backend"], "docker")
         self.assertEqual(
             parsed["tool"]["container"]["profiles"]["workspace-readonly"][
@@ -1510,13 +1697,294 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             ]["cpu_count"],
             1,
         )
+        self.assertNotIn(
+            "workspace_root",
+            parsed["tool"]["container"]["profiles"]["workspace-readonly"],
+        )
+        self.assertNotIn(
+            "pull_policy",
+            parsed["tool"]["container"]["profiles"]["workspace-readonly"],
+        )
+        self.assertNotIn(
+            "network",
+            parsed["tool"]["container"]["profiles"]["workspace-readonly"],
+        )
         self.assertEqual(
             parsed["tool"]["shell"]["container"],
             {"profile": "workspace-readonly", "required": True},
         )
 
+    async def test_agent_init_container_settings_accepts_execution_mode_alias(
+        self,
+    ):
+        image = "ghcr.io/example/tools@sha256:" + "3" * 64
+        args = self._agent_init_args(
+            goal_instructions=None,
+            tool=["shell.cat"],
+            tool_shell_execution_mode="container",
+            tool_container_backend="docker",
+            tool_container_profile="workspace-readonly",
+            tool_container_image=image,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T"]),
+            patch.object(agent_cmds.Prompt, "ask", side_effect=["N", "uri"]),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        parsed = tomllib.loads(output)
+        self.assertEqual(parsed["tool"]["shell"]["backend"], "container")
+        self.assertNotIn("execution_mode", parsed["tool"]["shell"])
+        self.assertEqual(parsed["tool"]["container"]["backend"], "docker")
+        self.assertEqual(
+            parsed["tool"]["container"]["profiles"]["workspace-readonly"][
+                "image"
+            ],
+            image,
+        )
+
+    async def test_agent_init_sandbox_settings_output(self):
+        args = self._agent_init_args(
+            goal_instructions=None,
+            tool=["shell.cat"],
+            tool_shell_backend="sandbox",
+            tool_sandbox_backend="seatbelt",
+            tool_sandbox_profile="host-tools",
+            tool_sandbox_trusted_executables=["/bin/cat"],
+            tool_sandbox_executable_search_roots=["/bin"],
+            tool_sandbox_read_roots=["/workspace"],
+            tool_sandbox_write_roots=None,
+            tool_sandbox_deny_roots=["/etc/ssh"],
+            tool_sandbox_scratch_roots=["/tmp/avalan"],
+            tool_sandbox_output_roots=None,
+            tool_sandbox_network_mode="none",
+            tool_sandbox_network_egress=None,
+            tool_sandbox_timeout_seconds=30,
+            tool_sandbox_pids=16,
+            tool_sandbox_max_stdout_bytes=4096,
+            tool_sandbox_max_stderr_bytes=None,
+            tool_sandbox_max_artifact_bytes=None,
+            tool_sandbox_allow_artifacts=None,
+            tool_sandbox_child_processes="deny",
+            tool_sandbox_inherited_fds="stdio",
+            tool_shell_sandbox_profile="host-tools",
+            tool_shell_sandbox_required=True,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T"]),
+            patch.object(agent_cmds.Prompt, "ask", side_effect=["N", "uri"]),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        parsed = tomllib.loads(output)
+        self.assertEqual(parsed["tool"]["shell"]["backend"], "sandbox")
+        self.assertNotIn("execution_mode", parsed["tool"]["shell"])
+        self.assertEqual(parsed["tool"]["sandbox"]["backend"], "seatbelt")
+        self.assertEqual(
+            parsed["tool"]["sandbox"]["profiles"]["host-tools"][
+                "trusted_executables"
+            ],
+            ["/bin/cat"],
+        )
+        self.assertEqual(
+            parsed["tool"]["sandbox"]["profiles"]["host-tools"]["resources"][
+                "pids"
+            ],
+            16,
+        )
+        self.assertNotIn(
+            "network",
+            parsed["tool"]["sandbox"]["profiles"]["host-tools"],
+        )
+        self.assertNotIn(
+            "child_processes",
+            parsed["tool"]["sandbox"]["profiles"]["host-tools"],
+        )
+        self.assertNotIn(
+            "inherited_fds",
+            parsed["tool"]["sandbox"]["profiles"]["host-tools"],
+        )
+        self.assertEqual(
+            parsed["tool"]["shell"]["sandbox"],
+            {"profile": "host-tools", "required": True},
+        )
+
+    async def test_agent_init_sandbox_settings_accepts_execution_mode_alias(
+        self,
+    ):
+        args = self._agent_init_args(
+            goal_instructions=None,
+            tool=["shell.cat"],
+            tool_shell_execution_mode="sandbox",
+            tool_sandbox_backend="seatbelt",
+            tool_sandbox_profile="host-tools",
+            tool_sandbox_trusted_executables=["/bin/cat"],
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T"]),
+            patch.object(agent_cmds.Prompt, "ask", side_effect=["N", "uri"]),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        parsed = tomllib.loads(output)
+        self.assertEqual(parsed["tool"]["shell"]["backend"], "sandbox")
+        self.assertNotIn("execution_mode", parsed["tool"]["shell"])
+        self.assertEqual(parsed["tool"]["sandbox"]["backend"], "seatbelt")
+        self.assertEqual(
+            parsed["tool"]["sandbox"]["default_profile"],
+            "host-tools",
+        )
+        self.assertEqual(
+            parsed["tool"]["sandbox"]["profiles"]["host-tools"][
+                "trusted_executables"
+            ],
+            ["/bin/cat"],
+        )
+
+    async def test_agent_init_sandbox_settings_renders_non_default_policies(
+        self,
+    ):
+        args = self._agent_init_args(
+            goal_instructions=None,
+            tool=["shell.cat"],
+            tool_shell_backend="sandbox",
+            tool_sandbox_backend="seatbelt",
+            tool_sandbox_profile="host-tools",
+            tool_sandbox_trusted_executables=["/bin/cat"],
+            tool_sandbox_network_mode="allowlist",
+            tool_sandbox_network_egress=["example.test"],
+            tool_sandbox_max_stderr_bytes=8192,
+            tool_sandbox_max_artifact_bytes=4096,
+            tool_sandbox_allow_artifacts=True,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T"]),
+            patch.object(agent_cmds.Prompt, "ask", side_effect=["N", "uri"]),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        parsed = tomllib.loads(output)
+        profile = parsed["tool"]["sandbox"]["profiles"]["host-tools"]
+        self.assertEqual(
+            profile["network"],
+            {
+                "mode": "allowlist",
+                "egress_allowlist": ["example.test"],
+            },
+        )
+        self.assertEqual(
+            profile["output"],
+            {
+                "max_stderr_bytes": 8192,
+                "max_artifact_bytes": 4096,
+                "allow_artifacts": True,
+            },
+        )
+
+    async def test_agent_init_sandbox_policy_validates_before_render(self):
+        args = self._agent_init_args(
+            tool_shell_backend="sandbox",
+            tool_sandbox_backend="seatbelt",
+            tool_sandbox_profile="host-tools",
+            tool_sandbox_trusted_executables=["/bin/cat"],
+            tool_sandbox_network_egress=["example.test"],
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        env = MagicMock()
+        template = MagicMock()
+        env.get_template.return_value = template
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "Environment", return_value=env),
+            self.assertRaisesRegex(
+                AssertionError,
+                "network none cannot define egress",
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        template.render.assert_not_called()
+
+    async def test_agent_init_container_policy_requires_shell_backend(self):
+        args = self._agent_init_args(
+            tool_container_backend="docker",
+            tool_container_profile="workspace-readonly",
+            tool_container_image="ghcr.io/example/tools@sha256:" + "3" * 64,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        env = MagicMock()
+        template = MagicMock()
+        env.get_template.return_value = template
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "Environment", return_value=env),
+            self.assertRaisesRegex(
+                AssertionError,
+                "tool.container requires tool.shell backend container",
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        template.render.assert_not_called()
+
+    async def test_agent_init_sandbox_policy_requires_shell_backend(self):
+        args = self._agent_init_args(
+            tool_sandbox_backend="seatbelt",
+            tool_sandbox_profile="host-tools",
+            tool_sandbox_trusted_executables=["/bin/cat"],
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        env = MagicMock()
+        template = MagicMock()
+        env.get_template.return_value = template
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "Environment", return_value=env),
+            self.assertRaisesRegex(
+                AssertionError,
+                "tool.sandbox requires tool.shell backend sandbox",
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        template.render.assert_not_called()
+
     async def test_agent_init_container_backend_requires_image(self):
         args = self._agent_init_args(
+            tool_shell_backend="container",
             tool_container_backend="docker",
         )
         console = MagicMock()
@@ -1540,8 +2008,6 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_agent_init_shell_container_profile_requires_backend(self):
         args = self._agent_init_args(
-            tool_container_backend="docker",
-            tool_container_image="ghcr.io/example/tools@sha256:" + "3" * 64,
             tool_shell_container_profile="workspace-readonly",
         )
         console = MagicMock()
@@ -1557,6 +2023,29 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertRaisesRegex(
                 AssertionError,
                 "tool.shell.container requires tool.shell backend container",
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        template.render.assert_not_called()
+
+    async def test_agent_init_shell_sandbox_profile_requires_backend(self):
+        args = self._agent_init_args(
+            tool_shell_sandbox_profile="host-tools",
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        env = MagicMock()
+        template = MagicMock()
+        env.get_template.return_value = template
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "Environment", return_value=env),
+            self.assertRaisesRegex(
+                AssertionError,
+                "tool.shell.sandbox requires tool.shell backend sandbox",
             ),
         ):
             await agent_cmds.agent_init(args, console, theme)
@@ -1590,6 +2079,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_agent_init_container_profile_requires_backend(self):
         args = self._agent_init_args(
+            tool_shell_backend="container",
             tool_container_profile="workspace-readonly",
             tool_container_cpu_count=1,
         )
@@ -1614,6 +2104,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_agent_init_rejects_unsupported_container_backend(self):
         args = self._agent_init_args(
+            tool_shell_backend="container",
             tool_container_backend="none",
             tool_container_profile="ignored",
             tool_container_cpu_count=1,

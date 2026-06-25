@@ -456,6 +456,8 @@ class CliShellToolOptionTestCase(TestCase):
         expected |= {
             "--tool-shell-container-profile",
             "--tool-shell-container-required",
+            "--tool-shell-sandbox-profile",
+            "--tool-shell-sandbox-required",
             "--tool-shell-executable-path",
             "--tool-shell-executable-search-path",
         }
@@ -3283,6 +3285,8 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(args.tool_shell_container_required)
         with self.assertRaises(SystemExit):
             parser.parse_args(["--tool-container-network-mode", "host"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--tool-shell-backend", "remote"])
         for backend in (
             "none",
             "auto",
@@ -3293,6 +3297,76 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
             with self.subTest(backend=backend):
                 with self.assertRaises(SystemExit):
                     parser.parse_args(["--tool-container-backend", backend])
+
+    def test_add_shell_tool_settings_arguments_accepts_sandbox_options(self):
+        parser = ArgumentParser()
+        CLI._add_tool_settings_arguments(
+            parser, prefix="shell", settings_cls=ShellToolSettings
+        )
+
+        args = parser.parse_args(
+            [
+                "--tool-shell-backend",
+                "sandbox",
+                "--tool-sandbox-backend",
+                "seatbelt",
+                "--tool-sandbox-profile",
+                "host-tools",
+                "--tool-sandbox-trusted-executable",
+                "/bin/cat",
+                "--tool-sandbox-executable-search-root",
+                "/bin",
+                "--tool-sandbox-read-root",
+                "/workspace",
+                "--tool-sandbox-write-root",
+                "/workspace/out",
+                "--tool-sandbox-deny-root",
+                "/etc/ssh",
+                "--tool-sandbox-scratch-root",
+                "/tmp/avalan",
+                "--tool-sandbox-output-root",
+                "/workspace/out",
+                "--tool-sandbox-network-mode",
+                "allowlist",
+                "--tool-sandbox-network-egress",
+                "api.example.test",
+                "--tool-sandbox-timeout-seconds",
+                "30",
+                "--tool-sandbox-pids",
+                "16",
+                "--tool-sandbox-max-stdout-bytes",
+                "4096",
+                "--tool-sandbox-max-stderr-bytes",
+                "2048",
+                "--tool-sandbox-max-artifact-bytes",
+                "1024",
+                "--tool-sandbox-allow-artifacts",
+                "--tool-sandbox-child-processes",
+                "deny",
+                "--tool-sandbox-inherited-fds",
+                "stdio",
+                "--tool-shell-sandbox-profile",
+                "host-tools",
+                "--tool-shell-sandbox-required",
+            ]
+        )
+
+        self.assertEqual(args.tool_shell_backend, "sandbox")
+        self.assertEqual(args.tool_sandbox_backend, "seatbelt")
+        self.assertEqual(args.tool_sandbox_profile, "host-tools")
+        self.assertEqual(args.tool_sandbox_trusted_executables, ["/bin/cat"])
+        self.assertEqual(args.tool_sandbox_read_roots, ["/workspace"])
+        self.assertEqual(args.tool_sandbox_network_mode, "allowlist")
+        self.assertEqual(
+            args.tool_sandbox_network_egress,
+            ["api.example.test"],
+        )
+        self.assertTrue(args.tool_sandbox_allow_artifacts)
+        self.assertTrue(args.tool_shell_sandbox_required)
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--tool-sandbox-backend", "firejail"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--tool-sandbox-network-mode", "host"])
 
     async def test_call_prompts_for_token_and_handles_exception(self):
         with (

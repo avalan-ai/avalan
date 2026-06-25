@@ -123,6 +123,20 @@ avalan agent run \
   --tool-shell-max-stdout-bytes 65536
 ```
 
+Trusted deployment TOML may select isolated shell execution. `[tool.sandbox]`
+and `[tool.container]` define operator-controlled profiles; `[tool.shell.sandbox]`
+and `[tool.shell.container]` select one of those profiles for shell tools.
+Models and untrusted request data must not define images, mounts, sandbox
+roots, executable paths, backend flags, network policy, or secrets. Constrain
+agent TOML with operator caps before loading files that are not trusted
+deployment configuration.
+
+Supported shell execution modes are `local`, `sandbox`, and `container`.
+Supported sandbox backends are `seatbelt` and `bubblewrap`; supported
+container backends are `docker` and `apple-container`. Container policy flags
+require `--tool-shell-backend container`; sandbox policy flags require
+`--tool-shell-backend sandbox`.
+
 Use `shell` or `shell.*` to enable the full namespace, or a concrete name such
 as `shell.rg` for one command. An empty `[tool.shell]` section enables shell
 tools with defaults. Shell settings alone opt the agent CLI into shell tools
@@ -614,7 +628,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tool-database-read-only]
                         [--tool-database-allowed-commands TOOL_DATABASE_ALLOWED_COMMANDS]
                         [--tool-graph-file TOOL_GRAPH_FILE]
-                        [--tool-shell-backend TOOL_SHELL_BACKEND]
+                        [--tool-shell-backend {local,sandbox,container}]
                         [--tool-shell-workspace-root TOOL_SHELL_WORKSPACE_ROOT]
                         [--tool-shell-cwd TOOL_SHELL_CWD]
                         [--tool-shell-default-timeout-seconds TOOL_SHELL_DEFAULT_TIMEOUT_SECONDS]
@@ -892,7 +906,7 @@ graph tool settings:
   --tool-graph-file TOOL_GRAPH_FILE
 
 shell tool settings:
-  --tool-shell-backend TOOL_SHELL_BACKEND
+  --tool-shell-backend {local,sandbox,container}
   --tool-shell-workspace-root TOOL_SHELL_WORKSPACE_ROOT
   --tool-shell-cwd TOOL_SHELL_CWD
   --tool-shell-default-timeout-seconds TOOL_SHELL_DEFAULT_TIMEOUT_SECONDS
@@ -951,6 +965,41 @@ shell tool settings:
                         Add a trusted directory used to resolve shell tools.
   --tool-shell-executable-path COMMAND=PATH
                         Map a shell command to a trusted absolute executable.
+  --tool-container-backend {docker,apple-container}
+  --tool-container-profile TOOL_CONTAINER_PROFILE
+  --tool-container-image TOOL_CONTAINER_IMAGE
+  --tool-container-workspace-root TOOL_CONTAINER_WORKSPACE_ROOT
+  --tool-container-pull-policy {never,if_missing,always}
+  --tool-container-platform TOOL_CONTAINER_PLATFORM
+  --tool-container-cpu-count TOOL_CONTAINER_CPU_COUNT
+  --tool-container-memory-bytes TOOL_CONTAINER_MEMORY_BYTES
+  --tool-container-pids TOOL_CONTAINER_PIDS
+  --tool-container-timeout-seconds TOOL_CONTAINER_TIMEOUT_SECONDS
+  --tool-container-network-mode {none,loopback,allowlist,full}
+  --tool-container-review-mode {deny,require_review,preauthorized}
+  --tool-sandbox-backend {seatbelt,bubblewrap}
+  --tool-sandbox-profile TOOL_SANDBOX_PROFILE
+  --tool-sandbox-trusted-executable TOOL_SANDBOX_TRUSTED_EXECUTABLES
+  --tool-sandbox-executable-search-root TOOL_SANDBOX_EXECUTABLE_SEARCH_ROOTS
+  --tool-sandbox-read-root TOOL_SANDBOX_READ_ROOTS
+  --tool-sandbox-write-root TOOL_SANDBOX_WRITE_ROOTS
+  --tool-sandbox-deny-root TOOL_SANDBOX_DENY_ROOTS
+  --tool-sandbox-scratch-root TOOL_SANDBOX_SCRATCH_ROOTS
+  --tool-sandbox-output-root TOOL_SANDBOX_OUTPUT_ROOTS
+  --tool-sandbox-network-mode {none,loopback,allowlist,full}
+  --tool-sandbox-network-egress TOOL_SANDBOX_NETWORK_EGRESS
+  --tool-sandbox-timeout-seconds TOOL_SANDBOX_TIMEOUT_SECONDS
+  --tool-sandbox-pids TOOL_SANDBOX_PIDS
+  --tool-sandbox-max-stdout-bytes TOOL_SANDBOX_MAX_STDOUT_BYTES
+  --tool-sandbox-max-stderr-bytes TOOL_SANDBOX_MAX_STDERR_BYTES
+  --tool-sandbox-max-artifact-bytes TOOL_SANDBOX_MAX_ARTIFACT_BYTES
+  --tool-sandbox-allow-artifacts
+  --tool-sandbox-child-processes {deny,allow}
+  --tool-sandbox-inherited-fds {deny,stdio,explicit}
+  --tool-shell-container-profile TOOL_SHELL_CONTAINER_PROFILE
+  --tool-shell-container-required
+  --tool-shell-sandbox-profile TOOL_SHELL_SANDBOX_PROFILE
+  --tool-shell-sandbox-required
 ```
 
 ### avalan agent serve
@@ -1916,7 +1965,7 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                        [--tool-database-dsn TOOL_DATABASE_DSN] [--tool-database-delay-secs TOOL_DATABASE_DELAY_SECS]
                        [--tool-database-identifier-case TOOL_DATABASE_IDENTIFIER_CASE] [--tool-database-read-only]
                        [--tool-database-allowed-commands TOOL_DATABASE_ALLOWED_COMMANDS]
-                       [--tool-graph-file TOOL_GRAPH_FILE] [--tool-shell-backend TOOL_SHELL_BACKEND]
+                       [--tool-graph-file TOOL_GRAPH_FILE] [--tool-shell-backend {local,sandbox,container}]
                        [--tool-shell-workspace-root TOOL_SHELL_WORKSPACE_ROOT] [--tool-shell-cwd TOOL_SHELL_CWD]
                        [--tool-shell-default-timeout-seconds TOOL_SHELL_DEFAULT_TIMEOUT_SECONDS]
                        [--tool-shell-max-timeout-seconds TOOL_SHELL_MAX_TIMEOUT_SECONDS]
@@ -2060,7 +2109,7 @@ graph tool settings:
   --tool-graph-file TOOL_GRAPH_FILE
 
 shell tool settings:
-  --tool-shell-backend TOOL_SHELL_BACKEND
+  --tool-shell-backend {local,sandbox,container}
   --tool-shell-workspace-root TOOL_SHELL_WORKSPACE_ROOT
   --tool-shell-cwd TOOL_SHELL_CWD
   --tool-shell-default-timeout-seconds TOOL_SHELL_DEFAULT_TIMEOUT_SECONDS
@@ -2119,6 +2168,41 @@ shell tool settings:
                         Add a trusted directory used to resolve shell tools.
   --tool-shell-executable-path COMMAND=PATH
                         Map a shell command to a trusted absolute executable.
+  --tool-container-backend {docker,apple-container}
+  --tool-container-profile TOOL_CONTAINER_PROFILE
+  --tool-container-image TOOL_CONTAINER_IMAGE
+  --tool-container-workspace-root TOOL_CONTAINER_WORKSPACE_ROOT
+  --tool-container-pull-policy {never,if_missing,always}
+  --tool-container-platform TOOL_CONTAINER_PLATFORM
+  --tool-container-cpu-count TOOL_CONTAINER_CPU_COUNT
+  --tool-container-memory-bytes TOOL_CONTAINER_MEMORY_BYTES
+  --tool-container-pids TOOL_CONTAINER_PIDS
+  --tool-container-timeout-seconds TOOL_CONTAINER_TIMEOUT_SECONDS
+  --tool-container-network-mode {none,loopback,allowlist,full}
+  --tool-container-review-mode {deny,require_review,preauthorized}
+  --tool-sandbox-backend {seatbelt,bubblewrap}
+  --tool-sandbox-profile TOOL_SANDBOX_PROFILE
+  --tool-sandbox-trusted-executable TOOL_SANDBOX_TRUSTED_EXECUTABLES
+  --tool-sandbox-executable-search-root TOOL_SANDBOX_EXECUTABLE_SEARCH_ROOTS
+  --tool-sandbox-read-root TOOL_SANDBOX_READ_ROOTS
+  --tool-sandbox-write-root TOOL_SANDBOX_WRITE_ROOTS
+  --tool-sandbox-deny-root TOOL_SANDBOX_DENY_ROOTS
+  --tool-sandbox-scratch-root TOOL_SANDBOX_SCRATCH_ROOTS
+  --tool-sandbox-output-root TOOL_SANDBOX_OUTPUT_ROOTS
+  --tool-sandbox-network-mode {none,loopback,allowlist,full}
+  --tool-sandbox-network-egress TOOL_SANDBOX_NETWORK_EGRESS
+  --tool-sandbox-timeout-seconds TOOL_SANDBOX_TIMEOUT_SECONDS
+  --tool-sandbox-pids TOOL_SANDBOX_PIDS
+  --tool-sandbox-max-stdout-bytes TOOL_SANDBOX_MAX_STDOUT_BYTES
+  --tool-sandbox-max-stderr-bytes TOOL_SANDBOX_MAX_STDERR_BYTES
+  --tool-sandbox-max-artifact-bytes TOOL_SANDBOX_MAX_ARTIFACT_BYTES
+  --tool-sandbox-allow-artifacts
+  --tool-sandbox-child-processes {deny,allow}
+  --tool-sandbox-inherited-fds {deny,stdio,explicit}
+  --tool-shell-container-profile TOOL_SHELL_CONTAINER_PROFILE
+  --tool-shell-container-required
+  --tool-shell-sandbox-profile TOOL_SHELL_SANDBOX_PROFILE
+  --tool-shell-sandbox-required
 ```
 
 Run a flow from a TOML definition:

@@ -352,19 +352,62 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
                 mode=IsolationMode.CONTAINER,
                 source=trusted_isolation_source("sdk"),
                 container=runtime.effective_settings,
-            )
+            ),
+            container_backend=backend,
         )
         toolset = ShellToolSet(
             settings=settings,
             policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
             isolation_runtime=isolation_runtime,
-            container_backend=backend,
         )
 
         output = await _call_cat(_tool_by_name(toolset, "cat"))
 
         self.assertIsInstance(output, ShellFormattedResult)
         self.assertEqual(output.execution_result.backend, "container")
+
+    def test_isolation_runtime_rejects_unsupported_container_hooks(
+        self,
+    ) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            execution_mode="container",
+            workspace_root=str(fixture_root),
+        )
+        runtime = trusted_container_runtime_from_mapping(
+            {
+                "backend": "docker",
+                "default_profile": "workspace-readonly",
+                "profiles": {
+                    "workspace-readonly": {
+                        "image": _IMAGE,
+                        "workspace_root": str(fixture_root),
+                    }
+                },
+            },
+            source=trusted_container_source("sdk"),
+        )
+        isolation_runtime = IsolationToolRuntimeSettings(
+            effective_settings=IsolationEffectiveSettings(
+                mode=IsolationMode.CONTAINER,
+                source=trusted_isolation_source("sdk"),
+                container=runtime.effective_settings,
+            ),
+            secret_resolver=lambda name: name,
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "shell isolation runtime hooks are not supported",
+        ):
+            ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                isolation_runtime=isolation_runtime,
+            )
 
     async def test_container_runtime_with_local_mode_is_rejected(
         self,

@@ -170,6 +170,62 @@ cache_strategy = "{{ orchestrator.call_options['cache_strategy'] }}"
 {% endfor %}
 {% endif %}
 
+{% if sandbox_tool %}
+[tool.sandbox]
+{% if sandbox_tool.get('backend') %}backend = "{{ sandbox_tool['backend'] }}"
+{% endif %}
+{% if sandbox_tool.get('default_profile') %}default_profile = "{{ sandbox_tool['default_profile'] }}"
+{% endif %}
+{% for name, profile in sandbox_tool.get('profiles', {}).items() %}
+[tool.sandbox.profiles."{{ name }}"]
+{% for k, v in profile.items() %}
+{% if k not in ['environment', 'network', 'resources', 'output'] %}
+{% if v is boolean %}
+{{ k }} = {{ v | lower }}
+{% elif v is number %}
+{{ k }} = {{ v }}
+{% elif v is string %}
+{{ k }} = "{{ v }}"
+{% else %}
+{{ k }} = [
+{% for item in v %}    "{{ item }}"{% if not loop.last %},{% endif %}
+{% endfor %}
+]
+{% endif %}
+{% endif %}
+{% endfor %}
+{% if profile.get('network') %}
+[tool.sandbox.profiles."{{ name }}".network]
+{% for k, v in profile['network'].items() %}
+{% if v is string %}
+{{ k }} = "{{ v }}"
+{% else %}
+{{ k }} = [
+{% for item in v %}    "{{ item }}"{% if not loop.last %},{% endif %}
+{% endfor %}
+]
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if profile.get('resources') %}
+[tool.sandbox.profiles."{{ name }}".resources]
+{% for k, v in profile['resources'].items() %}
+{{ k }} = {{ v }}
+{% endfor %}
+{% endif %}
+{% if profile.get('output') %}
+[tool.sandbox.profiles."{{ name }}".output]
+{% for k, v in profile['output'].items() %}
+{% if v is boolean %}
+{{ k }} = {{ v | lower }}
+{% else %}
+{{ k }} = {{ v }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
+
 {% if shell_tool is not none %}
 [tool.shell]
 {% for k, v in shell_tool.items() %}
@@ -186,6 +242,17 @@ cache_strategy = "{{ orchestrator.call_options['cache_strategy'] }}"
 {% for item in v %}    "{{ item }}"{% if not loop.last %},{% endif %}
 {% endfor %}
 ]
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if shell_sandbox %}
+[tool.shell.sandbox]
+{% for k, v in shell_sandbox.items() %}
+{% if v is boolean %}
+{{ k }} = {{ v | lower }}
+{% else %}
+{{ k }} = "{{ v }}"
 {% endif %}
 {% endfor %}
 {% endif %}

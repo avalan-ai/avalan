@@ -821,12 +821,7 @@ class ShellSandboxToolSetTest(IsolatedAsyncioTestCase):
                 mode=IsolationMode.SANDBOX,
                 source=trusted_isolation_source("sdk"),
                 sandbox=_sandbox_settings(fixture_root),
-            )
-        )
-        toolset = ShellToolSet(
-            settings=settings,
-            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
-            isolation_runtime=runtime,
+            ),
             sandbox_backend=sandbox_backend_module.SandboxFakeBackend(
                 sandbox_backend_module.SandboxFakeBackendScript(
                     capabilities=_capabilities(),
@@ -840,6 +835,11 @@ class ShellSandboxToolSetTest(IsolatedAsyncioTestCase):
                 )
             ),
         )
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            isolation_runtime=runtime,
+        )
 
         call = cast(
             Callable[..., Awaitable[str]], _tool_by_name(toolset, "cat")
@@ -852,6 +852,35 @@ class ShellSandboxToolSetTest(IsolatedAsyncioTestCase):
 
         formatted_output = cast(ShellFormattedResult, output)
         self.assertEqual(formatted_output.execution_result.backend, "sandbox")
+
+    def test_toolset_rejects_unsupported_isolation_runtime_hooks(self) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            execution_mode="sandbox",
+            workspace_root=str(fixture_root),
+        )
+        runtime = IsolationToolRuntimeSettings(
+            effective_settings=IsolationEffectiveSettings(
+                mode=IsolationMode.SANDBOX,
+                source=trusted_isolation_source("sdk"),
+                sandbox=_sandbox_settings(fixture_root),
+            ),
+            authorization_provider=lambda plan: plan,
+            audit_listeners=(lambda event: event,),
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "shell isolation runtime hooks are not supported",
+        ):
+            ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                isolation_runtime=runtime,
+            )
 
 
 class ShellSandboxValueTest(TestCase):

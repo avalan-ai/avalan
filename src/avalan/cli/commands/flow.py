@@ -97,7 +97,11 @@ from ...tool.shell import (
     normalize_shell_enabled_tools,
     should_append_shell_toolset,
 )
-from .agent import get_tool_settings
+from .agent import (
+    _agent_container_runtime_settings,
+    _agent_isolation_runtime_settings,
+    get_tool_settings,
+)
 from .task import (
     TaskCliInputError,
     _format_task_cli_value,
@@ -2344,6 +2348,17 @@ def _flow_tool_manager(args: Namespace) -> ToolManager | None:
         prefix="shell",
         settings_cls=ShellToolSettings,
     )
+    container_runtime = _agent_container_runtime_settings(
+        args,
+        shell_settings,
+    )
+    isolation_runtime = _agent_isolation_runtime_settings(
+        args,
+        shell_settings,
+    )
+    assert not (
+        container_runtime is not None and isolation_runtime is not None
+    ), "shell execution cannot mix container and sandbox runtimes"
     enabled_tools = normalize_shell_enabled_tools(_flow_enabled_tools(args))
     if not enabled_tools and shell_settings is not None:
         enabled_tools = ["shell"]
@@ -2389,12 +2404,25 @@ def _flow_tool_manager(args: Namespace) -> ToolManager | None:
         shell_settings=shell_settings,
         enabled_tools=enabled_tools,
     ):
-        available_toolsets.append(
-            ShellToolSet(
-                settings=shell_settings or ShellToolSettings(),
+        shell_settings = shell_settings or ShellToolSettings()
+        if isolation_runtime is not None:
+            shell_toolset = ShellToolSet(
+                settings=shell_settings,
+                namespace="shell",
+                isolation_runtime=isolation_runtime,
+            )
+        elif container_runtime is not None:
+            shell_toolset = ShellToolSet(
+                settings=shell_settings,
+                namespace="shell",
+                container_runtime=container_runtime,
+            )
+        else:
+            shell_toolset = ShellToolSet(
+                settings=shell_settings,
                 namespace="shell",
             )
-        )
+        available_toolsets.append(shell_toolset)
     return ToolManager.create_instance(
         available_toolsets=available_toolsets,
         enable_tools=enabled_tools,

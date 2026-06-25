@@ -39,6 +39,7 @@ from .tools import (
 )
 
 from collections.abc import Sequence
+from typing import cast
 
 
 class ShellToolSet(ToolSet):
@@ -67,6 +68,9 @@ class ShellToolSet(ToolSet):
         execution_mode = self._settings.execution_mode
         if container_runtime is not None:
             assert isinstance(container_runtime, ContainerToolRuntimeSettings)
+            assert not _container_runtime_hooks_configured(
+                container_runtime
+            ), "shell container runtime hooks are not supported"
         container_runtime_configured = (
             False
             if container_runtime is None
@@ -89,6 +93,9 @@ class ShellToolSet(ToolSet):
         ), "custom shell executors require shell execution mode local"
         if isolation_runtime is not None:
             assert isinstance(isolation_runtime, IsolationToolRuntimeSettings)
+            assert not _isolation_runtime_hooks_configured(
+                isolation_runtime
+            ), "shell isolation runtime hooks are not supported"
             assert (
                 isolation_runtime.mode.value == execution_mode
             ), "isolation runtime mode must match shell execution mode"
@@ -99,12 +106,19 @@ class ShellToolSet(ToolSet):
                 sandbox_settings = (
                     sandbox_settings or isolation_runtime.sandbox
                 )
+                sandbox_backend = sandbox_backend or cast(
+                    SandboxAsyncBackend | None,
+                    isolation_runtime.sandbox_backend,
+                )
             if (
                 isolation_runtime.mode is IsolationMode.CONTAINER
                 and execution_mode == "container"
             ):
                 container_settings = (
                     container_settings or isolation_runtime.container
+                )
+                container_backend = (
+                    container_backend or isolation_runtime.container_backend
                 )
         if container_runtime is not None and execution_mode == "container":
             container_settings = (
@@ -255,6 +269,28 @@ def _container_runtime_configured(
         or bool(runtime.opt_in_backends)
         or runtime.rootful_authorized
         or runtime.authorization_provider is not None
+        or runtime.secret_resolver is not None
+        or bool(runtime.audit_listeners)
+    )
+
+
+def _container_runtime_hooks_configured(
+    runtime: ContainerToolRuntimeSettings,
+) -> bool:
+    assert isinstance(runtime, ContainerToolRuntimeSettings)
+    return (
+        runtime.authorization_provider is not None
+        or runtime.secret_resolver is not None
+        or bool(runtime.audit_listeners)
+    )
+
+
+def _isolation_runtime_hooks_configured(
+    runtime: IsolationToolRuntimeSettings,
+) -> bool:
+    assert isinstance(runtime, IsolationToolRuntimeSettings)
+    return (
+        runtime.authorization_provider is not None
         or runtime.secret_resolver is not None
         or bool(runtime.audit_listeners)
     )
