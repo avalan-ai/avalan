@@ -1510,7 +1510,11 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
     ) -> None:
         cases = (
             ("unavailable", _backend(available=False), ()),
-            ("mismatch", _backend(backend=ContainerBackend.PODMAN), ()),
+            (
+                "mismatch",
+                _backend(backend=ContainerBackend.APPLE_CONTAINER),
+                (),
+            ),
             (
                 "failed",
                 _backend(
@@ -1836,7 +1840,7 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
             ("unavailable", _backend(available=False), TaskRunState.FAILED),
             (
                 "mismatch",
-                _backend(backend=ContainerBackend.PODMAN),
+                _backend(backend=ContainerBackend.APPLE_CONTAINER),
                 TaskRunState.FAILED,
             ),
             (

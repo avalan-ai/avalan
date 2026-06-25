@@ -211,7 +211,7 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(events[0].metadata["backend"], "container")
 
-    async def test_container_runtime_enables_trusted_auto_backend(
+    async def test_container_runtime_uses_explicit_docker_backend(
         self,
     ) -> None:
         backend = _RecordingContainerFakeBackend(
@@ -229,7 +229,7 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
         toolset = CodeToolSet(
             namespace="code",
             container_runtime=ContainerToolRuntimeSettings(
-                effective_settings=_auto_effective_settings(required=True),
+                effective_settings=_effective_settings(required=True),
                 backend=backend,
             ),
         )
@@ -653,27 +653,6 @@ def _apple_effective_settings(
     )
     return ContainerEffectiveSettings(
         backend=ContainerBackend.APPLE_CONTAINER,
-        required=required,
-        scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
-        source=_source(),
-        policy_version="phase19",
-        profile_registry_id="code",
-        profile_name=profile.name,
-        profile=profile,
-        allowed_profiles=(profile.name,),
-    )
-
-
-def _auto_effective_settings(
-    *,
-    required: bool = False,
-) -> ContainerEffectiveSettings:
-    profile = ContainerProfile.minimal_readonly(
-        name="auto-code-search-readonly",
-        image_reference=_IMAGE,
-    )
-    return ContainerEffectiveSettings(
-        backend=ContainerBackend.AUTO,
         required=required,
         scope=ContainerExecutionScope.SHELL_CONTAINER_EXECUTION,
         source=_source(),

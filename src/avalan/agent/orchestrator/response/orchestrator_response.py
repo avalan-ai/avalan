@@ -2622,6 +2622,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             )
 
         model_outcome = cls._model_facing_outcome(outcome)
+        assert isinstance(model_outcome, ToolCallResult | ToolCallError)
         return [
             Message(
                 role=MessageRole.ASSISTANT,

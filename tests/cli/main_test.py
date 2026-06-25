@@ -3283,6 +3283,16 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(args.tool_shell_container_required)
         with self.assertRaises(SystemExit):
             parser.parse_args(["--tool-container-network-mode", "host"])
+        for backend in (
+            "none",
+            "auto",
+            "podman",
+            "nerdctl",
+            "windows-docker",
+        ):
+            with self.subTest(backend=backend):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args(["--tool-container-backend", backend])
 
     async def test_call_prompts_for_token_and_handles_exception(self):
         with (

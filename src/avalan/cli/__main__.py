@@ -3806,13 +3806,8 @@ class CLI:
                 "--tool-container-backend",
                 dest="tool_container_backend",
                 choices=(
-                    "none",
                     "docker",
-                    "podman",
-                    "nerdctl",
                     "apple-container",
-                    "windows-docker",
-                    "auto",
                 ),
                 default=None,
                 help="Trusted container backend for shell tools.",

@@ -215,10 +215,7 @@ class ContainerReleaseConformanceTest(TestCase):
     ) -> None:
         expected = {
             ContainerBackend.DOCKER,
-            ContainerBackend.PODMAN,
-            ContainerBackend.NERDCTL,
             ContainerBackend.APPLE_CONTAINER,
-            ContainerBackend.WINDOWS_DOCKER,
         }
         profiles = container_backend_capability_profiles()
         by_backend = {profile.backend for profile in profiles}

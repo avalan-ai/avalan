@@ -138,22 +138,6 @@ class ContainerFailClosedConformanceTest(TestCase):
                 ContainerDiagnosticCode.BACKEND_UNAVAILABLE,
                 ContainerStableDiagnosticCode.CONFORMANCE_BACKEND_UNAVAILABLE,
             ),
-            (
-                "auto without a concrete backend",
-                resolve_container_backend(
-                    ContainerExecutionSettings(
-                        backend=ContainerBackend.AUTO,
-                        required=True,
-                        profile="workspace-readonly",
-                    ),
-                    available_backends=(
-                        ContainerBackend.NONE,
-                        ContainerBackend.AUTO,
-                    ),
-                ),
-                ContainerDiagnosticCode.BACKEND_UNAVAILABLE,
-                ContainerStableDiagnosticCode.CONFORMANCE_BACKEND_UNAVAILABLE,
-            ),
         )
 
         for name, resolution, expected_code, stable_code in cases:
@@ -177,6 +161,16 @@ class ContainerFailClosedConformanceTest(TestCase):
                     stable_code.value,
                     result.metadata["diagnostic_codes"],
                 )
+
+    def test_removed_backend_values_reject_before_execution(self) -> None:
+        for backend in ("auto", "podman", "nerdctl", "windows-docker"):
+            with self.subTest(backend=backend):
+                with self.assertRaises(AssertionError):
+                    ContainerExecutionSettings(
+                        backend=backend,
+                        required=True,
+                        profile="workspace-readonly",
+                    )
 
     def test_backend_capability_mismatches_deny_selection(
         self,
@@ -224,7 +218,6 @@ class ContainerFailClosedConformanceTest(TestCase):
                             capabilities=capabilities,
                         ),
                     ),
-                    auto_enabled=False,
                 )
 
                 self.assertFalse(selection.ok)

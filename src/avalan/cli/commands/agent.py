@@ -71,6 +71,7 @@ _APPLE_CONTAINER_BACKEND_MODULES = (
     "avalan.container.apple",
     "avalan.container.apple_container",
 )
+_SUPPORTED_CONTAINER_BACKENDS = frozenset({"apple-container", "docker"})
 
 
 def _parse_permanent_memory_items(
@@ -465,8 +466,6 @@ def _container_tool_template_settings(
     if backend is None and not _has_container_profile_args(args):
         return None
     _agent_container_config_from_args(args)
-    if backend == "none":
-        return {"backend": "none"}
     profile_name = getattr(args, "tool_container_profile", None) or (
         getattr(args, "tool_shell_container_profile", None)
         or "workspace-readonly"
@@ -506,9 +505,9 @@ def _shell_container_template_settings(
         rendered["required"] = True
     if not rendered:
         return None
-    assert getattr(args, "tool_shell_backend", None) == "container", (
-        "tool.shell.container requires tool.shell backend container"
-    )
+    assert (
+        getattr(args, "tool_shell_backend", None) == "container"
+    ), "tool.shell.container requires tool.shell backend container"
     container_config = _agent_container_config_from_args(args)
     assert container_config is not None, "container backend is required"
     return rendered
@@ -562,9 +561,9 @@ def _agent_container_runtime_settings(
         shell_settings,
     )
     if container_config is None:
-        assert shell_selection is None or shell_selection.profile is None, (
-            "required container profile unavailable"
-        )
+        assert (
+            shell_selection is None or shell_selection.profile is None
+        ), "required container profile unavailable"
         return None
     runtime = trusted_container_runtime_from_mapping(
         container_config,
@@ -629,8 +628,9 @@ def _agent_container_config_from_args(
     if backend is None and not _has_container_profile_args(args):
         return None
     assert backend is not None, "container backend is required"
-    if backend == "none":
-        return {"backend": "none", "policy_version": "phase11"}
+    assert (
+        backend in _SUPPORTED_CONTAINER_BACKENDS
+    ), "container backend is unsupported"
     profile_name = getattr(args, "tool_container_profile", None) or (
         getattr(args, "tool_shell_container_profile", None)
         or "workspace-readonly"
@@ -698,9 +698,9 @@ def _agent_shell_container_selection_from_args(
         shell_settings is not None and shell_settings.backend == "container"
     )
     if explicit_selection:
-        assert shell_backend_container, (
-            "tool.shell.container requires tool.shell backend container"
-        )
+        assert (
+            shell_backend_container
+        ), "tool.shell.container requires tool.shell backend container"
     if required is None and shell_settings is not None:
         required = shell_settings.backend == "container"
     if profile is None and not required:
@@ -812,12 +812,12 @@ async def agent_message_search(
 
     specs_path = args.specifications_file
     engine_uri = getattr(args, "engine_uri", None)
-    assert not (specs_path and engine_uri), (
-        "specifications file and --engine-uri are mutually exclusive"
-    )
-    assert specs_path or engine_uri, (
-        "specifications file or --engine-uri must be specified"
-    )
+    assert not (
+        specs_path and engine_uri
+    ), "specifications file and --engine-uri are mutually exclusive"
+    assert (
+        specs_path or engine_uri
+    ), "specifications file or --engine-uri must be specified"
     agent_id = args.id
     participant_id = args.participant
     session_id = args.session
@@ -864,9 +864,9 @@ async def agent_message_search(
                     event_manager_mode=EventManagerMode.CLI,
                 )
             else:
-                assert args.engine_uri, (
-                    "--engine-uri required when no specifications file"
-                )
+                assert (
+                    args.engine_uri
+                ), "--engine-uri required when no specifications file"
                 logger.debug("Loading agent from inline settings")
                 tool_settings = _agent_tool_settings(args)
                 memory_recent = (
@@ -950,12 +950,12 @@ async def agent_run(
 
     specs_path = args.specifications_file
     engine_uri = getattr(args, "engine_uri", None)
-    assert not (specs_path and engine_uri), (
-        "specifications file and --engine-uri are mutually exclusive"
-    )
-    assert specs_path or engine_uri, (
-        "specifications file or --engine-uri must be specified"
-    )
+    assert not (
+        specs_path and engine_uri
+    ), "specifications file and --engine-uri are mutually exclusive"
+    assert (
+        specs_path or engine_uri
+    ), "specifications file or --engine-uri must be specified"
     use_async_generator = not args.use_sync_generator
     display_tokens = display_config.display_tokens
     dtokens_pick = 10 if display_tokens > 0 else 0
@@ -1015,9 +1015,9 @@ async def agent_run(
                 event_manager_mode=EventManagerMode.CLI,
             )
         else:
-            assert args.engine_uri, (
-                "--engine-uri required when no specifications file"
-            )
+            assert (
+                args.engine_uri
+            ), "--engine-uri required when no specifications file"
             assert not args.specifications_file or not args.engine_uri
             tool_settings = _agent_tool_settings(args)
             memory_recent = (
@@ -1086,9 +1086,9 @@ async def agent_run(
         orchestrator = await stack.enter_async_context(orchestrator)
 
         if args.tools_confirm:
-            assert not orchestrator.tool.is_empty, (
-                "--tools-confirm requires tools"
-            )
+            assert (
+                not orchestrator.tool.is_empty
+            ), "--tools-confirm requires tools"
 
         logger.debug(
             "Agent loaded from %s, models used: %s, with recent message "
@@ -1282,12 +1282,12 @@ async def agent_serve(
     agent_id = getattr(args, "id", None)
     participant_id = args.participant
     engine_uri = getattr(args, "engine_uri", None)
-    assert not (specs_path and engine_uri), (
-        "specifications file and --engine-uri are mutually exclusive"
-    )
-    assert specs_path or engine_uri, (
-        "specifications file or --engine-uri must be specified"
-    )
+    assert not (
+        specs_path and engine_uri
+    ), "specifications file and --engine-uri are mutually exclusive"
+    assert (
+        specs_path or engine_uri
+    ), "specifications file or --engine-uri must be specified"
 
     settings: OrchestratorSettings | None = None
     tool_settings = _agent_tool_settings(args)

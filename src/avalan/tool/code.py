@@ -133,9 +133,7 @@ class CodeTool(Tool):
             else (
                 function(*positional_args)
                 if positional_args
-                else function(**keyword_args)
-                if keyword_args
-                else function()
+                else function(**keyword_args) if keyword_args else function()
             )
         )
 
@@ -173,11 +171,6 @@ class AstGrepTool(Tool):
         self.__name__ = "search.ast.grep"
         self._container_settings = container_settings
         self._container_backend = container_backend
-        self._container_auto_enabled = (
-            container_settings is not None
-            and container_settings.backend is ContainerBackend.AUTO
-            and container_settings.source.can_define_runtime_authority
-        )
         self._container_opt_in_backends = opt_in_backends
 
     def tool_display_projector(
@@ -264,7 +257,6 @@ class AstGrepTool(Tool):
         selection = await _select_container_backend(
             plan,
             self._container_backend,
-            auto_enabled=self._container_auto_enabled,
             opt_in_backends=self._container_opt_in_backends,
         )
         if not selection.ok:
@@ -438,14 +430,12 @@ async def _select_container_backend(
     plan: ContainerNormalizedRunPlan,
     backend: ContainerAsyncBackend,
     *,
-    auto_enabled: bool,
     opt_in_backends: Sequence[ContainerBackend | str] = (),
 ) -> ContainerBackendSelection:
     probe = await backend.probe()
     return select_container_backend(
         plan.run_plan,
         (probe,),
-        auto_enabled=auto_enabled,
         rootful_authorized=False,
         opt_in_backends=opt_in_backends,
     )
@@ -455,12 +445,12 @@ def _container_path(path: str) -> str:
     path = _path_arg(path)
     assert "\x00" not in path, "paths must not contain null bytes"
     posix_path = PurePosixPath(path)
-    assert not posix_path.is_absolute(), (
-        "container ast-grep paths must be workspace-relative"
-    )
-    assert ".." not in posix_path.parts, (
-        "container ast-grep paths must not traverse outside the workspace"
-    )
+    assert (
+        not posix_path.is_absolute()
+    ), "container ast-grep paths must be workspace-relative"
+    assert (
+        ".." not in posix_path.parts
+    ), "container ast-grep paths must not traverse outside the workspace"
     return path
 
 
@@ -610,10 +600,12 @@ def _diagnostic_summary(
 ) -> str:
     if not diagnostics:
         return "container execution failed"
-    codes = sorted({
-        cast(ContainerBackendDiagnosticCode, diagnostic.code).value
-        for diagnostic in diagnostics
-    })
+    codes = sorted(
+        {
+            cast(ContainerBackendDiagnosticCode, diagnostic.code).value
+            for diagnostic in diagnostics
+        }
+    )
     return "container execution failed: " + ", ".join(codes)
 
 

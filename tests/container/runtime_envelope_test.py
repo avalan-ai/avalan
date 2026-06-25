@@ -439,7 +439,7 @@ class ContainerRuntimeEnvelopeTest(TestCase):
             )
         )
         command = _command_plan(
-            backend=ContainerBackend.PODMAN,
+            backend=ContainerBackend.APPLE_CONTAINER,
             registry="other-registry",
             policy_version="phase16",
             profile=_profile(
