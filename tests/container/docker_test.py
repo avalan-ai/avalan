@@ -868,16 +868,15 @@ class DockerContainerBackendTest(TestCase):
             )
         )
 
-        action_type = Callable[
-            [DockerContainerBackend, ContainerBackendContainer],
-            Coroutine[object, object, object],
-        ]
         cases: tuple[
             tuple[
                 str,
                 tuple[str, ...],
                 ContainerBackendOperation,
-                action_type,
+                Callable[
+                    [DockerContainerBackend, ContainerBackendContainer],
+                    Coroutine[object, object, object],
+                ],
             ],
             ...,
         ] = (
@@ -930,17 +929,16 @@ class DockerContainerBackendTest(TestCase):
                 )
 
     def test_operation_failures_are_normalized(self) -> None:
-        action_type = Callable[
-            [DockerContainerBackend, ContainerBackendContainer],
-            Coroutine[object, object, object],
-        ]
         cases: tuple[
             tuple[
                 str,
                 tuple[str, ...],
                 ContainerBackendOperation,
                 ContainerBackendDiagnosticCode,
-                action_type,
+                Callable[
+                    [DockerContainerBackend, ContainerBackendContainer],
+                    Coroutine[object, object, object],
+                ],
             ],
             ...,
         ] = (
@@ -1014,10 +1012,6 @@ class DockerContainerBackendTest(TestCase):
     def test_operation_timeouts_and_cli_start_failures_are_normalized(
         self,
     ) -> None:
-        action_type = Callable[
-            [DockerContainerBackend, ContainerBackendContainer],
-            Coroutine[object, object, object],
-        ]
         cases: tuple[
             tuple[
                 str,
@@ -1025,7 +1019,10 @@ class DockerContainerBackendTest(TestCase):
                 BaseException,
                 ContainerBackendOperation,
                 ContainerBackendDiagnosticCode,
-                action_type,
+                Callable[
+                    [DockerContainerBackend, ContainerBackendContainer],
+                    Coroutine[object, object, object],
+                ],
             ],
             ...,
         ] = (

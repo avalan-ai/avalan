@@ -439,7 +439,7 @@ class SandboxPhase3Test(TestCase):
         )
         self.assertEqual(cancelled.status, SandboxResultStatus.CANCELLED)
         self.assertEqual(start_failed.status, SandboxResultStatus.DENIED)
-        self.assertTrue(start_failed.diagnostics[0].retryable is False)
+        self.assertIs(start_failed.diagnostics[0].retryable, False)
 
     def test_fake_backend_stream_truncates_and_rejects_outputs(self) -> None:
         truncated = run_async(
