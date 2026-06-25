@@ -14,6 +14,9 @@ from ..isolation import (
     SandboxNetworkMode as SandboxNetworkMode,
 )
 from .backend import (
+    BubblewrapSandboxBackend as BubblewrapSandboxBackend,
+)
+from .backend import (
     SandboxAsyncBackend as SandboxAsyncBackend,
 )
 from .backend import (
@@ -68,7 +71,22 @@ from .backend import (
     SandboxStreamChunk as SandboxStreamChunk,
 )
 from .backend import (
+    SandboxSubprocessRequest as SandboxSubprocessRequest,
+)
+from .backend import (
+    SandboxSubprocessResult as SandboxSubprocessResult,
+)
+from .backend import (
     SandboxTempOutputMapping as SandboxTempOutputMapping,
+)
+from .backend import (
+    SeatbeltSandboxBackend as SeatbeltSandboxBackend,
+)
+from .backend import (
+    generate_bubblewrap_arguments as generate_bubblewrap_arguments,
+)
+from .backend import (
+    generate_seatbelt_profile as generate_seatbelt_profile,
 )
 from .backend import (
     sandbox_backend_capability_profile as sandbox_backend_capability_profile,
