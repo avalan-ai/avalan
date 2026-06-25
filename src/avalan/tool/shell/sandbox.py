@@ -407,11 +407,11 @@ def _generated_files(
     files: list[GeneratedFile] = []
     total_bytes = 0
     for artifact in artifacts:
-        if len(files) >= plan.max_files:
-            raise _generated_output_too_large()
         path = _safe_artifact_path(artifact.path)
         if not _matches_generated_output_prefix(path.name, plan.prefix_name):
             continue
+        if len(files) >= plan.max_files:
+            raise _generated_output_too_large()
         suffix = path.suffix or ".out"
         if suffix not in plan.allowed_suffixes:
             raise _generated_output_too_large()

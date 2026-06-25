@@ -551,6 +551,15 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
                     ShellExecutionStatus.TOO_LARGE,
                 ),
                 (
+                    "ignored output after file count cap",
+                    {
+                        "shell-output-1.txt": b"one",
+                        "other.txt": b"skip",
+                    },
+                    _direct_generated_spec(root, max_files=1),
+                    ShellExecutionStatus.COMPLETED,
+                ),
+                (
                     "nested output",
                     {
                         "other.txt": b"skip",
@@ -599,6 +608,12 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
                         self.assertEqual(
                             result.generated_files[0].display_path,
                             "shell-output",
+                        )
+                    if name == "ignored output after file count cap":
+                        self.assertEqual(len(result.generated_files), 1)
+                        self.assertEqual(
+                            result.generated_files[0].display_path,
+                            "shell-output-1.txt",
                         )
 
     async def test_duplicate_sandbox_stream_chunks_emit_once(self) -> None:
