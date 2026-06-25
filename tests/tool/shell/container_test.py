@@ -10,8 +10,12 @@ from avalan.cli.commands import agent as agent_cmds
 from avalan.container import (
     ContainerBackend,
     ContainerBackendCapabilities,
+    ContainerBackendContainer,
+    ContainerBackendDiagnostic,
     ContainerBackendDiagnosticCode,
+    ContainerBackendError,
     ContainerBackendOperation,
+    ContainerBackendProbeResult,
     ContainerBackendStats,
     ContainerBackendStream,
     ContainerBackendStreamChunk,
@@ -33,6 +37,7 @@ from avalan.container import (
     ContainerOutputDiagnosticCode,
     ContainerOutputValidationResult,
     ContainerProfile,
+    ContainerRunPlan,
     ContainerSettingsSource,
     ContainerSurface,
     ContainerTrustLevel,
@@ -769,6 +774,11 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
 
                 self.assertEqual(result.status, expected_status)
                 self.assertNotEqual(result.backend, "local")
+                if name == "runtime unavailable":
+                    self.assertEqual(
+                        result.metadata["isolation_diagnostic_codes"],
+                        ("container.backend.unavailable",),
+                    )
 
     async def test_apple_container_requires_runtime_opt_in(self) -> None:
         without_opt_in = await ShellContainerCommandExecutor(
@@ -794,10 +804,52 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
             "container.backend.capability_mismatch",
             without_opt_in.error_message or "",
         )
+        self.assertEqual(
+            without_opt_in.metadata["isolation_diagnostic_codes"],
+            ("container.backend.capability_mismatch",),
+        )
         self.assertEqual(with_opt_in.status, ShellExecutionStatus.COMPLETED)
         self.assertIn(
             ContainerBackendOperation.CREATE,
             with_opt_in_backend.operations,
+        )
+
+    async def test_negative_backend_exceptions_return_shell_results(
+        self,
+    ) -> None:
+        probe_result = await ShellContainerCommandExecutor(
+            container_settings=_effective_settings(required=True),
+            container_backend=_ProbeRaisesBackend(),
+        ).execute(_direct_text_spec())
+        execute_result = await ShellContainerCommandExecutor(
+            container_settings=_effective_settings(required=True),
+            container_backend=_ExecuteRaisesBackend(),
+        ).execute(_direct_text_spec())
+        diagnostic_probe_result = await ShellContainerCommandExecutor(
+            container_settings=_effective_settings(required=True),
+            container_backend=_ProbeDiagnosticBackend(),
+        ).execute(_direct_text_spec())
+
+        self.assertEqual(probe_result.status, ShellExecutionStatus.TOOL_ERROR)
+        self.assertEqual(
+            probe_result.metadata["isolation_diagnostic_codes"],
+            ("container.backend.unavailable",),
+        )
+        self.assertEqual(
+            execute_result.status,
+            ShellExecutionStatus.TOOL_ERROR,
+        )
+        self.assertEqual(
+            execute_result.metadata["isolation_diagnostic_codes"],
+            ("container.backend.unavailable",),
+        )
+        self.assertEqual(
+            diagnostic_probe_result.error_message,
+            "container execution failed: container.backend.create_failed",
+        )
+        self.assertEqual(
+            diagnostic_probe_result.metadata["isolation_diagnostic_codes"],
+            ("container.backend.unavailable",),
         )
 
     async def test_malformed_generated_output_contract_fails_closed(
@@ -1204,6 +1256,48 @@ class _AllResolved:
         command: ShellCommandDefinition,
     ) -> str | None:
         return f"/trusted/bin/{command.executable_name}"
+
+
+class _ProbeRaisesBackend(ContainerFakeBackend):
+    def __init__(self) -> None:
+        super().__init__(
+            ContainerFakeBackendScript(capabilities=_capabilities())
+        )
+
+    async def probe(self) -> ContainerBackendProbeResult:
+        raise RuntimeError("probe failed")
+
+
+class _ExecuteRaisesBackend(ContainerFakeBackend):
+    def __init__(self) -> None:
+        super().__init__(
+            ContainerFakeBackendScript(capabilities=_capabilities())
+        )
+
+    async def create(
+        self,
+        plan: ContainerRunPlan,
+    ) -> ContainerBackendContainer:
+        raise RuntimeError("execute failed")
+
+
+class _ProbeDiagnosticBackend(ContainerFakeBackend):
+    def __init__(self) -> None:
+        super().__init__(
+            ContainerFakeBackendScript(capabilities=_capabilities())
+        )
+
+    async def probe(self) -> ContainerBackendProbeResult:
+        raise ContainerBackendError(_container_diagnostic())
+
+
+def _container_diagnostic() -> ContainerBackendDiagnostic:
+    return ContainerBackendDiagnostic(
+        code=ContainerBackendDiagnosticCode.CREATE_FAILED,
+        operation=ContainerBackendOperation.CREATE,
+        message="backend failed",
+        backend=ContainerBackend.DOCKER,
+    )
 
 
 class _RecordingLocalExecutor(CommandExecutor):

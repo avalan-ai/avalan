@@ -425,6 +425,18 @@ reason = "The active local agenda must name removed legacy runtimes so phases ca
 local_only = true
 
 [[keep_references]]
+path = "docs/ISOLATION.md"
+surface = "docs"
+terms = ["podman", "nerdctl", "containerd/nerdctl", "Microsoft containers", "Windows Docker", "WSL2", "Hyper-V"]
+reason = "Isolation docs mention removed legacy runtimes only as explicit non-support statements."
+
+[[keep_references]]
+path = "docs/ISOLATION_TRACEABILITY.md"
+surface = "docs"
+terms = ["podman", "nerdctl", "containerd/nerdctl", "Microsoft containers", "Windows Docker", "WSL2", "Hyper-V"]
+reason = "Traceability docs mention removed legacy runtimes only for the removed-backend sweep and negative coverage."
+
+[[keep_references]]
 path = "docs/MODALITIES.md"
 surface = "docs"
 terms = ["microsoft/resnet-50"]

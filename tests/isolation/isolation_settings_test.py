@@ -4,14 +4,22 @@ from unittest import TestCase, main
 from avalan.container import (
     ContainerBackend,
     ContainerBackendCapabilities,
+    ContainerBackendDiagnostic,
+    ContainerBackendDiagnosticCode,
+    ContainerBackendOperation,
     ContainerFakeBackend,
     ContainerFakeBackendScript,
     ContainerMountType,
+    ContainerOutputDiagnostic,
+    ContainerOutputDiagnosticCode,
 )
 from avalan.isolation import (
     IsolationDiagnosticCategory,
     IsolationDiagnosticCode,
+    IsolationDiagnosticInventoryItem,
+    IsolationDiagnosticSeverity,
     IsolationEffectiveSettings,
+    IsolationMappedDiagnostic,
     IsolationMode,
     IsolationProfileSelection,
     IsolationSettings,
@@ -27,12 +35,28 @@ from avalan.isolation import (
     SandboxProfileSelection,
     SandboxSettings,
     deserialize_isolation_effective_settings,
+    format_isolation_diagnostics_for_model,
+    format_isolation_diagnostics_output_for_model,
     isolation_diagnostic,
+    isolation_diagnostic_audit_metadata,
+    isolation_diagnostic_codes,
+    isolation_diagnostics_metadata,
+    isolation_public_diagnostics,
     isolation_selection_from_mapping,
+    normalize_isolation_diagnostic,
+    redact_isolation_value,
+    sanitize_isolation_metadata,
     serialize_isolation_effective_settings,
+    stable_isolation_diagnostic_codes,
+    stable_isolation_diagnostic_inventory,
     trusted_isolation_runtime_from_mapping,
     trusted_isolation_settings_from_mapping,
     trusted_isolation_source,
+)
+from avalan.sandbox import (
+    SandboxBackendDiagnostic,
+    SandboxBackendDiagnosticCode,
+    SandboxBackendOperation,
 )
 
 _DIGEST = "9" * 64
@@ -157,16 +181,85 @@ class IsolationSettingsTest(TestCase):
                 "isolation.mode_conflict",
                 "isolation.unsupported_mode",
                 "isolation.unsupported_backend",
-                "isolation.policy_widening",
+                "isolation.mode_unavailable",
+                "isolation.capability_mismatch",
+                "isolation.elevation_required",
+                "isolation.elevation_denied",
+                "isolation.fallback_denied",
+                "isolation.approval_stale",
+                "isolation.policy_drift",
+                "isolation.audit_unavailable",
+                "sandbox.provider_unavailable",
+                "sandbox.profile_generation_failed",
+                "sandbox.path_denied",
+                "sandbox.network_unenforceable",
+                "container.backend.unavailable",
+                "container.backend.capability_mismatch",
                 "isolation.unsupported_syntax",
             },
         )
+        self.assertEqual(
+            {
+                spec.to_dict()["code"]
+                for spec in stable_isolation_diagnostic_inventory()
+            },
+            {
+                "isolation.mode_conflict",
+                "isolation.unsupported_mode",
+                "isolation.unsupported_backend",
+                "isolation.mode_unavailable",
+                "isolation.capability_mismatch",
+                "isolation.elevation_required",
+                "isolation.elevation_denied",
+                "isolation.fallback_denied",
+                "isolation.approval_stale",
+                "isolation.policy_drift",
+                "isolation.audit_unavailable",
+                "sandbox.provider_unavailable",
+                "sandbox.profile_generation_failed",
+                "sandbox.path_denied",
+                "sandbox.network_unenforceable",
+                "container.backend.unavailable",
+                "container.backend.capability_mismatch",
+            },
+        )
+        self.assertEqual(
+            stable_isolation_diagnostic_codes(),
+            (
+                "isolation.mode_conflict",
+                "isolation.unsupported_mode",
+                "isolation.unsupported_backend",
+                "isolation.mode_unavailable",
+                "isolation.capability_mismatch",
+                "isolation.elevation_required",
+                "isolation.elevation_denied",
+                "isolation.fallback_denied",
+                "isolation.approval_stale",
+                "isolation.policy_drift",
+                "isolation.audit_unavailable",
+                "sandbox.provider_unavailable",
+                "sandbox.profile_generation_failed",
+                "sandbox.path_denied",
+                "sandbox.network_unenforceable",
+                "container.backend.unavailable",
+                "container.backend.capability_mismatch",
+            ),
+        )
+        for spec in stable_isolation_diagnostic_inventory():
+            with self.subTest(code=spec.to_dict()["code"]):
+                self.assertIn(
+                    "diagnostic_codes",
+                    spec.to_dict()["metadata_fields"],
+                )
+                self.assertIn("audit_event", spec.to_dict())
+                self.assertIn("model_status", spec.to_dict())
         diagnostic = isolation_diagnostic(
             IsolationDiagnosticCode.UNSUPPORTED_BACKEND,
             path="runtime.isolation.sandbox.backend",
             message="Unsupported sandbox backend.",
             hint="Use seatbelt or bubblewrap.",
             category=IsolationDiagnosticCategory.UNSUPPORTED,
+            severity=IsolationDiagnosticSeverity.ERROR,
         )
         self.assertEqual(
             diagnostic.to_dict(),
@@ -174,9 +267,454 @@ class IsolationSettingsTest(TestCase):
                 "code": "isolation.unsupported_backend",
                 "path": "runtime.isolation.sandbox.backend",
                 "category": "unsupported",
+                "severity": "error",
                 "message": "Unsupported sandbox backend.",
                 "hint": "Use seatbelt or bubblewrap.",
+                "retryable": False,
             },
+        )
+        self.assertEqual(
+            diagnostic.to_audit_metadata(),
+            {
+                "diagnostic_code": "isolation.unsupported_backend",
+                "diagnostic_category": "unsupported",
+                "diagnostic_severity": "error",
+                "diagnostic_retryable": "false",
+            },
+        )
+        self.assertEqual(
+            format_isolation_diagnostics_for_model((diagnostic,)),
+            "isolation.unsupported_backend: Unsupported sandbox backend. "
+            "Use seatbelt or bubblewrap.",
+        )
+        self.assertEqual(
+            diagnostic.model_message(),
+            "isolation.unsupported_backend: Unsupported sandbox backend. "
+            "Use seatbelt or bubblewrap.",
+        )
+
+    def test_stable_diagnostics_are_public_audited_and_model_visible(
+        self,
+    ) -> None:
+        diagnostics = tuple(
+            isolation_diagnostic(
+                spec.to_dict()["code"],
+                path=f"runtime.isolation.{index}",
+                message=f"{spec.to_dict()['code']} occurred.",
+                hint="Inspect the trusted isolation policy.",
+                category=spec.to_dict()["category"],
+                severity=spec.to_dict()["severity"],
+            )
+            for index, spec in enumerate(
+                stable_isolation_diagnostic_inventory()
+            )
+        )
+        public = isolation_public_diagnostics(diagnostics)
+        metadata = isolation_diagnostics_metadata(diagnostics)
+        output = format_isolation_diagnostics_output_for_model(diagnostics)
+
+        self.assertEqual(
+            tuple(item["code"] for item in public),
+            stable_isolation_diagnostic_codes(),
+        )
+        self.assertEqual(
+            metadata["diagnostic_codes"],
+            ",".join(stable_isolation_diagnostic_codes()),
+        )
+        self.assertEqual(
+            output.metadata["diagnostic_count"],
+            str(len(stable_isolation_diagnostic_codes())),
+        )
+        for diagnostic in diagnostics:
+            with self.subTest(code=diagnostic.to_dict()["code"]):
+                audit = isolation_diagnostic_audit_metadata(diagnostic)
+                code = cast(str, diagnostic.to_dict()["code"])
+                self.assertEqual(audit["code"], code)
+                self.assertIn(code, output.text)
+                self.assertIn(code, metadata["diagnostic_codes"])
+
+    def test_diagnostic_public_metadata_and_model_output_are_sanitized(
+        self,
+    ) -> None:
+        diagnostic = isolation_diagnostic(
+            IsolationDiagnosticCode.SANDBOX_PATH_DENIED,
+            path="/Users/mariano/.ssh/id_rsa",
+            message=(
+                "Denied /Users/mariano/.ssh/id_rsa with Bearer "
+                "sk-provider-token"
+            ),
+            hint="Remove token=private-token from the request.",
+            category=IsolationDiagnosticCategory.SECURITY,
+        )
+        public = isolation_public_diagnostics((diagnostic,))
+        metadata = isolation_diagnostics_metadata(
+            (diagnostic,),
+            {
+                "request_id": "request-1",
+                "api_token": "super-secret-token",
+                "path": "/Users/mariano/.ssh/id_rsa",
+            },
+        )
+        audit = isolation_diagnostic_audit_metadata(
+            diagnostic,
+            {"session_id": "session-1"},
+        )
+        model_output = format_isolation_diagnostics_for_model((diagnostic,))
+        serialized = str(public) + str(metadata) + str(audit) + model_output
+
+        self.assertEqual(public[0]["code"], "sandbox.path_denied")
+        self.assertEqual(metadata["diagnostic_codes"], "sandbox.path_denied")
+        self.assertEqual(audit["audit_event"], "sandbox.filesystem")
+        self.assertEqual(metadata["api_token"], "<redacted>")
+        self.assertNotIn("/Users/mariano", serialized)
+        self.assertNotIn("sk-provider-token", serialized)
+        self.assertNotIn("private-token", serialized)
+        self.assertIn("<redacted>", serialized)
+
+    def test_backend_diagnostics_map_to_stable_isolation_codes(self) -> None:
+        sandbox_timeout = SandboxBackendDiagnostic(
+            code=SandboxBackendDiagnosticCode.TIMEOUT,
+            operation=SandboxBackendOperation.WAIT,
+            message="timed out under /tmp/avalan-run",
+            backend=SandboxBackend.SEATBELT,
+        )
+        container_image_denied = ContainerBackendDiagnostic(
+            code=ContainerBackendDiagnosticCode.IMAGE_DENIED,
+            operation=ContainerBackendOperation.IMAGE_RESOLUTION,
+            message="image denied",
+            backend=ContainerBackend.DOCKER,
+        )
+        container_output = ContainerOutputDiagnostic(
+            code=ContainerOutputDiagnosticCode.SYMLINK_ESCAPE,
+            path="/Volumes/secrets/out",
+            message="symlink escaped /Volumes/secrets/out",
+        )
+
+        public = isolation_public_diagnostics(
+            (
+                sandbox_timeout,
+                container_image_denied,
+                container_output,
+            )
+        )
+        metadata = isolation_diagnostics_metadata(
+            (
+                sandbox_timeout,
+                container_image_denied,
+                container_output,
+            )
+        )
+        output = format_isolation_diagnostics_output_for_model(
+            (
+                sandbox_timeout,
+                container_image_denied,
+                container_output,
+            )
+        )
+        serialized = str(public) + str(metadata) + output.text
+
+        self.assertEqual(
+            tuple(item["code"] for item in public),
+            (
+                "isolation.mode_unavailable",
+                "container.backend.capability_mismatch",
+                "container.backend.capability_mismatch",
+            ),
+        )
+        self.assertEqual(
+            metadata["diagnostic_source_codes"],
+            "sandbox.backend.timeout,"
+            "container.backend.image_denied,"
+            "container.output.symlink_escape",
+        )
+        self.assertIn("container.backend.capability_mismatch", output.text)
+        self.assertNotIn("/tmp/avalan-run", serialized)
+        self.assertNotIn("/Volumes/secrets", serialized)
+        for code in SandboxBackendDiagnosticCode:
+            with self.subTest(source_code=code.value):
+                self.assertTrue(
+                    isolation_public_diagnostics(
+                        (
+                            SandboxBackendDiagnostic(
+                                code=code,
+                                operation=SandboxBackendOperation.WAIT,
+                                message=f"{code.value} from /tmp/sandbox",
+                                backend=SandboxBackend.SEATBELT,
+                            ),
+                        )
+                    )
+                )
+        for code in ContainerBackendDiagnosticCode:
+            with self.subTest(source_code=code.value):
+                self.assertTrue(
+                    isolation_public_diagnostics(
+                        (
+                            ContainerBackendDiagnostic(
+                                code=code,
+                                operation=ContainerBackendOperation.WAIT,
+                                message=f"{code.value} from /tmp/container",
+                                backend=ContainerBackend.DOCKER,
+                            ),
+                        )
+                    )
+                )
+        for code in ContainerOutputDiagnosticCode:
+            with self.subTest(source_code=code.value):
+                self.assertTrue(
+                    isolation_public_diagnostics(
+                        (
+                            ContainerOutputDiagnostic(
+                                code=code,
+                                path="/tmp/output",
+                                message=f"{code.value} from /tmp/output",
+                            ),
+                        )
+                    )
+                )
+
+    def test_diagnostic_helpers_cover_defensive_paths(self) -> None:
+        self.assertEqual(
+            isolation_diagnostic_codes(("unknown.source",)),
+            (),
+        )
+        self.assertEqual(
+            format_isolation_diagnostics_for_model(
+                (),
+                metadata={"request_id": "request-1"},
+            ),
+            "isolation: ok",
+        )
+        empty_output = format_isolation_diagnostics_output_for_model(())
+        self.assertEqual(
+            empty_output.to_dict(),
+            {
+                "text": "isolation status: ok",
+                "metadata": {
+                    "diagnostic_count": "0",
+                    "diagnostic_codes": "",
+                },
+            },
+        )
+        self.assertEqual(
+            redact_isolation_value("stdout", "visible"), "<redacted-stream>"
+        )
+        self.assertEqual(
+            redact_isolation_value("blob", b"secret"), "<redacted-bytes>"
+        )
+        self.assertEqual(
+            redact_isolation_value("diagnostic_message", "stdout: secret"),
+            "<redacted-stream>",
+        )
+        self.assertEqual(
+            redact_isolation_value("value", "bad\x00value"),
+            "<redacted-bytes>",
+        )
+        self.assertTrue(
+            redact_isolation_value("value", "x" * 300).endswith(
+                "...<truncated>"
+            )
+        )
+        self.assertTrue(
+            redact_isolation_value("text", "x" * 5000).endswith(
+                "...<truncated>"
+            )
+        )
+
+        with self.assertRaises(AssertionError):
+            sanitize_isolation_metadata({"bad key": "value"})
+        with self.assertRaises(AssertionError):
+            IsolationDiagnosticInventoryItem(
+                code=IsolationDiagnosticCode.MODE_CONFLICT,
+                category=IsolationDiagnosticCategory.VALUE,
+                severity=IsolationDiagnosticSeverity.ERROR,
+                message="message",
+                hint="hint",
+                audit_event="audit",
+                model_status="denied",
+                metadata_fields="diagnostic_codes",  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            IsolationDiagnosticInventoryItem(
+                code=IsolationDiagnosticCode.MODE_CONFLICT,
+                category=IsolationDiagnosticCategory.VALUE,
+                severity=IsolationDiagnosticSeverity.ERROR,
+                message="message",
+                hint="hint",
+                audit_event="audit",
+                model_status="denied",
+                metadata_fields=(1,),  # type: ignore[list-item]
+            )
+        with self.assertRaises(AssertionError):
+            IsolationDiagnosticInventoryItem(
+                code=IsolationDiagnosticCode.MODE_CONFLICT,
+                category=IsolationDiagnosticCategory.VALUE,
+                severity=IsolationDiagnosticSeverity.ERROR,
+                message="message",
+                hint="hint",
+                audit_event="audit",
+                model_status="denied",
+                metadata_fields=("bad key",),
+            )
+        with self.assertRaises(AssertionError):
+            IsolationMappedDiagnostic(
+                code="not-a-code",
+                category=IsolationDiagnosticCategory.VALUE,
+                severity=IsolationDiagnosticSeverity.ERROR,
+                message="message",
+                hint="hint",
+                audit_event="audit",
+                model_status="denied",
+            )
+        with self.assertRaises(AssertionError):
+            IsolationMappedDiagnostic(
+                code=IsolationDiagnosticCode.MODE_CONFLICT,
+                category=1,  # type: ignore[arg-type]
+                severity=IsolationDiagnosticSeverity.ERROR,
+                message="message",
+                hint="hint",
+                audit_event="audit",
+                model_status="denied",
+            )
+        with self.assertRaises(AssertionError):
+            normalize_isolation_diagnostic(object())
+        with self.assertRaises(AssertionError):
+            normalize_isolation_diagnostic(_DiagnosticStub(code=""))
+
+        mapped = normalize_isolation_diagnostic(
+            _DiagnosticStub(
+                code=IsolationDiagnosticCode.MODE_CONFLICT,
+                operation="custom",
+                message="message",
+            )
+        )
+        self.assertEqual(mapped.source_code, None)
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                IsolationDiagnosticCode.MODE_CONFLICT
+            ).code,
+            IsolationDiagnosticCode.MODE_CONFLICT,
+        )
+        self.assertEqual(
+            isolation_diagnostic_audit_metadata(
+                ContainerBackendDiagnostic(
+                    code=ContainerBackendDiagnosticCode.IMAGE_DENIED,
+                    operation=ContainerBackendOperation.IMAGE_RESOLUTION,
+                    message="image denied",
+                    backend=ContainerBackend.DOCKER,
+                )
+            )["source_code"],
+            "container.backend.image_denied",
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(code="isolation.unsupported_syntax")
+            ).code,
+            IsolationDiagnosticCode.UNSUPPORTED_MODE,
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(code="isolation.policy_widening")
+            ).code,
+            IsolationDiagnosticCode.POLICY_DRIFT,
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(code="isolation.review.local")
+            ).code,
+            IsolationDiagnosticCode.ELEVATION_REQUIRED,
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(code="isolation.deny.local")
+            ).code,
+            IsolationDiagnosticCode.ELEVATION_DENIED,
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(code="isolation.approval.stale")
+            ).code,
+            IsolationDiagnosticCode.APPROVAL_STALE,
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(
+                    code="sandbox.backend.capability_mismatch",
+                    message="network mode unsupported",
+                )
+            ).code,
+            IsolationDiagnosticCode.SANDBOX_NETWORK_UNENFORCEABLE,
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(
+                    code="sandbox.backend.execution_failed",
+                    operation="prepare_profile",
+                )
+            ).code,
+            IsolationDiagnosticCode.SANDBOX_PROFILE_GENERATION_FAILED,
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(code="container.backend_required")
+            ).code,
+            IsolationDiagnosticCode.UNSUPPORTED_BACKEND,
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(code="container.backend_unavailable")
+            ).code,
+            IsolationDiagnosticCode.CONTAINER_BACKEND_UNAVAILABLE,
+        )
+        self.assertEqual(
+            normalize_isolation_diagnostic(
+                _DiagnosticStub(code="container.unsupported_syntax")
+            ).code,
+            IsolationDiagnosticCode.UNSUPPORTED_MODE,
+        )
+
+        self.assertIn(
+            "isolation status: unavailable",
+            format_isolation_diagnostics_output_for_model(
+                (
+                    isolation_diagnostic(
+                        IsolationDiagnosticCode.MODE_UNAVAILABLE,
+                        path="runtime.isolation",
+                        message="unavailable",
+                        hint="retry later",
+                        category=IsolationDiagnosticCategory.AVAILABILITY,
+                    ),
+                )
+            ).text,
+        )
+        self.assertIn(
+            "isolation status: requires_review",
+            format_isolation_diagnostics_output_for_model(
+                (
+                    isolation_diagnostic(
+                        IsolationDiagnosticCode.ELEVATION_REQUIRED,
+                        path="runtime.isolation",
+                        message="review required",
+                        hint="request approval",
+                        category=IsolationDiagnosticCategory.APPROVAL,
+                    ),
+                )
+            ).text,
+        )
+        self.assertIn(
+            "isolation status: informational",
+            format_isolation_diagnostics_output_for_model(
+                (
+                    IsolationMappedDiagnostic(
+                        code=IsolationDiagnosticCode.MODE_CONFLICT,
+                        category=IsolationDiagnosticCategory.VALUE,
+                        severity=IsolationDiagnosticSeverity.INFO,
+                        message="message",
+                        hint="hint",
+                        audit_event="audit",
+                        model_status="informational",
+                    ),
+                )
+            ).text,
         )
 
     def test_negative_multiple_active_modes_are_rejected(self) -> None:
@@ -636,6 +1174,25 @@ class _FakeSandboxBackend:
 
     async def execute(self, plan: object) -> object:
         return plan
+
+
+class _DiagnosticStub:
+    def __init__(
+        self,
+        *,
+        code: object,
+        operation: object | None = None,
+        message: object = "",
+        hint: object = "",
+        path: object = "",
+        retryable: object = False,
+    ) -> None:
+        self.code = code
+        self.operation = operation
+        self.message = message
+        self.hint = hint
+        self.path = path
+        self.retryable = retryable
 
 
 def _fake_container_backend() -> ContainerFakeBackend:

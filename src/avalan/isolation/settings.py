@@ -76,16 +76,40 @@ class IsolationTrustLevel(StrEnum):
 
 
 class IsolationDiagnosticCategory(StrEnum):
+    APPROVAL = "approval"
+    AUDIT = "audit"
+    AVAILABILITY = "availability"
     UNSUPPORTED = "unsupported"
     VALUE = "value"
     SECURITY = "security"
+
+
+class IsolationDiagnosticSeverity(StrEnum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
 
 
 class IsolationDiagnosticCode(StrEnum):
     MODE_CONFLICT = "isolation.mode_conflict"
     UNSUPPORTED_MODE = "isolation.unsupported_mode"
     UNSUPPORTED_BACKEND = "isolation.unsupported_backend"
-    POLICY_WIDENING = "isolation.policy_widening"
+    MODE_UNAVAILABLE = "isolation.mode_unavailable"
+    CAPABILITY_MISMATCH = "isolation.capability_mismatch"
+    ELEVATION_REQUIRED = "isolation.elevation_required"
+    ELEVATION_DENIED = "isolation.elevation_denied"
+    FALLBACK_DENIED = "isolation.fallback_denied"
+    APPROVAL_STALE = "isolation.approval_stale"
+    POLICY_DRIFT = "isolation.policy_drift"
+    AUDIT_UNAVAILABLE = "isolation.audit_unavailable"
+    SANDBOX_PROVIDER_UNAVAILABLE = "sandbox.provider_unavailable"
+    SANDBOX_PROFILE_GENERATION_FAILED = "sandbox.profile_generation_failed"
+    SANDBOX_PATH_DENIED = "sandbox.path_denied"
+    SANDBOX_NETWORK_UNENFORCEABLE = "sandbox.network_unenforceable"
+    CONTAINER_BACKEND_UNAVAILABLE = "container.backend.unavailable"
+    CONTAINER_BACKEND_CAPABILITY_MISMATCH = (
+        "container.backend.capability_mismatch"
+    )
     UNSUPPORTED_SYNTAX = "isolation.unsupported_syntax"
 
 
@@ -121,36 +145,72 @@ class IsolationDiagnostic:
     message: str
     hint: str
     category: IsolationDiagnosticCategory | str
+    severity: IsolationDiagnosticSeverity | str = (
+        IsolationDiagnosticSeverity.ERROR
+    )
+    retryable: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "code",
-            _enum_value(self.code, IsolationDiagnosticCode, "code"),
+            (
+                self.code
+                if isinstance(self.code, IsolationDiagnosticCode)
+                else IsolationDiagnosticCode(self.code)
+            ),
         )
         object.__setattr__(
             self,
             "category",
-            _enum_value(
-                self.category,
-                IsolationDiagnosticCategory,
-                "category",
+            (
+                self.category
+                if isinstance(self.category, IsolationDiagnosticCategory)
+                else IsolationDiagnosticCategory(self.category)
+            ),
+        )
+        object.__setattr__(
+            self,
+            "severity",
+            (
+                self.severity
+                if isinstance(self.severity, IsolationDiagnosticSeverity)
+                else IsolationDiagnosticSeverity(self.severity)
             ),
         )
         _assert_non_empty_string(self.path, "path")
         _assert_non_empty_string(self.message, "message")
         _assert_non_empty_string(self.hint, "hint")
+        _assert_bool(self.retryable, "retryable")
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, str | bool]:
         code = cast(IsolationDiagnosticCode, self.code)
         category = cast(IsolationDiagnosticCategory, self.category)
+        severity = cast(IsolationDiagnosticSeverity, self.severity)
         return {
             "code": code.value,
             "path": self.path,
             "category": category.value,
+            "severity": severity.value,
             "message": self.message,
             "hint": self.hint,
+            "retryable": self.retryable,
         }
+
+    def to_audit_metadata(self) -> dict[str, str]:
+        code = cast(IsolationDiagnosticCode, self.code)
+        category = cast(IsolationDiagnosticCategory, self.category)
+        severity = cast(IsolationDiagnosticSeverity, self.severity)
+        return {
+            "diagnostic_code": code.value,
+            "diagnostic_category": category.value,
+            "diagnostic_severity": severity.value,
+            "diagnostic_retryable": str(self.retryable).lower(),
+        }
+
+    def model_message(self) -> str:
+        code = cast(IsolationDiagnosticCode, self.code)
+        return f"{code.value}: {self.message} {self.hint}"
 
 
 @final
@@ -1305,6 +1365,10 @@ def isolation_diagnostic(
     message: str,
     hint: str,
     category: IsolationDiagnosticCategory | str,
+    severity: IsolationDiagnosticSeverity | str = (
+        IsolationDiagnosticSeverity.ERROR
+    ),
+    retryable: bool = False,
 ) -> IsolationDiagnostic:
     return IsolationDiagnostic(
         code=code,
@@ -1312,6 +1376,8 @@ def isolation_diagnostic(
         message=message,
         hint=hint,
         category=category,
+        severity=severity,
+        retryable=retryable,
     )
 
 

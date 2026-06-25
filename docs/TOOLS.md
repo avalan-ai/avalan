@@ -239,8 +239,13 @@ sandbox `backend`. Top-level container policy is valid when `[tool.shell]`
 selects the container `backend`, or when `[runtime.container]` uses it as the
 whole-agent runtime envelope without shell container execution.
 Untrusted agent, flow, task, prompt, MCP, A2A, or HTTP inputs must be capped to
-profile selection only; they must not define roots, images, mounts, executable
-paths, backend flags, network policy, or secrets.
+supported profile selectors where that surface allows selection; they must not
+define roots, images, mounts, executable paths, backend flags, network policy,
+or secrets.
+
+See [Isolation execution](ISOLATION.md) for the supported mode/backend matrix,
+policy fields, examples, approval behavior, diagnostics, and real-runtime
+test gates.
 
 ## Database Tools
 

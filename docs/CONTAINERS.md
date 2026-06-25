@@ -6,7 +6,8 @@ operator configuration. Models and remote callers cannot choose arbitrary
 images, mounts, runtime sockets, networks, devices, secrets, or backend flags.
 
 This page documents current release readiness for the implemented container
-execution surfaces.
+execution surfaces. For the unified `local` / `sandbox` / `container` model,
+see [Isolation execution](ISOLATION.md).
 
 ## Supported Scope
 
@@ -21,10 +22,10 @@ full conformance claims until their real-runtime and release gates close.
 | `code.search.ast.grep` | Can run through the same injected container runtime when SDK/operator code supplies settings and a backend. The model schema does not expose runtime authority. |
 | Strict flows | Support trusted defaults, node narrowing, review records, and container events. Legacy flow paths reject container settings when they cannot enforce policy. |
 | Direct and queued tasks | SDK/operator paths support `TaskContainerExecutionSettings`, durable plan metadata, worker revalidation, and injected container backends. Task TOML container syntax remains unsupported. |
-| Server, MCP, and A2A | Remote callers may select only an operator-exposed safe profile selector. Arbitrary runtime authority is rejected before tool execution. |
+| Server, MCP, and A2A | Remote callers may select only an operator-exposed safe container profile selector. Arbitrary runtime authority is rejected before tool execution. |
 | Runtime envelopes | Planning and diagnostics exist for trusted agent, flow, task worker, server, and model backend envelopes. Actual envelope execution requires a trusted runner/loader; otherwise Avalan reports unavailable-envelope diagnostics. |
 | Model backends | Envelope planning exists for eligible model backends. Host-native targets such as Metal remain host-native unless a trusted envelope implementation is supplied. |
-| Backend breadth | Docker is the promoted catalog backend. Apple `container` has an opt-in shell backend adapter. |
+| Backend breadth | Docker is the promoted backend. Apple `container` has an opt-in shell backend adapter. |
 
 ## Runtime Setup
 
@@ -103,7 +104,7 @@ The optional live-runtime gates are recorded as backend runtime requirements:
 
 | Backend profile family | Gate |
 | --- | --- |
-| Docker Engine, Docker Desktop macOS | `AVALAN_CONTAINER_DOCKER_E2E=1` |
+| Docker Engine, Docker Desktop macOS | `AVALAN_CONTAINER_DOCKER_E2E=1`; backend lifecycle tests also require `AVALAN_CONTAINER_DOCKER_E2E_IMAGE=<digest-pinned-image>` |
 | Apple `container` | `AVALAN_CONTAINER_APPLE_E2E=1` plus `AVALAN_CONTAINER_APPLE_E2E_IMAGE=<digest-pinned-image>` |
 
 There is no repository-wide pytest marker for these gates today. The explicit
@@ -231,11 +232,12 @@ where the selected execution path reaches those phases.
 
 ## Known Risks And Deferred Non-Conformance
 
-- A concrete Docker backend adapter is not bundled here. Current default
-  verification is fake backend plus catalog capability validation, with
-  fake-runtime coverage for the Apple `container` shell adapter.
-- Optional Docker real-runtime suites still need harness jobs that set the
-  gate, probe runtimes, and skip with diagnostics.
+- Docker and Apple `container` backend adapters are implemented, but live
+  runtime coverage is optional and environment-gated. Default verification
+  still uses fake backends plus capability validation.
+- Optional Docker and Apple real-runtime suites still need harness jobs that
+  set the gates, provide digest-pinned images, probe runtimes, and skip with
+  diagnostics when unavailable.
 - Default conformance has release, fail-closed, watchdog, and stress tests,
   but it is not fully closed until real-runtime suites, broader
   platform performance gates, and every stable negative diagnostic audit are

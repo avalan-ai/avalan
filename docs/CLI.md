@@ -135,7 +135,8 @@ Supported shell execution modes are `local`, `sandbox`, and `container`.
 Supported sandbox backends are `seatbelt` and `bubblewrap`; supported
 container backends are `docker` and `apple-container`. Container policy flags
 require `--tool-shell-backend container`; sandbox policy flags require
-`--tool-shell-backend sandbox`.
+`--tool-shell-backend sandbox`. See [Isolation execution](ISOLATION.md) for
+trusted policy fields, platform limits, approval behavior, and diagnostics.
 
 Use `shell` or `shell.*` to enable the full namespace, or a concrete name such
 as `shell.rg` for one command. An empty `[tool.shell]` section enables shell
