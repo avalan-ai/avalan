@@ -17,6 +17,27 @@ across local and hosted models. Prompts, model routing, tools, memory,
 workflows, tasks, and serving protocols stay explicit, so the model is a
 component you control rather than the whole system.
 
+## 🧠 Build Your Intelligence Harness
+
+Avalan is for teams that want the model to be one part of the system, not the
+system itself. It gives you the runtime harness around inference, tools,
+memory, orchestration, tasks, protocols, and human control.
+
+With Avalan, you can:
+
+- 💻 Run **local and hosted models** behind one interface, with inference-time
+  control over prompts, sampling, streaming, backends, and vendor routing.
+- 🛠️ **Execute tools** as first-class runtime steps, including browser automation,
+  code, databases, shell media tools, MCP servers, and A2A agents.
+- 🔁 **Compose flows** where each node, edge, input, output, and review boundary is
+  visible.
+- ✅ Package repeatable work as **tasks with typed inputs**, file handling, queues,
+  durable execution, privacy settings, and schema-validated outputs.
+- 🌐 **Serve your agents** through OpenAI-compatible APIs, MCP, and A2A without
+  changing the agent runtime.
+- 🔒 Add **human-in-the-loop** and least-privilege controls around tool execution,
+  data access, files, and networked agent calls.
+
 ## 📦 Install
 
 Avalan supports Python 3.11 through 3.14.
@@ -111,27 +132,6 @@ avalan task run docs/examples/tasks/poc_extraction/image_flow_task.toml \
 For task contracts, flow graphs, file conversion, queues, and schema output,
 see [docs/TASKS.md](docs/TASKS.md), [docs/FLOWS.md](docs/FLOWS.md), and
 [docs/examples/tasks/poc_extraction/README.md](docs/examples/tasks/poc_extraction/README.md).
-
-## 🧠 Build Your Intelligence Harness
-
-Avalan is for teams that want the model to be one part of the system, not the
-system itself. It gives you the runtime harness around inference, tools,
-memory, orchestration, tasks, protocols, and human control.
-
-With Avalan, you can:
-
-- 💻 Run **local and hosted models** behind one interface, with inference-time
-  control over prompts, sampling, streaming, backends, and vendor routing.
-- 🛠️ **Execute tools** as first-class runtime steps, including browser automation,
-  code, databases, shell media tools, MCP servers, and A2A agents.
-- 🔁 **Compose flows** where each node, edge, input, output, and review boundary is
-  visible.
-- ✅ Package repeatable work as **tasks with typed inputs**, file handling, queues,
-  durable execution, privacy settings, and schema-validated outputs.
-- 🌐 **Serve your agents** through OpenAI-compatible APIs, MCP, and A2A without
-  changing the agent runtime.
-- 🔒 Add **human-in-the-loop** and least-privilege controls around tool execution,
-  data access, files, and networked agent calls.
 
 ## Documentation & Resources
 
