@@ -187,6 +187,16 @@ class FlowStoreSnapshotTest(TestCase):
             attempts=1,
             duration_ms=3,
         )
+        trace = FlowExecutionTrace(
+            nodes=trace.nodes,
+            edges=trace.edges,
+            metadata={
+                "isolation": {
+                    "version": "phase9",
+                    "nodes": {"start": {"plan_fingerprint": "abc"}},
+                }
+            },
+        )
 
         snapshot = flow_trace_to_snapshot(trace)
         restored = flow_trace_from_snapshot(snapshot)
@@ -194,6 +204,7 @@ class FlowStoreSnapshotTest(TestCase):
 
         self.assertEqual(restored.nodes[0].state, FlowNodeState.SUCCEEDED)
         self.assertEqual(restored.nodes[0].duration_ms, 3)
+        self.assertEqual(restored.metadata, trace.metadata)
         self.assertEqual(from_text.nodes, ())
         self.assertEqual(
             _plain(["created", datetime(2026, 1, 1, tzinfo=UTC)]),

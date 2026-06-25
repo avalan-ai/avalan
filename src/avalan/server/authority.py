@@ -38,34 +38,73 @@ _REMOTE_RUNTIME_AUTHORITY_KEYS = frozenset(
         "egressallowlist",
         "env",
         "environment",
+        "environmentpolicy",
         "environmentvariable",
         "environmentvariables",
         "envvar",
         "envvars",
         "gid",
+        "approval",
+        "approvalpolicy",
+        "approvalrecord",
+        "approvalrecords",
+        "approvals",
+        "approvedby",
+        "allowedroot",
+        "allowedroots",
+        "deniedroot",
+        "deniedroots",
+        "denyroot",
+        "denyroots",
+        "executionmode",
+        "hostroot",
+        "hostroots",
         "image",
         "imageref",
         "imagereference",
         "images",
+        "inputroot",
+        "inputroots",
+        "isolation",
+        "isolationbackend",
+        "isolationconfig",
+        "isolationmode",
+        "isolationplan",
+        "isolationpolicy",
+        "isolationprofile",
+        "isolationprofiles",
+        "isolationruntime",
+        "isolationsettings",
         "memorybytes",
+        "mode",
         "mount",
         "mountpath",
         "mountpaths",
         "mounts",
+        "mountroot",
+        "mountroots",
         "network",
         "networkmode",
         "networkpolicy",
         "networks",
+        "outputroot",
+        "outputroots",
         "pids",
         "platform",
         "policyversion",
         "privileged",
         "pullpolicy",
+        "readroot",
+        "readroots",
         "readonlyrootfs",
         "resource",
         "resourcelimit",
         "resourcelimits",
         "resources",
+        "reviewmode",
+        "rootpath",
+        "rootpaths",
+        "roots",
         "runtime",
         "runtimecontainer",
         "runtimeenvelope",
@@ -73,10 +112,26 @@ _REMOTE_RUNTIME_AUTHORITY_KEYS = frozenset(
         "runtimepolicy",
         "runtimeprofile",
         "runtimeprofiles",
+        "sandbox",
+        "sandboxbackend",
+        "sandboxconfig",
+        "sandboxmode",
+        "sandboxpolicy",
+        "sandboxprofile",
+        "sandboxprofileid",
+        "sandboxprofiles",
+        "sandboxroot",
+        "sandboxroots",
+        "sandboxruntime",
+        "sandboxsettings",
         "secret",
         "secretdelivery",
         "secretdeliveries",
         "secrets",
+        "scratchroot",
+        "scratchroots",
+        "temproot",
+        "temproots",
         "timeoutseconds",
         "uid",
         "user",
@@ -84,9 +139,47 @@ _REMOTE_RUNTIME_AUTHORITY_KEYS = frozenset(
         "workingdirectory",
         "workspace",
         "workspaceroot",
+        "writeroot",
+        "writeroots",
     }
 )
-_REMOTE_RUNTIME_AUTHORITY_PREFIXES = ("container", "runtime")
+_REMOTE_RUNTIME_AUTHORITY_PREFIXES = (
+    "container",
+    "isolation",
+    "runtime",
+    "sandbox",
+)
+_JSON_SCHEMA_DECLARATION_MAP_KEYS = frozenset(
+    {
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+        "patternProperties",
+        "properties",
+    }
+)
+_JSON_SCHEMA_VALUE_KEYS = frozenset(
+    {
+        "additionalProperties",
+        "contains",
+        "else",
+        "if",
+        "items",
+        "not",
+        "propertyNames",
+        "then",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+    }
+)
+_JSON_SCHEMA_SEQUENCE_VALUE_KEYS = frozenset(
+    {
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "prefixItems",
+    }
+)
 
 
 def remote_runtime_authority_key(key: object) -> bool:
@@ -108,26 +201,61 @@ def reject_remote_runtime_authority_fields(
     path: str = "request",
     skip_keys: set[str] | frozenset[str] = frozenset(),
 ) -> None:
+    _reject_remote_runtime_authority_fields(
+        value,
+        path=path,
+        skip_keys=skip_keys,
+        schema_context=False,
+    )
+
+
+def _reject_remote_runtime_authority_fields(
+    value: object,
+    *,
+    path: str,
+    skip_keys: set[str] | frozenset[str],
+    schema_context: bool,
+) -> None:
     if isinstance(value, Mapping):
         for raw_key, item in value.items():
             key = str(raw_key)
             item_path = f"{path}.{key}"
             if key in skip_keys:
                 continue
+            enters_schema_context = _enters_json_schema_context(
+                key,
+                path,
+                item,
+            )
+            item_schema_context = schema_context or enters_schema_context
+            if _is_json_schema_declaration_map(
+                key,
+                item,
+                item_schema_context,
+            ):
+                _reject_json_schema_property_definitions(
+                    item,
+                    path=item_path,
+                    skip_keys=skip_keys,
+                )
+                continue
             if remote_runtime_authority_key(key):
                 raise ValueError(_authority_error(item_path, key))
-            reject_remote_runtime_authority_fields(
+            _reject_remote_runtime_authority_fields(
                 item,
                 path=item_path,
                 skip_keys=skip_keys,
+                schema_context=enters_schema_context
+                or _child_schema_context(key, item_schema_context),
             )
         return
     if _is_sequence(value):
         for index, item in enumerate(cast(Sequence[object], value)):
-            reject_remote_runtime_authority_fields(
+            _reject_remote_runtime_authority_fields(
                 item,
                 path=f"{path}[{index}]",
                 skip_keys=skip_keys,
+                schema_context=schema_context,
             )
 
 
@@ -142,9 +270,10 @@ def reject_remote_runtime_authority_extra_fields(
         return
     for raw_key, item in value.items():
         key = str(raw_key)
-        if key in allowed_fields:
-            continue
         item_path = f"{path}.{key}"
+        if key in allowed_fields:
+            reject_remote_runtime_authority_fields(item, path=item_path)
+            continue
         if allow_container_profile_selector and _is_profile_selector(
             key,
             item,
@@ -179,6 +308,65 @@ def _authority_error(path: str, key: str) -> str:
 
 def _normalize_authority_key(key: object) -> str:
     return sub(r"[^a-z0-9]", "", str(key).lower())
+
+
+def _is_json_schema_declaration_map(
+    key: str,
+    value: object,
+    schema_context: bool,
+) -> bool:
+    return (
+        schema_context
+        and key in _JSON_SCHEMA_DECLARATION_MAP_KEYS
+        and isinstance(value, Mapping)
+    )
+
+
+def _enters_json_schema_context(
+    key: str,
+    path: str,
+    value: object,
+) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    if key == "parameters":
+        return path.startswith(("chat.tools[", "request.tools[")) and (
+            path.endswith(".function")
+        )
+    if key != "schema":
+        return False
+    return path in {
+        "chat.response_format",
+        "chat.response_format.json_schema",
+        "request.response_format",
+        "request.response_format.json_schema",
+        "request.text.format",
+        "responses.response_format",
+        "responses.response_format.json_schema",
+        "responses.text.format",
+    }
+
+
+def _child_schema_context(key: str, schema_context: bool) -> bool:
+    return schema_context and (
+        key in _JSON_SCHEMA_VALUE_KEYS
+        or key in _JSON_SCHEMA_SEQUENCE_VALUE_KEYS
+    )
+
+
+def _reject_json_schema_property_definitions(
+    value: Mapping[object, object],
+    *,
+    path: str,
+    skip_keys: set[str] | frozenset[str],
+) -> None:
+    for raw_key, item in value.items():
+        _reject_remote_runtime_authority_fields(
+            item,
+            path=f"{path}.{raw_key}",
+            skip_keys=skip_keys,
+            schema_context=True,
+        )
 
 
 def _is_profile_selector(key: str, value: object) -> bool:

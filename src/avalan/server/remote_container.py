@@ -1,4 +1,7 @@
-from .authority import REMOTE_CONTAINER_PROFILE_SELECTOR_KEYS
+from .authority import (
+    REMOTE_CONTAINER_PROFILE_SELECTOR_KEYS,
+    reject_remote_runtime_authority_extra_fields,
+)
 from .container_policy import (
     RemoteContainerRequestError,
     remote_container_policy_from_state,
@@ -9,25 +12,70 @@ from collections.abc import Mapping
 
 from fastapi import HTTPException, Request
 
+_OPENAI_COMPATIBLE_REQUEST_FIELDS = frozenset(
+    {
+        "frequency_penalty",
+        "input",
+        "instructions",
+        "logit_bias",
+        "logprobs",
+        "max_completion_tokens",
+        "max_output_tokens",
+        "max_tokens",
+        "messages",
+        "metadata",
+        "model",
+        "n",
+        "parallel_tool_calls",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "service_tier",
+        "stop",
+        "store",
+        "stream",
+        "stream_options",
+        "temperature",
+        "text",
+        "tool_choice",
+        "tools",
+        "top_logprobs",
+        "top_p",
+        "truncation",
+        "user",
+    }
+)
+
 
 async def validate_remote_container_profile_selection(
     request: Request,
 ) -> None:
-    """Validate an operator-exposed remote container profile selector."""
+    """Validate remote authority fields and container profile selectors."""
     payload = await _json_payload(request)
     if not isinstance(payload, Mapping):
         return
     arguments = _profile_selector_arguments(payload)
-    if not arguments:
-        return
     try:
-        container_request = validate_remote_container_arguments(
-            arguments,
-            policy=remote_container_policy_from_state(request.app.state),
+        container_request = (
+            validate_remote_container_arguments(
+                arguments,
+                policy=remote_container_policy_from_state(request.app.state),
+            )
+            if arguments
+            else None
         )
-    except RemoteContainerRequestError as exc:
+        reject_remote_runtime_authority_extra_fields(
+            payload,
+            allowed_fields=_OPENAI_COMPATIBLE_REQUEST_FIELDS,
+            allow_container_profile_selector=True,
+            path="request",
+        )
+    except (RemoteContainerRequestError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if container_request.profile is not None:
+    if container_request is not None and container_request.profile is not None:
+        # Server isolation remains operator-managed. The remote selector is
+        # validation-only and records the approved profile for observability.
         request.state.remote_container_profile = container_request.profile
 
 

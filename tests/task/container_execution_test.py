@@ -87,6 +87,8 @@ from avalan.task.artifacts.local import LocalArtifactStore
 from avalan.task.canonical import canonical_definition, spec_hash
 from avalan.task.container import (
     TASK_CONTAINER_ATTEMPT_KEY,
+    TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY,
+    TASK_CONTAINER_ISOLATION_KEY,
     TASK_CONTAINER_METADATA_KEY,
     TASK_CONTAINER_WORKER_ENVELOPE_KEY,
     TaskContainerPlans,
@@ -607,6 +609,21 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertIn(TASK_CONTAINER_WORKER_ENVELOPE_KEY, metadata)
         self.assertNotIn(TASK_CONTAINER_ATTEMPT_KEY, metadata)
+        isolation = cast(
+            Mapping[str, object],
+            metadata[TASK_CONTAINER_ISOLATION_KEY],
+        )
+        worker_isolation = cast(
+            Mapping[str, object],
+            isolation[TASK_CONTAINER_WORKER_ENVELOPE_KEY],
+        )
+        self.assertEqual(worker_isolation["mode"], "container")
+        self.assertEqual(worker_isolation["backend"], "docker")
+        self.assertEqual(worker_isolation["scope"], "runtime_envelope")
+        self.assertEqual(
+            worker_isolation["plan_fingerprint"],
+            plans.worker_envelope.plan_fingerprint,
+        )
 
         attempt_definition = _definition(container=_container_settings())
         await store.register_definition(
@@ -627,6 +644,27 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
                 run=attempt_run,
                 attempt=attempt_attempt,
             ).to_metadata(),
+        )
+        request_metadata = task_container_request_metadata(attempt_definition)
+        request_isolation = cast(
+            Mapping[str, object],
+            request_metadata[TASK_CONTAINER_ISOLATION_KEY],
+        )
+        request_attempt_isolation = cast(
+            Mapping[str, object],
+            request_isolation[TASK_CONTAINER_ATTEMPT_KEY],
+        )
+        request_attempt = cast(
+            Mapping[str, object],
+            request_metadata[TASK_CONTAINER_ATTEMPT_KEY],
+        )
+        self.assertEqual(
+            request_attempt_isolation["plan_fingerprint"],
+            request_attempt["plan_fingerprint"],
+        )
+        self.assertEqual(
+            request_attempt_isolation["profile_registry_id"],
+            "task-registry",
         )
 
         payload = task_container_event_payload(
@@ -669,6 +707,23 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
                 "provider",
             ],
         )
+        outside_manifest = task_container_input_mount_manifest(
+            (
+                TaskInputFile(
+                    logical_path="artifact:file",
+                    artifact_ref=TaskArtifactRef(
+                        artifact_id="input-artifact",
+                        store="task-inputs",
+                        storage_key="/tmp/outside",
+                        metadata={
+                            "container_mount_source": "/tmp/outside",
+                        },
+                    ),
+                ),
+            ),
+            allowed_roots=("/tmp/allowed",),
+        )
+        self.assertNotIn("source", outside_manifest[0])
 
     async def test_container_helper_fail_closed_edges(self) -> None:
         self.assertIsNone(
@@ -876,6 +931,40 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
         )
         self.assertIsInstance(array_output, tuple)
 
+    async def test_container_request_verification_accepts_legacy_metadata(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        definition = _definition(
+            container=_container_settings(
+                worker_envelope=_effective_settings(),
+            )
+        )
+        definition_hash = await spec_hash(definition)
+        await store.register_definition(
+            definition,
+            definition_hash=definition_hash,
+        )
+        metadata = task_container_request_metadata(definition)
+        container = dict(cast(Mapping[str, object], metadata))
+        container.pop(TASK_CONTAINER_ISOLATION_KEY)
+        run = await store.create_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                metadata={TASK_CONTAINER_METADATA_KEY: container},
+            )
+        )
+        attempt = await store.create_attempt(run.run_id)
+
+        plans = verify_task_container_request(
+            definition,
+            run=run,
+            attempt=attempt,
+        )
+
+        self.assertIsNotNone(plans.attempt)
+        self.assertIsNotNone(plans.worker_envelope)
+
     async def test_container_request_verification_rejects_bad_metadata(
         self,
     ) -> None:
@@ -895,6 +984,44 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
             self.assertEqual(
                 error.path,
                 f"{TASK_CONTAINER_METADATA_KEY}.{TASK_CONTAINER_ATTEMPT_KEY}",
+            )
+
+        with self.subTest("missing isolation attempt"):
+            metadata = task_container_request_metadata(definition)
+            container = dict(cast(Mapping[str, object], metadata))
+            isolation = dict(
+                cast(
+                    Mapping[str, object],
+                    container[TASK_CONTAINER_ISOLATION_KEY],
+                )
+            )
+            isolation[TASK_CONTAINER_ATTEMPT_KEY] = "invalid"
+            container[TASK_CONTAINER_ISOLATION_KEY] = isolation
+            error = await _verification_error(
+                definition,
+                {TASK_CONTAINER_METADATA_KEY: container},
+            )
+            self.assertEqual(error.code, "container.plan_missing")
+            self.assertEqual(
+                error.path,
+                f"{TASK_CONTAINER_METADATA_KEY}."
+                f"{TASK_CONTAINER_ISOLATION_KEY}."
+                f"{TASK_CONTAINER_ATTEMPT_KEY}",
+            )
+
+        with self.subTest("malformed isolation"):
+            metadata = task_container_request_metadata(definition)
+            container = dict(cast(Mapping[str, object], metadata))
+            container[TASK_CONTAINER_ISOLATION_KEY] = "invalid"
+            error = await _verification_error(
+                definition,
+                {TASK_CONTAINER_METADATA_KEY: container},
+            )
+            self.assertEqual(error.code, "container.plan_missing")
+            self.assertEqual(
+                error.path,
+                f"{TASK_CONTAINER_METADATA_KEY}."
+                f"{TASK_CONTAINER_ISOLATION_KEY}",
             )
 
         with self.subTest("stale policy"):
@@ -917,6 +1044,193 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
                 error.path,
                 f"{TASK_CONTAINER_METADATA_KEY}."
                 f"{TASK_CONTAINER_ATTEMPT_KEY}.policy_version",
+            )
+
+        stale_isolation_cases = (
+            ("mode", "sandbox"),
+            ("backend", "apple-container"),
+            ("profile_registry_id", "other-registry"),
+            ("policy_version", "policy-v2"),
+            ("scope", "runtime_envelope"),
+            ("plan_fingerprint", "0" * 64),
+        )
+        for field_name, stale_value in stale_isolation_cases:
+            with self.subTest(f"stale isolation {field_name}"):
+                metadata = task_container_request_metadata(definition)
+                container = dict(cast(Mapping[str, object], metadata))
+                isolation = dict(
+                    cast(
+                        Mapping[str, object],
+                        container[TASK_CONTAINER_ISOLATION_KEY],
+                    )
+                )
+                attempt = dict(
+                    cast(
+                        Mapping[str, object],
+                        isolation[TASK_CONTAINER_ATTEMPT_KEY],
+                    )
+                )
+                attempt[field_name] = stale_value
+                isolation[TASK_CONTAINER_ATTEMPT_KEY] = attempt
+                container[TASK_CONTAINER_ISOLATION_KEY] = isolation
+                error = await _verification_error(
+                    definition,
+                    {TASK_CONTAINER_METADATA_KEY: container},
+                )
+                self.assertEqual(error.code, "container.plan_mismatch")
+                self.assertEqual(
+                    error.path,
+                    f"{TASK_CONTAINER_METADATA_KEY}."
+                    f"{TASK_CONTAINER_ISOLATION_KEY}."
+                    f"{TASK_CONTAINER_ATTEMPT_KEY}.{field_name}",
+                )
+
+        with self.subTest("unexpected isolation authority"):
+            metadata = task_container_request_metadata(definition)
+            container = dict(cast(Mapping[str, object], metadata))
+            isolation = dict(
+                cast(
+                    Mapping[str, object],
+                    container[TASK_CONTAINER_ISOLATION_KEY],
+                )
+            )
+            attempt = dict(
+                cast(
+                    Mapping[str, object],
+                    isolation[TASK_CONTAINER_ATTEMPT_KEY],
+                )
+            )
+            attempt["mounts"] = []
+            isolation[TASK_CONTAINER_ATTEMPT_KEY] = attempt
+            container[TASK_CONTAINER_ISOLATION_KEY] = isolation
+            error = await _verification_error(
+                definition,
+                {TASK_CONTAINER_METADATA_KEY: container},
+            )
+            self.assertEqual(error.code, "container.plan_unexpected")
+            self.assertEqual(
+                error.path,
+                f"{TASK_CONTAINER_METADATA_KEY}."
+                f"{TASK_CONTAINER_ISOLATION_KEY}."
+                f"{TASK_CONTAINER_ATTEMPT_KEY}.mounts",
+            )
+
+        input_mounts = (
+            {
+                "source": "/tmp/input.txt",
+                "source_kind": "artifact",
+                "target": "/inputs/0",
+            },
+        )
+        with self.subTest("dynamic lifecycle isolation malformed"):
+            metadata = task_container_request_metadata(
+                definition,
+                input_mounts=input_mounts,
+            )
+            container = dict(cast(Mapping[str, object], metadata))
+            isolation = dict(
+                cast(
+                    Mapping[str, object],
+                    container[TASK_CONTAINER_ISOLATION_KEY],
+                )
+            )
+            isolation[TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY] = "invalid"
+            container[TASK_CONTAINER_ISOLATION_KEY] = isolation
+            error = await _verification_error(
+                definition,
+                {TASK_CONTAINER_METADATA_KEY: container},
+                input_mounts=input_mounts,
+                allow_dynamic_input_mounts=True,
+            )
+            self.assertEqual(error.code, "container.plan_missing")
+            self.assertEqual(
+                error.path,
+                f"{TASK_CONTAINER_METADATA_KEY}."
+                f"{TASK_CONTAINER_ISOLATION_KEY}."
+                f"{TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY}",
+            )
+
+        with self.subTest("dynamic lifecycle isolation authority"):
+            metadata = task_container_request_metadata(
+                definition,
+                input_mounts=input_mounts,
+            )
+            container = dict(cast(Mapping[str, object], metadata))
+            isolation = dict(
+                cast(
+                    Mapping[str, object],
+                    container[TASK_CONTAINER_ISOLATION_KEY],
+                )
+            )
+            lifecycle = dict(
+                cast(
+                    Mapping[str, object],
+                    isolation[TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY],
+                )
+            )
+            lifecycle["mounts"] = []
+            isolation[TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY] = lifecycle
+            container[TASK_CONTAINER_ISOLATION_KEY] = isolation
+            error = await _verification_error(
+                definition,
+                {TASK_CONTAINER_METADATA_KEY: container},
+                input_mounts=input_mounts,
+                allow_dynamic_input_mounts=True,
+            )
+            self.assertEqual(error.code, "container.plan_unexpected")
+            self.assertEqual(
+                error.path,
+                f"{TASK_CONTAINER_METADATA_KEY}."
+                f"{TASK_CONTAINER_ISOLATION_KEY}."
+                f"{TASK_CONTAINER_ATTEMPT_LIFECYCLE_KEY}.mounts",
+            )
+
+        for sibling_key in ("approval", "sandbox"):
+            with self.subTest(f"unexpected isolation {sibling_key}"):
+                metadata = task_container_request_metadata(definition)
+                container = dict(cast(Mapping[str, object], metadata))
+                isolation = dict(
+                    cast(
+                        Mapping[str, object],
+                        container[TASK_CONTAINER_ISOLATION_KEY],
+                    )
+                )
+                isolation[sibling_key] = {"mode": "container"}
+                container[TASK_CONTAINER_ISOLATION_KEY] = isolation
+                error = await _verification_error(
+                    definition,
+                    {TASK_CONTAINER_METADATA_KEY: container},
+                )
+                self.assertEqual(error.code, "container.plan_unexpected")
+                self.assertEqual(
+                    error.path,
+                    f"{TASK_CONTAINER_METADATA_KEY}."
+                    f"{TASK_CONTAINER_ISOLATION_KEY}.{sibling_key}",
+                )
+
+        with self.subTest("unexpected isolation envelope"):
+            metadata = task_container_request_metadata(definition)
+            container = dict(cast(Mapping[str, object], metadata))
+            isolation = dict(
+                cast(
+                    Mapping[str, object],
+                    container[TASK_CONTAINER_ISOLATION_KEY],
+                )
+            )
+            isolation[TASK_CONTAINER_WORKER_ENVELOPE_KEY] = {
+                "mode": "container"
+            }
+            container[TASK_CONTAINER_ISOLATION_KEY] = isolation
+            error = await _verification_error(
+                definition,
+                {TASK_CONTAINER_METADATA_KEY: container},
+            )
+            self.assertEqual(error.code, "container.plan_unexpected")
+            self.assertEqual(
+                error.path,
+                f"{TASK_CONTAINER_METADATA_KEY}."
+                f"{TASK_CONTAINER_ISOLATION_KEY}."
+                f"{TASK_CONTAINER_WORKER_ENVELOPE_KEY}",
             )
 
         with self.subTest("unexpected envelope"):
@@ -2011,6 +2325,70 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
         self.assertEqual(await store.list_events(submission.run.run_id), ())
         self.assertEqual(submission.queue_item.run_id, queue.item.run_id)
 
+    async def test_queued_worker_rejects_widened_isolation_metadata(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        clock = Clock()
+        queue = SingleItemQueue(store, clock)
+        definition = _container_file_definition(
+            run=TaskRunPolicy.queued("tasks"),
+            file_input=True,
+        )
+        definition_id = await spec_hash(definition)
+        await store.register_definition(
+            definition,
+            definition_hash=definition_id,
+        )
+        metadata = task_container_run_metadata(definition, None)
+        container = dict(
+            cast(Mapping[str, object], metadata[TASK_CONTAINER_METADATA_KEY])
+        )
+        isolation = dict(
+            cast(
+                Mapping[str, object],
+                container[TASK_CONTAINER_ISOLATION_KEY],
+            )
+        )
+        attempt = dict(
+            cast(
+                Mapping[str, object],
+                isolation[TASK_CONTAINER_ATTEMPT_KEY],
+            )
+        )
+        attempt["scope"] = "runtime_envelope"
+        isolation[TASK_CONTAINER_ATTEMPT_KEY] = attempt
+        container[TASK_CONTAINER_ISOLATION_KEY] = isolation
+        await queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_id,
+                metadata={TASK_CONTAINER_METADATA_KEY: container},
+            ),
+            queue_name="tasks",
+            run_metadata={"runner": "queue"},
+        )
+        target = RecordingTarget()
+        backend = _backend(output_result=_container_output_result())
+        worker = TaskWorker(
+            store,
+            queue,
+            target=target,
+            queue_name="tasks",
+            hmac_provider=StaticHmacProvider(),
+            artifact_store=_artifact_store(self),
+            container_backend=backend,
+            clock=lambda: clock.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertIsNotNone(result.claimed)
+        self.assertIsNotNone(queue.completed)
+        assert queue.completed is not None
+        self.assertEqual(queue.completed.run.state, TaskRunState.FAILED)
+        self.assertEqual(target.contexts, [])
+        self.assertNotIn(ContainerBackendOperation.CREATE, backend.operations)
+
     async def test_client_and_worker_preserve_direct_queued_equivalence(
         self,
     ) -> None:
@@ -2601,6 +2979,9 @@ def _artifact_store(
 async def _verification_error(
     definition: TaskDefinition,
     metadata: Mapping[str, object],
+    *,
+    input_mounts: tuple[dict[str, object], ...] = (),
+    allow_dynamic_input_mounts: bool = False,
 ) -> TaskContainerVerificationError:
     store = InMemoryTaskStore()
     definition_hash = await spec_hash(definition)
@@ -2616,7 +2997,13 @@ async def _verification_error(
     )
     attempt = await store.create_attempt(run.run_id)
     try:
-        verify_task_container_request(definition, run=run, attempt=attempt)
+        verify_task_container_request(
+            definition,
+            run=run,
+            attempt=attempt,
+            input_mounts=input_mounts,
+            allow_dynamic_input_mounts=allow_dynamic_input_mounts,
+        )
     except TaskContainerVerificationError as error:
         return error
     raise AssertionError("container verification unexpectedly succeeded")

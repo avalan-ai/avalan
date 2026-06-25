@@ -47,6 +47,20 @@ DefinitionValue = TypeVar("DefinitionValue")
 RawSection = Mapping[str, object]
 
 _REQUIRED_SECTIONS = ("task", "input", "output", "execution")
+_UNSUPPORTED_ISOLATION_PATHS = (
+    "isolation",
+    "sandbox",
+    "sandboxProfile",
+    "sandboxPolicy",
+    "sandbox_profile",
+    "sandbox_policy",
+    "execution.isolation",
+    "execution.sandbox",
+    "execution.sandboxProfile",
+    "execution.sandboxPolicy",
+    "execution.sandbox_profile",
+    "execution.sandbox_policy",
+)
 
 
 class TaskLoadIssueCategory(StrEnum):
@@ -273,6 +287,10 @@ def _container_issues(
     raw: Mapping[str, object],
 ) -> tuple[TaskLoadIssue, ...]:
     return tuple(
+        _issue_from_isolation_path(path)
+        for path in _UNSUPPORTED_ISOLATION_PATHS
+        if _has_path(raw, path)
+    ) + tuple(
         _issue_from_container_diagnostic(diagnostic)
         for diagnostic in container_syntax_diagnostics(
             ContainerSurface.TASK_TOML,
@@ -291,6 +309,28 @@ def _issue_from_container_diagnostic(
         hint=diagnostic.hint,
         category=TaskLoadIssueCategory.UNSUPPORTED,
     )
+
+
+def _issue_from_isolation_path(path: str) -> TaskLoadIssue:
+    return _issue(
+        code="isolation.unsupported_syntax",
+        path=path,
+        message="Isolation syntax is not supported for task TOML yet.",
+        hint=(
+            f"Remove {path}; task isolation policy must be supplied by a "
+            "trusted runtime or deployment."
+        ),
+        category=TaskLoadIssueCategory.UNSUPPORTED,
+    )
+
+
+def _has_path(raw: Mapping[str, object], dotted_path: str) -> bool:
+    value: object = raw
+    for part in dotted_path.split("."):
+        if not isinstance(value, Mapping) or part not in value:
+            return False
+        value = value[part]
+    return True
 
 
 def _sections(

@@ -1,6 +1,8 @@
 from asyncio import CancelledError, sleep
 from collections.abc import Mapping
+from dataclasses import replace
 from time import time
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
@@ -58,6 +60,7 @@ from avalan.flow import (
     FlowExecutor,
     FlowInputDefinition,
     FlowInputType,
+    FlowIsolationMetadata,
     FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeExecutionError,
@@ -82,6 +85,7 @@ from avalan.flow import (
     compile_flow_definition,
     execute_flow_plan,
     flow_node_container_fingerprint,
+    flow_resume_isolation_metadata,
     loads_flow_definition_result,
     parse_flow_selector,
     tool_flow_node_registry,
@@ -96,9 +100,12 @@ from avalan.flow.runtime import (
     _container_approval_from_resume,
     _emit_container_event,
     _FlowEventDraft,
+    _resume_isolation_metadata_diagnostics,
+    _resume_isolation_node_names,
 )
 from avalan.flow.serializer import serialize_flow_definition
 from avalan.flow.stream import flow_stream_session
+from avalan.isolation import IsolationMode
 from avalan.model.stream import CanonicalStreamItem
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
@@ -174,13 +181,51 @@ class FlowContainerPlanTestCase(IsolatedAsyncioTestCase):
             result.plan.container.scope,
             ContainerExecutionScope.DURABLE_WORKFLOW,
         )
+        assert result.plan.isolation is not None
+        self.assertEqual(result.plan.isolation.mode, IsolationMode.CONTAINER)
+        self.assertEqual(result.plan.isolation.profile_name, "wide")
+        self.assertEqual(result.plan.isolation.policy_version, "phase12")
+        self.assertEqual(result.plan.isolation.container_fingerprint, None)
         node = result.plan.node_map["work"]
         assert node.container is not None
+        assert node.isolation is not None
         self.assertEqual(node.container.profile_name, "wide")
         self.assertEqual(node.container.policy_version, "phase12")
         self.assertEqual(
             node.container.scope,
             ContainerExecutionScope.DURABLE_WORKFLOW,
+        )
+        self.assertEqual(node.isolation.mode, IsolationMode.CONTAINER)
+        self.assertEqual(node.isolation.profile_name, "wide")
+        self.assertEqual(
+            node.isolation.container_fingerprint,
+            flow_node_container_fingerprint(result.plan, node),
+        )
+        metadata = flow_resume_isolation_metadata(result.plan)
+        isolation = metadata["isolation"]
+        assert isinstance(isolation, Mapping)
+        nodes = isolation["nodes"]
+        assert isinstance(nodes, Mapping)
+        self.assertEqual(
+            nodes["work"],
+            node.isolation.to_dict(),
+        )
+
+        repeated = await compile_flow_definition(
+            _definition(container=defaults),
+        )
+        self.assertTrue(repeated.ok, repeated.public_diagnostics)
+        assert repeated.plan is not None
+        assert repeated.plan.isolation is not None
+        repeated_node = repeated.plan.node_map["work"]
+        assert repeated_node.isolation is not None
+        self.assertEqual(
+            repeated.plan.isolation.plan_fingerprint,
+            result.plan.isolation.plan_fingerprint,
+        )
+        self.assertEqual(
+            repeated_node.isolation.plan_fingerprint,
+            node.isolation.plan_fingerprint,
         )
 
     async def test_node_container_override_can_only_narrow_defaults(
@@ -223,6 +268,12 @@ class FlowContainerPlanTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             node.container.scope,
             ContainerExecutionScope.DURABLE_WORKFLOW,
+        )
+        assert result.plan.isolation is not None
+        assert node.isolation is not None
+        self.assertNotEqual(
+            node.isolation.plan_fingerprint,
+            result.plan.isolation.plan_fingerprint,
         )
 
     async def test_node_can_select_allowed_narrower_profile(self) -> None:
@@ -896,6 +947,62 @@ class FlowContainerPlanTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(runner.resume_decisions, resume_decisions)
         self.assertEqual(result.node_outputs, resume_outputs)
 
+    async def test_runtime_envelope_fingerprint_is_resume_metadata(
+        self,
+    ) -> None:
+        settings = _settings(
+            profiles={"flow": _profile("flow")},
+            default_profile="flow",
+        )
+        compiled = await compile_flow_definition(
+            _definition(
+                container=settings,
+                runtime_envelope=FlowRuntimeEnvelopeDefinition(
+                    container=ContainerProfileSelection(
+                        profile="flow",
+                        required=True,
+                        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                    ),
+                    readiness_timeout_seconds=30,
+                ),
+            )
+        )
+
+        self.assertTrue(compiled.ok, compiled.public_diagnostics)
+        assert compiled.plan is not None
+        assert compiled.plan.runtime_envelope is not None
+        metadata = flow_resume_isolation_metadata(compiled.plan)
+        isolation = metadata["isolation"]
+        assert isinstance(isolation, Mapping)
+        runtime_envelope = isolation["runtime_envelope"]
+        assert isinstance(runtime_envelope, Mapping)
+        self.assertEqual(
+            runtime_envelope["plan_fingerprint"],
+            compiled.plan.runtime_envelope.plan_fingerprint,
+        )
+
+        repeated = await compile_flow_definition(
+            _definition(
+                container=settings,
+                runtime_envelope=FlowRuntimeEnvelopeDefinition(
+                    container=ContainerProfileSelection(
+                        profile="flow",
+                        required=True,
+                        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                    ),
+                    readiness_timeout_seconds=30,
+                ),
+            )
+        )
+
+        self.assertTrue(repeated.ok, repeated.public_diagnostics)
+        assert repeated.plan is not None
+        assert repeated.plan.runtime_envelope is not None
+        self.assertEqual(
+            repeated.plan.runtime_envelope.plan_fingerprint,
+            compiled.plan.runtime_envelope.plan_fingerprint,
+        )
+
     async def test_runtime_envelope_runner_must_be_trusted(self) -> None:
         settings = _settings(
             profiles={"flow": _profile("flow")},
@@ -914,11 +1021,16 @@ class FlowContainerPlanTestCase(IsolatedAsyncioTestCase):
             )
         )
         assert compiled.plan is not None
+        plan = compiled.plan
 
         class UntrustedRuntimeEnvelopeRunner:
-            async def run_flow_runtime_envelope(self, *args, **kwargs):
+            async def run_flow_runtime_envelope(
+                self,
+                *args: object,
+                **kwargs: object,
+            ) -> FlowPlanExecutionResult:
                 return FlowPlanExecutionResult(
-                    trace=FlowExecutionTrace.from_plan(compiled.plan),
+                    trace=FlowExecutionTrace.from_plan(plan),
                 )
 
         with self.assertRaisesRegex(
@@ -926,9 +1038,12 @@ class FlowContainerPlanTestCase(IsolatedAsyncioTestCase):
             "runtime envelope runner must be trusted",
         ):
             await execute_flow_plan(
-                compiled.plan,
+                plan,
                 _constant_runner("should not run"),
-                runtime_envelope_runner=UntrustedRuntimeEnvelopeRunner(),
+                runtime_envelope_runner=cast(
+                    Any,
+                    UntrustedRuntimeEnvelopeRunner(),
+                ),
             )
 
         with self.assertRaisesRegex(
@@ -936,7 +1051,10 @@ class FlowContainerPlanTestCase(IsolatedAsyncioTestCase):
             "runtime envelope runner must be trusted",
         ):
             FlowExecutor(
-                runtime_envelope_runner=UntrustedRuntimeEnvelopeRunner()
+                runtime_envelope_runner=cast(
+                    Any,
+                    UntrustedRuntimeEnvelopeRunner(),
+                )
             )
 
     async def test_node_widening_is_rejected(self) -> None:
@@ -1111,6 +1229,82 @@ class FlowContainerPlanTestCase(IsolatedAsyncioTestCase):
             flow_node_container_fingerprint(plan, node),
         )
 
+    async def test_stale_manual_isolation_metadata_is_rejected(
+        self,
+    ) -> None:
+        stale = FlowIsolationMetadata(
+            mode=IsolationMode.LOCAL,
+            backend=None,
+            profile_registry_id=None,
+            profile_name=None,
+            policy_version=None,
+            scope=None,
+            plan_fingerprint="f" * 64,
+        )
+        plain_node = FlowNodePlan(
+            name="work",
+            type="pass-through",
+            kind=FlowNodeKind.PASS_THROUGH,
+        )
+        settings = _effective_settings(_profile("manual"))
+        isolated_node = FlowNodePlan(
+            name="work",
+            type="pass-through",
+            kind=FlowNodeKind.PASS_THROUGH,
+            container=settings,
+            isolation=stale,
+        )
+        baseline = _manual_plan(
+            FlowNodePlan(
+                name="work",
+                type="pass-through",
+                kind=FlowNodeKind.PASS_THROUGH,
+                container=settings,
+            ),
+            container=settings,
+        )
+        baseline_node = baseline.node_map["work"]
+        accepted = _manual_plan(
+            baseline_node,
+            container=settings,
+            isolation=baseline.isolation,
+        )
+        self.assertEqual(
+            accepted.node_map["work"].isolation,
+            baseline_node.isolation,
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "flow plan cannot carry stale isolation metadata",
+        ):
+            _manual_plan(plain_node, isolation=stale)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "flow node cannot carry stale isolation metadata",
+        ):
+            _manual_plan(
+                FlowNodePlan(
+                    name="work",
+                    type="pass-through",
+                    kind=FlowNodeKind.PASS_THROUGH,
+                    isolation=stale,
+                )
+            )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "flow plan isolation metadata changed",
+        ):
+            _manual_plan(plain_node, container=settings, isolation=stale)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "flow node isolation metadata changed",
+        ):
+            _manual_plan(isolated_node, container=settings)
+
     async def test_subflow_node_profile_selection_uses_allowlist(
         self,
     ) -> None:
@@ -1242,6 +1436,34 @@ class FlowContainerLoaderTestCase(IsolatedAsyncioTestCase):
         assert result.definition is not None
         self.assertIsNone(result.definition.container)
         self.assertIsNone(result.definition.runtime_envelope)
+
+    async def test_unsupported_isolation_syntax_fails_closed(self) -> None:
+        cases = (
+            ('[isolation]\nmode = "sandbox"\n', "isolation"),
+            ('[runtime.isolation]\nprofile = "wide"\n', "runtime.isolation"),
+            ('[runtime.sandbox]\nprofile = "wide"\n', "runtime.sandbox"),
+            (
+                '[nodes.work.runtime.isolation]\nprofile = "wide"\n',
+                "nodes.work.runtime.isolation",
+            ),
+            (
+                '[nodes.work.runtime.sandboxProfile]\nname = "wide"\n',
+                "nodes.work.runtime.sandboxProfile",
+            ),
+        )
+
+        for section, path in cases:
+            with self.subTest(path=path):
+                result = await FlowDefinitionLoader().loads_validation_result(
+                    _strict_source(section)
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    result.issues[0].code,
+                    "isolation.unsupported_syntax",
+                )
+                self.assertEqual(result.issues[0].path, path)
 
     async def test_runtime_envelope_must_be_table(self) -> None:
         result = await FlowDefinitionLoader().loads_validation_result(
@@ -1620,6 +1842,268 @@ class FlowContainerRuntimeTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(resumed.outputs["answer"], "approved")
         self.assertIn("review_decision", _container_event_names(events))
         self.assertIn("result_recorded", _container_event_names(events))
+
+    async def test_container_resume_rejects_stale_isolation_metadata(
+        self,
+    ) -> None:
+        paused_plan = _runtime_plan(
+            _effective_settings(
+                _profile(
+                    "review",
+                    escalation=ContainerEscalationMode.REQUIRE_REVIEW,
+                    cpu_count=1,
+                )
+            )
+        )
+        resumed_plan = _runtime_plan(
+            _effective_settings(
+                _profile(
+                    "review",
+                    escalation=ContainerEscalationMode.REQUIRE_REVIEW,
+                    cpu_count=2,
+                )
+            )
+        )
+        paused = await execute_flow_plan(
+            paused_plan,
+            _constant_runner("ignored"),
+        )
+        called = False
+
+        async def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            nonlocal called
+            called = True
+            return "should-not-run"
+
+        result = await execute_flow_plan(
+            resumed_plan,
+            runner,
+            resume_trace=paused.trace,
+            resume_node_outputs=paused.node_outputs,
+            resume_decisions={
+                "work": {
+                    "decision": "approved",
+                    "approval": _approval_payload(resumed_plan),
+                }
+            },
+        )
+
+        self.assertFalse(result.ok)
+        self.assertFalse(called)
+        self.assertEqual(
+            result.diagnostics[0].code,
+            "flow.execution.isolation_resume_metadata_stale",
+        )
+
+    async def test_runtime_envelope_resume_rejects_stale_metadata(
+        self,
+    ) -> None:
+        settings = _settings(
+            profiles={"flow": _profile("flow")},
+            default_profile="flow",
+        )
+        paused = await compile_flow_definition(
+            _definition(
+                container=settings,
+                runtime_envelope=FlowRuntimeEnvelopeDefinition(
+                    container=ContainerProfileSelection(
+                        profile="flow",
+                        required=True,
+                        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                    ),
+                    readiness_timeout_seconds=30,
+                ),
+            )
+        )
+        resumed = await compile_flow_definition(
+            _definition(
+                container=settings,
+                runtime_envelope=FlowRuntimeEnvelopeDefinition(
+                    container=ContainerProfileSelection(
+                        profile="flow",
+                        required=True,
+                        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+                    ),
+                    readiness_timeout_seconds=45,
+                ),
+            )
+        )
+        self.assertTrue(paused.ok, paused.public_diagnostics)
+        self.assertTrue(resumed.ok, resumed.public_diagnostics)
+        assert paused.plan is not None
+        assert resumed.plan is not None
+        paused_plan = paused.plan
+        resumed_plan = resumed.plan
+        assert paused_plan.runtime_envelope is not None
+        assert resumed_plan.runtime_envelope is not None
+        self.assertNotEqual(
+            paused_plan.runtime_envelope.plan_fingerprint,
+            resumed_plan.runtime_envelope.plan_fingerprint,
+        )
+        called = False
+
+        class FakeRuntimeEnvelopeRunner:
+            trusted_runtime_envelope_runner = True
+
+            async def run_flow_runtime_envelope(
+                self,
+                *args: object,
+                **kwargs: object,
+            ) -> FlowPlanExecutionResult:
+                nonlocal called
+                called = True
+                return FlowPlanExecutionResult(
+                    trace=FlowExecutionTrace.from_plan(resumed_plan),
+                )
+
+        result = await execute_flow_plan(
+            resumed_plan,
+            _constant_runner("should not run"),
+            resume_trace=FlowExecutionTrace.from_plan(paused_plan),
+            runtime_envelope_runner=FakeRuntimeEnvelopeRunner(),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertFalse(called)
+        self.assertEqual(
+            result.diagnostics[0].code,
+            "flow.execution.isolation_resume_metadata_stale",
+        )
+
+    async def test_container_resume_rejects_missing_isolation_metadata(
+        self,
+    ) -> None:
+        plan = _runtime_plan(
+            _effective_settings(
+                _profile(
+                    "review",
+                    escalation=ContainerEscalationMode.REQUIRE_REVIEW,
+                    cpu_count=1,
+                )
+            )
+        )
+        paused = await execute_flow_plan(plan, _constant_runner("ignored"))
+        trace = replace(paused.trace, metadata={})
+        called = False
+
+        async def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            nonlocal called
+            called = True
+            return "should-not-run"
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            resume_trace=trace,
+            resume_node_outputs=paused.node_outputs,
+            resume_decisions={
+                "work": {
+                    "decision": "approved",
+                    "approval": _approval_payload(plan),
+                }
+            },
+        )
+
+        self.assertFalse(result.ok)
+        self.assertFalse(called)
+        self.assertEqual(
+            result.diagnostics[0].code,
+            "flow.execution.isolation_resume_metadata_widened",
+        )
+
+    async def test_isolation_resume_metadata_helpers_cover_defensive_paths(
+        self,
+    ) -> None:
+        isolated_plan = _runtime_plan(
+            _effective_settings(
+                _profile(
+                    "review",
+                    escalation=ContainerEscalationMode.REQUIRE_REVIEW,
+                    cpu_count=1,
+                )
+            )
+        )
+        plain_plan = _manual_plan(
+            FlowNodePlan(
+                name="work",
+                type="pass-through",
+                kind=FlowNodeKind.PASS_THROUGH,
+            )
+        )
+        isolated_trace = FlowExecutionTrace.from_plan(isolated_plan)
+        plain_trace = replace(
+            FlowExecutionTrace.from_plan(plain_plan),
+            metadata=isolated_trace.metadata,
+        )
+        missing_node_trace = replace(
+            isolated_trace,
+            metadata={
+                "isolation": {
+                    "version": "phase9",
+                    "flow": None,
+                    "nodes": {},
+                }
+            },
+        )
+        malformed_trace = replace(
+            isolated_trace,
+            metadata={
+                "isolation": {
+                    "version": "phase9",
+                    "flow": None,
+                    "nodes": (),
+                }
+            },
+        )
+
+        self.assertEqual(
+            _resume_isolation_metadata_diagnostics(
+                plain_plan,
+                FlowExecutionTrace.from_plan(plain_plan),
+            ),
+            (),
+        )
+        self.assertEqual(
+            _resume_isolation_metadata_diagnostics(
+                plain_plan,
+                plain_trace,
+            )[0].code,
+            "flow.execution.isolation_resume_metadata_stale",
+        )
+        self.assertEqual(
+            _resume_isolation_metadata_diagnostics(
+                isolated_plan,
+                missing_node_trace,
+            )[0].code,
+            "flow.execution.isolation_resume_metadata_widened",
+        )
+        self.assertEqual(
+            _resume_isolation_metadata_diagnostics(
+                isolated_plan,
+                malformed_trace,
+            )[0].code,
+            "flow.execution.isolation_resume_metadata_stale",
+        )
+        self.assertIsNone(_resume_isolation_node_names({"nodes": ()}))
+        self.assertIsNone(_resume_isolation_node_names({"nodes": {"": {}}}))
+
+        with patch(
+            "avalan.flow.runtime.flow_resume_isolation_metadata",
+            return_value={"isolation": "bad"},
+        ):
+            self.assertEqual(
+                _resume_isolation_metadata_diagnostics(
+                    isolated_plan,
+                    isolated_trace,
+                ),
+                (),
+            )
 
     async def test_container_resume_requeues_after_processed_nodes(
         self,
@@ -2279,6 +2763,30 @@ def _runtime_plan(
                 container=settings,
             ),
         ),
+    )
+
+
+def _manual_plan(
+    node: FlowNodePlan,
+    *,
+    container: ContainerEffectiveSettings | None = None,
+    isolation: FlowIsolationMetadata | None = None,
+) -> FlowExecutionPlan:
+    return FlowExecutionPlan(
+        name="manual-isolation",
+        version=None,
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="payload", type=FlowInputType.OBJECT),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.OBJECT),
+        ),
+        entry_node="work",
+        output_selectors={"answer": parse_flow_selector("work.value")},
+        nodes=(node,),
+        container=container,
+        isolation=isolation,
     )
 
 

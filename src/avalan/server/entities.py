@@ -184,6 +184,8 @@ class JSONSchemaField(BaseModel):
 
 
 class JSONSchema(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     properties: dict[str, JSONSchemaField]
     required: list[str] | None = None
     title: str | None = None
@@ -230,6 +232,8 @@ class ResponseFormatJSONSchema(BaseModel):
 
 
 class FunctionParameters(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     type: Literal["object"] = "object"
     properties: dict[str, JSONSchemaField]
     required: list[str] | None = None

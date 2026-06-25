@@ -6376,6 +6376,11 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             "devices": {"devices": ["gpu"]},
             "resources": {"resources": {"cpu_count": 8}},
             "backend flags": {"backend_flags": ["--privileged"]},
+            "sandbox profile": {"sandboxProfile": "workspace-readonly"},
+            "isolation policy": {
+                "isolation": {"mode": "sandbox", "profile": "debug"}
+            },
+            "approval": {"approval": {"review_mode": "manual"}},
             "nested container": {
                 "metadata": {"container": {"image": "alpine:latest"}}
             },

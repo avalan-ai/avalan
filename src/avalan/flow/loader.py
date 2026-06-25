@@ -16,6 +16,7 @@ from ..filesystem import (
     assert_text_encoding,
     read_text,
 )
+from ..isolation import IsolationDiagnosticCode
 from .condition import (
     FlowCondition,
     FlowConditionEvaluationContext,
@@ -231,6 +232,16 @@ _ALLOWED_RUNTIME_ENVELOPE_FIELDS = frozenset(
     }
 )
 _ALLOWED_NODE_RUNTIME_FIELDS = frozenset({"container"})
+_UNSUPPORTED_ISOLATION_FIELDS = frozenset(
+    {
+        "isolation",
+        "sandbox",
+        "sandboxPolicy",
+        "sandboxProfile",
+        "sandbox_policy",
+        "sandbox_profile",
+    }
+)
 _ALLOWED_GRAPH_EDGE_FIELDS = _ALLOWED_EDGE_FIELDS - {"source", "target"}
 _GRAPH_EDGE_METADATA_PATH = "graph.edges.metadata"
 _ALLOWED_CONDITION_FIELDS = frozenset(
@@ -614,6 +625,7 @@ async def _build_result(
 ) -> FlowLoadResult:
     issues: list[FlowLoadIssue] = []
     issues.extend(_container_issues(raw))
+    issues.extend(_isolation_issues(raw))
     if issues:
         return FlowLoadResult(
             definition=None,
@@ -1677,6 +1689,62 @@ def _container_issues(
             ContainerSurface.FLOW_TOML,
             raw,
         )
+    )
+
+
+def _isolation_issues(
+    raw: Mapping[str, object],
+) -> tuple[FlowLoadIssue, ...]:
+    issues: list[FlowLoadIssue] = []
+    for key in raw:
+        if key in _UNSUPPORTED_ISOLATION_FIELDS:
+            issues.append(_unsupported_isolation_issue(str(key)))
+    runtime = raw.get("runtime")
+    if isinstance(runtime, Mapping):
+        _extend_unsupported_isolation_fields(
+            issues,
+            runtime,
+            path="runtime",
+        )
+    nodes = raw.get("nodes")
+    if isinstance(nodes, Mapping):
+        for node_name, node_raw in nodes.items():
+            if not isinstance(node_name, str) or not isinstance(
+                node_raw,
+                Mapping,
+            ):
+                continue
+            node_runtime = node_raw.get("runtime")
+            if isinstance(node_runtime, Mapping):
+                _extend_unsupported_isolation_fields(
+                    issues,
+                    node_runtime,
+                    path=f"nodes.{node_name}.runtime",
+                )
+    return tuple(issues)
+
+
+def _extend_unsupported_isolation_fields(
+    issues: list[FlowLoadIssue],
+    raw: Mapping[str, object],
+    *,
+    path: str,
+) -> None:
+    for key in raw:
+        if key in _UNSUPPORTED_ISOLATION_FIELDS:
+            issues.append(_unsupported_isolation_issue(f"{path}.{key}"))
+
+
+def _unsupported_isolation_issue(path: str) -> FlowLoadIssue:
+    return _issue(
+        code=IsolationDiagnosticCode.UNSUPPORTED_SYNTAX.value,
+        path=path,
+        message="Flow isolation syntax is not supported here.",
+        hint=(
+            "Use operator-approved flow container defaults and node-level "
+            "profile narrowing only."
+        ),
+        category=FlowLoadIssueCategory.UNSUPPORTED,
     )
 
 

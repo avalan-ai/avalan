@@ -171,6 +171,21 @@ class RemoteContainerRequestPolicyTestCase(TestCase):
                 {"runtime_envelope": {"profile": "workspace-readonly"}}
             )
 
+    def test_remote_isolation_and_sandbox_authority_rejected(self) -> None:
+        for arguments in (
+            {"isolation": {"mode": "sandbox"}},
+            {"isolationPolicy": {"profile": "workspace-readonly"}},
+            {"sandboxProfile": "workspace-readonly"},
+            {"sandbox": {"read_roots": ["/workspace"]}},
+            {"approval": {"review_mode": "manual"}},
+        ):
+            with self.subTest(arguments=arguments):
+                with self.assertRaisesRegex(
+                    RemoteContainerRequestError,
+                    "runtime authority",
+                ):
+                    validate_remote_container_arguments(arguments)
+
 
 def _runtime_settings(
     *profiles: str,
