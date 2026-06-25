@@ -40,6 +40,7 @@ from avalan.tool.shell import (
     ShellOutputKind,
     ShellPathMetadata,
     ShellPolicyDenied,
+    ShellSandboxCommandExecutor,
     ShellToolError,
     ShellToolSet,
     ShellToolSettings,
@@ -76,6 +77,10 @@ class ShellPublicApiTest(TestCase):
         self.assertIs(
             LocalCommandExecutor,
             import_module("avalan.tool.shell").LocalCommandExecutor,
+        )
+        self.assertIs(
+            ShellSandboxCommandExecutor,
+            import_module("avalan.tool.shell").ShellSandboxCommandExecutor,
         )
         self.assertIs(
             ShellPathMetadata,
@@ -242,6 +247,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.policy",
             "avalan.tool.shell.registry",
             "avalan.tool.shell.resolver",
+            "avalan.tool.shell.sandbox",
             "avalan.tool.shell.settings",
             "avalan.tool.shell.tools",
             "avalan.tool.shell.toolset",

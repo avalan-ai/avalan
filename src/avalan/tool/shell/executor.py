@@ -87,6 +87,34 @@ class LocalCommandExecutor:
             raise NotImplementedError(
                 "local shell execution is not implemented"
             )
+        if spec.backend != "local":
+            return ExecutionResult(
+                backend=spec.backend,
+                tool_name=spec.tool_name,
+                command=spec.command,
+                argv=_result_argv(spec),
+                display_argv=spec.display_argv,
+                cwd=spec.cwd,
+                display_cwd=spec.display_cwd,
+                status=ShellExecutionStatus.POLICY_DENIED,
+                exit_code=None,
+                stdout="",
+                stderr="",
+                stdout_media_type=spec.stdout_media_type,
+                output_kind=spec.output_kind,
+                stdout_bytes=0,
+                stderr_bytes=0,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                timed_out=False,
+                cancelled=False,
+                duration_ms=0,
+                error_code=ShellExecutionErrorCode.POLICY_DENIED,
+                error_message=(
+                    "local execution cannot run isolated shell specs"
+                ),
+                metadata=spec.metadata,
+            )
         if spec.executable is None:
             return ExecutionResult(
                 backend=spec.backend,

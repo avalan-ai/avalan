@@ -84,5 +84,6 @@ from .resolver import TrustedExecutableResolver as TrustedExecutableResolver
 from .resolver import (
     unavailable_executable_lookup as unavailable_executable_lookup,
 )
+from .sandbox import ShellSandboxCommandExecutor as ShellSandboxCommandExecutor
 from .settings import ShellToolSettings as ShellToolSettings
 from .toolset import ShellToolSet as ShellToolSet

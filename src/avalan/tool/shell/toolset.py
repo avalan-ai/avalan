@@ -5,12 +5,19 @@ from ...container import (
     ContainerToolRuntimeSettings,
     disabled_required_container_settings,
 )
+from ...isolation import (
+    IsolationMode,
+    IsolationToolRuntimeSettings,
+    SandboxEffectiveSettings,
+)
+from ...sandbox import SandboxAsyncBackend
 from .. import ToolSet
 from .container import ShellContainerCommandExecutor
 from .executor import CommandExecutor, LocalCommandExecutor
 from .formatting import format_shell_result
 from .opt_in import SHELL_TOOL_NAMESPACE
 from .policy import ExecutionPolicy
+from .sandbox import ShellSandboxCommandExecutor
 from .settings import ShellToolSettings
 from .tools import (
     AwkTool,
@@ -50,15 +57,56 @@ class ShellToolSet(ToolSet):
         container_backend: ContainerAsyncBackend | None = None,
         container_opt_in_backends: Sequence[ContainerBackend | str] = (),
         container_rootful_authorized: bool = False,
+        isolation_runtime: IsolationToolRuntimeSettings | None = None,
+        sandbox_settings: SandboxEffectiveSettings | None = None,
+        sandbox_backend: SandboxAsyncBackend | None = None,
     ) -> None:
         assert namespace == SHELL_TOOL_NAMESPACE, "namespace must be shell"
         assert isinstance(container_rootful_authorized, bool)
         self._settings = settings or ShellToolSettings()
-        if (
-            container_runtime is not None
-            and self._settings.backend == "container"
-        ):
+        execution_mode = self._settings.execution_mode
+        if container_runtime is not None:
             assert isinstance(container_runtime, ContainerToolRuntimeSettings)
+        container_runtime_configured = (
+            False
+            if container_runtime is None
+            else _container_runtime_configured(container_runtime)
+        )
+        assert not (
+            isolation_runtime is not None and container_runtime is not None
+        ), "isolation_runtime cannot be combined with container_runtime"
+        assert not (
+            execution_mode != "sandbox" and sandbox_settings is not None
+        ), "sandbox settings require shell execution mode sandbox"
+        assert not (
+            execution_mode != "container" and container_settings is not None
+        ), "container settings require shell execution mode container"
+        assert not (
+            execution_mode != "container" and container_runtime_configured
+        ), "container runtime requires shell execution mode container"
+        assert not (
+            execution_mode != "local" and executor is not None
+        ), "custom shell executors require shell execution mode local"
+        if isolation_runtime is not None:
+            assert isinstance(isolation_runtime, IsolationToolRuntimeSettings)
+            assert (
+                isolation_runtime.mode.value == execution_mode
+            ), "isolation runtime mode must match shell execution mode"
+            if (
+                isolation_runtime.mode is IsolationMode.SANDBOX
+                and execution_mode == "sandbox"
+            ):
+                sandbox_settings = (
+                    sandbox_settings or isolation_runtime.sandbox
+                )
+            if (
+                isolation_runtime.mode is IsolationMode.CONTAINER
+                and execution_mode == "container"
+            ):
+                container_settings = (
+                    container_settings or isolation_runtime.container
+                )
+        if container_runtime is not None and execution_mode == "container":
             container_settings = (
                 container_settings or container_runtime.effective_settings
             )
@@ -70,25 +118,32 @@ class ShellToolSet(ToolSet):
                 container_rootful_authorized
                 or container_runtime.rootful_authorized
             )
-        if (
-            container_settings is None
-            and self._settings.backend == "container"
-        ):
+        if container_settings is None and execution_mode == "container":
             container_settings = disabled_required_container_settings()
+        assert not (
+            execution_mode == "sandbox" and container_settings is not None
+        ), "sandbox shell execution cannot carry container policy"
+        assert not (
+            execution_mode == "container" and sandbox_settings is not None
+        ), "container shell execution cannot carry sandbox policy"
         policy = policy or ExecutionPolicy(settings=self._settings)
         if executor is None:
             local_executor = LocalCommandExecutor(settings=self._settings)
-            executor = (
-                local_executor
-                if container_settings is None
-                else ShellContainerCommandExecutor(
+            if execution_mode == "sandbox":
+                executor = ShellSandboxCommandExecutor(
+                    sandbox_settings=sandbox_settings,
+                    sandbox_backend=sandbox_backend,
+                )
+            elif container_settings is not None:
+                executor = ShellContainerCommandExecutor(
                     container_settings=container_settings,
                     container_backend=container_backend,
                     opt_in_backends=container_opt_in_backends,
                     local_executor=local_executor,
                     rootful_authorized=container_rootful_authorized,
                 )
-            )
+            else:
+                executor = local_executor
         formatter = formatter or (
             lambda result: format_shell_result(
                 result,
@@ -188,3 +243,18 @@ class ShellToolSet(ToolSet):
             ),
         ]
         super().__init__(namespace=namespace, tools=tools)
+
+
+def _container_runtime_configured(
+    runtime: ContainerToolRuntimeSettings,
+) -> bool:
+    assert isinstance(runtime, ContainerToolRuntimeSettings)
+    return (
+        runtime.effective_settings is not None
+        or runtime.backend is not None
+        or bool(runtime.opt_in_backends)
+        or runtime.rootful_authorized
+        or runtime.authorization_provider is not None
+        or runtime.secret_resolver is not None
+        or bool(runtime.audit_listeners)
+    )

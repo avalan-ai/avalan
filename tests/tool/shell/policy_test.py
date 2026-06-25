@@ -200,6 +200,13 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_local_host_approval_metadata_is_authoritative(self) -> None:
+        spec = await ExecutionPolicy().normalize(
+            _request(metadata={"local_host_approval": "spoofed"})
+        )
+
+        self.assertEqual(spec.metadata["local_host_approval"], "required")
+
     async def test_budget_hints_at_limits_are_not_clamped(self) -> None:
         resolver = _CountingResolver("/usr/bin/rg")
         policy = ExecutionPolicy(

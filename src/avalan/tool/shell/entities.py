@@ -53,6 +53,7 @@ ShellPathKind = Literal[
 ]
 ShellPathAccess = Literal["read", "create", "write"]
 ShellResourceClass = Literal["standard", "heavy"]
+ShellExecutionModeValue = Literal["local", "sandbox", "container"]
 GENERATED_OUTPUT_PREFIX_PLACEHOLDER = "__AVALAN_GENERATED_OUTPUT_PREFIX__"
 
 
@@ -225,7 +226,7 @@ class ShellCommandRequest:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ExecutionSpec:
     _policy_owned: InitVar[object]
-    backend: Literal["local", "container"]
+    backend: ShellExecutionModeValue
     tool_name: str
     command: str
     executable: str | None
@@ -250,8 +251,9 @@ class ExecutionSpec:
         ), "ExecutionSpec must be created by policy"
         assert self.backend in {
             "local",
+            "sandbox",
             "container",
-        }, "backend must be local or container"
+        }, "backend must be local, sandbox, or container"
         _assert_non_empty_string(self.tool_name, "tool_name")
         _assert_non_empty_string(self.command, "command")
         if self.executable is not None:
@@ -306,7 +308,7 @@ _EXECUTION_SPEC_FACTORY_KEY = object()
 
 def _create_execution_spec_from_policy(
     *,
-    backend: Literal["local", "container"],
+    backend: ShellExecutionModeValue,
     tool_name: str,
     command: str,
     executable: str | None,

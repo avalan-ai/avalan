@@ -2,7 +2,7 @@ from argparse import Namespace
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import Literal, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.agent.loader import OrchestratorLoader
@@ -84,9 +84,17 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             (root / "visible.txt").write_text("hello\n", encoding="utf-8")
-            settings = ShellToolSettings(workspace_root=str(root))
-            policy = ExecutionPolicy(
-                settings=settings,
+            local_settings = ShellToolSettings(workspace_root=str(root))
+            container_settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+            )
+            local_policy = ExecutionPolicy(
+                settings=local_settings,
+                resolver=_AllResolved(),
+            )
+            container_policy = ExecutionPolicy(
+                settings=container_settings,
                 resolver=_AllResolved(),
             )
             request = _cat_request("visible.txt")
@@ -95,15 +103,18 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
             (nested / "nested.txt").write_text("nested\n", encoding="utf-8")
             nested_request = _cat_request("nested.txt", cwd="nested")
 
-            local = await normalize_shell_execution_request(request, policy)
+            local = await normalize_shell_execution_request(
+                request,
+                local_policy,
+            )
             container = await normalize_shell_execution_request(
                 request,
-                policy,
+                container_policy,
                 container_settings=_effective_settings(),
             )
             nested_container = await normalize_shell_execution_request(
                 nested_request,
-                policy,
+                container_policy,
                 container_settings=_effective_settings(),
             )
 
@@ -135,7 +146,10 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
             root = Path(temporary_directory)
             (root / "visible.txt").write_text("hello\n", encoding="utf-8")
             policy = ExecutionPolicy(
-                settings=ShellToolSettings(workspace_root=str(root)),
+                settings=ShellToolSettings(
+                    execution_mode="container",
+                    workspace_root=str(root),
+                ),
                 resolver=_AllResolved(),
             )
             spec = await policy.normalize(_cat_request("visible.txt"))
@@ -145,6 +159,26 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
                 spec,
                 container_settings=_disabled_required_settings(),
             )
+
+    async def test_container_mode_without_effective_settings_fails_closed(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "visible.txt").write_text("hello\n", encoding="utf-8")
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    execution_mode="container",
+                    workspace_root=str(root),
+                ),
+                resolver=_AllResolved(),
+            )
+
+            with self.assertRaises(AssertionError):
+                await normalize_shell_execution_request(
+                    _cat_request("visible.txt"),
+                    policy,
+                )
 
 
 class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
@@ -511,19 +545,37 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
             backend.operations,
         )
 
-    async def test_local_fallback_only_when_container_not_required(
+    async def test_local_spec_without_container_settings_uses_local_executor(
         self,
     ) -> None:
         local = _RecordingLocalExecutor()
         result = await ShellContainerCommandExecutor(
-            container_settings=_disabled_optional_settings(),
+            container_settings=None,
             container_backend=None,
             local_executor=local,
-        ).execute(_direct_text_spec())
+        ).execute(_direct_text_spec(backend="local"))
 
         self.assertEqual(result.backend, "local")
         self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
         self.assertEqual(local.calls, 1)
+
+    async def test_local_spec_with_container_settings_fails_closed(
+        self,
+    ) -> None:
+        local = _RecordingLocalExecutor()
+
+        result = await ShellContainerCommandExecutor(
+            container_settings=_effective_settings(),
+            container_backend=ContainerFakeBackend(
+                ContainerFakeBackendScript(capabilities=_capabilities())
+            ),
+            local_executor=local,
+        ).execute(_direct_text_spec(backend="local"))
+
+        self.assertEqual(result.backend, "container")
+        self.assertEqual(result.status, ShellExecutionStatus.TOOL_ERROR)
+        self.assertEqual(local.calls, 0)
+        self.assertIn("local shell plans", result.error_message or "")
 
     async def test_no_silent_host_fallback_when_required_backend_missing(
         self,
@@ -559,6 +611,22 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
             ShellExecutionErrorCode.POLICY_DENIED,
         )
         self.assertEqual(local.calls, 0)
+
+    async def test_optional_disabled_container_does_not_fallback(
+        self,
+    ) -> None:
+        local = _RecordingLocalExecutor()
+
+        result = await ShellContainerCommandExecutor(
+            container_settings=_disabled_optional_settings(),
+            container_backend=None,
+            local_executor=local,
+        ).execute(_direct_text_spec())
+
+        self.assertEqual(result.backend, "container")
+        self.assertEqual(result.status, ShellExecutionStatus.POLICY_DENIED)
+        self.assertEqual(local.calls, 0)
+        self.assertIn("no profile", result.error_message or "")
 
     async def test_negative_container_runtime_failures(self) -> None:
         output_contract = ContainerOutputContract(
@@ -753,7 +821,10 @@ class ShellContainerToolSetTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             (root / "visible.txt").write_text("hello\n", encoding="utf-8")
-            settings = ShellToolSettings(workspace_root=str(root))
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+            )
             backend = ContainerFakeBackend(
                 ContainerFakeBackendScript(capabilities=_capabilities())
             )
@@ -911,12 +982,13 @@ def _cat_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
 
 def _direct_text_spec(
     *,
+    backend: Literal["local", "container"] = "container",
     metadata: dict[str, object] | None = None,
     max_stdout_bytes: int = 1024,
     max_stderr_bytes: int = 1024,
 ) -> ExecutionSpec:
     return ExecutionPolicy().create_execution_spec(
-        backend="local",
+        backend=backend,
         tool_name="shell.cat",
         command="cat",
         executable="/trusted/bin/cat",
@@ -937,7 +1009,11 @@ def _direct_text_spec(
     )
 
 
-def _direct_generated_spec(*, output_plan: bool = True) -> ExecutionSpec:
+def _direct_generated_spec(
+    *,
+    backend: Literal["local", "container"] = "container",
+    output_plan: bool = True,
+) -> ExecutionSpec:
     plan = (
         GeneratedOutputPlan(
             prefix_name="shell-output",
@@ -953,7 +1029,7 @@ def _direct_generated_spec(*, output_plan: bool = True) -> ExecutionSpec:
         else None
     )
     return ExecutionPolicy().create_execution_spec(
-        backend="local",
+        backend=backend,
         tool_name="shell.pdftoppm",
         command="pdftoppm",
         executable="/trusted/bin/pdftoppm",

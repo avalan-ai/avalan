@@ -3,6 +3,7 @@ from types import MappingProxyType
 from unittest import TestCase, main
 
 from avalan.container import ContainerProfileSelection
+from avalan.isolation import SandboxProfileSelection
 from avalan.tool.shell.registry import SHELL_COMMAND_IDS
 from avalan.tool.shell.settings import ShellToolSettings
 
@@ -12,6 +13,7 @@ class ShellToolSettingsTest(TestCase):
         settings = ShellToolSettings()
         expected_defaults = {
             "backend": "local",
+            "execution_mode": "local",
             "workspace_root": ".",
             "cwd": ".",
             "default_timeout_seconds": 10.0,
@@ -93,23 +95,73 @@ class ShellToolSettingsTest(TestCase):
         self.assertNotIn("executable_paths", scalar_fields)
         self.assertNotIn("executable_search_paths", scalar_fields)
         self.assertNotIn("container", scalar_fields)
+        self.assertNotIn("sandbox", scalar_fields)
         self.assertNotIn("allow_write", scalar_fields)
         self.assertNotIn("allow_shell", scalar_fields)
 
-    def test_container_backend_and_profile_selection_are_trusted_settings(
+    def test_execution_mode_and_backend_alias_are_synchronized(self) -> None:
+        canonical = ShellToolSettings(execution_mode="sandbox")
+        legacy = ShellToolSettings(backend="container")
+
+        self.assertEqual(canonical.execution_mode, "sandbox")
+        self.assertEqual(canonical.backend, "sandbox")
+        self.assertEqual(legacy.execution_mode, "container")
+        self.assertEqual(legacy.backend, "container")
+        with self.assertRaises(AssertionError):
+            ShellToolSettings(
+                execution_mode="sandbox",
+                backend="container",
+            )
+
+    def test_isolated_modes_and_profile_selection_are_trusted_settings(
         self,
     ) -> None:
-        selection = ContainerProfileSelection(
+        container_selection = ContainerProfileSelection(
             profile="workspace-readonly",
             required=True,
         )
-        settings = ShellToolSettings(
-            backend="container",
-            container=selection,
+        sandbox_selection = SandboxProfileSelection(
+            profile="workspace-readonly",
+            required=True,
+        )
+        container_settings = ShellToolSettings(
+            execution_mode="container",
+            container=container_selection,
+        )
+        sandbox_settings = ShellToolSettings(
+            execution_mode="sandbox",
+            sandbox=sandbox_selection,
         )
 
-        self.assertEqual(settings.backend, "container")
-        self.assertIs(settings.container, selection)
+        self.assertEqual(container_settings.execution_mode, "container")
+        self.assertIs(container_settings.container, container_selection)
+        self.assertEqual(sandbox_settings.execution_mode, "sandbox")
+        self.assertIs(sandbox_settings.sandbox, sandbox_selection)
+
+    def test_mixed_mode_policy_is_rejected(self) -> None:
+        container_selection = ContainerProfileSelection(
+            profile="workspace-readonly",
+            required=True,
+        )
+        sandbox_selection = SandboxProfileSelection(
+            profile="workspace-readonly",
+            required=True,
+        )
+
+        with self.assertRaises(AssertionError):
+            ShellToolSettings(
+                execution_mode="container",
+                sandbox=sandbox_selection,
+            )
+        with self.assertRaises(AssertionError):
+            ShellToolSettings(
+                execution_mode="sandbox",
+                container=container_selection,
+            )
+        with self.assertRaises(AssertionError):
+            ShellToolSettings(container=container_selection)
+        with self.assertRaises(AssertionError):
+            ShellToolSettings(sandbox=sandbox_selection)
 
     def test_mutable_inputs_are_copied(self) -> None:
         allowed_commands = ["rg"]
@@ -158,6 +210,7 @@ class ShellToolSettingsTest(TestCase):
     def test_rejects_invalid_scalar_settings(self) -> None:
         invalid_kwargs = (
             {"backend": "remote"},
+            {"execution_mode": "remote"},
             {"workspace_root": ""},
             {"cwd": ""},
             {"max_stdout_bytes": 0},
