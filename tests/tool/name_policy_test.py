@@ -66,6 +66,19 @@ class ToolNamePolicyTestCase(TestCase):
         self.assertEqual(policy.canonical_name("my_pdfinfo"), "shell.pdfinfo")
         self.assertEqual(policy.canonical_name("unknown_tool"), "unknown_tool")
 
+    def test_unsupported_mode_rejects_before_explicit_map(self):
+        settings = ToolNamePolicySettings(
+            mode=ToolNamePolicyMode.MAPPED,
+            map={"shell.pdfinfo": "my_pdfinfo"},
+        )
+        object.__setattr__(settings, "mode", "unsupported")
+        policy = ToolNamePolicy(settings=settings)
+
+        with self.assertRaisesRegex(
+            AssertionError, "unsupported ToolNamePolicyMode"
+        ):
+            policy.provider_name("shell.pdfinfo")
+
     def test_sanitized_replaces_and_collapses_repeated_replacements(self):
         settings = ToolNamePolicySettings(mode=ToolNamePolicyMode.SANITIZED)
         policy = ToolNamePolicy(settings=settings).bind(
