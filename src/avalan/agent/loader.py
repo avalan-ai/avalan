@@ -2,6 +2,7 @@ from ..agent.orchestrator import Orchestrator
 from ..agent.orchestrator.orchestrators.default import DefaultOrchestrator
 from ..agent.orchestrator.orchestrators.json import JsonOrchestrator, Property
 from ..container import (
+    ContainerBackend,
     ContainerExecutionScope,
     ContainerNormalizedRuntimeEnvelopePlan,
     ContainerPlanRequest,
@@ -29,6 +30,17 @@ from ..entities import (
 from ..event import Event, EventType
 from ..event.manager import EventManager, EventManagerMode
 from ..filesystem import read_text
+from ..isolation import (
+    IsolationMode,
+    IsolationProfileSelection,
+    IsolationSettings,
+    IsolationSettingsSource,
+    IsolationSettingsSurface,
+    IsolationToolRuntimeSettings,
+    SandboxProfileSelection,
+    SandboxSettings,
+    trusted_isolation_source,
+)
 from ..memory.manager import MemoryManager
 from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
@@ -435,14 +447,17 @@ class OrchestratorLoader:
         tool_section = config.get("tool", {})
         assert isinstance(tool_section, dict), "Tool section must be a mapping"
         source = trusted_container_source(ContainerSurface.AGENT_TOML)
+        runtime_envelope = cls._validate_tool_isolation_policy(
+            config,
+            tool_section,
+            source,
+        )
         container_settings = cls._container_settings_from_tool_section(
             tool_section,
             source,
         )
         cls._container_runtime_settings_from_config(config, tool_section)
-        runtime_envelope = cls._runtime_container_selection_from_config(
-            config, source
-        )
+        cls._isolation_runtime_settings_from_config(config, tool_section)
         if runtime_envelope is not None:
             assert (
                 container_settings is not None
@@ -474,6 +489,66 @@ class OrchestratorLoader:
             rootful_authorized=source.can_define_runtime_authority,
         )
 
+    @classmethod
+    def _isolation_runtime_settings_from_config(
+        cls,
+        config: Mapping[str, object],
+        tool_section: Mapping[str, object],
+    ) -> IsolationToolRuntimeSettings | None:
+        source = trusted_isolation_source(IsolationSettingsSurface.AGENT_TOML)
+        shell_selection = cls._shell_sandbox_selection_from_tool_section(
+            tool_section,
+            source,
+        )
+        sandbox_settings = cls._sandbox_settings_from_tool_section(
+            tool_section,
+            source,
+            shell_selection=shell_selection,
+        )
+        if sandbox_settings is None or shell_selection is None:
+            return None
+        settings = IsolationSettings(
+            source=source,
+            mode=IsolationMode.SANDBOX,
+            sandbox=sandbox_settings,
+        )
+        return IsolationToolRuntimeSettings(
+            effective_settings=settings.select_profile(
+                IsolationProfileSelection(
+                    mode=IsolationMode.SANDBOX,
+                    profile=shell_selection.profile,
+                    required=shell_selection.required,
+                )
+            ),
+        )
+
+    @classmethod
+    def _validate_tool_isolation_policy(
+        cls,
+        config: Mapping[str, object],
+        tool_section: Mapping[str, object],
+        source: ContainerSettingsSource,
+    ) -> _RuntimeEnvelopeSelection | None:
+        runtime_envelope = cls._runtime_container_selection_from_config(
+            config,
+            source,
+        )
+        has_container = "container" in tool_section
+        has_sandbox = "sandbox" in tool_section
+        assert not (
+            has_container and has_sandbox
+        ), "tool cannot mix sandbox and container policy"
+        shell_mode = cls._shell_execution_mode_from_tool_section(tool_section)
+        if has_sandbox:
+            assert (
+                shell_mode == "sandbox"
+            ), "tool.sandbox requires tool.shell backend sandbox"
+        if has_container:
+            assert (
+                shell_mode == "container" or runtime_envelope is not None
+            ), "tool.container requires tool.shell backend container"
+        return runtime_envelope
+
     @staticmethod
     def _container_settings_from_tool_section(
         tool_section: Mapping[str, object],
@@ -491,10 +566,37 @@ class OrchestratorLoader:
             container_config,
             dict,
         ), "tool.container section must be a mapping"
-        return trusted_container_settings_from_mapping(
+        settings = trusted_container_settings_from_mapping(
             container_config,
             source=source,
         )
+        assert settings.backend in {
+            ContainerBackend.DOCKER,
+            ContainerBackend.APPLE_CONTAINER,
+        }, "tool.container backend must be docker or apple-container"
+        return settings
+
+    @staticmethod
+    def _sandbox_settings_from_tool_section(
+        tool_section: Mapping[str, object],
+        source: IsolationSettingsSource,
+        *,
+        shell_selection: SandboxProfileSelection | None = None,
+    ) -> SandboxSettings | None:
+        sandbox_config = tool_section.get("sandbox")
+        if sandbox_config is None:
+            assert (
+                shell_selection is None or shell_selection.profile is None
+            ), "required sandbox profile unavailable"
+            return None
+        assert isinstance(
+            sandbox_config,
+            dict,
+        ), "tool.sandbox section must be a mapping"
+        settings = SandboxSettings.from_dict(sandbox_config, source=source)
+        if shell_selection is not None:
+            settings.select_profile(shell_selection)
+        return settings
 
     @classmethod
     def _shell_container_selection_from_tool_section(
@@ -509,6 +611,10 @@ class OrchestratorLoader:
             shell_config,
             dict,
         ), "tool.shell section must be a mapping"
+        assert not (
+            "container" in shell_config and "sandbox" in shell_config
+        ), "tool.shell cannot mix sandbox and container policy"
+        shell_mode = cls._shell_execution_mode_from_config(shell_config)
         shell_container_config = shell_config.get("container")
         if shell_container_config is not None:
             return cls._shell_container_selection_from_config(
@@ -516,7 +622,7 @@ class OrchestratorLoader:
                 shell_container_config,
                 source,
             )
-        if shell_config.get("backend") == "container":
+        if shell_mode == "container":
             return ContainerProfileSelection(required=True)
         return None
 
@@ -532,7 +638,8 @@ class OrchestratorLoader:
         ), "tool.shell.container section must be a mapping"
         assert isinstance(source, ContainerSettingsSource)
         assert (
-            shell_config.get("backend") == "container"
+            OrchestratorLoader._shell_execution_mode_from_config(shell_config)
+            == "container"
         ), "tool.shell.container requires tool.shell backend container"
         selection_config = dict(shell_container_config)
         if "required" in selection_config:
@@ -544,6 +651,106 @@ class OrchestratorLoader:
             selection_config,
             source=source,
         )
+
+    @classmethod
+    def _shell_sandbox_selection_from_tool_section(
+        cls,
+        tool_section: Mapping[str, object],
+        source: IsolationSettingsSource,
+    ) -> SandboxProfileSelection | None:
+        shell_config = tool_section.get("shell")
+        if shell_config is None:
+            return None
+        assert isinstance(
+            shell_config,
+            dict,
+        ), "tool.shell section must be a mapping"
+        assert not (
+            "container" in shell_config and "sandbox" in shell_config
+        ), "tool.shell cannot mix sandbox and container policy"
+        shell_mode = cls._shell_execution_mode_from_config(shell_config)
+        shell_sandbox_config = shell_config.get("sandbox")
+        if shell_sandbox_config is not None:
+            return cls._shell_sandbox_selection_from_config(
+                shell_config,
+                shell_sandbox_config,
+                source,
+            )
+        if shell_mode == "sandbox":
+            return SandboxProfileSelection(required=True)
+        return None
+
+    @staticmethod
+    def _shell_sandbox_selection_from_config(
+        shell_config: Mapping[str, object],
+        shell_sandbox_config: object,
+        source: IsolationSettingsSource,
+    ) -> SandboxProfileSelection:
+        assert isinstance(
+            shell_sandbox_config,
+            dict,
+        ), "tool.shell.sandbox section must be a mapping"
+        assert isinstance(source, IsolationSettingsSource)
+        assert (
+            OrchestratorLoader._shell_execution_mode_from_config(shell_config)
+            == "sandbox"
+        ), "tool.shell.sandbox requires tool.shell backend sandbox"
+        selection_config = dict(shell_sandbox_config)
+        if "required" in selection_config:
+            assert (
+                selection_config["required"] is True
+            ), "tool.shell backend sandbox requires required=true"
+        selection_config["required"] = True
+        return SandboxProfileSelection.from_dict(
+            selection_config,
+            source=source,
+        )
+
+    @classmethod
+    def _shell_execution_mode_from_tool_section(
+        cls,
+        tool_section: Mapping[str, object],
+    ) -> str | None:
+        shell_config = tool_section.get("shell")
+        if shell_config is None:
+            return None
+        assert isinstance(
+            shell_config,
+            dict,
+        ), "tool.shell section must be a mapping"
+        return cls._shell_execution_mode_from_config(shell_config)
+
+    @staticmethod
+    def _shell_execution_mode_from_config(
+        shell_config: Mapping[str, object],
+    ) -> str | None:
+        backend = shell_config.get("backend")
+        execution_mode = shell_config.get("execution_mode")
+        if backend is not None:
+            assert isinstance(
+                backend,
+                str,
+            ), "tool.shell backend must be a string"
+            assert backend in {
+                "local",
+                "sandbox",
+                "container",
+            }, "tool.shell backend must be local, sandbox, or container"
+        if execution_mode is not None:
+            assert isinstance(
+                execution_mode,
+                str,
+            ), "tool.shell execution_mode must be a string"
+            assert execution_mode in {
+                "local",
+                "sandbox",
+                "container",
+            }, "tool.shell execution_mode must be local, sandbox, or container"
+        if backend is not None and execution_mode is not None:
+            assert (
+                backend == execution_mode
+            ), "tool.shell backend and execution_mode must match"
+        return backend or execution_mode
 
     @staticmethod
     def _runtime_container_selection_from_config(
@@ -689,6 +896,11 @@ class OrchestratorLoader:
         container_source = trusted_container_source(
             ContainerSurface.AGENT_TOML
         )
+        runtime_envelope = self._validate_tool_isolation_policy(
+            config,
+            tool_section,
+            container_source,
+        )
         self._container_settings_from_tool_section(
             tool_section,
             container_source,
@@ -697,9 +909,9 @@ class OrchestratorLoader:
             config,
             tool_section,
         )
-        runtime_envelope = self._runtime_container_selection_from_config(
+        isolation_runtime = self._isolation_runtime_settings_from_config(
             config,
-            container_source,
+            tool_section,
         )
 
         enable_tools_config = tool_section.get("enable")
@@ -885,6 +1097,11 @@ class OrchestratorLoader:
             ), "tool.shell section must be a mapping"
             shell_config = dict(shell_section)
             shell_container_config = shell_config.pop("container", None)
+            shell_sandbox_config = shell_config.pop("sandbox", None)
+            assert not (
+                shell_container_config is not None
+                and shell_sandbox_config is not None
+            ), "tool.shell cannot mix sandbox and container policy"
             if shell_container_config is not None:
                 shell_settings_source = trusted_container_source(
                     ContainerSurface.AGENT_TOML
@@ -896,6 +1113,17 @@ class OrchestratorLoader:
                         shell_settings_source,
                     )
                 )
+            if shell_sandbox_config is not None:
+                shell_sandbox_source = trusted_isolation_source(
+                    IsolationSettingsSurface.AGENT_TOML
+                )
+                shell_config["sandbox"] = (
+                    self._shell_sandbox_selection_from_config(
+                        shell_config,
+                        shell_sandbox_config,
+                        shell_sandbox_source,
+                    )
+                )
             shell_settings = ShellToolSettings(**shell_config)
 
         extra: dict[str, object] | None
@@ -905,6 +1133,7 @@ class OrchestratorLoader:
             graph_settings = tool_settings.graph or graph_settings
             shell_settings = tool_settings.shell or shell_settings
             container_runtime = tool_settings.container or container_runtime
+            isolation_runtime = tool_settings.isolation or isolation_runtime
             extra = tool_settings.extra
         else:
             extra = None
@@ -915,6 +1144,7 @@ class OrchestratorLoader:
             graph=graph_settings,
             shell=shell_settings,
             container=container_runtime,
+            isolation=isolation_runtime,
             extra=extra,
         )
 
@@ -1081,6 +1311,7 @@ class OrchestratorLoader:
         graph_settings = tool_settings.graph if tool_settings else None
         shell_settings = tool_settings.shell if tool_settings else None
         container_runtime = tool_settings.container if tool_settings else None
+        isolation_runtime = tool_settings.isolation if tool_settings else None
         enabled_tools = normalize_shell_enabled_tools(settings.tools)
 
         _l(
@@ -1133,13 +1364,15 @@ class OrchestratorLoader:
             enabled_tools=enabled_tools,
         ):
             active_shell_settings = shell_settings or ShellToolSettings()
-            available_toolsets.append(
-                ShellToolSet(
-                    settings=active_shell_settings,
-                    container_runtime=container_runtime,
-                    namespace="shell",
-                )
-            )
+            shell_toolset_kwargs: dict[str, Any] = {
+                "settings": active_shell_settings,
+                "namespace": "shell",
+            }
+            if isolation_runtime is not None:
+                shell_toolset_kwargs["isolation_runtime"] = isolation_runtime
+            else:
+                shell_toolset_kwargs["container_runtime"] = container_runtime
+            available_toolsets.append(ShellToolSet(**shell_toolset_kwargs))
 
         tool = ToolManager.create_instance(
             available_toolsets=available_toolsets,

@@ -1,4 +1,5 @@
 from ..container import ContainerToolRuntimeSettings
+from ..isolation import IsolationToolRuntimeSettings
 from .browser import BrowserToolSettings
 from .database import DatabaseToolSettings
 from .graph_settings import GraphToolSettings
@@ -16,4 +17,5 @@ class ToolSettingsContext:
     graph: GraphToolSettings | None = None
     shell: ShellToolSettings | None = None
     container: ContainerToolRuntimeSettings | None = None
+    isolation: IsolationToolRuntimeSettings | None = None
     extra: dict[str, object] | None = None

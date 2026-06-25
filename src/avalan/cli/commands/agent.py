@@ -32,11 +32,26 @@ from ...entities import (
 )
 from ...event import EventStats, EventType
 from ...event.manager import EventManagerMode
+from ...isolation import (
+    IsolationMode,
+    IsolationProfileSelection,
+    IsolationSettingsSource,
+    IsolationSettingsSurface,
+    IsolationToolRuntimeSettings,
+    SandboxProfileSelection,
+    trusted_isolation_runtime_from_mapping,
+    trusted_isolation_source,
+)
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.input import input_files
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.nlp.text.vendor import TextGenerationVendorModel
 from ...model.response.text import TextGenerationResponse
+from ...sandbox import (
+    BubblewrapSandboxBackend,
+    SandboxAsyncBackend,
+    SeatbeltSandboxBackend,
+)
 from ...server import agents_server
 from ...tool.browser import BrowserToolSettings
 from ...tool.context import ToolSettingsContext
@@ -77,6 +92,9 @@ _DOCKER_CONTAINER_BACKEND_MODULES = (
     "avalan.container.docker",
 )
 _SUPPORTED_CONTAINER_BACKENDS = frozenset({"apple-container", "docker"})
+_BUBBLEWRAP_SANDBOX_BACKEND = "bubblewrap"
+_SEATBELT_SANDBOX_BACKEND = "seatbelt"
+_SUPPORTED_SANDBOX_BACKENDS = frozenset({"bubblewrap", "seatbelt"})
 
 
 def _parse_permanent_memory_items(
@@ -452,6 +470,8 @@ def _shell_tool_template_settings(
     ] = {}
     for field in fields(ShellToolSettings):
         name = field.name
+        if name == "execution_mode":
+            continue
         value = getattr(settings, name)
         if value == getattr(default_settings, name):
             continue
@@ -468,8 +488,14 @@ def _container_tool_template_settings(
     args: Namespace,
 ) -> dict[str, object] | None:
     backend = getattr(args, "tool_container_backend", None)
-    if backend is None and not _has_container_profile_args(args):
+    if not _has_container_policy_args(args):
         return None
+    _require_shell_backend_for_policy(
+        args,
+        None,
+        "container",
+        "tool.container",
+    )
     _agent_container_config_from_args(args)
     profile_name = getattr(args, "tool_container_profile", None) or (
         getattr(args, "tool_shell_container_profile", None)
@@ -485,7 +511,10 @@ def _container_tool_template_settings(
         ("tool_container_review_mode", "review_mode"),
     ):
         value = getattr(args, source_key, None)
-        if value is not None:
+        if value is not None and not _is_default_container_template_value(
+            target_key,
+            value,
+        ):
             profile[target_key] = value
     resources = _agent_container_resources_from_args(args)
     if resources:
@@ -511,10 +540,53 @@ def _shell_container_template_settings(
     if not rendered:
         return None
     assert (
-        getattr(args, "tool_shell_backend", None) == "container"
+        _shell_execution_mode_from_args(args) == "container"
     ), "tool.shell.container requires tool.shell backend container"
     container_config = _agent_container_config_from_args(args)
     assert container_config is not None, "container backend is required"
+    return rendered
+
+
+def _sandbox_tool_template_settings(
+    args: Namespace,
+) -> dict[str, object] | None:
+    if not _has_sandbox_policy_args(args):
+        return None
+    _require_shell_backend_for_policy(args, None, "sandbox", "tool.sandbox")
+    sandbox_config = _agent_sandbox_config_from_args(args)
+    assert sandbox_config is not None
+    _validate_sandbox_template_config(args, sandbox_config)
+    rendered: dict[str, object] = {
+        "backend": sandbox_config["backend"],
+        "profiles": {
+            name: _sandbox_profile_template_settings(profile)
+            for name, profile in cast(
+                Mapping[str, Mapping[str, object]],
+                sandbox_config["profiles"],
+            ).items()
+        },
+    }
+    if getattr(args, "tool_shell_sandbox_profile", None) is None:
+        rendered["default_profile"] = sandbox_config["default_profile"]
+    return rendered
+
+
+def _shell_sandbox_template_settings(
+    args: Namespace,
+) -> dict[str, object] | None:
+    rendered: dict[str, object] = {}
+    profile = getattr(args, "tool_shell_sandbox_profile", None)
+    if profile is not None:
+        rendered["profile"] = profile
+    if getattr(args, "tool_shell_sandbox_required", None):
+        rendered["required"] = True
+    if not rendered:
+        return None
+    assert (
+        _shell_execution_mode_from_args(args) == "sandbox"
+    ), "tool.shell.sandbox requires tool.shell backend sandbox"
+    sandbox_config = _agent_sandbox_config_from_args(args)
+    assert sandbox_config is not None, "sandbox backend is required"
     return rendered
 
 
@@ -531,6 +603,140 @@ def _is_simple_string_sequence(value: object) -> bool:
     if isinstance(value, str) or not isinstance(value, Sequence):
         return False
     return all(isinstance(item, str) for item in value)
+
+
+def _is_default_container_template_value(
+    key: str,
+    value: object,
+) -> bool:
+    return (
+        (key == "workspace_root" and value == ".")
+        or (key == "pull_policy" and value == "never")
+        or (key == "platform" and value == "linux/amd64")
+        or (key == "network" and value == "none")
+        or (key == "review_mode" and value == "deny")
+    )
+
+
+def _sandbox_profile_template_settings(
+    profile: Mapping[str, object],
+) -> dict[str, object]:
+    rendered: dict[str, object] = {}
+    for key, value in profile.items():
+        if key == "network":
+            network = _sandbox_network_template_settings(
+                cast(Mapping[str, object], value)
+            )
+            if network:
+                rendered[key] = network
+        elif key == "output":
+            output = _sandbox_output_template_settings(
+                cast(Mapping[str, object], value)
+            )
+            if output:
+                rendered[key] = output
+        elif key == "resources":
+            if value:
+                rendered[key] = value
+        elif not _is_default_sandbox_template_value(key, value):
+            rendered[key] = value
+    return rendered
+
+
+def _sandbox_network_template_settings(
+    network: Mapping[str, object],
+) -> dict[str, object]:
+    rendered: dict[str, object] = {}
+    mode = network.get("mode")
+    if mode is not None and mode != "none":
+        rendered["mode"] = mode
+    egress_allowlist = network.get("egress_allowlist")
+    if egress_allowlist:
+        rendered["egress_allowlist"] = egress_allowlist
+    return rendered
+
+
+def _sandbox_output_template_settings(
+    output: Mapping[str, object],
+) -> dict[str, object]:
+    rendered: dict[str, object] = {}
+    for key, default in (
+        ("max_stdout_bytes", 65536),
+        ("max_stderr_bytes", 32768),
+        ("max_artifact_bytes", 0),
+        ("allow_artifacts", False),
+    ):
+        value = output.get(key)
+        if value is not None and value != default:
+            rendered[key] = value
+    return rendered
+
+
+def _is_default_sandbox_template_value(
+    key: str,
+    value: object,
+) -> bool:
+    return (
+        (key == "child_processes" and value == "deny")
+        or (key == "inherited_fds" and value == "stdio")
+        or (key == "cleanup" and value == "delete")
+    )
+
+
+def _validate_sandbox_template_config(
+    args: Namespace,
+    sandbox_config: Mapping[str, object],
+) -> None:
+    trusted_isolation_runtime_from_mapping(
+        {
+            "mode": IsolationMode.SANDBOX.value,
+            "sandbox": sandbox_config,
+        },
+        source=_cli_isolation_source(),
+        selection=IsolationProfileSelection(
+            mode=IsolationMode.SANDBOX,
+            profile=getattr(args, "tool_shell_sandbox_profile", None),
+            required=(
+                bool(getattr(args, "tool_shell_sandbox_required", None))
+                or _shell_execution_mode_from_args(args) == "sandbox"
+            ),
+        ),
+    )
+
+
+def _has_container_policy_args(args: Namespace) -> bool:
+    return getattr(
+        args, "tool_container_backend", None
+    ) is not None or _has_container_profile_args(args)
+
+
+def _has_sandbox_policy_args(args: Namespace) -> bool:
+    return getattr(
+        args, "tool_sandbox_backend", None
+    ) is not None or _has_sandbox_profile_args(args)
+
+
+def _require_shell_backend_for_policy(
+    args: Namespace,
+    shell_settings: ShellToolSettings | None,
+    mode: str,
+    policy_name: str,
+) -> None:
+    backend = (
+        shell_settings.backend
+        if shell_settings is not None
+        else _shell_execution_mode_from_args(args)
+    )
+    assert backend == mode, f"{policy_name} requires tool.shell backend {mode}"
+
+
+def _shell_execution_mode_from_args(args: Namespace) -> str | None:
+    backend = getattr(args, "tool_shell_backend", None)
+    execution_mode = getattr(args, "tool_shell_execution_mode", None)
+    assert (
+        backend is None or execution_mode is None or backend == execution_mode
+    ), "tool shell backend and execution mode must match"
+    return cast(str | None, backend or execution_mode)
 
 
 def _agent_enabled_tools(args: Namespace) -> list[str] | None:
@@ -560,7 +766,19 @@ def _agent_container_runtime_settings(
     args: Namespace,
     shell_settings: ShellToolSettings | None,
 ) -> ContainerToolRuntimeSettings | None:
+    if _has_container_policy_args(args):
+        _require_shell_backend_for_policy(
+            args,
+            shell_settings,
+            "container",
+            "tool.container",
+        )
     container_config = _agent_container_config_from_args(args)
+    assert not (
+        container_config is not None
+        and shell_settings is not None
+        and shell_settings.backend == "sandbox"
+    ), "sandbox shell execution cannot carry container policy"
     shell_selection = _agent_shell_container_selection_from_args(
         args,
         shell_settings,
@@ -744,6 +962,175 @@ def _agent_shell_container_selection_from_args(
     )
 
 
+def _agent_isolation_runtime_settings(
+    args: Namespace,
+    shell_settings: ShellToolSettings | None,
+) -> IsolationToolRuntimeSettings | None:
+    if _has_sandbox_policy_args(args):
+        _require_shell_backend_for_policy(
+            args,
+            shell_settings,
+            "sandbox",
+            "tool.sandbox",
+        )
+    sandbox_config = _agent_sandbox_config_from_args(args)
+    assert not (
+        sandbox_config is not None
+        and shell_settings is not None
+        and shell_settings.backend == "container"
+    ), "container shell execution cannot carry sandbox policy"
+    shell_selection = _agent_shell_sandbox_selection_from_args(
+        args,
+        shell_settings,
+    )
+    if sandbox_config is None:
+        assert (
+            shell_selection is None or shell_selection.profile is None
+        ), "required sandbox profile unavailable"
+        return None
+    runtime = trusted_isolation_runtime_from_mapping(
+        {
+            "mode": IsolationMode.SANDBOX.value,
+            "sandbox": sandbox_config,
+        },
+        source=_cli_isolation_source(),
+        selection=(
+            None
+            if shell_selection is None
+            else IsolationProfileSelection(
+                mode=IsolationMode.SANDBOX,
+                profile=shell_selection.profile,
+                required=shell_selection.required,
+            )
+        ),
+        sandbox_backend=_agent_sandbox_backend_from_args(args),
+    )
+    return runtime
+
+
+def _agent_sandbox_backend_from_args(
+    args: Namespace,
+) -> SandboxAsyncBackend | None:
+    backend = getattr(args, "tool_sandbox_backend", None)
+    if backend == _SEATBELT_SANDBOX_BACKEND:
+        return SeatbeltSandboxBackend()
+    if backend == _BUBBLEWRAP_SANDBOX_BACKEND:
+        return BubblewrapSandboxBackend()
+    return None
+
+
+def _agent_sandbox_config_from_args(
+    args: Namespace,
+) -> dict[str, object] | None:
+    backend = getattr(args, "tool_sandbox_backend", None)
+    if backend is None and not _has_sandbox_profile_args(args):
+        return None
+    assert backend is not None, "sandbox backend is required"
+    assert (
+        backend in _SUPPORTED_SANDBOX_BACKENDS
+    ), "sandbox backend is unsupported"
+    profile_name = getattr(args, "tool_sandbox_profile", None) or (
+        getattr(args, "tool_shell_sandbox_profile", None) or "host-tools"
+    )
+    profile: dict[str, object] = {}
+    for source_key, target_key in (
+        ("tool_sandbox_trusted_executables", "trusted_executables"),
+        ("tool_sandbox_executable_search_roots", "executable_search_roots"),
+        ("tool_sandbox_read_roots", "read_roots"),
+        ("tool_sandbox_write_roots", "write_roots"),
+        ("tool_sandbox_deny_roots", "deny_roots"),
+        ("tool_sandbox_scratch_roots", "scratch_roots"),
+        ("tool_sandbox_output_roots", "output_roots"),
+    ):
+        value = getattr(args, source_key, None)
+        if value:
+            profile[target_key] = tuple(value)
+    network = _agent_sandbox_network_from_args(args)
+    if network:
+        profile["network"] = network
+    resources = _agent_sandbox_resources_from_args(args)
+    if resources:
+        profile["resources"] = resources
+    output = _agent_sandbox_output_from_args(args)
+    if output:
+        profile["output"] = output
+    for source_key, target_key in (
+        ("tool_sandbox_child_processes", "child_processes"),
+        ("tool_sandbox_inherited_fds", "inherited_fds"),
+    ):
+        value = getattr(args, source_key, None)
+        if value is not None:
+            profile[target_key] = value
+    return {
+        "backend": backend,
+        "default_profile": profile_name,
+        "allowed_profiles": (profile_name,),
+        "profiles": {profile_name: profile},
+        "profile_registry_id": "default",
+        "policy_version": "phase8",
+    }
+
+
+def _agent_sandbox_network_from_args(args: Namespace) -> dict[str, object]:
+    network: dict[str, object] = {}
+    mode = getattr(args, "tool_sandbox_network_mode", None)
+    if mode is not None:
+        network["mode"] = mode
+    egress_allowlist = getattr(args, "tool_sandbox_network_egress", None)
+    if egress_allowlist:
+        network["egress_allowlist"] = tuple(egress_allowlist)
+    return network
+
+
+def _agent_sandbox_resources_from_args(args: Namespace) -> dict[str, int]:
+    resources: dict[str, int] = {}
+    for source_key, target_key in (
+        ("tool_sandbox_timeout_seconds", "timeout_seconds"),
+        ("tool_sandbox_pids", "pids"),
+    ):
+        value = getattr(args, source_key, None)
+        if value is not None:
+            resources[target_key] = value
+    return resources
+
+
+def _agent_sandbox_output_from_args(args: Namespace) -> dict[str, int | bool]:
+    output: dict[str, int | bool] = {}
+    for source_key, target_key in (
+        ("tool_sandbox_max_stdout_bytes", "max_stdout_bytes"),
+        ("tool_sandbox_max_stderr_bytes", "max_stderr_bytes"),
+        ("tool_sandbox_max_artifact_bytes", "max_artifact_bytes"),
+    ):
+        value = getattr(args, source_key, None)
+        if value is not None:
+            output[target_key] = value
+    allow_artifacts = getattr(args, "tool_sandbox_allow_artifacts", None)
+    if allow_artifacts is not None:
+        output["allow_artifacts"] = allow_artifacts
+    return output
+
+
+def _agent_shell_sandbox_selection_from_args(
+    args: Namespace,
+    shell_settings: ShellToolSettings | None,
+) -> SandboxProfileSelection | None:
+    profile = getattr(args, "tool_shell_sandbox_profile", None)
+    required = getattr(args, "tool_shell_sandbox_required", None)
+    explicit_selection = profile is not None or required is not None
+    shell_backend_sandbox = (
+        shell_settings is not None and shell_settings.backend == "sandbox"
+    )
+    if explicit_selection:
+        assert (
+            shell_backend_sandbox
+        ), "tool.shell.sandbox requires tool.shell backend sandbox"
+    if required is None and shell_settings is not None:
+        required = shell_settings.backend == "sandbox"
+    if profile is None and not required:
+        return None
+    return SandboxProfileSelection(profile=profile, required=bool(required))
+
+
 def _has_container_profile_args(args: Namespace) -> bool:
     return any(
         getattr(args, key, None) is not None
@@ -763,11 +1150,41 @@ def _has_container_profile_args(args: Namespace) -> bool:
     )
 
 
+def _has_sandbox_profile_args(args: Namespace) -> bool:
+    return any(
+        getattr(args, key, None) is not None
+        for key in (
+            "tool_sandbox_profile",
+            "tool_sandbox_trusted_executables",
+            "tool_sandbox_executable_search_roots",
+            "tool_sandbox_read_roots",
+            "tool_sandbox_write_roots",
+            "tool_sandbox_deny_roots",
+            "tool_sandbox_scratch_roots",
+            "tool_sandbox_output_roots",
+            "tool_sandbox_network_mode",
+            "tool_sandbox_network_egress",
+            "tool_sandbox_timeout_seconds",
+            "tool_sandbox_pids",
+            "tool_sandbox_max_stdout_bytes",
+            "tool_sandbox_max_stderr_bytes",
+            "tool_sandbox_max_artifact_bytes",
+            "tool_sandbox_allow_artifacts",
+            "tool_sandbox_child_processes",
+            "tool_sandbox_inherited_fds",
+        )
+    )
+
+
 def _cli_container_source() -> ContainerSettingsSource:
     return ContainerSettingsSource(
         surface=ContainerSurface.CLI,
         trust_level=ContainerTrustLevel.TRUSTED_OPERATOR,
     )
+
+
+def _cli_isolation_source() -> IsolationSettingsSource:
+    return trusted_isolation_source(IsolationSettingsSurface.CLI)
 
 
 def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
@@ -783,12 +1200,17 @@ def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
     shell_settings = get_tool_settings(
         args, prefix="shell", settings_cls=ShellToolSettings
     )
+    container_runtime = _agent_container_runtime_settings(
+        args,
+        shell_settings,
+    )
     return ToolSettingsContext(
         browser=browser_settings,
         database=database_settings,
         graph=graph_settings,
         shell=shell_settings,
-        container=_agent_container_runtime_settings(args, shell_settings),
+        container=container_runtime,
+        isolation=_agent_isolation_runtime_settings(args, shell_settings),
     )
 
 
@@ -1497,7 +1919,9 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         graph_tool=graph_tool,
         shell_tool=_shell_tool_template_settings(shell_tool),
         container_tool=_container_tool_template_settings(args),
+        sandbox_tool=_sandbox_tool_template_settings(args),
         shell_container=_shell_container_template_settings(args),
+        shell_sandbox=_shell_sandbox_template_settings(args),
         tool_format=tool_format,
         tool_recovery_formats=tool_recovery_formats,
     )

@@ -230,6 +230,18 @@ Media tools such as `shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`, and
 flag. Absolute paths, symlinks, hidden files, and executable search paths are
 also opt-in.
 
+Agent TOML is trusted deployment configuration only when supplied through an
+operator-controlled channel. In that mode `[tool.sandbox]` and
+`[tool.container]` may define approved isolation profiles, while
+`[tool.shell.sandbox]` and `[tool.shell.container]` may select one profile.
+Top-level sandbox policy is valid only when `[tool.shell]` selects the
+sandbox `backend`. Top-level container policy is valid when `[tool.shell]`
+selects the container `backend`, or when `[runtime.container]` uses it as the
+whole-agent runtime envelope without shell container execution.
+Untrusted agent, flow, task, prompt, MCP, A2A, or HTTP inputs must be capped to
+profile selection only; they must not define roots, images, mounts, executable
+paths, backend flags, network policy, or secrets.
+
 ## Database Tools
 
 Database tools share configured SQLAlchemy settings. Keep database agents

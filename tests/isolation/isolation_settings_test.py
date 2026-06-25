@@ -3,6 +3,10 @@ from unittest import TestCase, main
 
 from avalan.container import (
     ContainerBackend,
+    ContainerBackendCapabilities,
+    ContainerFakeBackend,
+    ContainerFakeBackendScript,
+    ContainerMountType,
 )
 from avalan.isolation import (
     IsolationDiagnosticCategory,
@@ -439,11 +443,14 @@ class IsolationSettingsTest(TestCase):
 
     def test_runtime_branch_accessors_and_canonical_json(self) -> None:
         sandbox_effective = _sandbox_effective("seatbelt")
+        sandbox_backend = _FakeSandboxBackend()
         sandbox_runtime = IsolationToolRuntimeSettings(
             effective_settings=sandbox_effective,
+            sandbox_backend=sandbox_backend,
         )
 
         self.assertIs(sandbox_runtime.sandbox, sandbox_effective.sandbox)
+        self.assertIs(sandbox_runtime.sandbox_backend, sandbox_backend)
         self.assertIsNone(sandbox_runtime.local)
         self.assertIsNone(sandbox_runtime.container)
         self.assertEqual(
@@ -452,15 +459,39 @@ class IsolationSettingsTest(TestCase):
         )
 
         container_effective = _container_effective("docker")
+        container_backend = _fake_container_backend()
+
+        def resolve_secret(name: str) -> object:
+            return f"resolved:{name}"
+
         container_runtime = IsolationToolRuntimeSettings(
             effective_settings=container_effective,
+            container_backend=container_backend,
+            secret_resolver=resolve_secret,
         )
 
         self.assertIs(
             container_runtime.container, container_effective.container
         )
+        self.assertIs(container_runtime.container_backend, container_backend)
+        assert container_runtime.secret_resolver is not None
+        self.assertEqual(
+            container_runtime.secret_resolver("TOKEN"),
+            "resolved:TOKEN",
+        )
         self.assertIsNone(container_runtime.local)
         self.assertIsNone(container_runtime.sandbox)
+
+        with self.assertRaises(AssertionError):
+            IsolationToolRuntimeSettings(
+                effective_settings=sandbox_effective,
+                container_backend=container_backend,
+            )
+        with self.assertRaises(AssertionError):
+            IsolationToolRuntimeSettings(
+                effective_settings=container_effective,
+                sandbox_backend=sandbox_backend,
+            )
 
     def test_settings_to_dict_and_optional_sequence_defaults(self) -> None:
         source = trusted_isolation_source("sdk")
@@ -597,6 +628,30 @@ def _container_settings_raw(backend: str) -> dict[str, object]:
         "profile_registry_id": "default",
         "policy_version": "phase2",
     }
+
+
+class _FakeSandboxBackend:
+    async def probe(self) -> object:
+        return object()
+
+    async def execute(self, plan: object) -> object:
+        return plan
+
+
+def _fake_container_backend() -> ContainerFakeBackend:
+    return ContainerFakeBackend(
+        ContainerFakeBackendScript(
+            capabilities=ContainerBackendCapabilities(
+                backend=ContainerBackend.DOCKER,
+                host_os="linux",
+                guest_os="linux",
+                architecture="amd64",
+                rootless=True,
+                mount_types=(ContainerMountType.WORKSPACE,),
+                streaming_attach=True,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":
