@@ -1,5 +1,6 @@
 from pathlib import Path
 from tomllib import load
+from typing import Any
 from unittest import TestCase, main
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -92,11 +93,11 @@ class IsolationPhase0InventoryTest(TestCase):
             "implemented",
         )
         self.assertIn("class AppleContainerBackend", container_sources)
-        self.assertEqual(current_reality["docker"]["status"], "target-only")
-        self.assertFalse(
+        self.assertEqual(current_reality["docker"]["status"], "implemented")
+        self.assertTrue(
             current_reality["docker"]["concrete_backend_exists"],
         )
-        self.assertNotIn("class DockerContainerBackend", container_sources)
+        self.assertIn("class DockerContainerBackend", container_sources)
 
     def test_ci_jobs_are_defined_for_target_runtimes(self) -> None:
         inventory = _inventory()
@@ -200,12 +201,12 @@ class IsolationPhase0InventoryTest(TestCase):
         self.assertIn("podman", condition["blocking_values"])
 
 
-def _inventory() -> dict[str, object]:
+def _inventory() -> dict[str, Any]:
     with _INVENTORY_PATH.open("rb") as inventory_file:
         return load(inventory_file)
 
 
-def _terms(entries: list[dict[str, object]]) -> set[str]:
+def _terms(entries: list[dict[str, Any]]) -> set[str]:
     return {term for entry in entries for term in entry["terms"]}
 
 

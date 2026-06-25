@@ -218,7 +218,7 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
                     host_os="linux",
                     guest_os="linux",
                     architecture="amd64",
-                    rootless=True,
+                    rootless=False,
                     mount_types=(ContainerMountType.WORKSPACE,),
                     streaming_attach=True,
                 ),
@@ -244,6 +244,7 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
             container_runtime=ContainerToolRuntimeSettings(
                 effective_settings=runtime.effective_settings,
                 backend=backend,
+                rootful_authorized=runtime.rootful_authorized,
             ),
         )
 
@@ -268,7 +269,7 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
                     host_os="linux",
                     guest_os="linux",
                     architecture="amd64",
-                    rootless=True,
+                    rootless=False,
                     mount_types=(ContainerMountType.WORKSPACE,),
                     streaming_attach=True,
                 ),
@@ -294,6 +295,7 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
             container_runtime=ContainerToolRuntimeSettings(
                 effective_settings=runtime.effective_settings,
                 backend=backend,
+                rootful_authorized=runtime.rootful_authorized,
             ),
         )
 

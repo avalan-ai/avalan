@@ -71,6 +71,11 @@ _APPLE_CONTAINER_BACKEND_MODULES = (
     "avalan.container.apple",
     "avalan.container.apple_container",
 )
+_DOCKER_CONTAINER_BACKEND = "docker"
+_DOCKER_CONTAINER_BACKEND_MODULES = (
+    "avalan.container",
+    "avalan.container.docker",
+)
 _SUPPORTED_CONTAINER_BACKENDS = frozenset({"apple-container", "docker"})
 
 
@@ -574,6 +579,7 @@ def _agent_container_runtime_settings(
         effective_settings=runtime.effective_settings,
         backend=_agent_container_backend_from_args(args),
         opt_in_backends=_agent_container_opt_in_backends(args),
+        rootful_authorized=runtime.rootful_authorized,
     )
 
 
@@ -581,9 +587,12 @@ def _agent_container_backend_from_args(
     args: Namespace,
 ) -> ContainerAsyncBackend | None:
     backend = getattr(args, "tool_container_backend", None)
-    if backend != _APPLE_CONTAINER_BACKEND:
+    if backend == _DOCKER_CONTAINER_BACKEND:
+        backend_cls = _docker_container_backend_class()
+    elif backend == _APPLE_CONTAINER_BACKEND:
+        backend_cls = _apple_container_backend_class()
+    else:
         return None
-    backend_cls = _apple_container_backend_class()
     if backend_cls is None:
         return None
     container_backend = backend_cls()
@@ -612,12 +621,33 @@ def _apple_container_backend_class() -> type[ContainerAsyncBackend] | None:
     return None
 
 
+def _docker_container_backend_class() -> type[ContainerAsyncBackend] | None:
+    for module_name in _DOCKER_CONTAINER_BACKEND_MODULES:
+        try:
+            module = import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+        for candidate in vars(module).values():
+            if _is_docker_container_backend_class(candidate):
+                return cast(type[ContainerAsyncBackend], candidate)
+    return None
+
+
 def _is_apple_container_backend_class(candidate: object) -> bool:
     return (
         isinstance(candidate, type)
         and issubclass(candidate, ContainerAsyncBackend)
         and candidate is not ContainerAsyncBackend
         and "apple" in candidate.__name__.lower()
+    )
+
+
+def _is_docker_container_backend_class(candidate: object) -> bool:
+    return (
+        isinstance(candidate, type)
+        and issubclass(candidate, ContainerAsyncBackend)
+        and candidate is not ContainerAsyncBackend
+        and "docker" in candidate.__name__.lower()
     )
 
 

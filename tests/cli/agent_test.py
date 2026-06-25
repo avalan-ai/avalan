@@ -1309,6 +1309,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.shell.backend, "container")
         self.assertIsNotNone(settings.container)
         assert settings.container is not None
+        self.assertTrue(settings.container.rootful_authorized)
         effective = settings.container.effective_settings
         self.assertIsNotNone(effective)
         assert effective is not None
@@ -1357,6 +1358,45 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             settings.container.opt_in_backends,
             (ContainerBackend.APPLE_CONTAINER,),
         )
+
+    def test_agent_tool_settings_missing_docker_backend_fails_closed(self):
+        args = Namespace(
+            tool_shell_backend="container",
+            tool_container_backend="docker",
+            tool_container_profile="workspace-readonly",
+            tool_container_image="ghcr.io/example/tools@sha256:" + "2" * 64,
+            tool_container_workspace_root=".",
+            tool_container_pull_policy="never",
+            tool_container_platform="linux/amd64",
+            tool_container_cpu_count=1,
+            tool_container_memory_bytes=268435456,
+            tool_container_pids=64,
+            tool_container_timeout_seconds=30,
+            tool_container_network_mode="none",
+            tool_container_review_mode="deny",
+            tool_shell_container_profile="workspace-readonly",
+            tool_shell_container_required=True,
+        )
+
+        def missing_module(_module_name: str) -> object:
+            raise ModuleNotFoundError(_module_name)
+
+        with patch.object(
+            agent_cmds,
+            "import_module",
+            side_effect=missing_module,
+        ):
+            settings = agent_cmds._agent_tool_settings(args)
+
+        self.assertIsNotNone(settings.container)
+        assert settings.container is not None
+        self.assertIsNone(settings.container.backend)
+        self.assertEqual(settings.container.opt_in_backends, ())
+
+    def test_agent_container_backend_unknown_value_returns_none(self):
+        args = Namespace(tool_container_backend="unknown")
+
+        self.assertIsNone(agent_cmds._agent_container_backend_from_args(args))
 
     def test_agent_tool_settings_missing_apple_backend_fails_closed(self):
         args = Namespace(

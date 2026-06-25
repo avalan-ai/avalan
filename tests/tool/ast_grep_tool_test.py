@@ -216,7 +216,7 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
     ) -> None:
         backend = _RecordingContainerFakeBackend(
             ContainerFakeBackendScript(
-                capabilities=_capabilities(),
+                capabilities=_capabilities(rootless=False),
                 stream_chunks=(
                     ContainerBackendStreamChunk(
                         stream=ContainerBackendStream.STDOUT,
@@ -231,6 +231,7 @@ class AstGrepToolTestCase(IsolatedAsyncioTestCase):
             container_runtime=ContainerToolRuntimeSettings(
                 effective_settings=_effective_settings(required=True),
                 backend=backend,
+                rootful_authorized=True,
             ),
         )
 
@@ -701,13 +702,13 @@ def _source() -> ContainerSettingsSource:
     )
 
 
-def _capabilities() -> ContainerBackendCapabilities:
+def _capabilities(*, rootless: bool = True) -> ContainerBackendCapabilities:
     return ContainerBackendCapabilities(
         backend=ContainerBackend.DOCKER,
         host_os="linux",
         guest_os="linux",
         architecture="amd64",
-        rootless=True,
+        rootless=rootless,
         network_modes=(ContainerNetworkMode.NONE,),
         mount_types=(ContainerMountType.WORKSPACE, ContainerMountType.OUTPUT),
         device_classes=(ContainerDeviceClass.CPU,),
