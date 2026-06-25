@@ -2167,8 +2167,6 @@ class ContainerBackendCapabilities:
     per_container_vm_isolation: bool = False
     vm_backed: bool = False
     remote_engine: bool = False
-    windows_process_isolation: bool = False
-    windows_hyperv_isolation: bool = False
     streaming_attach: bool = False
     stats: bool = False
     lifecycle_normalization: bool = True
@@ -2206,8 +2204,6 @@ class ContainerBackendCapabilities:
             "per_container_vm_isolation",
             "vm_backed",
             "remote_engine",
-            "windows_process_isolation",
-            "windows_hyperv_isolation",
             "streaming_attach",
             "stats",
             "lifecycle_normalization",
@@ -2290,8 +2286,6 @@ class ContainerBackendCapabilities:
             "per_container_vm_isolation": self.per_container_vm_isolation,
             "vm_backed": self.vm_backed,
             "remote_engine": self.remote_engine,
-            "windows_process_isolation": self.windows_process_isolation,
-            "windows_hyperv_isolation": self.windows_hyperv_isolation,
             "streaming_attach": self.streaming_attach,
             "stats": self.stats,
             "lifecycle_normalization": self.lifecycle_normalization,

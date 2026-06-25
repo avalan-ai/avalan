@@ -149,7 +149,7 @@ class ContainerIntegrationTest(TestCase):
         )
         settings = trusted_container_settings_from_mapping(
             {
-                "backend": "podman",
+                "backend": "apple-container",
                 "default_profile": "sdk-profile",
                 "profiles": {
                     "sdk-profile": {
@@ -171,7 +171,7 @@ class ContainerIntegrationTest(TestCase):
         )
         effective = settings.select_profile(selection)
 
-        self.assertEqual(effective.backend, ContainerBackend.PODMAN)
+        self.assertEqual(effective.backend, ContainerBackend.APPLE_CONTAINER)
         self.assertEqual(
             effective.scope,
             ContainerExecutionScope.RUNTIME_ENVELOPE,

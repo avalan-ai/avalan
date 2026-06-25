@@ -223,8 +223,6 @@ class ContainerSettingsTest(TestCase):
             per_container_vm_isolation=True,
             vm_backed=True,
             remote_engine=True,
-            windows_process_isolation=True,
-            windows_hyperv_isolation=True,
             streaming_attach=True,
             stats=True,
             lifecycle_normalization=True,
@@ -302,8 +300,6 @@ class ContainerSettingsTest(TestCase):
         )
         self.assertTrue(capabilities.to_dict()["vm_backed"])
         self.assertTrue(capabilities.to_dict()["remote_engine"])
-        self.assertTrue(capabilities.to_dict()["windows_process_isolation"])
-        self.assertTrue(capabilities.to_dict()["windows_hyperv_isolation"])
         behavior_dict = capabilities.to_dict()["platform_behavior"]
         assert isinstance(behavior_dict, dict)
         self.assertEqual(
@@ -1046,7 +1042,7 @@ class ContainerSettingsTest(TestCase):
                 source=source,
                 layer=ContainerSettingsPrecedence.SDK,
                 profile="workspace-rich",
-                backend=ContainerBackend.PODMAN,
+                backend=ContainerBackend.APPLE_CONTAINER,
             ),
         )
 

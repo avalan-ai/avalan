@@ -2077,7 +2077,6 @@ def _raise_for_container_backend_selection(
     selection = select_container_backend(
         run_plan,
         (probe,),
-        auto_enabled=True,
     )
     if selection.ok:
         return

@@ -69,11 +69,6 @@ class ShellToolSet(ToolSet):
             and self._settings.backend == "container"
         ):
             container_settings = disabled_required_container_settings()
-        container_auto_enabled = (
-            container_settings is not None
-            and container_settings.backend is ContainerBackend.AUTO
-            and container_settings.source.can_define_runtime_authority
-        )
         policy = policy or ExecutionPolicy(settings=self._settings)
         if executor is None:
             local_executor = LocalCommandExecutor(settings=self._settings)
@@ -85,7 +80,6 @@ class ShellToolSet(ToolSet):
                     container_backend=container_backend,
                     opt_in_backends=container_opt_in_backends,
                     local_executor=local_executor,
-                    auto_enabled=container_auto_enabled,
                 )
             )
         formatter = formatter or (

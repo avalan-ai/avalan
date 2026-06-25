@@ -1,0 +1,449 @@
+[target]
+shell_execution_modes = ["container", "sandbox", "local"]
+container_backends = ["apple-container", "docker"]
+sandbox_backends = ["seatbelt", "bubblewrap"]
+
+[rejected_values]
+unknown_shell_execution_modes = ["host", "direct", "native", "none"]
+legacy_container_backends = [
+    "podman",
+    "nerdctl",
+    "containerd",
+    "containerd/nerdctl",
+    "microsoft-containers",
+    "windows-docker",
+    "wsl2",
+    "hyper-v",
+    "auto",
+    "none",
+    "container",
+]
+unknown_container_backends = ["firejail", "nsjail", "gvisor"]
+unknown_sandbox_backends = [
+    "apple-container",
+    "docker",
+    "podman",
+    "firejail",
+    "nsjail",
+    "auto",
+    "none",
+]
+
+[current_reality.apple_container]
+status = "implemented"
+site = "src/avalan/container/apple.py::AppleContainerBackend"
+notes = "Apple Container has a concrete async backend adapter and fake/live tests."
+
+[current_reality.docker]
+status = "target-only"
+concrete_backend_exists = false
+notes = "Docker exists today as enum/catalog/settings/test data only. No DockerContainerBackend exists yet."
+
+[ci.default]
+jobs = [
+    "isolation phase0 static inventory",
+    "container fake-e2e no-fallback",
+    "apple-container fake backend coverage",
+    "docker fake backend coverage after Docker backend lands",
+    "seatbelt fake backend coverage after sandbox backend lands",
+    "bubblewrap fake backend coverage after sandbox backend lands",
+]
+
+[[ci.optional_real_runtime_jobs]]
+runtime = "docker"
+job = "isolation real Docker e2e"
+gate = "AVALAN_CONTAINER_DOCKER_E2E=1"
+status = "blocked until DockerContainerBackend exists"
+
+[[ci.optional_real_runtime_jobs]]
+runtime = "apple-container"
+job = "isolation real Apple Container e2e"
+gate = "AVALAN_CONTAINER_APPLE_E2E=1 and AVALAN_CONTAINER_APPLE_E2E_IMAGE"
+status = "implemented and optional"
+
+[[ci.optional_real_runtime_jobs]]
+runtime = "seatbelt"
+job = "isolation real seatbelt e2e"
+gate = "AVALAN_ISOLATION_SEATBELT_E2E=1"
+status = "blocked until sandbox backend exists"
+
+[[ci.optional_real_runtime_jobs]]
+runtime = "bubblewrap"
+job = "isolation real bubblewrap e2e"
+gate = "AVALAN_ISOLATION_BUBBLEWRAP_E2E=1"
+status = "blocked until sandbox backend exists"
+
+[phase0_exit_conditions.fake_e2e_sdk_cli_toml_snapshots]
+status = "partial"
+reason = "Existing SDK, CLI, and TOML tests cover current local/container shell settings, Docker catalog strings, and Apple Container wiring, but they cannot expose only target active values until Phase 1 removes legacy container backends and Phase 2 adds sandbox settings."
+blocking_values = ["podman", "nerdctl", "windows-docker", "auto", "none"]
+blocking_missing_values = ["sandbox", "seatbelt", "bubblewrap"]
+evidence = [
+    "tests/agent/loader_test.py",
+    "tests/cli/main_test.py",
+    "tests/cli/agent_test.py",
+    "tests/tool/shell/container_test.py",
+    "tests/container/apple_test.py",
+]
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/tool/shell/settings.py"
+surface = "source"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Extend or replace ShellToolSettings.backend with the isolation mode contract when sandbox settings exist."
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/tool/shell/entities.py"
+surface = "source"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Move ExecutionSpec.backend to the unified isolation plan vocabulary."
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/tool/shell/policy.py"
+surface = "source"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Normalize shell requests into backend-neutral command plans before lowering to local, sandbox, or container."
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/tool/shell/container.py"
+surface = "source"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Replace ShellExecutionMode with local, sandbox, and container once sandbox planning exists."
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/tool/shell/__init__.py"
+surface = "source"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Keep the public export aligned with the final isolation mode enum."
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/tool/shell/toolset.py"
+surface = "source"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Wire toolset construction through unified isolation runtime settings."
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/agent/loader.py"
+surface = "agent_toml"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Parse trusted TOML isolation settings and reject mixed sandbox/container authority."
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/agent/templates/blueprint.toml"
+surface = "agent_toml"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Render only target shell mode and backend values after the settings model changes."
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/cli/__main__.py"
+surface = "cli"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Constrain CLI shell backend choices to local, sandbox, and container."
+
+[[local_container_shell_mode_sites]]
+path = "src/avalan/cli/commands/agent.py"
+surface = "cli"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Render trusted CLI isolation settings without legacy backend widening."
+
+[[local_container_shell_mode_sites]]
+path = "docs/TOOLS.md"
+surface = "docs"
+values = ["local"]
+classification = "keep-current"
+action = "Keep generic shell docs until sandbox and container examples are promoted."
+
+[[local_container_shell_mode_sites]]
+path = "docs/CLI.md"
+surface = "docs"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Regenerate CLI docs after shell backend choices change."
+
+[[local_container_shell_mode_sites]]
+path = "docs/CONTAINERS.md"
+surface = "docs"
+values = ["container", "local"]
+classification = "update-phase1"
+action = "Remove legacy runtime claims and document Docker as target-only until implemented."
+
+[[local_container_shell_mode_sites]]
+path = "docs/containers/shell-code/README.md"
+surface = "docs"
+values = ["container"]
+classification = "keep-current"
+action = "Keep Apple Container shell walkthrough; ensure it keeps using apple-container."
+
+[[local_container_shell_mode_sites]]
+path = "docs/examples/agent_shell.toml"
+surface = "docs"
+values = ["local"]
+classification = "keep-current"
+action = "Keep as local shell example."
+
+[[local_container_shell_mode_sites]]
+path = "specs/shell-toolset.md"
+surface = "specs"
+values = ["local"]
+classification = "superseded-input"
+action = "Keep as historical shell-toolset source; isolation agenda now owns target modes."
+local_only = true
+
+[[local_container_shell_mode_sites]]
+path = "specs/CONTAINERS.md"
+surface = "specs"
+values = ["container", "local"]
+classification = "superseded-input"
+action = "Keep as container-only source input; isolation agenda narrows the active backend model."
+local_only = true
+
+[[local_container_shell_mode_sites]]
+path = "specs/ISOLATION-AGENDA.md"
+surface = "specs"
+values = ["container", "sandbox", "local"]
+classification = "target"
+action = "Keep as the active local isolation agenda."
+local_only = true
+
+[[local_container_shell_mode_sites]]
+path = "tests/agent/loader_test.py"
+surface = "tests"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Add sandbox TOML snapshots after sandbox settings exist."
+
+[[local_container_shell_mode_sites]]
+path = "tests/cli/main_test.py"
+surface = "tests"
+values = ["container"]
+classification = "update-phase1"
+action = "Remove legacy container backend CLI choices in Phase 1; add sandbox choice in Phase 2."
+
+[[local_container_shell_mode_sites]]
+path = "tests/cli/agent_test.py"
+surface = "tests"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Keep current CLI rendering coverage; add sandbox snapshots after implementation."
+
+[[local_container_shell_mode_sites]]
+path = "tests/tool/shell/container_test.py"
+surface = "tests"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Keep current shell container tests; split into local/sandbox/container plan tests later."
+
+[[local_container_shell_mode_sites]]
+path = "tests/tool/shell/entities_test.py"
+surface = "tests"
+values = ["local", "container"]
+classification = "update-phase2"
+action = "Update ExecutionSpec backend expectations when isolation settings land."
+
+[[local_container_shell_mode_sites]]
+path = "tests/tool/shell/policy_test.py"
+surface = "tests"
+values = ["local"]
+classification = "update-phase2"
+action = "Add sandbox policy normalization tests after sandbox support exists."
+
+[[local_container_shell_mode_sites]]
+path = "tests/container/release_conformance_test.py"
+surface = "tests"
+values = ["container"]
+classification = "update-phase1"
+action = "Remove legacy backend breadth expectations and keep no-fallback container coverage."
+
+[[local_container_shell_mode_sites]]
+path = "tests/tool/shell/fixtures/cli_toml_e2e/agent-shell.toml"
+surface = "tests"
+values = ["local"]
+classification = "keep-current"
+action = "Keep as local shell fixture."
+
+[[removal_references]]
+path = "src/avalan/container/conformance.py"
+surface = "source"
+terms = ["PODMAN", "NERDCTL", "WINDOWS_DOCKER", "AUTO", "podman runtime e2e", "nerdctl runtime e2e", "windows-docker runtime e2e"]
+action = "Remove legacy executable backend enum values and auto backend selection in Phase 1. Keep none only as a disabled-settings migration value if still needed."
+
+[[removal_references]]
+path = "src/avalan/container/backend.py"
+surface = "source"
+terms = ["docker-desktop-wsl2-linux", "podman-rootless-linux", "podman-machine-macos-linux", "nerdctl-containerd-linux", "windows-docker-process", "windows-docker-hyperv", "AVALAN_CONTAINER_PODMAN_E2E", "AVALAN_CONTAINER_NERDCTL_E2E", "AVALAN_CONTAINER_WINDOWS_DOCKER_E2E", "WSL2", "Hyper-V"]
+action = "Remove legacy capability profiles and optional real-runtime gates in Phase 1."
+
+[[removal_references]]
+path = "src/avalan/cli/__main__.py"
+surface = "cli"
+terms = ["podman", "nerdctl", "windows-docker", "auto", "none"]
+action = "Remove legacy executable backend choices from --tool-container-backend in Phase 1."
+
+[[removal_references]]
+path = "src/avalan/tool/code.py"
+surface = "source"
+terms = ["ContainerBackend.AUTO"]
+action = "Remove auto backend handling when the backend matrix is contracted."
+
+[[removal_references]]
+path = "src/avalan/tool/shell/toolset.py"
+surface = "source"
+terms = ["ContainerBackend.AUTO"]
+action = "Remove auto backend handling when the backend matrix is contracted."
+
+[[removal_references]]
+path = "tests/container/backend_test.py"
+surface = "tests"
+terms = ["podman-machine-macos-linux", "nerdctl-containerd-linux", "WINDOWS_DOCKER", "PODMAN", "ContainerBackend.AUTO", "windows-docker-hyperv"]
+action = "Replace legacy backend catalog and auto-selection expectations with Docker and Apple Container coverage."
+
+[[removal_references]]
+path = "tests/container/conformance_test.py"
+surface = "tests"
+terms = ["PODMAN", "NERDCTL", "WINDOWS_DOCKER", "backend = auto"]
+action = "Replace legacy conformance expectations with target backend values."
+
+[[removal_references]]
+path = "tests/container/fail_closed_conformance_test.py"
+surface = "tests"
+terms = ["ContainerBackend.AUTO"]
+action = "Replace auto-backend failure cases with unknown or legacy backend rejection cases."
+
+[[removal_references]]
+path = "tests/container/integration_test.py"
+surface = "tests"
+terms = ["podman", "PODMAN"]
+action = "Remove trusted settings normalization coverage for Podman."
+
+[[removal_references]]
+path = "tests/container/release_conformance_test.py"
+surface = "tests"
+terms = ["PODMAN", "NERDCTL", "WINDOWS_DOCKER"]
+action = "Remove legacy backend breadth release claims."
+
+[[removal_references]]
+path = "tests/container/runtime_envelope_test.py"
+surface = "tests"
+terms = ["PODMAN"]
+action = "Remove legacy runtime-envelope backend examples."
+
+[[removal_references]]
+path = "tests/container/settings_test.py"
+surface = "tests"
+terms = ["PODMAN"]
+action = "Remove legacy backend settings expectations."
+
+[[removal_references]]
+path = "tests/task/container_execution_test.py"
+surface = "tests"
+terms = ["PODMAN"]
+action = "Replace Podman mismatch cases with a removed-backend rejection or Docker mismatch case."
+
+[[removal_references]]
+path = "tests/tool/ast_grep_tool_test.py"
+surface = "tests"
+terms = ["ContainerBackend.AUTO"]
+action = "Remove auto backend coverage for ast-grep container execution when public auto backend selection is removed."
+
+[[removal_references]]
+path = "docs/CONTAINERS.md"
+surface = "docs"
+terms = ["Podman", "nerdctl", "Windows Docker", "WSL2", "Hyper-V", "AVALAN_CONTAINER_PODMAN_E2E", "AVALAN_CONTAINER_NERDCTL_E2E", "AVALAN_CONTAINER_WINDOWS_DOCKER_E2E"]
+action = "Remove public release claims for legacy runtimes and document Docker as target-only until implemented."
+
+[[removal_references]]
+path = "docs/INSTALL.md"
+surface = "docs"
+terms = ["Podman", "nerdctl", "Windows"]
+action = "Remove install docs that imply legacy container runtime support."
+
+[[removal_references]]
+path = "specs/CONTAINERS.md"
+surface = "specs"
+terms = ["Podman", "containerd/nerdctl", "windows-docker", "WSL2", "Hyper-V", "Microsoft Windows containers"]
+action = "Mark as superseded by the isolation agenda or remove from active target claims."
+local_only = true
+
+[[removal_references]]
+path = "specs/CONTAINERS-AGENDA.md"
+surface = "specs"
+terms = ["Podman", "containerd", "Windows containers", "Linux-on-WSL2"]
+action = "Keep only as historical source input; do not use as active backend target."
+local_only = true
+
+[[keep_references]]
+path = "src/avalan/container/apple.py"
+surface = "source"
+terms = ["AppleContainerBackend", "apple-container"]
+reason = "Apple Container is the existing concrete backend and remains in target."
+
+[[keep_references]]
+path = "src/avalan/container/backend.py"
+surface = "source"
+terms = ["docker-engine-linux", "docker-desktop-macos-linux", "apple-container-macos-linux", "AVALAN_CONTAINER_DOCKER_E2E", "AVALAN_CONTAINER_APPLE_E2E"]
+reason = "Docker and Apple Container are target backend values; Docker catalog data must not be represented as concrete Docker support until the backend lands."
+
+[[keep_references]]
+path = "src/avalan/container/policy.py"
+surface = "source"
+terms = ["podman.sock"]
+reason = "Podman socket denylist entries are security guardrails, not runtime support claims. They can remain until a generic sensitive-socket policy replaces them."
+
+[[keep_references]]
+path = "src/avalan/container/security.py"
+surface = "source"
+terms = ["podman.sock"]
+reason = "Podman socket denylist entries are security guardrails, not runtime support claims. They can remain until a generic sensitive-socket policy replaces them."
+
+[[keep_references]]
+path = "tests/container/policy_test.py"
+surface = "tests"
+terms = ["podman.sock"]
+reason = "Tests for Podman socket denylist entries are security guardrails, not runtime support claims. They can remain until a generic sensitive-socket policy replaces them."
+
+[[keep_references]]
+path = "tests/cli/main_test.py"
+surface = "tests"
+terms = ["podman", "nerdctl", "windows-docker"]
+reason = "Removed backend strings remain as negative CLI rejection coverage."
+
+[[keep_references]]
+path = "specs/ISOLATION-AGENDA.md"
+surface = "specs"
+terms = ["podman", "nerdctl", "containerd/nerdctl", "Microsoft containers", "Windows Docker", "WSL2", "Hyper-V"]
+reason = "The active local agenda must name removed legacy runtimes so phases can track removal."
+local_only = true
+
+[[keep_references]]
+path = "docs/MODALITIES.md"
+surface = "docs"
+terms = ["microsoft/resnet-50"]
+reason = "Model IDs that contain microsoft are unrelated to Microsoft container runtime support."
+
+[[keep_references]]
+path = "docs/examples/agent_messi.toml"
+surface = "docs"
+terms = ["microsoft/Phi-4-mini-instruct"]
+reason = "Model IDs that contain microsoft are unrelated to Microsoft container runtime support."
+
+[[keep_references]]
+path = "src/avalan/cli/commands/agent.py"
+surface = "source"
+terms = ["microsoft/Phi-4-mini-instruct"]
+reason = "Default model ID is unrelated to Microsoft container runtime support."
+
+[[keep_references]]
+path = "src/avalan/container/settings.py"
+surface = "source"
+terms = ["ContainerNetworkMode.NONE", "ContainerBackend.NONE"]
+reason = "Non-executable none values remain valid for network policy and disabled-settings migration, not as a target executable backend."

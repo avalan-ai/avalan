@@ -65,11 +65,7 @@ class ContainerConformanceTest(TestCase):
         )
         self.assertEqual(
             CONFORMANCE_PLAN.optional_integration_backends,
-            (
-                ContainerBackend.PODMAN,
-                ContainerBackend.NERDCTL,
-                ContainerBackend.WINDOWS_DOCKER,
-            ),
+            (),
         )
         self.assertEqual(
             CONFORMANCE_PLAN.opt_in_integration_backends,
@@ -101,7 +97,7 @@ class ContainerConformanceTest(TestCase):
             ContainerSurface.AGENT_TOML,
             {
                 "tool": {
-                    "container": {"backend": "auto"},
+                    "container": {"backend": "docker"},
                     "shell": {
                         "backend": "container",
                         "container": {"profile": "workspace-readonly"},
@@ -247,7 +243,7 @@ class ContainerConformanceTest(TestCase):
     ) -> None:
         assert_container_syntax_supported(
             ContainerSurface.AGENT_TOML,
-            {"tool": {"container": {"backend": "auto"}}},
+            {"tool": {"container": {"backend": "docker"}}},
         )
 
         with self.assertRaisesRegex(AssertionError, "execution.container"):
@@ -299,47 +295,17 @@ class ContainerConformanceTest(TestCase):
         self.assertEqual(resolution.backend, ContainerBackend.DOCKER)
         self.assertFalse(resolution.direct_execution_allowed)
 
-    def test_auto_backend_resolution_uses_available_concrete_backend(
+    def test_legacy_backend_values_are_rejected(
         self,
     ) -> None:
-        settings = ContainerExecutionSettings(
-            backend="auto",
-            required=True,
-            profile="workspace-readonly",
-        )
-
-        resolution = resolve_container_backend(
-            settings,
-            available_backends=(ContainerBackend.AUTO, "podman"),
-        )
-
-        self.assertTrue(settings.enabled)
-        self.assertEqual(settings.backend, ContainerBackend.AUTO)
-        self.assertTrue(resolution.ok)
-        self.assertEqual(resolution.backend, ContainerBackend.PODMAN)
-        self.assertFalse(resolution.direct_execution_allowed)
-
-    def test_auto_backend_resolution_prefers_safer_available_backend(
-        self,
-    ) -> None:
-        settings = ContainerExecutionSettings(
-            backend=ContainerBackend.AUTO,
-            required=True,
-            profile="workspace-readonly",
-        )
-
-        resolution = resolve_container_backend(
-            settings,
-            available_backends=(
-                ContainerBackend.DOCKER,
-                ContainerBackend.PODMAN,
-                ContainerBackend.APPLE_CONTAINER,
-            ),
-        )
-
-        self.assertTrue(resolution.ok)
-        self.assertEqual(resolution.backend, ContainerBackend.PODMAN)
-        self.assertFalse(resolution.direct_execution_allowed)
+        for backend in ("auto", "podman", "nerdctl", "windows-docker"):
+            with self.subTest(backend=backend):
+                with self.assertRaises(AssertionError):
+                    ContainerExecutionSettings(
+                        backend=backend,
+                        required=True,
+                        profile="workspace-readonly",
+                    )
 
     def test_required_disabled_backend_fails_closed(self) -> None:
         resolution = resolve_container_backend(

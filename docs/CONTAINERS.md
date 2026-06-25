@@ -24,7 +24,7 @@ full conformance claims until their real-runtime and release gates close.
 | Server, MCP, and A2A | Remote callers may select only an operator-exposed safe profile selector. Arbitrary runtime authority is rejected before tool execution. |
 | Runtime envelopes | Planning and diagnostics exist for trusted agent, flow, task worker, server, and model backend envelopes. Actual envelope execution requires a trusted runner/loader; otherwise Avalan reports unavailable-envelope diagnostics. |
 | Model backends | Envelope planning exists for eligible model backends. Host-native targets such as Metal remain host-native unless a trusted envelope implementation is supplied. |
-| Backend breadth | Docker is the promoted catalog backend. Apple `container` has an opt-in shell backend adapter. Podman, nerdctl, and Windows Docker remain optional catalog backends that require an injected adapter. |
+| Backend breadth | Docker is the promoted catalog backend. Apple `container` has an opt-in shell backend adapter. |
 
 ## Runtime Setup
 
@@ -90,23 +90,21 @@ avalan agent run \
 ```
 
 These examples configure policy. They do not discover or start Docker by
-themselves. Required execution fails closed instead of running on the host when
-the selected backend adapter is unavailable.
+themselves. The executable backend values are `docker` and
+`apple-container`. Required execution fails closed instead of running on the
+host when the selected backend adapter is unavailable.
 
 ## Optional Runtime Gates
 
 Default tests use fake backends and catalog probes. They must not contact
-Docker, Podman, containerd, Apple `container`, or Windows Docker.
+Docker or Apple `container`.
 
 The optional live-runtime gates are recorded as backend runtime requirements:
 
 | Backend profile family | Gate |
 | --- | --- |
-| Docker Engine, Docker Desktop macOS, Docker Desktop WSL2 | `AVALAN_CONTAINER_DOCKER_E2E=1` |
-| Podman rootless Linux, Podman machine macOS | `AVALAN_CONTAINER_PODMAN_E2E=1` |
-| nerdctl/containerd | `AVALAN_CONTAINER_NERDCTL_E2E=1` |
+| Docker Engine, Docker Desktop macOS | `AVALAN_CONTAINER_DOCKER_E2E=1` |
 | Apple `container` | `AVALAN_CONTAINER_APPLE_E2E=1` plus `AVALAN_CONTAINER_APPLE_E2E_IMAGE=<digest-pinned-image>` |
-| Windows Docker process or Hyper-V isolation | `AVALAN_CONTAINER_WINDOWS_DOCKER_E2E=1` |
 
 There is no repository-wide pytest marker for these gates today. The explicit
 live-runtime tests are the Docker gate in
@@ -114,12 +112,8 @@ live-runtime tests are the Docker gate in
 `tests/container/apple_test.py`; each calls `skipTest` with a diagnostic when
 the matching environment variable is not set. Apple also requires
 `AVALAN_CONTAINER_APPLE_E2E_IMAGE` so the live test can run the same
-digest-pinned shell image used by the CLI tutorial. Other live runtime jobs
-should use the catalog gate metadata the same way: opt in with the matching
-environment variable, probe the runtime, and skip with a clear diagnostic when
-the variable is missing, the runtime binary or service is unavailable, or the
-runtime capabilities cannot enforce the selected plan. Missing optional
-runtimes are not failures for the default suite.
+digest-pinned shell image used by the CLI tutorial. Missing optional runtimes
+are not failures for the default suite.
 
 Use the normal lightweight checks for conformance, policy, fake lifecycle, and
 stress coverage:
@@ -143,14 +137,10 @@ make lint
 ## Platform Limits
 
 Docker Engine on Linux is the promoted catalog profile. Docker Desktop on
-macOS and WSL2 is optional and VM-backed: shared mount prefixes, VM resource
-ceilings, path normalization, case behavior, and signal behavior must be
-treated as runtime-specific.
-
-Podman and nerdctl are optional catalog profiles. Apple `container` is opt-in
-and available for shell tool execution when the Apple CLI backend is selected.
-Windows Docker separates Linux-on-WSL2 Docker Desktop from native Windows
-containers using process or Hyper-V isolation.
+macOS is optional and VM-backed: shared mount prefixes, VM resource ceilings,
+path normalization, case behavior, and signal behavior must be treated as
+runtime-specific. Apple `container` is opt-in and available for shell tool
+execution when the Apple CLI backend is selected.
 
 Current catalog capabilities are CPU-only. Network allowlists, devices,
 rootful engines, build support, resource controls, and VM-backed mounts are
@@ -241,18 +231,17 @@ where the selected execution path reaches those phases.
 
 ## Known Risks And Deferred Non-Conformance
 
-- Concrete Docker, Podman, nerdctl, and Windows Docker backend adapters are not
-  bundled here. Current default verification is fake backend plus catalog
-  capability validation, with fake-runtime coverage for the Apple `container`
-  shell adapter.
-- Optional real-runtime suites are defined by gate metadata but still need
-  harness jobs that set the gates, probe runtimes, and skip with diagnostics.
+- A concrete Docker backend adapter is not bundled here. Current default
+  verification is fake backend plus catalog capability validation, with
+  fake-runtime coverage for the Apple `container` shell adapter.
+- Optional Docker real-runtime suites still need harness jobs that set the
+  gate, probe runtimes, and skip with diagnostics.
 - Default conformance has release, fail-closed, watchdog, and stress tests,
   but it is not fully closed until real-runtime suites, broader
   platform performance gates, and every stable negative diagnostic audit are
   covered in CI.
 - Backend breadth is not a release claim beyond the catalog. Apple `container`
-  is explicitly opt-in with parity gaps, and Windows/VM-backed path behavior
+  is explicitly opt-in with parity gaps, and VM-backed path behavior
   needs live validation on the target platform.
 - Runtime envelopes and model backend containers require trusted
   loader/runner implementations. The default server and agent paths report

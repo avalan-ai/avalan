@@ -96,7 +96,6 @@ class ContainerAuditSeverity(StrEnum):
 
 
 class ContainerStableDiagnosticCode(StrEnum):
-    AUTO_NOT_ENABLED = "container.backend.auto_not_enabled"
     BACKEND_REQUIRED = "container.backend_required"
     BACKEND_UNAVAILABLE = "container.backend.unavailable"
     CONFORMANCE_BACKEND_UNAVAILABLE = "container.backend_unavailable"
@@ -152,9 +151,6 @@ class ContainerStableDiagnosticCode(StrEnum):
 
 
 _BACKEND_CODE_MAP = {
-    ContainerBackendDiagnosticCode.AUTO_NOT_ENABLED: (
-        ContainerStableDiagnosticCode.AUTO_NOT_ENABLED
-    ),
     ContainerBackendDiagnosticCode.BACKEND_UNAVAILABLE: (
         ContainerStableDiagnosticCode.BACKEND_UNAVAILABLE
     ),
@@ -278,7 +274,6 @@ _CONFORMANCE_CODE_MAP = {
     ),
 }
 _DENIED_CODES = {
-    ContainerStableDiagnosticCode.AUTO_NOT_ENABLED,
     ContainerStableDiagnosticCode.BACKEND_REQUIRED,
     ContainerStableDiagnosticCode.CONFORMANCE_BACKEND_UNAVAILABLE,
     ContainerStableDiagnosticCode.UNSUPPORTED_SYNTAX,

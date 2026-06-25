@@ -65,12 +65,10 @@ class AppleContainerBackendTest(TestCase):
         without_opt_in = select_container_backend(
             _run_plan(),
             (probe,),
-            auto_enabled=False,
         )
         selection = select_container_backend(
             _run_plan(),
             (probe,),
-            auto_enabled=False,
             opt_in_backends=(ContainerBackend.APPLE_CONTAINER,),
         )
 

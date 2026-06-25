@@ -63,7 +63,6 @@ class ContainerBackendOperation(StrEnum):
 
 
 class ContainerBackendDiagnosticCode(StrEnum):
-    AUTO_NOT_ENABLED = "container.backend.auto_not_enabled"
     BACKEND_UNAVAILABLE = "container.backend.unavailable"
     CAPABILITY_MISMATCH = "container.backend.capability_mismatch"
     ROOTFUL_NOT_AUTHORIZED = "container.backend.rootful_not_authorized"
@@ -172,9 +171,9 @@ class ContainerBackendRuntimeRequirements:
             _assert_non_empty_string(self.marker, "marker")
         assert isinstance(
             self.environment_variables, Sequence
-        ) and not isinstance(self.environment_variables, str | bytes), (
-            "environment_variables must be a sequence"
-        )
+        ) and not isinstance(
+            self.environment_variables, str | bytes
+        ), "environment_variables must be a sequence"
         environment_variables = tuple(self.environment_variables)
         for variable in environment_variables:
             _assert_non_empty_string(variable, "environment_variables")
@@ -219,9 +218,9 @@ class ContainerBackendProbeResult:
         if self.capabilities is not None:
             assert isinstance(self.capabilities, ContainerBackendCapabilities)
         if self.available:
-            assert self.capabilities is not None, (
-                "available backend probes require capabilities"
-            )
+            assert (
+                self.capabilities is not None
+            ), "available backend probes require capabilities"
         _assert_diagnostics(self.diagnostics)
         assert isinstance(
             self.runtime_requirements,
@@ -1292,8 +1291,6 @@ def _capability_profile(
     per_container_vm_isolation: bool = False,
     vm_backed: bool = False,
     remote_engine: bool = False,
-    windows_process_isolation: bool = False,
-    windows_hyperv_isolation: bool = False,
     streaming_attach: bool = True,
     stats: bool = True,
     lifecycle_normalization: bool = True,
@@ -1321,8 +1318,6 @@ def _capability_profile(
             per_container_vm_isolation=per_container_vm_isolation,
             vm_backed=vm_backed,
             remote_engine=remote_engine,
-            windows_process_isolation=windows_process_isolation,
-            windows_hyperv_isolation=windows_hyperv_isolation,
             streaming_attach=streaming_attach,
             stats=stats,
             lifecycle_normalization=lifecycle_normalization,
@@ -1344,19 +1339,8 @@ _LINUX_MOUNT_TYPES = (
     ContainerMountType.OUTPUT,
     ContainerMountType.CACHE,
 )
-_WINDOWS_MOUNT_TYPES = (
-    ContainerMountType.INPUT,
-    ContainerMountType.WORKSPACE,
-    ContainerMountType.SCRATCH,
-    ContainerMountType.OUTPUT,
-)
 _CPU_DEVICE_CLASSES = (ContainerDeviceClass.CPU,)
 _DOCKER_NETWORK_MODES = (
-    ContainerNetworkMode.NONE,
-    ContainerNetworkMode.LOOPBACK,
-    ContainerNetworkMode.FULL,
-)
-_ROOTLESS_NETWORK_MODES = (
     ContainerNetworkMode.NONE,
     ContainerNetworkMode.LOOPBACK,
     ContainerNetworkMode.FULL,
@@ -1425,128 +1409,6 @@ _CONTAINER_BACKEND_CAPABILITY_PROFILES = (
         environment_variable="AVALAN_CONTAINER_DOCKER_E2E",
     ),
     _capability_profile(
-        "docker-desktop-wsl2-linux",
-        backend=ContainerBackend.DOCKER,
-        runtime_name="Docker Desktop WSL2 Linux",
-        support_level=ContainerBackendSupportLevel.OPTIONAL,
-        host_os="windows",
-        guest_os="linux",
-        architecture="amd64",
-        platform_emulation=True,
-        rootless=False,
-        user_namespace=False,
-        build=True,
-        pull=True,
-        network_modes=_DOCKER_NETWORK_MODES,
-        mount_types=_LINUX_MOUNT_TYPES,
-        resource_limits=True,
-        device_classes=_CPU_DEVICE_CLASSES,
-        vm_backed=True,
-        remote_engine=True,
-        platform_behavior=_platform_behavior(
-            file_io="WSL2 or Windows shared path file I/O",
-            networking="WSL2 VM networking with Docker Desktop forwarding",
-            architecture_emulation="amd64 native or host-provided emulation",
-            resources="Docker Desktop and WSL2 limits both apply",
-            signals="signals cross the WSL2 VM boundary",
-            path_syntax="WSL POSIX paths or shared Windows drive paths",
-            drive_letters="Windows drive letters must be normalized",
-            case_behavior="case behavior depends on WSL or NTFS location",
-        ),
-        shared_mount_prefixes=("C:\\", "D:\\", "/mnt/"),
-        environment_variable="AVALAN_CONTAINER_DOCKER_E2E",
-    ),
-    _capability_profile(
-        "podman-rootless-linux",
-        backend=ContainerBackend.PODMAN,
-        runtime_name="Podman rootless",
-        support_level=ContainerBackendSupportLevel.OPTIONAL,
-        host_os="linux",
-        guest_os="linux",
-        architecture="amd64",
-        platform_emulation=False,
-        rootless=True,
-        user_namespace=True,
-        build=True,
-        pull=True,
-        network_modes=_ROOTLESS_NETWORK_MODES,
-        mount_types=_LINUX_MOUNT_TYPES,
-        resource_limits=True,
-        device_classes=_CPU_DEVICE_CLASSES,
-        platform_behavior=_platform_behavior(
-            file_io="native rootless bind mounts with user namespace mapping",
-            networking="slirp or pasta rootless networking where configured",
-            architecture_emulation="host-native unless binfmt is configured",
-            resources="cgroup v2 rootless limits when available",
-            signals="OCI process signals delivered by Podman",
-            path_syntax="POSIX host paths",
-            drive_letters="not applicable",
-            case_behavior="host filesystem dependent, usually sensitive",
-        ),
-        environment_variable="AVALAN_CONTAINER_PODMAN_E2E",
-    ),
-    _capability_profile(
-        "podman-machine-macos-linux",
-        backend=ContainerBackend.PODMAN,
-        runtime_name="Podman machine Linux VM",
-        support_level=ContainerBackendSupportLevel.OPTIONAL,
-        host_os="darwin",
-        guest_os="linux",
-        architecture="arm64",
-        platform_emulation=True,
-        rootless=True,
-        user_namespace=True,
-        build=True,
-        pull=True,
-        network_modes=_ROOTLESS_NETWORK_MODES,
-        mount_types=_LINUX_MOUNT_TYPES,
-        resource_limits=True,
-        device_classes=_CPU_DEVICE_CLASSES,
-        vm_backed=True,
-        remote_engine=True,
-        platform_behavior=_platform_behavior(
-            file_io="Podman machine shared-directory VM file I/O",
-            networking="Podman machine VM networking and forwarding",
-            architecture_emulation="Apple silicon arm64 with VM emulation",
-            resources="Podman machine VM resource ceilings apply first",
-            signals="signals cross the Podman machine VM boundary",
-            path_syntax="macOS POSIX paths from shared directories",
-            drive_letters="not applicable",
-            case_behavior="host volume case behavior may differ from guest",
-        ),
-        shared_mount_prefixes=("/Users/", "/Volumes/", "/private/", "/tmp/"),
-        environment_variable="AVALAN_CONTAINER_PODMAN_E2E",
-    ),
-    _capability_profile(
-        "nerdctl-containerd-linux",
-        backend=ContainerBackend.NERDCTL,
-        runtime_name="nerdctl containerd",
-        support_level=ContainerBackendSupportLevel.OPTIONAL,
-        host_os="linux",
-        guest_os="linux",
-        architecture="amd64",
-        platform_emulation=False,
-        rootless=False,
-        user_namespace=False,
-        build=True,
-        pull=True,
-        network_modes=(ContainerNetworkMode.NONE, ContainerNetworkMode.FULL),
-        mount_types=_LINUX_MOUNT_TYPES,
-        resource_limits=True,
-        device_classes=_CPU_DEVICE_CLASSES,
-        platform_behavior=_platform_behavior(
-            file_io="containerd bind mounts through nerdctl",
-            networking="CNI-backed none or full modes",
-            architecture_emulation="host-native unless binfmt is configured",
-            resources="containerd and cgroup resource limits",
-            signals="OCI process signals delivered through containerd",
-            path_syntax="POSIX host paths",
-            drive_letters="not applicable",
-            case_behavior="host filesystem dependent, usually sensitive",
-        ),
-        environment_variable="AVALAN_CONTAINER_NERDCTL_E2E",
-    ),
-    _capability_profile(
         "apple-container-macos-linux",
         backend=ContainerBackend.APPLE_CONTAINER,
         runtime_name="Apple container",
@@ -1587,72 +1449,6 @@ _CONTAINER_BACKEND_CAPABILITY_PROFILES = (
             "startup and file I/O performance budgets",
         ),
         environment_variable="AVALAN_CONTAINER_APPLE_E2E",
-    ),
-    _capability_profile(
-        "windows-docker-process",
-        backend=ContainerBackend.WINDOWS_DOCKER,
-        runtime_name="Windows Docker process isolation",
-        support_level=ContainerBackendSupportLevel.OPTIONAL,
-        host_os="windows",
-        guest_os="windows",
-        architecture="amd64",
-        platform_emulation=False,
-        rootless=False,
-        user_namespace=False,
-        build=True,
-        pull=True,
-        network_modes=(ContainerNetworkMode.NONE, ContainerNetworkMode.FULL),
-        mount_types=_WINDOWS_MOUNT_TYPES,
-        resource_limits=True,
-        device_classes=_CPU_DEVICE_CLASSES,
-        windows_process_isolation=True,
-        platform_behavior=_platform_behavior(
-            file_io="Windows bind mounts with NTFS semantics",
-            networking="Windows container NAT or none modes",
-            architecture_emulation=(
-                "Windows process isolation is host-version bound"
-            ),
-            resources="Windows job object and Docker resource controls",
-            signals="Windows stop events differ from POSIX signals",
-            path_syntax="Windows drive-letter paths",
-            drive_letters="drive letters are required for host paths",
-            case_behavior="case-insensitive by default",
-        ),
-        environment_variable="AVALAN_CONTAINER_WINDOWS_DOCKER_E2E",
-    ),
-    _capability_profile(
-        "windows-docker-hyperv",
-        backend=ContainerBackend.WINDOWS_DOCKER,
-        runtime_name="Windows Docker Hyper-V isolation",
-        support_level=ContainerBackendSupportLevel.OPTIONAL,
-        host_os="windows",
-        guest_os="windows",
-        architecture="amd64",
-        platform_emulation=False,
-        rootless=False,
-        user_namespace=False,
-        build=True,
-        pull=True,
-        network_modes=(ContainerNetworkMode.NONE, ContainerNetworkMode.FULL),
-        mount_types=_WINDOWS_MOUNT_TYPES,
-        resource_limits=True,
-        device_classes=_CPU_DEVICE_CLASSES,
-        per_container_vm_isolation=True,
-        vm_backed=True,
-        windows_hyperv_isolation=True,
-        platform_behavior=_platform_behavior(
-            file_io="Windows Hyper-V isolated bind mounts",
-            networking="Hyper-V isolated Windows container networking",
-            architecture_emulation=(
-                "Windows image architecture must match host"
-            ),
-            resources="Hyper-V and Docker resource controls",
-            signals="Windows stop events cross the Hyper-V boundary",
-            path_syntax="Windows drive-letter paths",
-            drive_letters="drive letters are required for host paths",
-            case_behavior="case-insensitive by default",
-        ),
-        environment_variable="AVALAN_CONTAINER_WINDOWS_DOCKER_E2E",
     ),
 )
 
@@ -1772,9 +1568,9 @@ class ContainerFakeBackendScript:
         )
         for chunk in self.build_progress_chunks:
             assert isinstance(chunk, ContainerBackendStreamChunk)
-            assert chunk.stream is ContainerBackendStream.PROGRESS, (
-                "build progress chunks must use progress stream"
-            )
+            assert (
+                chunk.stream is ContainerBackendStream.PROGRESS
+            ), "build progress chunks must use progress stream"
         object.__setattr__(
             self,
             "build_progress_chunks",
@@ -1784,9 +1580,9 @@ class ContainerFakeBackendScript:
             assert isinstance(chunk, ContainerBackendStreamChunk)
         _assert_bool(self.stream_incremental, "stream_incremental")
         assert isinstance(self.stream_delay_seconds, int | float)
-        assert self.stream_delay_seconds >= 0, (
-            "stream_delay_seconds must not be negative"
-        )
+        assert (
+            self.stream_delay_seconds >= 0
+        ), "stream_delay_seconds must not be negative"
         for stat in self.stats_samples:
             assert isinstance(stat, ContainerBackendStats)
         if self.output_result is not None:
@@ -2107,7 +1903,6 @@ def select_container_backend(
     plan: ContainerRunPlan,
     probes: Sequence[ContainerBackendProbeResult],
     *,
-    auto_enabled: bool,
     rootful_authorized: bool = False,
     opt_in_backends: Sequence[ContainerBackend | str] = (),
 ) -> ContainerBackendSelection:
@@ -2119,18 +1914,6 @@ def select_container_backend(
         _enum_value(backend, ContainerBackend, "opt_in_backends")
         for backend in opt_in_backends
     )
-    if requested is ContainerBackend.AUTO and not auto_enabled:
-        return ContainerBackendSelection(
-            backend=None,
-            diagnostics=(
-                _diagnostic(
-                    ContainerBackendDiagnosticCode.AUTO_NOT_ENABLED,
-                    ContainerBackendOperation.PROBE,
-                    None,
-                    "backend auto-selection is not enabled by operator policy",
-                ),
-            ),
-        )
     candidates = [
         probe
         for probe in probes
@@ -2140,12 +1923,8 @@ def select_container_backend(
     if not candidates:
         diagnostics.append(
             _backend_unavailable_diagnostic(
-                None if requested is ContainerBackend.AUTO else requested,
-                (
-                    "no container backend probes are available"
-                    if requested is ContainerBackend.AUTO
-                    else f"configured backend {requested.value} is unavailable"
-                ),
+                requested,
+                f"configured backend {requested.value} is unavailable",
             )
         )
     eligible: list[ContainerBackendProbeResult] = []
@@ -2216,8 +1995,6 @@ def _candidate_matches_request(
     probe: ContainerBackendProbeResult,
     requested: ContainerBackend,
 ) -> bool:
-    if requested is ContainerBackend.AUTO:
-        return True
     return probe.backend is requested
 
 
@@ -2640,12 +2417,14 @@ def container_build_cache_key(plan: ContainerRunPlan) -> str:
     context_key = (
         "legacy"
         if context is None
-        else ":".join((
-            context.context_path,
-            context.dockerfile_path,
-            context.dockerignore_path,
-            context.context_digest,
-        ))
+        else ":".join(
+            (
+                context.context_path,
+                context.dockerfile_path,
+                context.dockerignore_path,
+                context.context_digest,
+            )
+        )
     )
     build_policy = cast(ContainerBuildPolicy, plan.image.build_policy)
     assert plan.image.digest is not None
@@ -2740,7 +2519,7 @@ def _enum_value(
         return value
     _assert_non_empty_string(value, field_name)
     assert isinstance(value, str)
-    assert value in {member.value for member in enum_type}, (
-        f"{field_name} contains unsupported value"
-    )
+    assert value in {
+        member.value for member in enum_type
+    }, f"{field_name} contains unsupported value"
     return enum_type(value)

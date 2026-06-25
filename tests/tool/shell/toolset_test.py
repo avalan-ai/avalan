@@ -253,7 +253,7 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(output, ShellFormattedResult)
         self.assertEqual(output.execution_result.backend, "container")
 
-    async def test_container_runtime_enables_trusted_auto_backend(
+    async def test_container_runtime_uses_explicit_docker_backend(
         self,
     ) -> None:
         fixture_root = Path(__file__).parent / "fixtures"
@@ -277,7 +277,7 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
         )
         runtime = trusted_container_runtime_from_mapping(
             {
-                "backend": "auto",
+                "backend": "docker",
                 "default_profile": "workspace-readonly",
                 "profiles": {
                     "workspace-readonly": {

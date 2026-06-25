@@ -60,20 +60,11 @@ class ContainerBackendTest(TestCase):
         docker_profiles = container_backend_capability_profiles(
             ContainerBackend.DOCKER
         )
-        podman_machine = container_backend_capability_profile(
-            "podman-machine-macos-linux"
-        )
-        nerdctl = container_backend_capability_profile(
-            "nerdctl-containerd-linux"
-        )
         apple = container_backend_capability_profile(
             "apple-container-macos-linux"
         )
-        docker_wsl2 = container_backend_capability_profile(
-            "docker-desktop-wsl2-linux"
-        )
-        windows_profiles = container_backend_capability_profiles(
-            ContainerBackend.WINDOWS_DOCKER
+        docker_desktop = container_backend_capability_profile(
+            "docker-desktop-macos-linux"
         )
         behavior = docker.capabilities.platform_behavior
 
@@ -103,12 +94,11 @@ class ContainerBackendTest(TestCase):
         self.assertIsNotNone(behavior)
         assert behavior is not None
         self.assertEqual(behavior.to_dict()["drive_letters"], "not applicable")
-        self.assertTrue(podman_machine.capabilities.vm_backed)
+        self.assertTrue(docker_desktop.capabilities.vm_backed)
         self.assertIn(
             "/Users/",
-            podman_machine.capabilities.shared_mount_prefixes,
+            docker_desktop.capabilities.shared_mount_prefixes,
         )
-        self.assertEqual(nerdctl.backend, ContainerBackend.NERDCTL)
         self.assertEqual(
             apple.support_level,
             ContainerBackendSupportLevel.OPT_IN,
@@ -121,29 +111,9 @@ class ContainerBackendTest(TestCase):
             "streaming attach parity",
             apple.capabilities.parity_requirements,
         )
-        self.assertEqual(docker_wsl2.capabilities.guest_os, "linux")
-        wsl2_behavior = docker_wsl2.capabilities.platform_behavior
-        self.assertIsNotNone(wsl2_behavior)
-        assert wsl2_behavior is not None
-        self.assertIn(
-            "Windows drive letters",
-            wsl2_behavior.to_dict()["drive_letters"],
-        )
         self.assertEqual(
-            {profile.capabilities.guest_os for profile in windows_profiles},
-            {"windows"},
-        )
-        self.assertTrue(
-            any(
-                profile.capabilities.windows_process_isolation
-                for profile in windows_profiles
-            )
-        )
-        self.assertTrue(
-            any(
-                profile.capabilities.windows_hyperv_isolation
-                for profile in windows_profiles
-            )
+            {profile.backend for profile in all_profiles},
+            {ContainerBackend.DOCKER, ContainerBackend.APPLE_CONTAINER},
         )
 
     def test_catalog_probe_unavailable_runtime_and_unknown_profile(
@@ -222,11 +192,13 @@ class ContainerBackendTest(TestCase):
         self.assertIn(ContainerBackendOperation.CLEANUP, fake.operations)
 
     def test_probe_selection_and_runtime_requirements(self) -> None:
-        podman = ContainerFakeBackend(
+        apple = ContainerFakeBackend(
             ContainerFakeBackendScript(
                 capabilities=_capabilities(
-                    backend=ContainerBackend.PODMAN,
-                    rootless=True,
+                    backend=ContainerBackend.APPLE_CONTAINER,
+                    rootless=False,
+                    vm_isolated=True,
+                    support_level=ContainerBackendSupportLevel.OPT_IN,
                 )
             )
         )
@@ -241,18 +213,7 @@ class ContainerBackendTest(TestCase):
                 )
             ).probe()
         )
-        vm_probe = run_async(
-            ContainerFakeBackend(
-                ContainerFakeBackendScript(
-                    capabilities=_capabilities(
-                        backend=ContainerBackend.APPLE_CONTAINER,
-                        rootless=False,
-                        vm_isolated=True,
-                    )
-                )
-            ).probe()
-        )
-        podman_probe = run_async(podman.probe())
+        apple_probe = run_async(apple.probe())
         marker = ContainerBackendRuntimeRequirements(
             marker="container_runtime",
             environment_variables=("AVALAN_CONTAINER_TESTS",),
@@ -260,58 +221,44 @@ class ContainerBackendTest(TestCase):
             requires_secrets=False,
         )
 
-        explicit = select_container_backend(
-            _run_plan(backend=ContainerBackend.PODMAN),
-            (docker_probe, podman_probe),
-            auto_enabled=False,
+        apple_without_opt_in = select_container_backend(
+            _run_plan(backend=ContainerBackend.APPLE_CONTAINER),
+            (docker_probe, apple_probe),
         )
-        auto = select_container_backend(
-            _run_plan(backend=ContainerBackend.AUTO),
-            (docker_probe, vm_probe, podman_probe),
-            auto_enabled=True,
-        )
-        empty_auto = select_container_backend(
-            _run_plan(backend=ContainerBackend.AUTO),
-            (),
-            auto_enabled=True,
-        )
-        auto_disabled = select_container_backend(
-            _run_plan(backend=ContainerBackend.AUTO),
-            (podman_probe,),
-            auto_enabled=False,
+        apple_with_opt_in = select_container_backend(
+            _run_plan(backend=ContainerBackend.APPLE_CONTAINER),
+            (docker_probe, apple_probe),
+            opt_in_backends=(ContainerBackend.APPLE_CONTAINER,),
         )
         missing_explicit = select_container_backend(
-            _run_plan(backend=ContainerBackend.PODMAN),
+            _run_plan(backend=ContainerBackend.APPLE_CONTAINER),
             (docker_probe,),
-            auto_enabled=False,
         )
         rootful_denied = select_container_backend(
             _run_plan(backend=ContainerBackend.DOCKER),
             (docker_probe,),
-            auto_enabled=False,
         )
         rootful_allowed = select_container_backend(
             _run_plan(backend=ContainerBackend.DOCKER),
             (docker_probe,),
-            auto_enabled=False,
             rootful_authorized=True,
         )
 
-        self.assertTrue(podman_probe.ok)
-        self.assertEqual(podman_probe.to_dict()["backend"], "podman")
-        self.assertEqual(marker.to_dict()["marker"], "container_runtime")
-        self.assertTrue(explicit.ok)
-        self.assertEqual(explicit.backend, ContainerBackend.PODMAN)
-        self.assertEqual(auto.backend, ContainerBackend.PODMAN)
-        self.assertFalse(empty_auto.ok)
+        self.assertTrue(apple_probe.ok)
         self.assertEqual(
-            empty_auto.diagnostics[0].code,
-            ContainerBackendDiagnosticCode.BACKEND_UNAVAILABLE,
+            apple_probe.to_dict()["backend"],
+            "apple-container",
         )
-        self.assertFalse(auto_disabled.ok)
+        self.assertEqual(marker.to_dict()["marker"], "container_runtime")
+        self.assertFalse(apple_without_opt_in.ok)
         self.assertEqual(
-            auto_disabled.diagnostics[0].code,
-            ContainerBackendDiagnosticCode.AUTO_NOT_ENABLED,
+            apple_without_opt_in.diagnostics[0].code,
+            ContainerBackendDiagnosticCode.CAPABILITY_MISMATCH,
+        )
+        self.assertTrue(apple_with_opt_in.ok)
+        self.assertEqual(
+            apple_with_opt_in.backend,
+            ContainerBackend.APPLE_CONTAINER,
         )
         self.assertFalse(missing_explicit.ok)
         self.assertEqual(
@@ -333,13 +280,11 @@ class ContainerBackendTest(TestCase):
         docker_authorized = select_container_backend(
             _run_plan(backend=ContainerBackend.DOCKER),
             (docker_probe,),
-            auto_enabled=False,
             rootful_authorized=True,
         )
         rootful_denied = select_container_backend(
             _run_plan(backend=ContainerBackend.DOCKER),
             (docker_probe,),
-            auto_enabled=False,
         )
         unsupported_network = select_container_backend(
             _run_plan(
@@ -350,12 +295,15 @@ class ContainerBackendTest(TestCase):
                 ),
             ),
             (docker_probe,),
-            auto_enabled=False,
             rootful_authorized=True,
+        )
+        vm_probe = container_backend_probe_from_profile(
+            "docker-desktop-macos-linux",
+            available=True,
         )
         vm_good = select_container_backend(
             _run_plan(
-                backend=ContainerBackend.PODMAN,
+                backend=ContainerBackend.DOCKER,
                 image=ContainerImagePolicy(
                     reference=_IMAGE,
                     platform="linux/arm64",
@@ -368,17 +316,12 @@ class ContainerBackendTest(TestCase):
                     ),
                 ),
             ),
-            (
-                container_backend_probe_from_profile(
-                    "podman-machine-macos-linux",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
+            (vm_probe,),
+            rootful_authorized=True,
         )
         vm_posix_case_mismatch = select_container_backend(
             _run_plan(
-                backend=ContainerBackend.PODMAN,
+                backend=ContainerBackend.DOCKER,
                 image=ContainerImagePolicy(
                     reference=_IMAGE,
                     platform="linux/arm64",
@@ -391,17 +334,12 @@ class ContainerBackendTest(TestCase):
                     ),
                 ),
             ),
-            (
-                container_backend_probe_from_profile(
-                    "podman-machine-macos-linux",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
+            (vm_probe,),
+            rootful_authorized=True,
         )
         vm_bad = select_container_backend(
             _run_plan(
-                backend=ContainerBackend.PODMAN,
+                backend=ContainerBackend.DOCKER,
                 image=ContainerImagePolicy(
                     reference=_IMAGE,
                     platform="linux/arm64",
@@ -414,17 +352,12 @@ class ContainerBackendTest(TestCase):
                     ),
                 ),
             ),
-            (
-                container_backend_probe_from_profile(
-                    "podman-machine-macos-linux",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
+            (vm_probe,),
+            rootful_authorized=True,
         )
         vm_traversal_bad = select_container_backend(
             _run_plan(
-                backend=ContainerBackend.PODMAN,
+                backend=ContainerBackend.DOCKER,
                 image=ContainerImagePolicy(
                     reference=_IMAGE,
                     platform="linux/arm64",
@@ -437,17 +370,12 @@ class ContainerBackendTest(TestCase):
                     ),
                 ),
             ),
-            (
-                container_backend_probe_from_profile(
-                    "podman-machine-macos-linux",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
+            (vm_probe,),
+            rootful_authorized=True,
         )
         vm_boundary_bad = select_container_backend(
             _run_plan(
-                backend=ContainerBackend.PODMAN,
+                backend=ContainerBackend.DOCKER,
                 image=ContainerImagePolicy(
                     reference=_IMAGE,
                     platform="linux/arm64",
@@ -460,17 +388,12 @@ class ContainerBackendTest(TestCase):
                     ),
                 ),
             ),
-            (
-                container_backend_probe_from_profile(
-                    "podman-machine-macos-linux",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
+            (vm_probe,),
+            rootful_authorized=True,
         )
         vm_relative_mount = select_container_backend(
             _run_plan(
-                backend=ContainerBackend.PODMAN,
+                backend=ContainerBackend.DOCKER,
                 image=ContainerImagePolicy(
                     reference=_IMAGE,
                     platform="linux/arm64",
@@ -483,17 +406,12 @@ class ContainerBackendTest(TestCase):
                     ),
                 ),
             ),
-            (
-                container_backend_probe_from_profile(
-                    "podman-machine-macos-linux",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
+            (vm_probe,),
+            rootful_authorized=True,
         )
         vm_root_shared_mount = select_container_backend(
             _run_plan(
-                backend=ContainerBackend.PODMAN,
+                backend=ContainerBackend.DOCKER,
                 mounts=(
                     ContainerMountDeclaration(
                         source="/opt/project",
@@ -505,179 +423,13 @@ class ContainerBackendTest(TestCase):
             (
                 _probe(
                     _capabilities(
-                        backend=ContainerBackend.PODMAN,
-                        rootless=True,
+                        backend=ContainerBackend.DOCKER,
+                        rootless=False,
                         vm_backed=True,
                         shared_mount_prefixes=("/",),
                     )
                 ),
             ),
-            auto_enabled=False,
-        )
-        wsl2_windows_drive = select_container_backend(
-            _run_plan(
-                backend=ContainerBackend.DOCKER,
-                mounts=(
-                    ContainerMountDeclaration(
-                        source="c:\\Users\\project",
-                        target="/workspace",
-                        mount_type=ContainerMountType.WORKSPACE,
-                    ),
-                ),
-            ),
-            (
-                container_backend_probe_from_profile(
-                    "docker-desktop-wsl2-linux",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
-            rootful_authorized=True,
-        )
-        wsl2_windows_forward_drive = select_container_backend(
-            _run_plan(
-                backend=ContainerBackend.DOCKER,
-                mounts=(
-                    ContainerMountDeclaration(
-                        source="C:/Users/project",
-                        target="/workspace",
-                        mount_type=ContainerMountType.WORKSPACE,
-                    ),
-                ),
-            ),
-            (
-                container_backend_probe_from_profile(
-                    "docker-desktop-wsl2-linux",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
-            rootful_authorized=True,
-        )
-        wsl2_windows_user_shared = _probe(
-            _capabilities(
-                backend=ContainerBackend.DOCKER,
-                rootless=False,
-                vm_backed=True,
-                shared_mount_prefixes=("C:/Users/",),
-            )
-        )
-        wsl2_windows_user_drive = select_container_backend(
-            _run_plan(
-                backend=ContainerBackend.DOCKER,
-                mounts=(
-                    ContainerMountDeclaration(
-                        source="C:/Users/project",
-                        target="/workspace",
-                        mount_type=ContainerMountType.WORKSPACE,
-                    ),
-                ),
-            ),
-            (wsl2_windows_user_shared,),
-            auto_enabled=False,
-            rootful_authorized=True,
-        )
-        wsl2_windows_casefold_drive = select_container_backend(
-            _run_plan(
-                backend=ContainerBackend.DOCKER,
-                mounts=(
-                    ContainerMountDeclaration(
-                        source="c:/users/project",
-                        target="/workspace",
-                        mount_type=ContainerMountType.WORKSPACE,
-                    ),
-                ),
-            ),
-            (wsl2_windows_user_shared,),
-            auto_enabled=False,
-            rootful_authorized=True,
-        )
-        wsl2_windows_traversal_bad = select_container_backend(
-            _run_plan(
-                backend=ContainerBackend.DOCKER,
-                mounts=(
-                    ContainerMountDeclaration(
-                        source="C:/Users/../Windows",
-                        target="/workspace",
-                        mount_type=ContainerMountType.WORKSPACE,
-                    ),
-                ),
-            ),
-            (wsl2_windows_user_shared,),
-            auto_enabled=False,
-            rootful_authorized=True,
-        )
-        wsl2_windows_boundary_bad = select_container_backend(
-            _run_plan(
-                backend=ContainerBackend.DOCKER,
-                mounts=(
-                    ContainerMountDeclaration(
-                        source="C:/Users2/project",
-                        target="/workspace",
-                        mount_type=ContainerMountType.WORKSPACE,
-                    ),
-                ),
-            ),
-            (wsl2_windows_user_shared,),
-            auto_enabled=False,
-            rootful_authorized=True,
-        )
-        wsl2_unc_unshared = select_container_backend(
-            _run_plan(
-                backend=ContainerBackend.DOCKER,
-                mounts=(
-                    ContainerMountDeclaration(
-                        source="\\\\server\\share\\project",
-                        target="/workspace",
-                        mount_type=ContainerMountType.WORKSPACE,
-                    ),
-                ),
-            ),
-            (
-                container_backend_probe_from_profile(
-                    "docker-desktop-wsl2-linux",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
-            rootful_authorized=True,
-        )
-        wsl2_unc_project_shared = _probe(
-            _capabilities(
-                backend=ContainerBackend.DOCKER,
-                rootless=False,
-                vm_backed=True,
-                shared_mount_prefixes=("\\\\server\\share\\project\\",),
-            )
-        )
-        wsl2_unc_shared = select_container_backend(
-            _run_plan(
-                backend=ContainerBackend.DOCKER,
-                mounts=(
-                    ContainerMountDeclaration(
-                        source="\\\\server\\share\\project\\src",
-                        target="/workspace",
-                        mount_type=ContainerMountType.WORKSPACE,
-                    ),
-                ),
-            ),
-            (wsl2_unc_project_shared,),
-            auto_enabled=False,
-            rootful_authorized=True,
-        )
-        wsl2_unc_traversal_bad = select_container_backend(
-            _run_plan(
-                backend=ContainerBackend.DOCKER,
-                mounts=(
-                    ContainerMountDeclaration(
-                        source="\\\\server\\share\\project\\..\\Windows",
-                        target="/workspace",
-                        mount_type=ContainerMountType.WORKSPACE,
-                    ),
-                ),
-            ),
-            (wsl2_unc_project_shared,),
-            auto_enabled=False,
             rootful_authorized=True,
         )
         no_lifecycle_normalization = select_container_backend(
@@ -689,17 +441,6 @@ class ContainerBackendTest(TestCase):
                     )
                 ),
             ),
-            auto_enabled=False,
-        )
-        windows_platform_mismatch = select_container_backend(
-            _run_plan(backend=ContainerBackend.WINDOWS_DOCKER),
-            (
-                container_backend_probe_from_profile(
-                    "windows-docker-hyperv",
-                    available=True,
-                ),
-            ),
-            auto_enabled=False,
         )
         apple_without_opt_in = select_container_backend(
             _run_plan(
@@ -715,7 +456,6 @@ class ContainerBackendTest(TestCase):
                     available=True,
                 ),
             ),
-            auto_enabled=False,
         )
         apple_with_opt_in = select_container_backend(
             _run_plan(
@@ -731,7 +471,6 @@ class ContainerBackendTest(TestCase):
                     available=True,
                 ),
             ),
-            auto_enabled=False,
             opt_in_backends=(ContainerBackend.APPLE_CONTAINER,),
         )
 
@@ -777,53 +516,12 @@ class ContainerBackendTest(TestCase):
         self.assertFalse(vm_boundary_bad.ok)
         self.assertTrue(vm_relative_mount.ok)
         self.assertTrue(vm_root_shared_mount.ok)
-        self.assertTrue(wsl2_windows_drive.ok)
-        self.assertTrue(wsl2_windows_forward_drive.ok)
-        self.assertTrue(wsl2_windows_user_drive.ok)
-        self.assertTrue(wsl2_windows_casefold_drive.ok)
-        self.assertFalse(wsl2_windows_traversal_bad.ok)
-        self.assertIn(
-            "VM-backed runtime cannot mount source outside declared shared"
-            " prefixes",
-            {
-                diagnostic.message
-                for diagnostic in wsl2_windows_traversal_bad.diagnostics
-            },
-        )
-        self.assertFalse(wsl2_windows_boundary_bad.ok)
-        self.assertFalse(wsl2_unc_unshared.ok)
-        self.assertIn(
-            "VM-backed runtime cannot mount source outside declared shared"
-            " prefixes",
-            {
-                diagnostic.message
-                for diagnostic in wsl2_unc_unshared.diagnostics
-            },
-        )
-        self.assertTrue(wsl2_unc_shared.ok)
-        self.assertFalse(wsl2_unc_traversal_bad.ok)
-        self.assertIn(
-            "VM-backed runtime cannot mount source outside declared shared"
-            " prefixes",
-            {
-                diagnostic.message
-                for diagnostic in wsl2_unc_traversal_bad.diagnostics
-            },
-        )
         self.assertFalse(no_lifecycle_normalization.ok)
         self.assertIn(
             "lifecycle normalization is not supported",
             {
                 diagnostic.message
                 for diagnostic in no_lifecycle_normalization.diagnostics
-            },
-        )
-        self.assertFalse(windows_platform_mismatch.ok)
-        self.assertIn(
-            "guest OS linux is not supported",
-            {
-                diagnostic.message
-                for diagnostic in windows_platform_mismatch.diagnostics
             },
         )
         self.assertFalse(apple_without_opt_in.ok)
@@ -869,7 +567,6 @@ class ContainerBackendTest(TestCase):
                 ),
             ),
             (invalid_prefixes_then_root,),
-            auto_enabled=False,
             rootful_authorized=True,
         )
         skipped_invalid_prefixes = select_container_backend(
@@ -884,7 +581,6 @@ class ContainerBackendTest(TestCase):
                 ),
             ),
             (invalid_prefixes_then_root,),
-            auto_enabled=False,
             rootful_authorized=True,
         )
 
@@ -920,7 +616,6 @@ class ContainerBackendTest(TestCase):
         diagnostic_selection = select_container_backend(
             _run_plan(backend=ContainerBackend.DOCKER),
             (diagnostic_probe,),
-            auto_enabled=False,
             rootful_authorized=True,
         )
         catalog_only_selection = select_container_backend(
@@ -933,7 +628,6 @@ class ContainerBackendTest(TestCase):
                     )
                 ),
             ),
-            auto_enabled=False,
             rootful_authorized=True,
         )
         mismatch = select_container_backend(
@@ -955,7 +649,6 @@ class ContainerBackendTest(TestCase):
                     )
                 ),
             ),
-            auto_enabled=False,
             rootful_authorized=True,
         )
 

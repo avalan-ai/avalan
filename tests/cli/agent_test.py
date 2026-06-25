@@ -511,12 +511,16 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
 
         gos.assert_called_once()
         self.assertIsNone(gos.call_args.kwargs["tools"])
-        gts.assert_has_calls([
-            call(args, prefix="browser", settings_cls=BrowserToolSettings),
-            call(args, prefix="database", settings_cls=DatabaseToolSettings),
-            call(args, prefix="graph", settings_cls=GraphToolSettings),
-            call(args, prefix="shell", settings_cls=ShellToolSettings),
-        ])
+        gts.assert_has_calls(
+            [
+                call(args, prefix="browser", settings_cls=BrowserToolSettings),
+                call(
+                    args, prefix="database", settings_cls=DatabaseToolSettings
+                ),
+                call(args, prefix="graph", settings_cls=GraphToolSettings),
+                call(args, prefix="shell", settings_cls=ShellToolSettings),
+            ]
+        )
         asrv.assert_called_once_with(
             hub=hub,
             name="name",
@@ -1568,9 +1572,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
 
         template.render.assert_not_called()
 
-    async def test_agent_init_container_backend_none_renders_no_profile(
-        self,
-    ):
+    async def test_agent_init_rejects_unsupported_container_backend(self):
         args = self._agent_init_args(
             tool_container_backend="none",
             tool_container_profile="ignored",
@@ -1579,13 +1581,21 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         console = MagicMock()
         theme = MagicMock()
         theme._ = lambda s: s
+        env = MagicMock()
+        template = MagicMock()
+        env.get_template.return_value = template
 
-        await agent_cmds.agent_init(args, console, theme)
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "Environment", return_value=env),
+            self.assertRaisesRegex(
+                AssertionError,
+                "container backend is unsupported",
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
 
-        output = console.print.call_args.args[0].code
-        parsed = tomllib.loads(output)
-        self.assertEqual(parsed["tool"]["container"], {"backend": "none"})
-        self.assertNotIn("[tool.container.profiles", output)
+        template.render.assert_not_called()
 
 
 class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
