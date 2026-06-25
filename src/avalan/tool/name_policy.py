@@ -140,20 +140,29 @@ class ToolNamePolicy:
         return decoded
 
     def _provider_name_for(self, canonical_name: str) -> str:
-        mapped_name = self.settings.map.get(canonical_name)
-        if mapped_name is not None:
-            return mapped_name
-
         match self.settings.mode:
             case ToolNamePolicyMode.ENCODED:
+                mapped_name = self.settings.map.get(canonical_name)
+                if mapped_name is not None:
+                    return mapped_name
                 return self.encode_encoded(
                     canonical_name,
                     prefix=self.settings.prefix,
                 )
             case ToolNamePolicyMode.MAPPED | ToolNamePolicyMode.RAW:
-                return canonical_name
+                mapped_name = self.settings.map.get(canonical_name)
+                return (
+                    mapped_name if mapped_name is not None else canonical_name
+                )
             case ToolNamePolicyMode.SANITIZED:
+                mapped_name = self.settings.map.get(canonical_name)
+                if mapped_name is not None:
+                    return mapped_name
                 return self._sanitize(canonical_name)
+            case _:
+                raise AssertionError(
+                    f"unsupported ToolNamePolicyMode: {self.settings.mode!r}"
+                )
 
     def _sanitize(self, canonical_name: str) -> str:
         replacement = self.settings.replacement
