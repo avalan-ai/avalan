@@ -94,6 +94,7 @@ async def _load_orchestrator(
             agent_id=agent_id,
             uri=uri,
             tool_settings=tool_settings,
+            tool_name_policy=ctx.tool_name_policy,
             event_manager_mode=EventManagerMode.SERVER,
         )
         new_ctx = OrchestratorContext(
@@ -101,6 +102,7 @@ async def _load_orchestrator(
             specs_path=ctx.specs_path,
             settings=ctx.settings,
             tool_settings=tool_settings,
+            tool_name_policy=ctx.tool_name_policy,
         )
     else:
         assert ctx.settings
@@ -110,6 +112,7 @@ async def _load_orchestrator(
         orchestrator_cm = await loader.from_settings(
             settings,
             tool_settings=tool_settings,
+            tool_name_policy=ctx.tool_name_policy,
             event_manager_mode=EventManagerMode.SERVER,
         )
         new_ctx = OrchestratorContext(
@@ -117,5 +120,6 @@ async def _load_orchestrator(
             specs_path=ctx.specs_path,
             settings=settings,
             tool_settings=tool_settings,
+            tool_name_policy=ctx.tool_name_policy,
         )
     return orchestrator_cm, new_ctx

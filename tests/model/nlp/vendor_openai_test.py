@@ -33,6 +33,9 @@ from avalan.entities import (
     ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
+    ToolManagerSettings,
+    ToolNamePolicyMode,
+    ToolNamePolicySettings,
     TransformerEngineSettings,
 )
 from avalan.model.response.text import TextGenerationResponse
@@ -47,6 +50,8 @@ from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
 )
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tool_parsing"
 
@@ -111,6 +116,27 @@ class PendingAsyncIter:
 
     async def aclose(self) -> None:
         self.close_count += 1
+
+
+class PolicyAdder:
+    def __init__(self) -> None:
+        self.__name__ = "adder"
+
+    async def __call__(self, a: int, b: int) -> int:
+        """Return the sum of two integers."""
+        return a + b
+
+
+def _sanitized_policy_manager() -> ToolManager:
+    return ToolManager.create_instance(
+        enable_tools=["math.adder"],
+        available_toolsets=[ToolSet(namespace="math", tools=[PolicyAdder()])],
+        settings=ToolManagerSettings(
+            tool_name_policy=ToolNamePolicySettings(
+                mode=ToolNamePolicyMode.SANITIZED
+            )
+        ),
+    )
 
 
 def patch_openai_imports():
@@ -2022,9 +2048,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                         "response": {
                             "id": "resp-2",
                             "status": "incomplete",
-                            "incomplete_details": {
-                                "reason": "content_filter"
-                            },
+                            "incomplete_details": {"reason": "content_filter"},
                             "usage": {
                                 "input_tokens": 5,
                                 "output_tokens": 6,
@@ -2435,6 +2459,89 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(ready.correlation.tool_call_id, "fc_1")
         self.assertEqual(ready.data, {"name": "math.calculator"})
+
+    async def test_function_call_added_item_uses_tool_name_policy(self):
+        manager = _sanitized_policy_manager()
+        events = [
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="fc_1",
+                    name="math_adder",
+                ),
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="fc_1",
+                delta='{"a":1',
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="fc_1",
+                delta=',"b":2}',
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(type="function_call", id="fc_1"),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events), tool=manager)
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).tool_call_arguments,
+            {"fc_1": '{"a":1,"b":2}'},
+        )
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.data, {"name": "math.adder"})
+
+    async def test_function_call_name_falls_back_when_policy_rejects(self):
+        manager = _sanitized_policy_manager()
+        events = [
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="fc_1",
+                    name="bad.name",
+                ),
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(type="function_call", id="fc_1"),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events), tool=manager)
+
+        items = await _stream_items(stream)
+
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.data, {"name": "bad.name"})
+
+    async def test_stream_client_passes_tool_manager_to_stream(self):
+        stream_instance = AsyncIter([])
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=stream_instance
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        manager = _sanitized_policy_manager()
+
+        with patch.object(self.mod, "OpenAIStream") as StreamMock:
+            result = await client("m", [], tool=manager)
+
+        self.assertIs(result, StreamMock.return_value)
+        StreamMock.assert_called_once()
+        self.assertIs(StreamMock.call_args.kwargs["tool"], manager)
 
     async def test_function_call_events_reject_invalid_delta_id(self):
         stream = self.mod.OpenAIStream(
@@ -3366,6 +3473,15 @@ class TemplateAndToolSchemaTestCase(TestCase):
         tool.json_schemas.return_value = [{"type": "x"}]
         self.assertEqual(self.mod.OpenAIClient._tool_schemas(tool), [])
 
+    def test_tool_schemas_use_tool_manager_name_policy(self):
+        schemas = self.mod.OpenAIClient._tool_schemas(
+            _sanitized_policy_manager()
+        )
+
+        self.assertIsNotNone(schemas)
+        assert schemas is not None
+        self.assertEqual(schemas[0]["name"], "math_adder")
+
     def test_template_messages_tool_results(self):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
 
@@ -3417,6 +3533,25 @@ class TemplateAndToolSchemaTestCase(TestCase):
                 },
             ],
         )
+
+    def test_template_messages_use_tool_manager_name_policy(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        call = ToolCall(id="c1", name="math.adder", arguments={"a": 1, "b": 2})
+        result = ToolCallResult(
+            id="c1",
+            name="math.adder",
+            arguments=call.arguments,
+            call=call,
+            result=3,
+        )
+
+        templated = client._template_messages(
+            [Message(role=MessageRole.TOOL, tool_call_result=result)],
+            tool=_sanitized_policy_manager(),
+        )
+
+        self.assertEqual(templated[0]["type"], "function_call")
+        self.assertEqual(templated[0]["name"], "math_adder")
 
     def test_template_messages_skips_tool_only_assistant_placeholder(self):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
@@ -3504,7 +3639,9 @@ class TemplateAndToolSchemaTestCase(TestCase):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         limit = OrchestratorResponse._MAXIMUM_MODEL_TOOL_OUTPUT_CHARS
         output = "x" * (limit + 5_000)
-        call = ToolCall(id="c1", name="shell.cat", arguments={"path": "big.py"})
+        call = ToolCall(
+            id="c1", name="shell.cat", arguments={"path": "big.py"}
+        )
         result = ToolCallResult(
             id="c1",
             name="shell.cat",
@@ -3641,6 +3778,29 @@ class OpenAIAdditionalCoverageTestCase(TestCase):
 
         self.assertEqual(text, "hello<tool>")
         build.assert_called_once_with("call-id", "pkg.tool", '{"a":1}')
+
+    def test_non_stream_response_content_uses_tool_name_policy(self):
+        response = {
+            "output": [
+                {
+                    "type": "tool_call",
+                    "call": {
+                        "id": "call-id",
+                        "function": {
+                            "name": "math_adder",
+                            "arguments": '{"a":1,"b":2}',
+                        },
+                    },
+                },
+            ]
+        }
+
+        text = self.mod.OpenAIClient._non_stream_response_content(
+            response,
+            tool=_sanitized_policy_manager(),
+        )
+
+        self.assertIn('"name": "math.adder"', text)
 
     def test_non_streaming_response_str_variants(self):
         settings = GenerationSettings()

@@ -27,6 +27,7 @@ from avalan.entities import (
     ToolCallResult,
     ToolFormat,
     ToolManagerSettings,
+    ToolNamePolicyMode,
     ToolNameResolutionStatus,
 )
 from avalan.event import Event, EventType
@@ -1342,6 +1343,34 @@ profile = "host-tools"
 
                 self.assertEqual(_shell_namespaces(kwargs), ["shell"])
                 self.assertEqual(kwargs["enable_tools"], expected_enable)
+
+    async def test_from_file_loads_tool_name_policy(self):
+        kwargs = await _from_file_tool_manager_kwargs(
+            _minimal_agent_toml() + """
+[tool]
+enable = ["math.calculator"]
+
+[tool.name_policy]
+mode = "mapped"
+prefix = "tool_"
+replacement = "_"
+collapse_replacement = false
+provider_family = "local"
+
+[tool.name_policy.map]
+"math.calculator" = "calc"
+"""
+        )
+
+        settings = kwargs["settings"]
+        self.assertIsInstance(settings, ToolManagerSettings)
+        policy = settings.tool_name_policy
+        self.assertIs(policy.mode, ToolNamePolicyMode.MAPPED)
+        self.assertEqual(policy.prefix, "tool_")
+        self.assertEqual(policy.replacement, "_")
+        self.assertFalse(policy.collapse_replacement)
+        self.assertEqual(policy.provider_family, "local")
+        self.assertEqual(policy.map, {"math.calculator": "calc"})
 
     async def test_from_file_shell_agent_invokes_tool_with_fake_executor(
         self,

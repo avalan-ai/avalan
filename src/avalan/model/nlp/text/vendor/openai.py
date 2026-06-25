@@ -76,12 +76,14 @@ class OpenAIStream(TextGenerationVendorStream):
     _canonical_done_tool_call_ids: set[str]
     _answer_text_seen: bool
     _answer_done_seen: bool
+    _tool_manager: ToolManager | None
 
     def __init__(
         self,
         stream: AsyncIterator[Any],
         *,
         provider_family: ProviderFamily | str = ProviderFamily.OPENAI,
+        tool: ToolManager | None = None,
     ) -> None:
         self._stream = stream
         self._canonical_tool_calls = {}
@@ -90,6 +92,7 @@ class OpenAIStream(TextGenerationVendorStream):
         self._canonical_done_tool_call_ids = set()
         self._answer_text_seen = False
         self._answer_done_seen = False
+        self._tool_manager = tool
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -213,9 +216,7 @@ class OpenAIStream(TextGenerationVendorStream):
         if event_type in self._INCOMPLETE_EVENTS or (
             self._response_is_incomplete(response)
         ):
-            return self._incomplete_events(
-                event, provider_payload, event_type
-            )
+            return self._incomplete_events(event, provider_payload, event_type)
         if event_type == "response.completed":
             return self._completion_events(event, provider_payload, event_type)
         if event_type in self._TEXT_DELTA_EVENTS:
@@ -735,7 +736,11 @@ class OpenAIStream(TextGenerationVendorStream):
                 continue
             if isinstance(value, str):
                 try:
-                    return TextGenerationVendor.decode_tool_name(value)
+                    return TextGenerationVendor.canonical_tool_name(
+                        value,
+                        tool=self._tool_manager,
+                        provider_family=self._provider_family,
+                    )
                 except AssertionError:
                     return value
             raise ValueError("response tool call name must be a string")
@@ -827,9 +832,7 @@ class OpenAIStream(TextGenerationVendorStream):
 
     @staticmethod
     def _response_incomplete_data(response: object) -> LooseJsonValue:
-        details = OpenAIClient._response_field(
-            response, "incomplete_details"
-        )
+        details = OpenAIClient._response_field(response, "incomplete_details")
         reason = OpenAIClient._response_field(details, "reason")
         message = "response incomplete"
         error: dict[str, LooseJsonValue] = {
@@ -908,7 +911,7 @@ class OpenAIClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
-        template_messages = self._template_messages(messages)
+        template_messages = self._template_messages(messages, tool=tool)
         use_reasoning_profile = self._uses_reasoning_profile(model_id)
         kwargs: dict[str, Any] = {
             "extra_headers": {
@@ -952,17 +955,27 @@ class OpenAIClient(TextGenerationVendor):
                 kwargs["tools"] = schemas
                 if settings and settings.tool_choice is not None:
                     kwargs["tool_choice"] = OpenAIClient._tool_choice(
-                        settings.tool_choice, schemas
+                        settings.tool_choice,
+                        schemas,
+                        tool=tool,
                     )
         client_stream = await self._client.responses.create(**kwargs)
 
         if use_async_generator:
+            stream_kwargs: dict[str, Any] = {}
+            if isinstance(tool, ToolManager):
+                stream_kwargs["tool"] = tool
             return OpenAIStream(
                 stream=client_stream,
-                provider_family=self._usage_provider_family,
+                provider_family=self._usage_provider_family.value,
+                **stream_kwargs,
             )
 
-        content = OpenAIClient._non_stream_response_content(client_stream)
+        content = OpenAIClient._non_stream_response_content(
+            client_stream,
+            tool=tool,
+            provider_family=self._usage_provider_family,
+        )
         return TextGenerationSingleStream(
             content,
             provider_family=self._usage_provider_family,
@@ -981,6 +994,8 @@ class OpenAIClient(TextGenerationVendor):
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
+        *,
+        tool: ToolManager | None = None,
     ) -> list[TemplateMessage] | list[dict[str, Any]]:
         tool_messages = [
             message
@@ -1058,7 +1073,11 @@ class OpenAIClient(TextGenerationVendor):
 
             call_message = {
                 "type": "function_call",
-                "name": TextGenerationVendor.encode_tool_name(name),
+                "name": TextGenerationVendor.provider_tool_name(
+                    name,
+                    tool=tool,
+                    provider_family=self._usage_provider_family,
+                ),
                 "call_id": call_id,
                 "arguments": to_json(arguments),
             }
@@ -1329,17 +1348,28 @@ class OpenAIClient(TextGenerationVendor):
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
-        schemas = tool.json_schemas()
+        provider_ready = isinstance(tool, ToolManager)
+        schemas = (
+            tool.provider_json_schemas(
+                provider_family=ProviderFamily.OPENAI.value
+            )
+            if provider_ready
+            else tool.json_schemas()
+        )
         return (
             [
                 {
                     "type": t["type"],
                     **t["function"],
-                    **{
-                        "name": TextGenerationVendor.encode_tool_name(
-                            t["function"]["name"]
-                        )
-                    },
+                    **(
+                        {}
+                        if provider_ready
+                        else {
+                            "name": TextGenerationVendor.encode_tool_name(
+                                t["function"]["name"]
+                            )
+                        }
+                    ),
                 }
                 for t in schemas
                 if t["type"] == "function"
@@ -1352,9 +1382,15 @@ class OpenAIClient(TextGenerationVendor):
     def _tool_choice(
         tool_choice: str,
         schemas: Sequence[Mapping[str, Any]],
+        *,
+        tool: ToolManager | None = None,
     ) -> dict[str, str]:
         assert tool_choice, "OpenAI tool_choice must be a tool name"
-        name = TextGenerationVendor.encode_tool_name(tool_choice)
+        name = TextGenerationVendor.provider_tool_name(
+            tool_choice,
+            tool=tool,
+            provider_family=ProviderFamily.OPENAI,
+        )
         schema_names = {schema.get("name") for schema in schemas}
         assert (
             name in schema_names
@@ -1362,7 +1398,12 @@ class OpenAIClient(TextGenerationVendor):
         return {"type": "function", "name": name}
 
     @staticmethod
-    def _non_stream_response_content(response: object) -> str:
+    def _non_stream_response_content(
+        response: object,
+        *,
+        tool: ToolManager | None = None,
+        provider_family: ProviderFamily | str | None = ProviderFamily.OPENAI,
+    ) -> str:
         parts: list[str] = []
         output = OpenAIClient._response_field(response, "output")
         if not isinstance(output, list):
@@ -1386,13 +1427,38 @@ class OpenAIClient(TextGenerationVendor):
                 function = (
                     OpenAIClient._response_field(call, "function") or call
                 )
-                parts.append(
-                    TextGenerationVendor.build_tool_call_text(
-                        OpenAIClient._response_field(call, "id"),
-                        OpenAIClient._response_field(function, "name"),
-                        OpenAIClient._response_field(function, "arguments"),
+                provider_name = OpenAIClient._response_field(function, "name")
+                canonical_name = (
+                    TextGenerationVendor.canonical_tool_name(
+                        provider_name,
+                        tool=tool,
+                        provider_family=provider_family,
                     )
+                    if isinstance(provider_name, str)
+                    and isinstance(tool, ToolManager)
+                    else provider_name
                 )
+                call_id = OpenAIClient._response_field(call, "id")
+                arguments = OpenAIClient._response_field(function, "arguments")
+                if isinstance(tool, ToolManager):
+                    parts.append(
+                        TextGenerationVendor.build_tool_call_text(
+                            call_id,
+                            canonical_name,
+                            arguments,
+                            tool_name_is_canonical=isinstance(
+                                canonical_name, str
+                            ),
+                        )
+                    )
+                else:
+                    parts.append(
+                        TextGenerationVendor.build_tool_call_text(
+                            call_id,
+                            canonical_name,
+                            arguments,
+                        )
+                    )
 
         return "".join(parts)
 

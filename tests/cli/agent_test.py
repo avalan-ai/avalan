@@ -47,6 +47,7 @@ from avalan.entities import (
     ToolCallRecoveryFormat,
     ToolCallToken,
     ToolFormat,
+    ToolNamePolicyMode,
 )
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager, EventManagerMode
@@ -371,6 +372,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 specs_path=spec.name,
                 settings=None,
                 tool_settings=ToolSettingsContext(),
+                tool_name_policy=None,
                 host="0.0.0.0",
                 port=80,
                 reload=False,
@@ -432,6 +434,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
                 specs_path=spec.name,
                 settings=None,
                 tool_settings=ToolSettingsContext(),
+                tool_name_policy=None,
                 host="0.0.0.0",
                 port=80,
                 reload=False,
@@ -538,6 +541,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             tool_settings=ToolSettingsContext(
                 browser=browser_settings, database=None, graph=None
             ),
+            tool_name_policy=None,
             host="0.0.0.0",
             port=80,
             reload=False,
@@ -1209,6 +1213,86 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("recovery_formats = [", output)
         self.assertIn('"fenced"', output)
         self.assertIn('"tool_call_block"', output)
+
+    def test_agent_tool_name_policy_from_cli_args(self):
+        args = Namespace(
+            tool_name_policy="mapped",
+            tool_name_prefix="tool_",
+            tool_name_replacement="__",
+            tool_name_collapse_replacement=False,
+            tool_name_map=["math.calculator=calc"],
+        )
+
+        policy = agent_cmds._agent_tool_name_policy(args)
+
+        assert policy is not None
+        self.assertIs(policy.mode, ToolNamePolicyMode.MAPPED)
+        self.assertEqual(policy.prefix, "tool_")
+        self.assertEqual(policy.replacement, "__")
+        self.assertFalse(policy.collapse_replacement)
+        self.assertEqual(policy.map, {"math.calculator": "calc"})
+
+    def test_agent_tool_name_policy_rejects_invalid_cli_values(self):
+        cases = (
+            Namespace(
+                tool_name_policy="encoded",
+                tool_name_prefix="",
+                tool_name_replacement=None,
+                tool_name_collapse_replacement=None,
+                tool_name_map=None,
+            ),
+            Namespace(
+                tool_name_policy="sanitized",
+                tool_name_prefix=None,
+                tool_name_replacement="",
+                tool_name_collapse_replacement=None,
+                tool_name_map=None,
+            ),
+            Namespace(
+                tool_name_policy="mapped",
+                tool_name_prefix=None,
+                tool_name_replacement=None,
+                tool_name_collapse_replacement=None,
+                tool_name_map=["math.calculator"],
+            ),
+        )
+
+        for args in cases:
+            with self.subTest(args=args):
+                with self.assertRaises(AssertionError):
+                    agent_cmds._agent_tool_name_policy(args)
+
+    async def test_agent_init_tool_name_policy_output(self):
+        args = self._agent_init_args(
+            memory_recent=False,
+            tool=["math.calculator"],
+            tool_name_policy="sanitized",
+            tool_name_prefix="tool_",
+            tool_name_replacement="_",
+            tool_name_collapse_replacement=True,
+            tool_name_map=["math.calculator=calc"],
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T"]),
+            patch.object(agent_cmds.Prompt, "ask", side_effect=["N", "uri"]),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        self.assertIn("[tool]", output)
+        self.assertIn('"math.calculator"', output)
+        self.assertIn("[tool.name_policy]", output)
+        self.assertIn('mode = "sanitized"', output)
+        self.assertIn('prefix = "tool_"', output)
+        self.assertIn('replacement = "_"', output)
+        self.assertIn("collapse_replacement = true", output)
+        self.assertIn("[tool.name_policy.map]", output)
+        self.assertIn('"math.calculator" = "calc"', output)
 
     async def test_agent_init_shell_tool_settings_output(self):
         args = Namespace(

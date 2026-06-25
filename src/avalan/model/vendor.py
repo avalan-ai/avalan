@@ -7,6 +7,7 @@ from ..entities import (
     MessageContentText,
 )
 from ..tool.manager import ToolManager
+from ..tool.name_policy import ToolNamePolicy
 from .message import (
     TemplateMessage,
     TemplateMessageContent,
@@ -24,22 +25,16 @@ from .stream import (
 )
 
 from abc import ABC
-from base64 import urlsafe_b64decode, urlsafe_b64encode
-from binascii import Error as BinasciiError
 from collections.abc import AsyncIterable
 from dataclasses import replace
 from inspect import isawaitable
 from json import JSONDecodeError, dumps, loads
-from re import compile as compile_regex
 from typing import Any, AsyncIterator, Awaitable, Iterable, TypeVar, cast
 
 _StreamItemT = TypeVar("_StreamItemT")
 
 
 class TextGenerationVendor(ABC):
-    _PROVIDER_TOOL_NAME_PATTERN = compile_regex(r"^[A-Za-z0-9_-]+$")
-    _PROVIDER_TOOL_NAME_PREFIX = "avl_"
-
     async def __call__(
         self,
         model_id: str,
@@ -117,60 +112,65 @@ class TextGenerationVendor(ABC):
 
     @staticmethod
     def encode_tool_name(tool_name: str) -> str:
-        assert isinstance(tool_name, str)
-        assert tool_name.strip(), "tool name must not be empty"
-        if TextGenerationVendor._PROVIDER_TOOL_NAME_PATTERN.fullmatch(
-            tool_name
-        ) and not tool_name.startswith(
-            TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX
-        ):
-            return tool_name
-        encoded = urlsafe_b64encode(tool_name.encode()).decode().rstrip("=")
-        return f"{TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX}{encoded}"
+        return ToolNamePolicy.encode_encoded(tool_name)
 
     @staticmethod
     def decode_tool_name(tool_name: str) -> str:
-        assert isinstance(tool_name, str)
-        assert tool_name.strip(), "tool name must not be empty"
-        assert TextGenerationVendor._PROVIDER_TOOL_NAME_PATTERN.fullmatch(
-            tool_name
-        ), "provider tool name is invalid"
+        return ToolNamePolicy.decode_encoded(tool_name)
 
-        prefix = TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX
-        if not tool_name.startswith(prefix):
-            return tool_name
+    @staticmethod
+    def provider_tool_name(
+        tool_name: str,
+        *,
+        tool: ToolManager | None = None,
+        provider_family: ProviderFamily | str | None = None,
+    ) -> str:
+        if isinstance(tool, ToolManager):
+            return tool.provider_tool_name(
+                tool_name,
+                provider_family=provider_family_value(provider_family),
+            )
+        return TextGenerationVendor.encode_tool_name(tool_name)
 
-        payload = tool_name[len(prefix) :]
-        assert payload, "provider tool name is missing encoded content"
-        padding = "=" * (-len(payload) % 4)
+    @staticmethod
+    def canonical_tool_name(
+        tool_name: str,
+        *,
+        tool: ToolManager | None = None,
+        provider_family: ProviderFamily | str | None = None,
+    ) -> str:
+        if isinstance(tool, ToolManager):
+            return tool.canonical_tool_name(
+                tool_name,
+                provider_family=provider_family_value(provider_family),
+            )
         try:
-            decoded = urlsafe_b64decode(f"{payload}{padding}").decode()
-        except (BinasciiError, UnicodeDecodeError) as exc:
-            raise AssertionError("provider tool name is malformed") from exc
-        assert decoded.strip(), "decoded tool name must not be empty"
-        assert (
-            TextGenerationVendor.encode_tool_name(decoded) == tool_name
-        ), "provider tool name is malformed"
-        return decoded
+            return TextGenerationVendor.decode_tool_name(tool_name)
+        except AssertionError:
+            if not tool_name.startswith("avl_"):
+                return tool_name
+            raise
 
     @staticmethod
     def build_tool_call_text(
         call_id: str | object | None,
         tool_name: str | object | None,
         arguments: str | dict[str, Any] | object | None,
+        *,
+        tool_name_is_canonical: bool = False,
     ) -> str:
         tool_name_text = (
             tool_name if isinstance(tool_name, str) else str(tool_name or "")
         )
-        provider_name_encoded = tool_name_text.startswith(
-            TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX
-        )
-        if tool_name_text:
+        provider_name_encoded = tool_name_text.startswith("avl_")
+        if tool_name_text and not tool_name_is_canonical:
             try:
                 name = TextGenerationVendor.decode_tool_name(tool_name_text)
             except AssertionError:
                 assert provider_name_encoded
                 name = tool_name_text
+        elif tool_name_text:
+            name = tool_name_text
         else:
             name = ""
         if isinstance(arguments, str):

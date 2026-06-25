@@ -25,6 +25,8 @@ from ..entities import (
     ToolCallRecoveryFormat,
     ToolFormat,
     ToolManagerSettings,
+    ToolNamePolicyMode,
+    ToolNamePolicySettings,
     TransformerEngineSettings,
 )
 from ..event import Event, EventType
@@ -844,6 +846,7 @@ class OrchestratorLoader:
         disable_memory: bool = False,
         uri: str | None = None,
         tool_settings: ToolSettingsContext | None = None,
+        tool_name_policy: ToolNamePolicySettings | None = None,
         event_manager_mode: EventManagerMode = EventManagerMode.SDK,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
@@ -1178,6 +1181,10 @@ class OrchestratorLoader:
         tool_format_str = tool_section.get("format")
         if tool_format_str:
             tool_format = ToolFormat(tool_format_str)
+        parsed_tool_name_policy = self._tool_name_policy_from_tool_section(
+            tool_section
+        )
+        tool_name_policy = tool_name_policy or parsed_tool_name_policy
 
         recovery_format_values = tool_section.get("recovery_formats", [])
         assert isinstance(
@@ -1198,6 +1205,7 @@ class OrchestratorLoader:
                     settings,
                     tool_settings=tool_settings,
                     tool_format=tool_format,
+                    tool_name_policy=tool_name_policy,
                     tool_recovery_formats=tool_recovery_formats,
                     event_manager_mode=event_manager_mode,
                 )
@@ -1205,6 +1213,7 @@ class OrchestratorLoader:
                 settings,
                 tool_settings=tool_settings,
                 tool_format=tool_format,
+                tool_name_policy=tool_name_policy,
                 tool_recovery_formats=tool_recovery_formats,
             )
         if event_manager_mode is not EventManagerMode.SDK:
@@ -1212,12 +1221,79 @@ class OrchestratorLoader:
                 settings,
                 tool_settings=tool_settings,
                 tool_format=tool_format,
+                tool_name_policy=tool_name_policy,
                 event_manager_mode=event_manager_mode,
             )
         return await self.from_settings(
             settings,
             tool_settings=tool_settings,
             tool_format=tool_format,
+            tool_name_policy=tool_name_policy,
+        )
+
+    @staticmethod
+    def _tool_name_policy_from_tool_section(
+        tool_section: dict[str, Any],
+    ) -> ToolNamePolicySettings | None:
+        policy_config = tool_section.get("name_policy")
+        if policy_config is None:
+            return None
+        assert isinstance(
+            policy_config, dict
+        ), "tool.name_policy section must be a mapping"
+        supported_keys = {
+            "mode",
+            "prefix",
+            "replacement",
+            "collapse_replacement",
+            "provider_family",
+            "map",
+        }
+        unknown_keys = sorted(set(policy_config) - supported_keys)
+        assert not unknown_keys, "tool.name_policy has unknown keys"
+
+        mode_value = policy_config.get(
+            "mode", ToolNamePolicyMode.ENCODED.value
+        )
+        assert isinstance(
+            mode_value, str
+        ), "tool.name_policy.mode must be a string"
+
+        prefix = policy_config.get("prefix", "avl_")
+        assert isinstance(
+            prefix, str
+        ), "tool.name_policy.prefix must be a string"
+        replacement = policy_config.get("replacement", "_")
+        assert isinstance(
+            replacement, str
+        ), "tool.name_policy.replacement must be a string"
+        collapse = policy_config.get("collapse_replacement", True)
+        assert isinstance(
+            collapse, bool
+        ), "tool.name_policy.collapse_replacement must be a boolean"
+        provider_family = policy_config.get("provider_family")
+        assert provider_family is None or isinstance(
+            provider_family, str
+        ), "tool.name_policy.provider_family must be a string"
+        name_map = policy_config.get("map", {})
+        assert isinstance(
+            name_map, dict
+        ), "tool.name_policy.map must be a mapping"
+        for canonical_name, provider_name in name_map.items():
+            assert isinstance(
+                canonical_name, str
+            ), "tool.name_policy.map keys must be strings"
+            assert isinstance(
+                provider_name, str
+            ), "tool.name_policy.map values must be strings"
+
+        return ToolNamePolicySettings(
+            mode=ToolNamePolicyMode(mode_value),
+            prefix=prefix,
+            replacement=replacement,
+            collapse_replacement=collapse,
+            provider_family=provider_family,
+            map=dict(name_map),
         )
 
     async def from_settings(
@@ -1226,6 +1302,7 @@ class OrchestratorLoader:
         *,
         tool_settings: ToolSettingsContext | None = None,
         tool_format: ToolFormat | None = None,
+        tool_name_policy: ToolNamePolicySettings | None = None,
         tool_recovery_formats: list[ToolCallRecoveryFormat] | None = None,
         event_manager_mode: EventManagerMode = EventManagerMode.SDK,
     ) -> Orchestrator:
@@ -1379,6 +1456,9 @@ class OrchestratorLoader:
             enable_tools=enabled_tools,
             settings=ToolManagerSettings(
                 tool_format=tool_format,
+                tool_name_policy=(
+                    tool_name_policy or ToolNamePolicySettings()
+                ),
                 filters=(
                     [shell_input_file_filter(active_shell_settings)]
                     if active_shell_settings is not None

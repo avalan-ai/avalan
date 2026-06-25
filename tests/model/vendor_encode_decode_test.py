@@ -45,3 +45,13 @@ class VendorEncodeDecodeTestCase(TestCase):
     def test_decode_rejects_invalid_encoded_payload(self) -> None:
         with self.assertRaises(AssertionError):
             TextGenerationVendor.decode_tool_name("avl_A")
+
+    def test_canonical_tool_name_preserves_raw_and_rejects_bad_encoded(
+        self,
+    ) -> None:
+        self.assertEqual(
+            TextGenerationVendor.canonical_tool_name("pkg.tool"),
+            "pkg.tool",
+        )
+        with self.assertRaises(AssertionError):
+            TextGenerationVendor.canonical_tool_name("avl_notbase64")

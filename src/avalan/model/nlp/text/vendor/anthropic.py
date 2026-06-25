@@ -96,12 +96,19 @@ class AnthropicStream(TextGenerationVendorStream):
     _canonical_tool_blocks: dict[int, dict[str, Any]]
     _canonical_ready_tool_call_ids: set[str]
     _canonical_done_tool_call_ids: set[str]
+    _tool_manager: ToolManager | None
 
-    def __init__(self, events: AsyncIterator[object]):
+    def __init__(
+        self,
+        events: AsyncIterator[object],
+        *,
+        tool: ToolManager | None = None,
+    ):
         self._events = events
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
+        self._tool_manager = tool
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -399,11 +406,24 @@ class AnthropicStream(TextGenerationVendorStream):
         if call_id in self._canonical_ready_tool_call_ids:
             return ()
         self._canonical_ready_tool_call_ids.add(call_id)
+        canonical_name = (
+            TextGenerationVendor.canonical_tool_name(
+                name,
+                tool=self._tool_manager,
+                provider_family=ProviderFamily.ANTHROPIC,
+            )
+            if isinstance(name, str)
+            else name
+        )
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_READY,
                 correlation=StreamItemCorrelation(tool_call_id=call_id),
-                data={"name": name} if isinstance(name, str) else {},
+                data=(
+                    {"name": canonical_name}
+                    if isinstance(canonical_name, str)
+                    else {}
+                ),
                 provider_payload=provider_payload,
                 provider_event_type="content_block_stop",
             ),
@@ -462,7 +482,11 @@ class AnthropicClient(TextGenerationVendor):
         ), "Anthropic does not support provider instructions"
         settings = settings or GenerationSettings()
         system_prompt = self._system_prompt(messages)
-        template_messages = self._template_messages(messages, ["system"])
+        template_messages = self._template_messages(
+            messages,
+            ["system"],
+            tool=tool,
+        )
         kwargs: dict[str, Any] = {
             "model": model_id,
             "system": system_prompt,
@@ -484,10 +508,13 @@ class AnthropicClient(TextGenerationVendor):
             if use_async_generator:
                 stream = self._client.messages.stream(**kwargs)
                 events = await self._exit_stack.enter_async_context(stream)
-                return AnthropicStream(events=events)
+                stream_kwargs: dict[str, Any] = {}
+                if isinstance(tool, ToolManager):
+                    stream_kwargs["tool"] = tool
+                return AnthropicStream(events=events, **stream_kwargs)
 
             response = await self._client.messages.create(**kwargs)
-            content = self._non_stream_response_content(response)
+            content = self._non_stream_response_content(response, tool=tool)
             return cast(
                 TextGenerationVendorStream,
                 TextGenerationSingleStream(
@@ -504,6 +531,8 @@ class AnthropicClient(TextGenerationVendor):
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
+        *,
+        tool: ToolManager | None = None,
     ) -> list[TemplateMessage]:
         template_messages: list[dict[str, Any]] = []
         excluded_roles = set(exclude_roles or [])
@@ -563,7 +592,10 @@ class AnthropicClient(TextGenerationVendor):
                     call = result.call
                     call_id = str(result.call.id)
                 if call_id not in tool_call_ids:
-                    tool_use_block = AnthropicClient._tool_use_block(call)
+                    tool_use_block = AnthropicClient._tool_use_block(
+                        call,
+                        tool=tool,
+                    )
                     if last_assistant_index is not None:
                         assistant_message = template_messages[
                             last_assistant_index
@@ -595,7 +627,12 @@ class AnthropicClient(TextGenerationVendor):
                     empty_when_none=message.content is None,
                 )
                 for tool_call in message.tool_calls:
-                    content.append(AnthropicClient._tool_use_block(tool_call))
+                    content.append(
+                        AnthropicClient._tool_use_block(
+                            tool_call,
+                            tool=tool,
+                        )
+                    )
                     if tool_call.id is not None:
                         tool_call_ids.add(str(tool_call.id))
                 formatted["content"] = content
@@ -651,11 +688,19 @@ class AnthropicClient(TextGenerationVendor):
         return [{"type": "text", "text": str(content)}]
 
     @staticmethod
-    def _tool_use_block(call: ToolCall | MessageToolCall) -> dict[str, Any]:
+    def _tool_use_block(
+        call: ToolCall | MessageToolCall,
+        *,
+        tool: ToolManager | None = None,
+    ) -> dict[str, Any]:
         return {
             "type": "tool_use",
             "id": str(call.id) if call.id is not None else "",
-            "name": TextGenerationVendor.encode_tool_name(call.name),
+            "name": TextGenerationVendor.provider_tool_name(
+                call.name,
+                tool=tool,
+                provider_family=ProviderFamily.ANTHROPIC,
+            ),
             "input": call.arguments or {},
         }
 
@@ -836,12 +881,23 @@ class AnthropicClient(TextGenerationVendor):
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
-        schemas = tool.json_schemas()
+        provider_ready = isinstance(tool, ToolManager)
+        schemas = (
+            tool.provider_json_schemas(
+                provider_family=ProviderFamily.ANTHROPIC.value
+            )
+            if provider_ready
+            else tool.json_schemas()
+        )
         return (
             [
                 {
-                    "name": TextGenerationVendor.encode_tool_name(
+                    "name": (
                         t["function"]["name"]
+                        if provider_ready
+                        else TextGenerationVendor.encode_tool_name(
+                            t["function"]["name"]
+                        )
                     ),
                     "description": t["function"]["description"],
                     "input_schema": {
@@ -857,7 +913,11 @@ class AnthropicClient(TextGenerationVendor):
         )
 
     @staticmethod
-    def _non_stream_response_content(response: object) -> str:
+    def _non_stream_response_content(
+        response: object,
+        *,
+        tool: ToolManager | None = None,
+    ) -> str:
         def _get(value: object, attribute: str) -> object | None:
             if isinstance(value, dict):
                 return value.get(attribute)
@@ -876,13 +936,36 @@ class AnthropicClient(TextGenerationVendor):
                 continue
 
             if block_type == "tool_use":
-                parts.append(
-                    TextGenerationVendor.build_tool_call_text(
-                        _get(block, "id"),
-                        _get(block, "name"),
-                        _get(block, "input"),
+                provider_name = _get(block, "name")
+                canonical_name = (
+                    TextGenerationVendor.canonical_tool_name(
+                        provider_name,
+                        tool=tool,
+                        provider_family=ProviderFamily.ANTHROPIC,
                     )
+                    if isinstance(provider_name, str)
+                    and isinstance(tool, ToolManager)
+                    else provider_name
                 )
+                if isinstance(tool, ToolManager):
+                    parts.append(
+                        TextGenerationVendor.build_tool_call_text(
+                            _get(block, "id"),
+                            canonical_name,
+                            _get(block, "input"),
+                            tool_name_is_canonical=isinstance(
+                                canonical_name, str
+                            ),
+                        )
+                    )
+                else:
+                    parts.append(
+                        TextGenerationVendor.build_tool_call_text(
+                            _get(block, "id"),
+                            canonical_name,
+                            _get(block, "input"),
+                        )
+                    )
 
         return "".join(parts)
 

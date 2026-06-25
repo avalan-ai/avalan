@@ -26,6 +26,9 @@ from avalan.entities import (
     ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
+    ToolManagerSettings,
+    ToolNamePolicyMode,
+    ToolNamePolicySettings,
     TransformerEngineSettings,
 )
 from avalan.model.stream import (
@@ -36,6 +39,8 @@ from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
 )
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
 
 
 class AsyncIter:
@@ -50,6 +55,27 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:  # pragma: no cover - helper
             raise StopAsyncIteration from exc
+
+
+class PolicyAdder:
+    def __init__(self) -> None:
+        self.__name__ = "adder"
+
+    async def __call__(self, a: int, b: int) -> int:
+        """Return the sum of two integers."""
+        return a + b
+
+
+def _sanitized_policy_manager() -> ToolManager:
+    return ToolManager.create_instance(
+        enable_tools=["math.adder"],
+        available_toolsets=[ToolSet(namespace="math", tools=[PolicyAdder()])],
+        settings=ToolManagerSettings(
+            tool_name_policy=ToolNamePolicySettings(
+                mode=ToolNamePolicyMode.SANITIZED
+            )
+        ),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -413,6 +439,38 @@ def test_canonical_stream_maps_anthropic_events(anthropic_mod):
         item for item in items if item.kind is StreamItemKind.TOOL_CALL_READY
     )
     assert ready.data == {"name": "lookup"}
+
+
+def test_canonical_stream_uses_tool_name_policy(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield SimpleNamespace(
+            type="content_block_start",
+            content_block=SimpleNamespace(
+                type="tool_use", id="call-1", name="math_adder"
+            ),
+            index=0,
+        )
+        yield mod.RawContentBlockDeltaEvent(
+            SimpleNamespace(partial_json='{"a":1}')
+        )
+        yield SimpleNamespace(type="content_block_stop", index=0)
+        yield SimpleNamespace(type="message_stop")
+
+    async def collect():
+        stream = mod.AnthropicStream(agen(), tool=_sanitized_policy_manager())
+        return [item async for item in stream]
+
+    items = asyncio.run(collect())
+
+    ready = next(
+        item for item in items if item.kind is StreamItemKind.TOOL_CALL_READY
+    )
+    assert ready.data == {"name": "math.adder"}
+    assert accumulate_canonical_stream_items(items).tool_call_arguments == {
+        "call-1": '{"a":1}'
+    }
 
 
 def test_canonical_stream_preserves_anthropic_model_dump_payloads(
@@ -806,6 +864,28 @@ def test_client_call_and_model(anthropic_mod):
     assert loaded is ClientMock.return_value
 
 
+def test_client_stream_passes_tool_manager_to_stream(anthropic_mod):
+    mod, stub = anthropic_mod
+    manager = _sanitized_policy_manager()
+    stub.AsyncAnthropic.return_value.messages.stream = MagicMock(
+        return_value=object()
+    )
+    exit_stack = AsyncMock(spec=AsyncExitStack)
+    exit_stack.enter_async_context.return_value = AsyncIter([])
+    client = mod.AnthropicClient("tok", "url", exit_stack=exit_stack)
+    client._template_messages = MagicMock(return_value=[{"content": "c"}])
+
+    async def invoke():
+        with patch.object(mod, "AnthropicStream") as StreamMock:
+            result = await client("m", [], tool=manager)
+        return result, StreamMock
+
+    result, stream_mock = asyncio.run(invoke())
+
+    assert result is stream_mock.return_value
+    assert stream_mock.call_args.kwargs["tool"] is manager
+
+
 def test_provider_instructions_are_rejected_before_api_call(anthropic_mod):
     mod, stub = anthropic_mod
     exit_stack = AsyncExitStack()
@@ -968,6 +1048,27 @@ def test_template_messages_and_exclude_roles(anthropic_mod):
     templated = client._template_messages(messages, ["system"])
     assert templated[1]["content"][1]["name"] == "avl_cGtnLnRvb2w"
     assert templated[2]["content"][0]["tool_use_id"] == "id1"
+
+    policy_call = ToolCall(
+        id="id2",
+        name="math.adder",
+        arguments={"a": 1, "b": 2},
+    )
+    policy_result = ToolCallResult(
+        id="id2",
+        name="math.adder",
+        call=policy_call,
+        result=3,
+    )
+    policy_messages = [
+        Message(role=MessageRole.USER, content="hi"),
+        Message(role=MessageRole.TOOL, tool_call_result=policy_result),
+    ]
+    policy_templated = client._template_messages(
+        policy_messages,
+        tool=_sanitized_policy_manager(),
+    )
+    assert policy_templated[1]["content"][0]["name"] == "math_adder"
 
     no_assistant = client._template_messages(
         [
@@ -1374,6 +1475,10 @@ def test_tool_schemas_variants(anthropic_mod):
     assert mod.AnthropicClient._tool_schemas(DummyTool([])) is None
     assert mod.AnthropicClient._tool_schemas(DummyTool(None)) is None
 
+    policy_out = mod.AnthropicClient._tool_schemas(_sanitized_policy_manager())
+    assert policy_out is not None
+    assert policy_out[0]["name"] == "math_adder"
+
 
 def test_non_stream_response_content_from_dict(anthropic_mod):
     mod, _ = anthropic_mod
@@ -1397,6 +1502,23 @@ def test_non_stream_response_content_from_dict(anthropic_mod):
 
     assert text == "alpha<tool>"
     build.assert_called_once_with("call-id", "pkg.tool", {"foo": "bar"})
+
+    policy_response = {
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "call-id",
+                "name": "math_adder",
+                "input": {"a": 1, "b": 2},
+            },
+        ]
+    }
+    policy_text = mod.AnthropicClient._non_stream_response_content(
+        policy_response,
+        tool=_sanitized_policy_manager(),
+    )
+
+    assert '"name": "math.adder"' in policy_text
 
 
 def test_translate_api_error_for_retired_model(anthropic_mod):

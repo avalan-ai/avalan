@@ -143,6 +143,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 specs_path="agent.yaml",
                 settings=None,
                 tool_settings=tool_settings,
+                tool_name_policy=None,
             )
             resource_store_cls.assert_called_once_with()
             uuid4_mock.assert_called_once_with()

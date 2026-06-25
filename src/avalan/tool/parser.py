@@ -44,6 +44,11 @@ _MARKDOWN_FENCE_LINE_PATTERN = compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})")
 _XML_NAME_PREFIX_PATTERN = compile(r"<(/?)([A-Za-z_][\w.-]*):")
 _TOOL_NAME_PATTERN_TEXT = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
 _TOOL_NAME_PATTERN = compile(rf"^{_TOOL_NAME_PATTERN_TEXT}$")
+_PROVIDER_TOOL_NAME_PATTERN_TEXT = r"[A-Za-z0-9_-]{1,64}"
+_ANY_TOOL_NAME_PATTERN_TEXT = (
+    rf"(?:{_TOOL_NAME_PATTERN_TEXT}|{_PROVIDER_TOOL_NAME_PATTERN_TEXT})"
+)
+_ANY_TOOL_NAME_PATTERN = compile(rf"^{_ANY_TOOL_NAME_PATTERN_TEXT}$")
 _BRACKET_CALL_PATTERN = compile(r"\[([^\]\r\n]*)\]\(([^)\r\n]*)\)")
 _BRACKET_CALL_START_PATTERN = compile(r"\[[^\]\r\n]*\]\(")
 _REACT_CALL_PATTERN = compile(
@@ -720,7 +725,7 @@ class ToolCallParser:
         for name, arguments, malformed in self._react_payloads(text):
             if (
                 not malformed
-                and _TOOL_NAME_PATTERN.fullmatch(name)
+                and _ANY_TOOL_NAME_PATTERN.fullmatch(name)
                 and isinstance(arguments, dict)
             ):
                 return name, arguments
@@ -731,7 +736,7 @@ class ToolCallParser:
         diagnostics: list[ToolCallDiagnostic] = []
         for name, arguments, malformed in self._react_payloads(text):
             requested_name = (
-                name if _TOOL_NAME_PATTERN.fullmatch(name) else None
+                name if _ANY_TOOL_NAME_PATTERN.fullmatch(name) else None
             )
             if requested_name is None:
                 diagnostics.append(self._malformed_call_diagnostic())
@@ -796,7 +801,7 @@ class ToolCallParser:
         return arguments, False
 
     def _parse_bracket(self, text: str) -> tuple[str, dict[str, Any]] | None:
-        m = search(rf"\[({_TOOL_NAME_PATTERN_TEXT})\]\(([^)]+)\)", text)
+        m = search(rf"\[({_ANY_TOOL_NAME_PATTERN_TEXT})\]\(([^)]+)\)", text)
         if m:
             return m.group(1), {"input": m.group(2)}
         return None
@@ -1020,7 +1025,7 @@ class ToolCallParser:
             argument = match.group(2)
             if (
                 not name
-                or not _TOOL_NAME_PATTERN.fullmatch(name)
+                or not _ANY_TOOL_NAME_PATTERN.fullmatch(name)
                 or not argument
             ):
                 malformed = True
@@ -1965,7 +1970,7 @@ class ToolCallParser:
     @staticmethod
     def _is_valid_tool_name(name: Any) -> bool:
         return isinstance(name, str) and bool(
-            _TOOL_NAME_PATTERN.fullmatch(name)
+            _ANY_TOOL_NAME_PATTERN.fullmatch(name)
         )
 
     @staticmethod

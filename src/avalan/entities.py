@@ -171,6 +171,13 @@ class ToolFormat(StrEnum):
     DSML = "dsml"
 
 
+class ToolNamePolicyMode(StrEnum):
+    ENCODED = "encoded"
+    MAPPED = "mapped"
+    SANITIZED = "sanitized"
+    RAW = "raw"
+
+
 class ToolCallRecoveryFormat(StrEnum):
     TOOL_CALL_BLOCK = "tool_call_block"
     MINIMAX_XML = "minimax_xml"
@@ -1284,9 +1291,60 @@ class ToolTransformer:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ToolNamePolicySettings:
+    mode: ToolNamePolicyMode = ToolNamePolicyMode.ENCODED
+    prefix: str = "avl_"
+    replacement: str = "_"
+    collapse_replacement: bool = True
+    map: dict[str, str] = field(default_factory=dict)
+    provider_family: str | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.mode, ToolNamePolicyMode)
+        assert isinstance(
+            self.prefix, str
+        ), "tool name policy prefix must be a string"
+        assert self.prefix.strip(), "tool name policy prefix must not be empty"
+        assert isinstance(
+            self.replacement, str
+        ), "tool name policy replacement must be a string"
+        assert (
+            self.replacement.strip()
+        ), "tool name policy replacement must not be empty"
+        assert isinstance(self.collapse_replacement, bool)
+        assert isinstance(
+            self.map, dict
+        ), "tool name policy map must be a dict"
+        if self.provider_family is not None:
+            assert isinstance(
+                self.provider_family, str
+            ), "tool name policy provider_family must be a string"
+            assert (
+                self.provider_family.strip()
+            ), "tool name policy provider_family must not be empty"
+        for canonical_name, provider_name in self.map.items():
+            assert isinstance(
+                canonical_name, str
+            ), "tool name policy map keys must be strings"
+            assert (
+                canonical_name.strip()
+            ), "tool name policy map keys must not be empty"
+            assert isinstance(
+                provider_name, str
+            ), "tool name policy map values must be strings"
+            assert (
+                provider_name.strip()
+            ), "tool name policy map values must not be empty"
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolManagerSettings:
     eos_token: str | None = None
     tool_format: ToolFormat | None = None
+    tool_name_policy: ToolNamePolicySettings = field(
+        default_factory=ToolNamePolicySettings
+    )
     recovery_formats: list[ToolCallRecoveryFormat] = field(
         default_factory=list
     )
@@ -1353,6 +1411,7 @@ class ToolManagerSettings:
                 and limit > 0
             )
         assert isinstance(self.parallel_tool_calls, bool)
+        assert isinstance(self.tool_name_policy, ToolNamePolicySettings)
         assert isinstance(self.recovery_formats, list)
         for recovery_format in self.recovery_formats:
             assert isinstance(recovery_format, ToolCallRecoveryFormat)

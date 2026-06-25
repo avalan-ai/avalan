@@ -20,6 +20,7 @@ from ..entities import (
     ToolFormat,
     ToolManagerExecutionMode,
     ToolManagerSettings,
+    ToolNamePolicyMode,
     ToolNameResolution,
     ToolNameResolutionStatus,
     ToolProviderArgumentsMode,
@@ -28,18 +29,16 @@ from ..entities import (
 )
 from . import Tool, ToolSet
 from .json_schema import get_json_schema
+from .name_policy import ToolNamePolicy
 from .names import matches_tool_namespace
 from .parser import ToolCallParser
 
 from asyncio import CancelledError, wait_for
-from base64 import urlsafe_b64decode, urlsafe_b64encode
-from binascii import Error as BinasciiError
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from dataclasses import replace
 from inspect import Parameter, signature
-from re import compile as compile_regex
 from types import TracebackType
 from typing import Any, cast
 from uuid import uuid4
@@ -47,8 +46,6 @@ from uuid import uuid4
 
 class ToolManager:
     _INTERRUPT_CLOSE_TIMEOUT = 0.5
-    _PROVIDER_TOOL_NAME_PATTERN = compile_regex(r"^[A-Za-z0-9_-]+$")
-    _PROVIDER_TOOL_NAME_PREFIX = "avl_"
 
     _parser: ToolCallParser
     _stack: AsyncExitStack
@@ -56,6 +53,7 @@ class ToolManager:
     _available_aliases: dict[str, list[str]]
     _available_tool_names: set[str]
     _descriptors: dict[str, ToolDescriptor]
+    _tool_name_policy: ToolNamePolicy
     _tools: dict[str, Callable[..., Any]] | None = None
     _toolsets: list[ToolSet] | None = None
 
@@ -118,6 +116,43 @@ class ToolManager:
             if toolset_schemas:
                 schemas.extend(toolset_schemas)
         return schemas
+
+    def provider_json_schemas(
+        self, *, provider_family: str | None = None
+    ) -> list[dict[str, Any]] | None:
+        """Return enabled tool schemas with provider-facing names."""
+        policy = self._tool_name_policy.for_provider(provider_family)
+        schemas: list[dict[str, Any]] = []
+        for descriptor in self._descriptors.values():
+            schema = self._provider_safe_schema(
+                descriptor.schema,
+                policy=policy,
+            )
+            if schema is not None:
+                schemas.append(schema)
+        return schemas or None
+
+    def provider_tool_name(
+        self,
+        canonical_name: str,
+        *,
+        provider_family: str | None = None,
+    ) -> str:
+        """Return the provider-facing name for ``canonical_name``."""
+        return self._tool_name_policy.for_provider(
+            provider_family
+        ).provider_name(canonical_name)
+
+    def canonical_tool_name(
+        self,
+        provider_name: str,
+        *,
+        provider_family: str | None = None,
+    ) -> str:
+        """Return the canonical name for a provider-facing name."""
+        return self._tool_name_policy.for_provider(
+            provider_family
+        ).canonical_name(provider_name)
 
     def list_tools(self) -> list[ToolDescriptor]:
         """Return descriptors for enabled tools."""
@@ -297,6 +332,14 @@ class ToolManager:
                     enabled_toolsets.append(toolset)
 
         self._tools = {}
+        enabled_names: list[str] = []
+        for toolset in enabled_toolsets:
+            enabled_names.extend(
+                name for name, _aliases in self._toolset_tool_names(toolset)
+            )
+        self._tool_name_policy = ToolNamePolicy(
+            settings=self._settings.tool_name_policy
+        ).bind(enabled_names)
         if enabled_toolsets:
             for toolset in enabled_toolsets:
                 self._register_toolset(toolset)
@@ -375,6 +418,7 @@ class ToolManager:
                 aliases=aliases,
                 namespace=namespace,
                 schema=schema,
+                policy=self._tool_name_policy,
             )
 
     @staticmethod
@@ -402,6 +446,7 @@ class ToolManager:
         aliases: list[str],
         namespace: str | None,
         schema: dict[str, Any] | None,
+        policy: ToolNamePolicy | None = None,
     ) -> ToolDescriptor:
         function_schema = (
             schema.get("function")
@@ -433,7 +478,10 @@ class ToolManager:
                 if isinstance(returns, dict)
                 else None
             ),
-            provider_safe_schema=cls._provider_safe_schema(schema),
+            provider_safe_schema=cls._provider_safe_schema(
+                schema,
+                policy=policy or ToolNamePolicy.default(),
+            ),
             namespace=namespace,
             capabilities=cls._tool_capabilities(tool),
             metadata=cls._tool_metadata(tool),
@@ -512,9 +560,11 @@ class ToolManager:
         assert isinstance(value, bool), f"{name} must be a boolean"
         return value
 
-    @classmethod
+    @staticmethod
     def _provider_safe_schema(
-        cls, schema: dict[str, Any] | None
+        schema: dict[str, Any] | None,
+        *,
+        policy: ToolNamePolicy,
     ) -> dict[str, Any] | None:
         if not schema:
             return None
@@ -525,52 +575,18 @@ class ToolManager:
             and isinstance(function, dict)
             and isinstance(function.get("name"), str)
         ):
-            function["name"] = cls._encode_provider_tool_name(function["name"])
+            function["name"] = policy.provider_name(function["name"])
         return provider_schema
 
-    @classmethod
-    def _encode_provider_tool_name(cls, tool_name: str) -> str:
-        assert tool_name.strip(), "tool name must not be empty"
-        if cls._PROVIDER_TOOL_NAME_PATTERN.fullmatch(
-            tool_name
-        ) and not tool_name.startswith(cls._PROVIDER_TOOL_NAME_PREFIX):
-            return tool_name
-        encoded = urlsafe_b64encode(tool_name.encode()).decode().rstrip("=")
-        return f"{cls._PROVIDER_TOOL_NAME_PREFIX}{encoded}"
-
-    @classmethod
     def _canonical_requested_name(
-        cls, name: str, *, provider_originated: bool
+        self, name: str, *, provider_originated: bool
     ) -> str:
         requested_name = (
-            cls._decode_provider_tool_name(name)
+            self._tool_name_policy.canonical_name(name)
             if provider_originated
             else name
         )
         return requested_name.removeprefix("functions.")
-
-    @classmethod
-    def _decode_provider_tool_name(cls, tool_name: str) -> str:
-        assert tool_name.strip(), "tool name must not be empty"
-        assert cls._PROVIDER_TOOL_NAME_PATTERN.fullmatch(
-            tool_name
-        ), "provider tool name is invalid"
-
-        if not tool_name.startswith(cls._PROVIDER_TOOL_NAME_PREFIX):
-            return tool_name
-
-        payload = tool_name[len(cls._PROVIDER_TOOL_NAME_PREFIX) :]
-        assert payload, "provider tool name is missing encoded content"
-        padding = "=" * (-len(payload) % 4)
-        try:
-            decoded = urlsafe_b64decode(f"{payload}{padding}").decode()
-        except (BinasciiError, UnicodeDecodeError) as exc:
-            raise AssertionError("provider tool name is malformed") from exc
-        assert decoded.strip(), "decoded tool name must not be empty"
-        assert (
-            cls._encode_provider_tool_name(decoded) == tool_name
-        ), "provider tool name is malformed"
-        return decoded
 
     def is_potential_tool_call(self, buffer: str, token_str: str) -> bool:
         """Proxy :meth:`ToolCallParser.is_potential_tool_call`."""
@@ -584,7 +600,16 @@ class ToolManager:
 
     def parse_calls(self, text: str) -> ToolCallParseOutcome:
         """Return parsed calls and diagnostics for ``text``."""
-        return self._parser.parse(text)
+        outcome = self._parser.parse(text)
+        if not outcome.calls:
+            return outcome
+        return ToolCallParseOutcome(
+            calls=[
+                self._canonical_provider_originated_call(call)
+                for call in outcome.calls
+            ],
+            diagnostics=outcome.diagnostics,
+        )
 
     def stream_buffer_diagnostics(
         self, buffer: str
@@ -595,6 +620,39 @@ class ToolManager:
     def get_calls(self, text: str) -> list[ToolCall] | None:
         calls = self.parse_calls(text).calls
         return calls or None
+
+    def _canonical_provider_originated_call(self, call: ToolCall) -> ToolCall:
+        try:
+            canonical_name = self._tool_name_policy.canonical_name(call.name)
+        except AssertionError:
+            if (
+                self._settings.tool_name_policy.mode
+                is ToolNamePolicyMode.ENCODED
+                and not call.name.startswith(
+                    self._settings.tool_name_policy.prefix
+                )
+            ):
+                return call
+            return ToolCall(
+                id=call.id,
+                name="",
+                arguments=call.arguments,
+                provider_name=call.name,
+                provider_name_encoded=call.provider_name_encoded,
+                provider_arguments_malformed=(
+                    call.provider_arguments_malformed
+                ),
+            )
+        if canonical_name == call.name:
+            return call
+        return ToolCall(
+            id=call.id,
+            name=canonical_name,
+            arguments=call.arguments,
+            provider_name=call.name,
+            provider_name_encoded=call.provider_name_encoded,
+            provider_arguments_malformed=call.provider_arguments_malformed,
+        )
 
     async def prepare_call(
         self, call: ToolCall, context: ToolCallContext

@@ -1,6 +1,6 @@
 from ..agent.loader import OrchestratorLoader
 from ..agent.orchestrator import Orchestrator
-from ..entities import OrchestratorSettings
+from ..entities import OrchestratorSettings, ToolNamePolicySettings
 from ..event.manager import EventManagerMode
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.context import ToolSettingsContext
@@ -92,6 +92,7 @@ def _create_lifespan(
     specs_path: str | None,
     settings: OrchestratorSettings | None,
     tool_settings: ToolSettingsContext | None,
+    tool_name_policy: ToolNamePolicySettings | None,
     mcp_prefix: str,
     mcp_name: str,
     mcp_description: str | None,
@@ -122,6 +123,7 @@ def _create_lifespan(
                 specs_path=specs_path,
                 settings=settings,
                 tool_settings=tool_ctx,
+                tool_name_policy=tool_name_policy,
             )
             app.state.ctx = ctx
             app.state.stack = stack
@@ -292,6 +294,7 @@ def register_agent_endpoints(
     allow_headers: list[str] | None = None,
     allow_credentials: bool = False,
     protocols: Mapping[str, set[str]] | None = None,
+    tool_name_policy: ToolNamePolicySettings | None = None,
 ) -> None:
     assert (specs_path is None) ^ (
         settings is None
@@ -305,6 +308,7 @@ def register_agent_endpoints(
         specs_path=specs_path,
         settings=settings,
         tool_settings=tool_settings,
+        tool_name_policy=tool_name_policy,
         mcp_prefix=mcp_prefix,
         mcp_name=mcp_name,
         mcp_description=mcp_description,
@@ -363,6 +367,7 @@ def agents_server(
     allow_headers: list[str] | None = None,
     allow_credentials: bool = False,
     protocols: Mapping[str, set[str]] | None = None,
+    tool_name_policy: ToolNamePolicySettings | None = None,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents."""
     assert (specs_path is None) ^ (
@@ -379,6 +384,7 @@ def agents_server(
         specs_path=specs_path,
         settings=settings,
         tool_settings=tool_settings,
+        tool_name_policy=tool_name_policy,
         mcp_prefix=mcp_prefix,
         mcp_name=mcp_name,
         mcp_description=mcp_description,
@@ -454,6 +460,7 @@ async def di_get_orchestrator_from_app(app: FastAPI) -> Orchestrator:
                 ctx.specs_path,
                 agent_id=app.state.agent_id,
                 tool_settings=ctx.tool_settings,
+                tool_name_policy=ctx.tool_name_policy,
                 event_manager_mode=EventManagerMode.SERVER,
             )
         else:
@@ -461,6 +468,7 @@ async def di_get_orchestrator_from_app(app: FastAPI) -> Orchestrator:
             orchestrator_cm = await loader.from_settings(
                 ctx.settings,
                 tool_settings=ctx.tool_settings,
+                tool_name_policy=ctx.tool_name_policy,
                 event_manager_mode=EventManagerMode.SERVER,
             )
         orchestrator = await stack.enter_async_context(orchestrator_cm)
