@@ -4,11 +4,12 @@ from ...entities import (
     ToolValue,
 )
 from ...isolation import SandboxBackend as IsolationSandboxBackend
-from ...isolation import SandboxEffectiveSettings
+from ...isolation import SandboxEffectiveSettings, isolation_diagnostic_codes
 from ...sandbox import (
     SandboxAsyncBackend,
     SandboxBackendDiagnostic,
     SandboxBackendDiagnosticCode,
+    SandboxBackendOperation,
     SandboxBackendStream,
     SandboxExecutionResult,
     SandboxOutputArtifact,
@@ -118,25 +119,20 @@ class ShellSandboxCommandExecutor(CommandExecutor):
         try:
             probe = await self._sandbox_backend.probe()
         except Exception as error:
-            diagnostics = _backend_exception_diagnostics(error)
-            if diagnostics:
-                return _closed_result(
-                    spec,
-                    start_time=start_time,
-                    status=ShellExecutionStatus.TOOL_ERROR,
-                    error_code=ShellExecutionErrorCode.TOOL_ERROR,
-                    error_message=_diagnostic_summary(diagnostics),
-                    backend="sandbox",
-                    metadata=_sandbox_metadata(plan, diagnostics),
-                )
+            diagnostics = _backend_exception_diagnostics(
+                error,
+                operation=SandboxBackendOperation.PROBE,
+                fallback_code=SandboxBackendDiagnosticCode.BACKEND_UNAVAILABLE,
+                fallback_message="sandbox backend probe failed",
+            )
             return _closed_result(
                 spec,
                 start_time=start_time,
                 status=ShellExecutionStatus.TOOL_ERROR,
                 error_code=ShellExecutionErrorCode.TOOL_ERROR,
-                error_message="sandbox backend probe failed",
+                error_message=_diagnostic_summary(diagnostics),
                 backend="sandbox",
-                metadata=_sandbox_metadata(plan, ()),
+                metadata=_sandbox_metadata(plan, diagnostics),
             )
         selection = select_sandbox_backend(plan.sandbox_plan, (probe,))
         if not selection.ok:
@@ -152,25 +148,20 @@ class ShellSandboxCommandExecutor(CommandExecutor):
         try:
             result = await self._sandbox_backend.execute(plan.sandbox_plan)
         except Exception as error:
-            diagnostics = _backend_exception_diagnostics(error)
-            if diagnostics:
-                return _closed_result(
-                    spec,
-                    start_time=start_time,
-                    status=ShellExecutionStatus.TOOL_ERROR,
-                    error_code=ShellExecutionErrorCode.TOOL_ERROR,
-                    error_message=_diagnostic_summary(diagnostics),
-                    backend="sandbox",
-                    metadata=_sandbox_metadata(plan, diagnostics),
-                )
+            diagnostics = _backend_exception_diagnostics(
+                error,
+                operation=SandboxBackendOperation.START,
+                fallback_code=SandboxBackendDiagnosticCode.EXECUTION_FAILED,
+                fallback_message="sandbox backend execution failed",
+            )
             return _closed_result(
                 spec,
                 start_time=start_time,
                 status=ShellExecutionStatus.TOOL_ERROR,
                 error_code=ShellExecutionErrorCode.TOOL_ERROR,
-                error_message="sandbox backend execution failed",
+                error_message=_diagnostic_summary(diagnostics),
                 backend="sandbox",
-                metadata=_sandbox_metadata(plan, ()),
+                metadata=_sandbox_metadata(plan, diagnostics),
             )
         stdout = _sandbox_stream_capture(
             result.stdout,
@@ -201,15 +192,24 @@ def _is_sandbox_backend(value: object) -> bool:
 
 def _backend_exception_diagnostics(
     error: Exception,
+    *,
+    operation: SandboxBackendOperation,
+    fallback_code: SandboxBackendDiagnosticCode,
+    fallback_message: str,
 ) -> tuple[SandboxBackendDiagnostic, ...]:
     diagnostic = getattr(error, "diagnostic", None)
-    if diagnostic is None:
-        return ()
     if not all(
         hasattr(diagnostic, attribute)
         for attribute in ("code", "operation", "message")
     ):
-        return ()
+        return (
+            SandboxBackendDiagnostic(
+                code=fallback_code,
+                operation=operation,
+                message=fallback_message,
+                retryable=True,
+            ),
+        )
     return (cast(SandboxBackendDiagnostic, diagnostic),)
 
 
@@ -522,6 +522,9 @@ def _sandbox_metadata(
         metadata["sandbox_diagnostic_codes"] = tuple(
             _enum_value(diagnostic.code) for diagnostic in diagnostics
         )
+        stable_codes = isolation_diagnostic_codes(diagnostics)
+        if stable_codes:
+            metadata["isolation_diagnostic_codes"] = stable_codes
     if result is not None and result.cleanup_uncertain:
         metadata["sandbox_cleanup_uncertain"] = True
     return metadata

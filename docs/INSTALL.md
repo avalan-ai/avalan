@@ -216,10 +216,10 @@ failure-mode runbooks.
 ## Container execution
 
 Container-backed execution is disabled by default and requires trusted
-operator configuration. Current release readiness centers on the core
-container contract, shell container policy, fake-backend tests, and injected
-runtime backends; real Docker and Apple `container` jobs are optional
-environment-gated checks. See
-[Container execution](CONTAINERS.md) for supported scope, runtime setup,
-test gates, platform limits, fail-closed behavior, diagnostics, and known
-deferred conformance.
+operator configuration. Docker and Apple `container` backends are implemented,
+but default tests use fake backends; real Docker and Apple `container` jobs
+are optional environment-gated checks. See
+[Isolation execution](ISOLATION.md) for the unified local, sandbox, and
+container model, and [Container execution](CONTAINERS.md) for
+container-specific setup, test gates, platform limits, fail-closed behavior,
+diagnostics, and known deferred conformance.

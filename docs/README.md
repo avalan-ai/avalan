@@ -47,6 +47,12 @@ agents and workflows across local and hosted models.
 - [Container execution](CONTAINERS.md) - Configure trusted container profiles,
   understand current runtime scope, optional live-runtime gates, platform
   limits, security posture, diagnostics, and deferred conformance.
+- [Isolation execution](ISOLATION.md) - Configure local, sandbox, and
+  container execution modes, trusted policy fields, approval behavior,
+  fail-closed semantics, diagnostics, and optional live-runtime gates.
+- [Isolation traceability](ISOLATION_TRACEABILITY.md) - Map isolation agenda
+  phases and release-readiness safety claims to concrete test files and
+  commands.
 - [Task file delivery](task_file_delivery.md) - Understand direct and queued
   file descriptors, provider references, conversion, local backends, and the
   file-delivery capability matrix.

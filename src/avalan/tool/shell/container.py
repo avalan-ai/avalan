@@ -3,6 +3,7 @@ from ...container import (
     ContainerBackend,
     ContainerBackendDiagnostic,
     ContainerBackendDiagnosticCode,
+    ContainerBackendOperation,
     ContainerBackendSelection,
     ContainerBackendStream,
     ContainerEffectiveSettings,
@@ -33,6 +34,7 @@ from ...isolation import (
     SandboxEffectiveSettings,
     SandboxOutputPolicy,
     SandboxResourceLimits,
+    isolation_diagnostic_codes,
 )
 from ...sandbox import (
     SandboxExecutionPlan,
@@ -440,12 +442,29 @@ class ShellContainerCommandExecutor(CommandExecutor):
                 backend="container",
             )
         assert plan.container_plan is not None
-        selection = await _select_backend(
-            plan.container_plan,
-            self._container_backend,
-            opt_in_backends=self._opt_in_backends,
-            rootful_authorized=self._rootful_authorized,
-        )
+        try:
+            selection = await _select_backend(
+                plan.container_plan,
+                self._container_backend,
+                opt_in_backends=self._opt_in_backends,
+                rootful_authorized=self._rootful_authorized,
+            )
+        except Exception as error:
+            diagnostics = _backend_exception_diagnostics(
+                error,
+                operation=ContainerBackendOperation.PROBE,
+                fallback_code=ContainerBackendDiagnosticCode.BACKEND_UNAVAILABLE,
+                fallback_message="container backend probe failed",
+            )
+            return _closed_result(
+                spec,
+                start_time=start_time,
+                status=ShellExecutionStatus.TOOL_ERROR,
+                error_code=ShellExecutionErrorCode.TOOL_ERROR,
+                error_message=_diagnostic_summary(diagnostics),
+                backend="container",
+                metadata=_container_metadata(plan, diagnostics),
+            )
         if not selection.ok:
             return _closed_result(
                 spec,
@@ -456,13 +475,30 @@ class ShellContainerCommandExecutor(CommandExecutor):
                 backend="container",
                 metadata=_container_metadata(plan, selection.diagnostics),
             )
-        result = await run_container_managed_lifecycle(
-            self._container_backend,
-            plan.container_plan.run_plan,
-            output_contract=plan.output_contract,
-            deadlines=_deadlines(spec),
-            stream_policy=_stream_policy(spec),
-        )
+        try:
+            result = await run_container_managed_lifecycle(
+                self._container_backend,
+                plan.container_plan.run_plan,
+                output_contract=plan.output_contract,
+                deadlines=_deadlines(spec),
+                stream_policy=_stream_policy(spec),
+            )
+        except Exception as error:
+            diagnostics = _backend_exception_diagnostics(
+                error,
+                operation=ContainerBackendOperation.CREATE,
+                fallback_code=ContainerBackendDiagnosticCode.CREATE_FAILED,
+                fallback_message="container backend execution failed",
+            )
+            return _closed_result(
+                spec,
+                start_time=start_time,
+                status=ShellExecutionStatus.TOOL_ERROR,
+                error_code=ShellExecutionErrorCode.TOOL_ERROR,
+                error_message=_diagnostic_summary(diagnostics),
+                backend="container",
+                metadata=_container_metadata(plan, diagnostics),
+            )
         stdout = _shell_stream_capture(
             result,
             ContainerBackendStream.STDOUT,
@@ -497,6 +533,29 @@ async def _select_backend(
         (probe,),
         rootful_authorized=rootful_authorized,
         opt_in_backends=opt_in_backends,
+    )
+
+
+def _backend_exception_diagnostics(
+    error: Exception,
+    *,
+    operation: ContainerBackendOperation,
+    fallback_code: ContainerBackendDiagnosticCode,
+    fallback_message: str,
+) -> tuple[ContainerBackendDiagnostic, ...]:
+    diagnostic = getattr(error, "diagnostic", None)
+    if all(
+        hasattr(diagnostic, attribute)
+        for attribute in ("code", "operation", "message")
+    ):
+        return (cast(ContainerBackendDiagnostic, diagnostic),)
+    return (
+        ContainerBackendDiagnostic(
+            code=fallback_code,
+            operation=operation,
+            message=fallback_message,
+            retryable=True,
+        ),
     )
 
 
@@ -760,6 +819,9 @@ def _container_metadata(
             cast(ContainerBackendDiagnosticCode, diagnostic.code).value
             for diagnostic in diagnostics
         )
+        stable_codes = isolation_diagnostic_codes(diagnostics)
+        if stable_codes:
+            metadata["isolation_diagnostic_codes"] = stable_codes
     return metadata
 
 

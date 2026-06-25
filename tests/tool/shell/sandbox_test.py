@@ -354,6 +354,11 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
 
                     self.assertEqual(result.backend, "sandbox")
                     self.assertEqual(result.status, expected_status)
+                    if name == "unavailable backend":
+                        self.assertEqual(
+                            result.metadata["isolation_diagnostic_codes"],
+                            ("sandbox.provider_unavailable",),
+                        )
 
     async def test_negative_missing_backend_and_executable(self) -> None:
         with TemporaryDirectory() as temporary_directory:
@@ -437,7 +442,11 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
         self.assertEqual(probe_result.status, ShellExecutionStatus.TOOL_ERROR)
         self.assertEqual(
             probe_result.error_message,
-            "sandbox backend probe failed",
+            "sandbox execution failed: sandbox.backend.unavailable",
+        )
+        self.assertEqual(
+            probe_result.metadata["isolation_diagnostic_codes"],
+            ("sandbox.provider_unavailable",),
         )
         self.assertEqual(
             execute_result.status,
@@ -445,7 +454,11 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             execute_result.error_message,
-            "sandbox backend execution failed",
+            "sandbox execution failed: sandbox.backend.execution_failed",
+        )
+        self.assertEqual(
+            execute_result.metadata["isolation_diagnostic_codes"],
+            ("isolation.mode_unavailable",),
         )
         self.assertEqual(
             diagnostic_probe_result.error_message,
@@ -457,7 +470,11 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             malformed_diagnostic_result.error_message,
-            "sandbox backend probe failed",
+            "sandbox execution failed: sandbox.backend.unavailable",
+        )
+        self.assertEqual(
+            malformed_diagnostic_result.metadata["isolation_diagnostic_codes"],
+            ("sandbox.provider_unavailable",),
         )
 
     async def test_negative_unmapped_cwd_and_unsupported_output_contract(
