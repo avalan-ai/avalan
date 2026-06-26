@@ -29,6 +29,8 @@ With Avalan, you can:
   control over prompts, sampling, streaming, backends, and vendor routing.
 - 🛠️ **Execute tools** as first-class runtime steps, including browser automation,
   code, databases, shell media tools, MCP servers, and A2A agents.
+- 🧱 Choose **runtime isolation** for execution surfaces with local, sandbox,
+  and container modes, trusted profiles, and fail-closed policy.
 - 🔁 **Compose flows** where each node, edge, input, output, and review boundary is
   visible.
 - ✅ Package repeatable work as **tasks with typed inputs**, file handling, queues,
