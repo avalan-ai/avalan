@@ -41,6 +41,7 @@ from avalan.sandbox.backend import (
     _default_command_runner,
     _process_limit_preexec,
     _replace_path_prefix,
+    _system_prefix_resolves_equivalently,
 )
 
 
@@ -1391,6 +1392,20 @@ class SandboxPhase6Test(TestCase):
         self.assertEqual(
             _replace_path_prefix("/tmp", "/tmp", "/private/tmp"),
             "/private/tmp",
+        )
+
+    def test_system_prefix_helper_accepts_nested_equivalent_prefix(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _replace_path_prefix("/tmp/work", "/tmp", "/private/tmp"),
+            "/private/tmp/work",
+        )
+        self.assertTrue(
+            _system_prefix_resolves_equivalently(
+                "/tmp/work",
+                "/private/tmp/work",
+            )
         )
 
     def test_start_failures_clean_prepared_temp_dirs(self) -> None:

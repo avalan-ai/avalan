@@ -221,6 +221,7 @@ enable = ["shell.rg", "shell.head", "shell.jq"]
 [tool.shell]
 workspace_root = "."
 cwd = "."
+materialized_input_files_dir = "avalan-input-files"
 max_stdout_bytes = 65536
 allow_media_tools = false
 ```
@@ -229,6 +230,10 @@ Media tools such as `shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`, and
 `shell.tesseract` require `allow_media_tools = true` or the corresponding CLI
 flag. Absolute paths, symlinks, hidden files, and executable search paths are
 also opt-in.
+
+Attached and generated files that need to be exposed to shell tools are
+materialized under `workspace_root / materialized_input_files_dir`. The
+directory is workspace-relative and defaults to `avalan-input-files`.
 
 Agent TOML is trusted deployment configuration only when supplied through an
 operator-controlled channel. In that mode `[tool.sandbox]` and

@@ -1232,6 +1232,48 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(policy.collapse_replacement)
         self.assertEqual(policy.map, {"math.calculator": "calc"})
 
+    def test_agent_tool_name_policy_maps_with_sanitized_fallback(self):
+        args = Namespace(
+            tool_name_policy="sanitized",
+            tool_name_prefix=None,
+            tool_name_replacement="_",
+            tool_name_collapse_replacement=True,
+            tool_name_map=[
+                "shell.pdfinfo=pdfinfo",
+                "shell.tesseract=tesseract",
+            ],
+        )
+
+        policy = agent_cmds._agent_tool_name_policy(args)
+
+        assert policy is not None
+        self.assertIs(policy.mode, ToolNamePolicyMode.SANITIZED)
+        self.assertEqual(policy.replacement, "_")
+        self.assertTrue(policy.collapse_replacement)
+        self.assertEqual(
+            policy.map,
+            {
+                "shell.pdfinfo": "pdfinfo",
+                "shell.tesseract": "tesseract",
+            },
+        )
+
+    def test_agent_tool_name_policy_allows_empty_mapped_prefix(self):
+        args = Namespace(
+            tool_name_policy="mapped",
+            tool_name_prefix="",
+            tool_name_replacement=None,
+            tool_name_collapse_replacement=None,
+            tool_name_map=["shell.pdfinfo=pdfinfo"],
+        )
+
+        policy = agent_cmds._agent_tool_name_policy(args)
+
+        assert policy is not None
+        self.assertIs(policy.mode, ToolNamePolicyMode.MAPPED)
+        self.assertEqual(policy.prefix, "")
+        self.assertEqual(policy.map, {"shell.pdfinfo": "pdfinfo"})
+
     def test_agent_tool_name_policy_rejects_invalid_cli_values(self):
         cases = (
             Namespace(
@@ -1318,6 +1360,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             run_cache_strategy=None,
             tool=["shell.rg"],
             tool_shell_workspace_root="workspace",
+            tool_shell_materialized_input_files_dir="agent-input-files",
             tool_shell_max_stdout_bytes=4096,
             tool_shell_allow_media_tools=True,
             tool_shell_allowed_commands=("rg", "cat"),
@@ -1343,6 +1386,10 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         output = console.print.call_args.args[0].code
         self.assertIn("[tool.shell]", output)
         self.assertIn('workspace_root = "workspace"', output)
+        self.assertIn(
+            'materialized_input_files_dir = "agent-input-files"',
+            output,
+        )
         self.assertIn("max_stdout_bytes = 4096", output)
         self.assertIn("allow_media_tools = true", output)
         self.assertIn("allowed_commands = [", output)
@@ -1355,6 +1402,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             parsed["tool"]["shell"],
             {
                 "workspace_root": "workspace",
+                "materialized_input_files_dir": "agent-input-files",
                 "max_stdout_bytes": 4096,
                 "allow_media_tools": True,
                 "allowed_commands": ["rg", "cat"],

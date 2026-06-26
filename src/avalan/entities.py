@@ -1304,7 +1304,10 @@ class ToolNamePolicySettings:
         assert isinstance(
             self.prefix, str
         ), "tool name policy prefix must be a string"
-        assert self.prefix.strip(), "tool name policy prefix must not be empty"
+        if self.mode is ToolNamePolicyMode.ENCODED:
+            assert (
+                self.prefix.strip()
+            ), "tool name policy prefix must not be empty"
         assert isinstance(
             self.replacement, str
         ), "tool name policy replacement must be a string"

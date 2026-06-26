@@ -64,10 +64,8 @@ def _sed_selectors(
     if selector_count > settings.max_filter_selectors:
         raise policy_denied(
             ShellExecutionErrorCode.UNSAFE_FILTER,
-            (
-                "sed selector count is too large "
-                f"({selector_count} > {settings.max_filter_selectors})"
-            ),
+            "sed selector count is too large "
+            f"({selector_count} > {settings.max_filter_selectors})",
         )
     selectors: list[str] = []
     total_selector_bytes = 0

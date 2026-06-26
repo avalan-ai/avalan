@@ -11,20 +11,35 @@ from avalan.entities import (
     MessageRole,
     ToolCall,
     ToolCallContext,
+    ToolCallResult,
+)
+from avalan.tool.shell.entities import (
+    ExecutionResult,
+    GeneratedFile,
+    ShellExecutionStatus,
+    ShellFormattedResult,
+    ShellOutputKind,
 )
 from avalan.tool.shell.input_files import (
     _add_alias,
+    _add_generated_file_path_aliases,
     _cwd_relative_file_path,
+    _decode_base64_payload,
     _effective_shell_cwd,
+    _execution_result,
+    _generated_file_filename,
     _input_file_path_aliases,
     _is_relative_to,
+    _iter_generated_files,
     _iter_input_file_content,
     _iter_message_file_content,
+    _make_directory_tree,
     _path_alias,
     _path_has_part,
     _rewrite_path_argument,
     _rewrite_paths_argument,
     _rewrite_shell_input_file_paths,
+    _shell_file_path_aliases,
     shell_input_file_filter,
 )
 from avalan.tool.shell.settings import ShellToolSettings
@@ -229,6 +244,18 @@ async def test_effective_shell_cwd_rejects_invalid_values(
     )
 
 
+async def test_shell_file_path_aliases_skip_when_effective_cwd_invalid(
+    tmp_path: Path,
+) -> None:
+    aliases = await _shell_file_path_aliases(
+        ToolCallContext(input=_message(tmp_path / "missing.pdf")),
+        ShellToolSettings(workspace_root=str(tmp_path)),
+        request_cwd=object(),
+    )
+
+    assert aliases == {}
+
+
 async def test_shell_input_file_rewrite_noops(tmp_path: Path) -> None:
     source = tmp_path / "report.pdf"
     source.write_bytes(b"%PDF-1.7")
@@ -336,7 +363,10 @@ async def test_shell_input_file_filter_materializes_base64_attachments(
             )
         ],
     )
-    settings = ShellToolSettings(workspace_root=str(tmp_path))
+    settings = ShellToolSettings(
+        workspace_root=str(tmp_path),
+        materialized_input_files_dir="materialized/inputs",
+    )
     call = ToolCall(
         id="call-1",
         name="shell.pdfinfo",
@@ -352,10 +382,12 @@ async def test_shell_input_file_filter_materializes_base64_attachments(
     assert result is not None
     filtered_call, _ = result
     assert filtered_call.arguments == {
-        "path": "avalan-input-files/fixed/report.pdf",
-        "paths": ["avalan-input-files/fixed/report.pdf"],
+        "path": "materialized/inputs/fixed/report.pdf",
+        "paths": ["materialized/inputs/fixed/report.pdf"],
     }
-    materialized = tmp_path / "avalan-input-files" / "fixed" / "report.pdf"
+    materialized = (
+        tmp_path / "materialized" / "inputs" / "fixed" / "report.pdf"
+    )
     assert materialized.read_bytes() == b"%PDF-1.7"
 
     aliases = await _input_file_path_aliases(
@@ -372,9 +404,77 @@ async def test_shell_input_file_filter_materializes_base64_attachments(
         settings,
     )
 
-    assert aliases["second.pdf"] == "avalan-input-files/second/second.pdf"
-    second = tmp_path / "avalan-input-files" / "second" / "second.pdf"
+    assert aliases["second.pdf"] == "materialized/inputs/second/second.pdf"
+    second = tmp_path / "materialized" / "inputs" / "second" / "second.pdf"
     assert second.read_bytes() == b"second"
+
+
+async def test_shell_input_file_filter_materializes_generated_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "avalan.tool.shell.input_files.uuid4",
+        lambda: SimpleNamespace(hex="generated"),
+    )
+    generated_file = GeneratedFile(
+        display_path="GENERATED_PREFIX-1.png",
+        media_type="image/png",
+        suffix=".png",
+        bytes=5,
+        content_base64=b64encode(b"image").decode("ascii"),
+    )
+    execution_result = ExecutionResult(
+        backend="local",
+        tool_name="shell.pdftoppm",
+        command="pdftoppm",
+        argv=("pdftoppm",),
+        display_argv=("pdftoppm", "GENERATED_PREFIX"),
+        cwd=str(tmp_path),
+        display_cwd=".",
+        status=ShellExecutionStatus.COMPLETED,
+        exit_code=0,
+        stdout="",
+        stderr="",
+        stdout_media_type="application/json",
+        output_kind=ShellOutputKind.GENERATED_FILES,
+        generated_files=(generated_file,),
+    )
+    previous = ToolCallResult(
+        id="result-1",
+        call=ToolCall(
+            id="call-1",
+            name="shell.pdftoppm",
+            arguments={"path": "report.pdf"},
+        ),
+        name="shell.pdftoppm",
+        arguments={"path": "report.pdf"},
+        result=ShellFormattedResult("formatted", execution_result),
+    )
+    call = ToolCall(
+        id="call-2",
+        name="shell.tesseract",
+        arguments={"path": "GENERATED_PREFIX-1.png"},
+    )
+
+    result = await _rewrite_shell_input_file_paths(
+        call,
+        ToolCallContext(calls=[previous]),
+        ShellToolSettings(
+            workspace_root=str(tmp_path),
+            materialized_input_files_dir="generated-files",
+        ),
+    )
+
+    assert result is not None
+    filtered_call, _ = result
+    assert filtered_call.arguments == {
+        "path": "generated-files/generated/GENERATED_PREFIX-1.png"
+    }
+    materialized = (
+        tmp_path / "generated-files" / "generated" / "GENERATED_PREFIX-1.png"
+    )
+    assert materialized.read_bytes() == b"image"
 
 
 async def test_shell_input_file_aliases_skip_unmaterializable_files(
@@ -410,6 +510,181 @@ async def test_shell_input_file_aliases_skip_unmaterializable_files(
 
     assert aliases == {}
     assert not (tmp_path / "avalan-input-files").exists()
+
+
+async def test_make_directory_tree_handles_stop_and_races(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[Path] = []
+
+    async def make_directory(path: Path) -> None:
+        calls.append(path)
+        if len(calls) == 1:
+            raise FileNotFoundError(path)
+        if len(calls) == 3:
+            raise FileExistsError(path)
+
+    await _make_directory_tree(tmp_path, stop_at=tmp_path)
+
+    monkeypatch.setattr(
+        "avalan.tool.shell.input_files._make_directory",
+        make_directory,
+    )
+
+    await _make_directory_tree(tmp_path / "parent" / "child", stop_at=tmp_path)
+
+    assert calls == [
+        tmp_path / "parent" / "child",
+        tmp_path / "parent",
+        tmp_path / "parent" / "child",
+    ]
+
+
+async def test_make_directory_tree_reraises_outside_stop_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def make_directory(_path: Path) -> None:
+        raise FileNotFoundError(_path)
+
+    monkeypatch.setattr(
+        "avalan.tool.shell.input_files._make_directory",
+        make_directory,
+    )
+
+    with pytest.raises(FileNotFoundError):
+        await _make_directory_tree(tmp_path.parent, stop_at=tmp_path)
+
+
+async def test_generated_file_aliases_skip_unusable_outputs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ids = iter(
+        [
+            SimpleNamespace(hex="valid"),
+            SimpleNamespace(hex="outside"),
+        ]
+    )
+    monkeypatch.setattr(
+        "avalan.tool.shell.input_files.uuid4",
+        lambda: next(ids),
+    )
+    aliases: dict[str, str] = {}
+    conflicts: set[str] = set()
+
+    await _add_generated_file_path_aliases(
+        aliases,
+        conflicts,
+        [
+            _generated_result(
+                GeneratedFile(
+                    display_path="truncated.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    truncated=True,
+                )
+            ),
+            _generated_result(
+                GeneratedFile(
+                    display_path="missing-content.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                )
+            ),
+            _generated_result(
+                GeneratedFile(
+                    display_path=".",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    content_base64=b64encode(b"dot").decode("ascii"),
+                )
+            ),
+            _generated_result(
+                GeneratedFile(
+                    display_path="bad.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    content_base64="not base64!",
+                )
+            ),
+            _generated_result(
+                GeneratedFile(
+                    display_path="valid.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    content_base64=b64encode(b"valid").decode("ascii"),
+                )
+            ),
+        ],
+        workspace_root=tmp_path,
+        materialized_root=tmp_path / "generated",
+        effective_cwd=tmp_path,
+    )
+
+    await _add_generated_file_path_aliases(
+        aliases,
+        conflicts,
+        [
+            _generated_result(
+                GeneratedFile(
+                    display_path="outside.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    content_base64=b64encode(b"outside").decode("ascii"),
+                )
+            )
+        ],
+        workspace_root=tmp_path,
+        materialized_root=tmp_path / "generated",
+        effective_cwd=tmp_path / "nested",
+    )
+
+    assert aliases == {"valid.png": "generated/valid/valid.png"}
+    assert conflicts == set()
+
+
+def test_generated_file_helpers_skip_non_execution_results() -> None:
+    plain_call = ToolCall(id="call-1", name="shell.cat", arguments={})
+    plain_result = ToolCallResult(
+        id="result-1",
+        call=plain_call,
+        name="shell.cat",
+        arguments={},
+        result="plain",
+    )
+    malformed_result = ToolCallResult(
+        id="result-2",
+        call=plain_call,
+        name="shell.cat",
+        arguments={},
+        result=SimpleNamespace(execution_result="not-result"),
+    )
+
+    assert list(_iter_generated_files([plain_call])) == []
+    assert list(_iter_generated_files([plain_result])) == []
+    assert _execution_result(malformed_result.result) is None
+    assert (
+        _generated_file_filename(
+            GeneratedFile(
+                display_path="dir/..",
+                media_type="image/png",
+                suffix=".png",
+                bytes=1,
+                content_base64=b64encode(b"x").decode("ascii"),
+            )
+        )
+        is None
+    )
+    assert _decode_base64_payload(" ") is None
+    assert _decode_base64_payload("not base64!") is None
 
 
 def test_input_file_iterators_cover_message_shapes(tmp_path: Path) -> None:
@@ -470,4 +745,34 @@ def _file_content(path: Path) -> MessageContentFile:
             "filename": path.name,
             "local_path": str(path.resolve()),
         },
+    )
+
+
+def _generated_result(generated_file: GeneratedFile) -> ToolCallResult:
+    execution_result = ExecutionResult(
+        backend="local",
+        tool_name="shell.pdftoppm",
+        command="pdftoppm",
+        argv=("pdftoppm",),
+        display_argv=("pdftoppm",),
+        cwd=".",
+        display_cwd=".",
+        status=ShellExecutionStatus.COMPLETED,
+        exit_code=0,
+        stdout="",
+        stderr="",
+        stdout_media_type="application/json",
+        output_kind=ShellOutputKind.GENERATED_FILES,
+        generated_files=(generated_file,),
+    )
+    return ToolCallResult(
+        id=f"result-{generated_file.display_path}",
+        call=ToolCall(
+            id=f"call-{generated_file.display_path}",
+            name="shell.pdftoppm",
+            arguments={},
+        ),
+        name="shell.pdftoppm",
+        arguments={},
+        result=ShellFormattedResult("formatted", execution_result),
     )

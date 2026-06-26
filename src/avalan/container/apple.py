@@ -210,12 +210,14 @@ class AppleContainerBackend(ContainerAsyncBackend):
                 ),
             )
         try:
-            result = await self._runner.run((
-                "system",
-                "status",
-                "--format",
-                "json",
-            ))
+            result = await self._runner.run(
+                (
+                    "system",
+                    "status",
+                    "--format",
+                    "json",
+                )
+            )
         except OSError:
             return ContainerBackendProbeResult(
                 backend=_APPLE_BACKEND,
@@ -392,11 +394,13 @@ class AppleContainerBackend(ContainerAsyncBackend):
     ) -> ContainerBackendOperationResult:
         state = self._state(container, ContainerBackendOperation.START)
         try:
-            result = await self._runner.run((
-                "start",
-                "--attach",
-                container.container_id,
-            ))
+            result = await self._runner.run(
+                (
+                    "start",
+                    "--attach",
+                    container.container_id,
+                )
+            )
         except OSError as error:
             raise ContainerBackendError(
                 _diagnostic(
@@ -515,13 +519,15 @@ class AppleContainerBackend(ContainerAsyncBackend):
     ) -> tuple[ContainerBackendStats, ...]:
         self._state(container, ContainerBackendOperation.STATS)
         try:
-            result = await self._runner.run((
-                "stats",
-                "--format",
-                "json",
-                "--no-stream",
-                container.container_id,
-            ))
+            result = await self._runner.run(
+                (
+                    "stats",
+                    "--format",
+                    "json",
+                    "--no-stream",
+                    container.container_id,
+                )
+            )
         except OSError as error:
             raise ContainerBackendError(
                 _diagnostic(
@@ -730,11 +736,13 @@ class AppleContainerBackend(ContainerAsyncBackend):
         last_result: AppleContainerCommandResult | None = None
         for reference in _local_image_references(plan.image.reference):
             try:
-                result = await self._runner.run((
-                    "image",
-                    "inspect",
-                    reference,
-                ))
+                result = await self._runner.run(
+                    (
+                        "image",
+                        "inspect",
+                        reference,
+                    )
+                )
             except OSError:
                 return (
                     reference,
@@ -772,10 +780,8 @@ class AppleContainerBackend(ContainerAsyncBackend):
                         _diagnostic(
                             ContainerBackendDiagnosticCode.IMAGE_DENIED,
                             operation,
-                            (
-                                "local Apple container image digest does not"
-                                " match approved plan"
-                            ),
+                            "local Apple container image digest does not"
+                            " match approved plan",
                         ),
                     ),
                 )
@@ -879,10 +885,8 @@ class AppleContainerBackend(ContainerAsyncBackend):
                     _diagnostic(
                         ContainerBackendDiagnosticCode.IMAGE_DENIED,
                         operation,
-                        (
-                            "local Apple container image digest does not"
-                            " match approved plan"
-                        ),
+                        "local Apple container image digest does not"
+                        " match approved plan",
                     ),
                 ),
             )
@@ -947,10 +951,12 @@ def _create_args(
     if plan.resources.cpu_count is not None:
         args.extend(("--cpus", str(plan.resources.cpu_count)))
     if plan.resources.memory_bytes is not None:
-        args.extend((
-            "--memory",
-            _memory_argument(plan.resources.memory_bytes),
-        ))
+        args.extend(
+            (
+                "--memory",
+                _memory_argument(plan.resources.memory_bytes),
+            )
+        )
     if plan.resources.pids is not None:
         args.extend(("--ulimit", f"nproc={plan.resources.pids}"))
     for mount in plan.mounts:

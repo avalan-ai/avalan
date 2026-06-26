@@ -1079,6 +1079,16 @@ class IsolationSettingsTest(TestCase):
                 }
             )
 
+    def test_select_profile_rejects_unsupported_mutated_mode(self) -> None:
+        settings = IsolationSettings.from_dict(
+            {"mode": "local"},
+            source=trusted_isolation_source("sdk"),
+        )
+        object.__setattr__(settings, "mode", "jail")
+
+        with self.assertRaisesRegex(AssertionError, "unsupported"):
+            settings.select_profile(IsolationProfileSelection())
+
 
 def _sandbox_effective(backend: str) -> IsolationEffectiveSettings:
     source = trusted_isolation_source("sdk")

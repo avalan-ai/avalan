@@ -16,6 +16,7 @@ class ShellToolSettingsTest(TestCase):
             "execution_mode": "local",
             "workspace_root": ".",
             "cwd": ".",
+            "materialized_input_files_dir": "avalan-input-files",
             "default_timeout_seconds": 10.0,
             "max_timeout_seconds": 60.0,
             "max_stdout_bytes": 65536,
@@ -88,6 +89,7 @@ class ShellToolSettingsTest(TestCase):
 
         self.assertLess(scalar_fields, field_names)
         self.assertIn("allow_media_tools", scalar_fields)
+        self.assertIn("materialized_input_files_dir", scalar_fields)
         self.assertIn("max_stdout_bytes", scalar_fields)
         self.assertNotIn("allowed_commands", scalar_fields)
         self.assertNotIn("environment", scalar_fields)
@@ -213,6 +215,9 @@ class ShellToolSettingsTest(TestCase):
             {"execution_mode": "remote"},
             {"workspace_root": ""},
             {"cwd": ""},
+            {"materialized_input_files_dir": ""},
+            {"materialized_input_files_dir": "/tmp/inputs"},
+            {"materialized_input_files_dir": "../inputs"},
             {"max_stdout_bytes": 0},
             {"max_stdin_bytes": 1},
             {"default_timeout_seconds": 61.0},

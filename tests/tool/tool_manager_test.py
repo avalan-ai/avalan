@@ -1383,6 +1383,16 @@ class DummySum(DummyAdder):
         self.aliases = []
 
 
+class DummyNamedTool:
+    def __init__(self, name: str) -> None:
+        self.__name__ = name
+        self.aliases: list[str] = []
+
+    async def __call__(self) -> str:
+        """Return the configured tool name."""
+        return self.__name__
+
+
 class InvalidAliasesTool(DummyAdder):
     def __init__(self) -> None:
         self.__name__ = "invalid_aliases"
@@ -4081,6 +4091,92 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             descriptor.provider_safe_schema["function"]["name"],
             "math_adder",
+        )
+
+    def test_provider_json_schemas_mix_maps_and_policy_fallback(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[
+                "shell.pdfinfo",
+                "shell.tesseract",
+                "shell.pdftoppm",
+                "database.query",
+            ],
+            available_toolsets=[
+                ToolSet(
+                    namespace="shell",
+                    tools=[
+                        DummyNamedTool("pdfinfo"),
+                        DummyNamedTool("tesseract"),
+                        DummyNamedTool("pdftoppm"),
+                    ],
+                ),
+                ToolSet(
+                    namespace="database",
+                    tools=[DummyNamedTool("query")],
+                ),
+            ],
+            settings=ToolManagerSettings(
+                tool_name_policy=ToolNamePolicySettings(
+                    mode=ToolNamePolicyMode.SANITIZED,
+                    map={
+                        "shell.pdfinfo": "pdfinfo",
+                        "shell.tesseract": "tesseract",
+                    },
+                )
+            ),
+        )
+
+        provider_schemas = manager.provider_json_schemas(
+            provider_family=ProviderFamily.OPENAI.value
+        )
+        assert provider_schemas is not None
+        provider_names = [
+            schema["function"]["name"] for schema in provider_schemas
+        ]
+
+        self.assertEqual(
+            provider_names,
+            ["pdfinfo", "tesseract", "shell_pdftoppm", "database_query"],
+        )
+        for provider_name, canonical_name in (
+            ("pdfinfo", "shell.pdfinfo"),
+            ("tesseract", "shell.tesseract"),
+            ("shell_pdftoppm", "shell.pdftoppm"),
+            ("database_query", "database.query"),
+        ):
+            with self.subTest(provider_name=provider_name):
+                resolution = manager.resolve_tool_name(
+                    provider_name,
+                    provider_originated=True,
+                )
+                self.assertIs(
+                    resolution.status,
+                    ToolNameResolutionStatus.EXACT,
+                )
+                self.assertEqual(resolution.canonical_name, canonical_name)
+
+        calls = manager.get_calls(
+            '<tool_call>{"name": "pdfinfo", "arguments": {}}</tool_call>'
+            '<tool_call>{"name": "shell_pdftoppm", "arguments": {}}'
+            "</tool_call>"
+            '<tool_call>{"name": "database_query", "arguments": {}}'
+            "</tool_call>"
+        )
+
+        assert calls is not None
+        self.assertEqual(calls[0].name, "shell.pdfinfo")
+        self.assertEqual(calls[0].provider_name, "pdfinfo")
+        self.assertEqual(calls[1].name, "shell.pdftoppm")
+        self.assertEqual(calls[1].provider_name, "shell_pdftoppm")
+        self.assertEqual(calls[2].name, "database.query")
+        self.assertEqual(calls[2].provider_name, "database_query")
+        unmapped_resolution = manager.resolve_tool_name(
+            "shell_pdfinfo",
+            provider_originated=True,
+        )
+        self.assertIs(
+            unmapped_resolution.status,
+            ToolNameResolutionStatus.UNKNOWN,
         )
 
     def test_provider_originated_resolution_uses_policy(self):

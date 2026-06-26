@@ -10,6 +10,7 @@ enable = [
 [tool.shell]
 workspace_root = "."
 cwd = "."
+materialized_input_files_dir = "avalan-input-files"
 max_stdout_bytes = 65536
 max_stderr_bytes = 32768
 max_head_lines = 120

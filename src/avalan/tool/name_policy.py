@@ -140,25 +140,32 @@ class ToolNamePolicy:
         return decoded
 
     def _provider_name_for(self, canonical_name: str) -> str:
+        self._assert_supported_mode()
+        mapped_name = self.settings.map.get(canonical_name)
+        if mapped_name is not None:
+            return mapped_name
+
+        if self.settings.mode is ToolNamePolicyMode.ENCODED:
+            return self.encode_encoded(
+                canonical_name,
+                prefix=self.settings.prefix,
+            )
+        if self.settings.mode in (
+            ToolNamePolicyMode.MAPPED,
+            ToolNamePolicyMode.RAW,
+        ):
+            return canonical_name
+        return self._sanitize(canonical_name)
+
+    def _assert_supported_mode(self) -> None:
         match self.settings.mode:
-            case ToolNamePolicyMode.ENCODED:
-                mapped_name = self.settings.map.get(canonical_name)
-                if mapped_name is not None:
-                    return mapped_name
-                return self.encode_encoded(
-                    canonical_name,
-                    prefix=self.settings.prefix,
-                )
-            case ToolNamePolicyMode.MAPPED | ToolNamePolicyMode.RAW:
-                mapped_name = self.settings.map.get(canonical_name)
-                return (
-                    mapped_name if mapped_name is not None else canonical_name
-                )
-            case ToolNamePolicyMode.SANITIZED:
-                mapped_name = self.settings.map.get(canonical_name)
-                if mapped_name is not None:
-                    return mapped_name
-                return self._sanitize(canonical_name)
+            case (
+                ToolNamePolicyMode.ENCODED
+                | ToolNamePolicyMode.MAPPED
+                | ToolNamePolicyMode.RAW
+                | ToolNamePolicyMode.SANITIZED
+            ):
+                return
             case _:
                 raise AssertionError(
                     f"unsupported ToolNamePolicyMode: {self.settings.mode!r}"
@@ -207,6 +214,11 @@ class ToolNamePolicy:
 
     def _validate_prefix(self) -> None:
         prefix = self.settings.prefix
+        if prefix == "":
+            assert (
+                self.settings.mode is not ToolNamePolicyMode.ENCODED
+            ), "tool name policy prefix must not be empty"
+            return
         assert _OPENAI_SAFE_PATTERN.fullmatch(
             prefix
         ), "tool name policy prefix must be provider-safe"

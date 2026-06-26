@@ -110,6 +110,7 @@ enable = ["shell.rg", "shell.head"]
 
 [tool.shell]
 workspace_root = "."
+materialized_input_files_dir = "avalan-input-files"
 max_stdout_bytes = 65536
 ```
 
@@ -120,6 +121,7 @@ avalan agent run \
   --engine-uri "ai://env:OPENAI_API_KEY@openai/gpt-4.1-mini" \
   --tool shell.rg \
   --tool-shell-workspace-root . \
+  --tool-shell-materialized-input-files-dir avalan-input-files \
   --tool-shell-max-stdout-bytes 65536
 ```
 

@@ -413,6 +413,8 @@ class CliToolNamePolicyOptionTestCase(TestCase):
                         "--tool-name-no-collapse-replacement",
                         "--tool-name-map",
                         "shell.pdfinfo=my_pdfinfo",
+                        "--tool-name-map",
+                        "shell.tesseract=tesseract",
                     ]
                 )
 
@@ -422,7 +424,10 @@ class CliToolNamePolicyOptionTestCase(TestCase):
                 self.assertFalse(args.tool_name_collapse_replacement)
                 self.assertEqual(
                     args.tool_name_map,
-                    ["shell.pdfinfo=my_pdfinfo"],
+                    [
+                        "shell.pdfinfo=my_pdfinfo",
+                        "shell.tesseract=tesseract",
+                    ],
                 )
 
 

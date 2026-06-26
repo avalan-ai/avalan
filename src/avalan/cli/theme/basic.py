@@ -651,9 +651,11 @@ def _basic_tool_entries(
     terminal_entries = (
         (_basic_terminal_error_entry(request),)
         if _basic_terminal_error(request)
-        else (_basic_empty_answer_entry(),)
-        if _basic_terminal_empty_answer(request)
-        else ()
+        else (
+            (_basic_empty_answer_entry(),)
+            if _basic_terminal_empty_answer(request)
+            else ()
+        )
     )
     history_entries = [
         *(

@@ -35,6 +35,7 @@ from .registry import SHELL_COMMAND_IDS
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from re import compile as compile_pattern
 from types import MappingProxyType
 from typing import ClassVar, cast, final
@@ -50,6 +51,7 @@ class ShellToolSettings:
         "execution_mode",
         "workspace_root",
         "cwd",
+        "materialized_input_files_dir",
         "default_timeout_seconds",
         "max_timeout_seconds",
         "max_stdout_bytes",
@@ -108,6 +110,7 @@ class ShellToolSettings:
     execution_mode: ShellExecutionModeValue | None = None
     workspace_root: str = "."
     cwd: str = "."
+    materialized_input_files_dir: str = "avalan-input-files"
     default_timeout_seconds: float = 10.0
     max_timeout_seconds: float = 60.0
     max_stdout_bytes: int = 65536
@@ -190,6 +193,10 @@ class ShellToolSettings:
         object.__setattr__(self, "backend", execution_mode)
         _assert_non_empty_string(self.workspace_root, "workspace_root")
         _assert_non_empty_string(self.cwd, "cwd")
+        _assert_relative_path(
+            self.materialized_input_files_dir,
+            "materialized_input_files_dir",
+        )
         _assert_positive_timeout_order(
             self.default_timeout_seconds,
             self.max_timeout_seconds,
@@ -413,6 +420,13 @@ def _assert_positive_timeout_order(
     assert (
         default_value <= max_value
     ), f"{default_field_name} must not exceed {max_field_name}"
+
+
+def _assert_relative_path(value: str, field_name: str) -> None:
+    _assert_non_empty_string(value, field_name)
+    path = Path(value)
+    assert not path.is_absolute(), f"{field_name} must be relative"
+    assert ".." not in path.parts, f"{field_name} must not contain .."
 
 
 def _assert_known_commands(value: object) -> None:

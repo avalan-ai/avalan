@@ -590,6 +590,7 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 + "\n[tool.shell]\n"
                 + 'workspace_root = "/tmp"\n'
                 + 'cwd = "fixtures"\n'
+                + 'materialized_input_files_dir = "agent-input-files"\n'
                 + "max_head_lines = 12\n"
                 + "allow_hidden = true\n"
                 + 'allowed_commands = ["head", "cat"]\n'
@@ -614,6 +615,10 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             tool_settings = from_settings.call_args.kwargs["tool_settings"]
             self.assertEqual(tool_settings.shell.workspace_root, "/tmp")
             self.assertEqual(tool_settings.shell.cwd, "fixtures")
+            self.assertEqual(
+                tool_settings.shell.materialized_input_files_dir,
+                "agent-input-files",
+            )
             self.assertEqual(tool_settings.shell.max_head_lines, 12)
             self.assertTrue(tool_settings.shell.allow_hidden)
             self.assertEqual(
@@ -1371,6 +1376,86 @@ provider_family = "local"
         self.assertFalse(policy.collapse_replacement)
         self.assertEqual(policy.provider_family, "local")
         self.assertEqual(policy.map, {"math.calculator": "calc"})
+
+    async def test_from_file_tool_name_policy_maps_with_fallback(self):
+        kwargs = await _from_file_tool_manager_kwargs(
+            _minimal_agent_toml() + """
+[tool]
+enable = ["shell.pdfinfo", "shell.tesseract", "shell.pdftoppm"]
+
+[tool.name_policy]
+mode = "sanitized"
+
+[tool.name_policy.map]
+"shell.pdfinfo" = "pdfinfo"
+"shell.tesseract" = "tesseract"
+"""
+        )
+
+        settings = kwargs["settings"]
+        self.assertIsInstance(settings, ToolManagerSettings)
+        policy = settings.tool_name_policy
+        self.assertIs(policy.mode, ToolNamePolicyMode.SANITIZED)
+        self.assertEqual(
+            policy.map,
+            {
+                "shell.pdfinfo": "pdfinfo",
+                "shell.tesseract": "tesseract",
+            },
+        )
+
+        shell_toolsets = [
+            toolset
+            for toolset in kwargs["available_toolsets"]
+            if toolset.namespace == "shell"
+        ]
+        manager = ToolManager.create_instance(
+            available_toolsets=shell_toolsets,
+            enable_tools=kwargs["enable_tools"],
+            settings=settings,
+        )
+
+        provider_schemas = manager.provider_json_schemas(
+            provider_family="openai"
+        )
+        assert provider_schemas is not None
+        provider_names = [
+            schema["function"]["name"] for schema in provider_schemas
+        ]
+
+        self.assertEqual(
+            provider_names,
+            ["pdfinfo", "shell_pdftoppm", "tesseract"],
+        )
+        resolution = manager.resolve_tool_name(
+            "shell_pdftoppm",
+            provider_originated=True,
+        )
+        self.assertIs(resolution.status, ToolNameResolutionStatus.EXACT)
+        self.assertEqual(resolution.canonical_name, "shell.pdftoppm")
+
+    async def test_from_file_loads_tool_name_policy_empty_prefix(self):
+        kwargs = await _from_file_tool_manager_kwargs(
+            _minimal_agent_toml() + """
+[tool]
+enable = ["shell.pdfinfo"]
+
+[tool.name_policy]
+provider_family = "openai"
+mode = "mapped"
+prefix = ""
+
+[tool.name_policy.map]
+"shell.pdfinfo" = "pdfinfo"
+"""
+        )
+
+        settings = kwargs["settings"]
+        self.assertIsInstance(settings, ToolManagerSettings)
+        policy = settings.tool_name_policy
+        self.assertIs(policy.mode, ToolNamePolicyMode.MAPPED)
+        self.assertEqual(policy.prefix, "")
+        self.assertEqual(policy.map, {"shell.pdfinfo": "pdfinfo"})
 
     async def test_from_file_shell_agent_invokes_tool_with_fake_executor(
         self,

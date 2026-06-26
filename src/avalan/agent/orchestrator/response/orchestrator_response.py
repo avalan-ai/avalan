@@ -2440,7 +2440,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         return sorted(self._attempted_call_signatures)
 
     def _record_tool_outcome(self, result: ToolCallOutcome | None) -> None:
-        if isinstance(result, (ToolCallResult, ToolCallError)):
+        if isinstance(result, ToolCallResult):
+            self._call_history.append(result)
+        elif isinstance(result, ToolCallError):
             self._call_history.append(result.call)
 
     async def _trigger_tool_diagnostic_event(

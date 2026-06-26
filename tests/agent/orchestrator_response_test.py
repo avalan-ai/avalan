@@ -10069,6 +10069,39 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         tool.assert_awaited_once()
         self.assertEqual(resp._call_history, [])
 
+    async def test_record_tool_outcome_preserves_result_history(self):
+        call = ToolCall(id="call1", name="calc", arguments={"value": 1})
+        result = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="ok",
+        )
+        error = ToolCallError(
+            id="error1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            error=RuntimeError("boom"),
+            message="boom",
+        )
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = _DummyEngine()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("done", async_gen=False),
+            agent,
+            _dummy_operation(),
+            {},
+            tool=MagicMock(spec=ToolManager),
+        )
+
+        resp._record_tool_outcome(result)
+        resp._record_tool_outcome(error)
+
+        self.assertEqual(resp._call_history, [result, call])
+
     async def test_repeated_tool_attempt_returns_guard_diagnostic(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
