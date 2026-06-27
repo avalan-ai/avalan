@@ -48,6 +48,7 @@ from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..task.schema import TaskSchemaResolutionError, resolve_schema_ref
+from ..tool import ToolSet
 from ..tool.a2a import A2AToolSet
 from ..tool.browser import (
     HAS_BROWSER_DEPENDENCIES,
@@ -116,6 +117,27 @@ def should_append_a2a_toolset(enabled_tools: list[str] | None) -> bool:
         matches_tool_namespace("a2a.call", enabled)
         for enabled in enabled_tools
     )
+
+
+def _toolset_exposes_enabled_tool(
+    toolset: ToolSet,
+    enabled_tools: list[str] | None,
+) -> bool:
+    """Return whether a toolset retains at least one enabled tool."""
+    if enabled_tools is None:
+        return bool(toolset.tools)
+
+    tool_prefix = f"{toolset.namespace}." if toolset.namespace else ""
+    for tool in toolset.tools:
+        name = getattr(tool, "__name__", tool.__class__.__name__)
+        canonical_name = f"{tool_prefix}{name}"
+        if any(
+            matches_tool_namespace(canonical_name, enabled)
+            for enabled in enabled_tools
+        ):
+            return True
+
+    return False
 
 
 def _merge_shell_tool_settings(
@@ -1534,17 +1556,17 @@ class OrchestratorLoader:
             shell_settings=shell_settings,
             enabled_tools=enabled_tools,
         ):
-            active_shell_settings = shell_settings or ShellToolSettings()
+            candidate_shell_settings = shell_settings or ShellToolSettings()
             (
                 shell_container_runtime,
                 shell_isolation_runtime,
             ) = _shell_tool_runtime_settings(
-                active_shell_settings,
+                candidate_shell_settings,
                 container_runtime,
                 isolation_runtime,
             )
             shell_toolset_kwargs: dict[str, Any] = {
-                "settings": active_shell_settings,
+                "settings": candidate_shell_settings,
                 "namespace": "shell",
             }
             if shell_isolation_runtime is not None:
@@ -1555,7 +1577,10 @@ class OrchestratorLoader:
                 shell_toolset_kwargs["container_runtime"] = (
                     shell_container_runtime
                 )
-            available_toolsets.append(ShellToolSet(**shell_toolset_kwargs))
+            shell_toolset = ShellToolSet(**shell_toolset_kwargs)
+            available_toolsets.append(shell_toolset)
+            if _toolset_exposes_enabled_tool(shell_toolset, enabled_tools):
+                active_shell_settings = candidate_shell_settings
 
         tool = ToolManager.create_instance(
             available_toolsets=available_toolsets,

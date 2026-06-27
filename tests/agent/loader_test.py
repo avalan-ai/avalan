@@ -2071,6 +2071,63 @@ workspace_root = "{workspace.as_posix()}"
         self.assertNotIn(workspace_path, plain_text)
         self.assertIn(file_content, _input_file_blocks(plain_input))
 
+    async def test_from_file_shell_manifest_skips_filtered_shell_tools(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            source = (
+                workspace / "inputs" / "batches" / "client_docs" / "report.pdf"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"%PDF-1.7")
+            file_content = MessageContentFile(
+                type="file",
+                file={
+                    "filename": "report.pdf",
+                    "local_path": str(source.resolve()),
+                },
+            )
+            message = Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(
+                        type="text",
+                        text="summarize the attachment",
+                    ),
+                    file_content,
+                ],
+            )
+            config = f"""
+[agent]
+role = "assistant"
+user = "Review: {{{{ input }}}}"
+
+[engine]
+uri = "ai://local/model"
+
+[tool]
+enable = ["math.calculator"]
+
+[tool.shell]
+workspace_root = "{workspace.as_posix()}"
+"""
+
+            kwargs = await _from_file_tool_manager_kwargs(config)
+            model_input = await _loaded_agent_model_input(config, message)
+
+        settings = kwargs["settings"]
+        self.assertIsInstance(settings, ToolManagerSettings)
+        self.assertIsNone(settings.filters)
+
+        text = "\n".join(_input_text_blocks(model_input))
+        workspace_path = "inputs/batches/client_docs/report.pdf"
+
+        self.assertIn("Review: summarize the attachment", text)
+        self.assertNotIn(workspace_path, text)
+        self.assertNotIn("Attached files available to tools", text)
+        self.assertIn(file_content, _input_file_blocks(model_input))
+
     async def test_from_file_shell_manifest_can_be_disabled(self) -> None:
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
