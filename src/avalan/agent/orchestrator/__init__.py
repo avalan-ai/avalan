@@ -6,6 +6,7 @@ from ...entities import (
     Input,
     Message,
     MessageContent,
+    MessageContentFile,
     MessageContentText,
     MessageRole,
     TransformerEngineSettings,
@@ -19,6 +20,8 @@ from ...model.engine import Engine
 from ...model.manager import ModelManager
 from ...model.response.text import TextGenerationResponse
 from ...tool.manager import ToolManager
+from ...tool.shell.input_files import shell_input_file_manifest
+from ...tool.shell.settings import ShellToolSettings
 from .. import (
     AgentOperation,
     InputType,
@@ -74,6 +77,7 @@ class Orchestrator:
     _call_options: dict[str, Any] | None = None
     _last_engine_agent: EngineAgent | None = None
     _exit_memory: bool = True
+    _shell_input_file_settings: ShellToolSettings | None
     _user: str | None
     _user_template: str | None
 
@@ -91,10 +95,14 @@ class Orchestrator:
         id: UUID | None = None,
         name: str | None = None,
         renderer: Renderer | None = None,
+        shell_input_file_settings: ShellToolSettings | None = None,
         user: str | None = None,
         user_template: str | None = None,
     ):
         assert not (user and user_template)
+        assert shell_input_file_settings is None or isinstance(
+            shell_input_file_settings, ShellToolSettings
+        )
         self._logger = logger
         self._model_manager = model_manager
         self._memory = memory
@@ -111,6 +119,7 @@ class Orchestrator:
         self._renderer = renderer or Renderer()
         self._total_operations = len(self._operations)
         self._call_options = call_options
+        self._shell_input_file_settings = shell_input_file_settings
         self._user = user
         self._user_template = user_template
         self._engines = []
@@ -240,6 +249,7 @@ class Orchestrator:
         )
 
         messages = self._input_messages(operation.specification, input)
+        messages = await self._input_messages_with_shell_manifest(messages)
 
         participant_id = getattr(self._memory, "participant_id", None)
         session_id = (
@@ -418,6 +428,37 @@ class Orchestrator:
 
         return input
 
+    async def _input_messages_with_shell_manifest(
+        self,
+        input: Input,
+    ) -> Input:
+        if self._shell_input_file_settings is None:
+            return input
+
+        target = self._last_user_file_message(input)
+        if target is None:
+            return input
+
+        manifest = await shell_input_file_manifest(
+            input,
+            self._shell_input_file_settings,
+        )
+        if manifest is None:
+            return input
+
+        index, message = target
+        replacement = replace(
+            message,
+            content=self._append_message_text_content(message, manifest),
+        )
+        if index is None:
+            return replacement
+
+        assert isinstance(input, list)
+        messages = cast(list[Message], list(input))
+        messages[index] = replacement
+        return messages
+
     def _prefix_user_input(
         self, specification: Specification, input: Input
     ) -> Input:
@@ -479,6 +520,39 @@ class Orchestrator:
         ):
             return input[-1]
         return None
+
+    @staticmethod
+    def _last_user_file_message(
+        input: Input,
+    ) -> tuple[int | None, Message] | None:
+        if isinstance(input, Message):
+            if Orchestrator._message_has_file_content(input):
+                return None, input
+            return None
+
+        if not isinstance(input, list):
+            return None
+
+        for index in range(len(input) - 1, -1, -1):
+            message = input[index]
+            if not isinstance(message, Message):
+                continue
+            if Orchestrator._message_has_file_content(message):
+                return index, message
+        return None
+
+    @staticmethod
+    def _message_has_file_content(message: Message) -> bool:
+        if message.role != MessageRole.USER:
+            return False
+        if isinstance(message.content, MessageContentFile):
+            return True
+        if isinstance(message.content, list):
+            return any(
+                isinstance(content, MessageContentFile)
+                for content in message.content
+            )
+        return False
 
     @staticmethod
     def _message_text_content(message: Message) -> str | None:
@@ -544,6 +618,18 @@ class Orchestrator:
             if replaced:
                 return replacement
         return content
+
+    @staticmethod
+    def _append_message_text_content(
+        message: Message,
+        content: str,
+    ) -> MessageContent | list[MessageContent]:
+        text = MessageContentText(type="text", text=content)
+        if isinstance(message.content, list):
+            return [*message.content, text]
+        if isinstance(message.content, MessageContentFile):
+            return [message.content, text]
+        return text
 
     @staticmethod
     def _input_render_vars(

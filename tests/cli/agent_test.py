@@ -1484,6 +1484,37 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(effective.profile.resources.cpu_count, 1)
         self.assertEqual(effective.profile.resources.memory_bytes, 268435456)
 
+    def test_agent_tool_settings_records_explicit_shell_fields(self):
+        args = Namespace(
+            tool_shell_allow_media_tools=True,
+            tool_shell_max_head_lines=ShellToolSettings().max_head_lines,
+        )
+
+        settings = agent_cmds._agent_tool_settings(args)
+
+        self.assertIsInstance(settings.shell, ShellToolSettings)
+        self.assertEqual(
+            settings.shell_explicit_fields,
+            frozenset({"allow_media_tools", "max_head_lines"}),
+        )
+
+    def test_tool_settings_explicit_fields_tracks_mapping_inputs(self):
+        prefixed_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                {"tool_shell_allow_media_tools": True},
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+        direct_fields = agent_cmds._tool_settings_explicit_fields_from_mapping(
+            {"allow_media_tools": True},
+            prefix="shell",
+            settings_cls=ShellToolSettings,
+        )
+
+        self.assertEqual(prefixed_fields, frozenset({"allow_media_tools"}))
+        self.assertEqual(direct_fields, frozenset({"allow_media_tools"}))
+
     def test_agent_tool_settings_builds_sandbox_runtime_from_cli(self):
         args = Namespace(
             tool_shell_backend="sandbox",

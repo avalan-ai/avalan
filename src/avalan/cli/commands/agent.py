@@ -347,6 +347,35 @@ def _tool_settings_from_mapping(
     return settings
 
 
+def _tool_settings_explicit_fields_from_mapping(
+    mapping: Mapping[str, object] | Namespace,
+    *,
+    prefix: str | None = None,
+    settings_cls: (
+        type[BrowserToolSettings]
+        | type[DatabaseToolSettings]
+        | type[GraphToolSettings]
+        | type[ShellToolSettings]
+    ),
+) -> frozenset[str]:
+    """Return dataclass fields explicitly present in tool settings input."""
+    explicit_fields: set[str] = set()
+    for field in fields(settings_cls):
+        key = f"tool_{prefix}_{field.name}" if prefix else field.name
+        if isinstance(mapping, Namespace):
+            if hasattr(mapping, key) and getattr(mapping, key) is not None:
+                explicit_fields.add(field.name)
+        elif key in mapping and mapping[key] is not None:
+            explicit_fields.add(field.name)
+        elif (
+            prefix
+            and field.name in mapping
+            and mapping[field.name] is not None
+        ):
+            explicit_fields.add(field.name)
+    return frozenset(explicit_fields)
+
+
 def _coerce_database_tool_setting_value(
     field_name: str, value: object, *, from_cli: bool
 ) -> object:
@@ -1246,6 +1275,11 @@ def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
     shell_settings = get_tool_settings(
         args, prefix="shell", settings_cls=ShellToolSettings
     )
+    shell_explicit_fields = _tool_settings_explicit_fields_from_mapping(
+        args,
+        prefix="shell",
+        settings_cls=ShellToolSettings,
+    )
     container_runtime = _agent_container_runtime_settings(
         args,
         shell_settings,
@@ -1255,6 +1289,9 @@ def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
         database=database_settings,
         graph=graph_settings,
         shell=shell_settings,
+        shell_explicit_fields=(
+            shell_explicit_fields if shell_settings is not None else None
+        ),
         container=container_runtime,
         isolation=_agent_isolation_runtime_settings(args, shell_settings),
     )

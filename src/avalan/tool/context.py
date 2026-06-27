@@ -16,6 +16,7 @@ class ToolSettingsContext:
     database: DatabaseToolSettings | None = None
     graph: GraphToolSettings | None = None
     shell: ShellToolSettings | None = None
+    shell_explicit_fields: frozenset[str] | None = None
     container: ContainerToolRuntimeSettings | None = None
     isolation: IsolationToolRuntimeSettings | None = None
     extra: dict[str, object] | None = None

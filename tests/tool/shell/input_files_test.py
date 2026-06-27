@@ -1,4 +1,5 @@
 from base64 import b64encode
+from inspect import isawaitable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ from avalan.entities import (
     ToolCallContext,
     ToolCallResult,
 )
+from avalan.tool.shell import input_files as shell_input_files
 from avalan.tool.shell.entities import (
     ExecutionResult,
     GeneratedFile,
@@ -28,6 +30,7 @@ from avalan.tool.shell.input_files import (
     _effective_shell_cwd,
     _execution_result,
     _generated_file_filename,
+    _input_file_path_alias_values,
     _input_file_path_aliases,
     _is_relative_to,
     _iter_generated_files,
@@ -36,10 +39,12 @@ from avalan.tool.shell.input_files import (
     _make_directory_tree,
     _path_alias,
     _path_has_part,
+    _path_suffix_aliases,
     _rewrite_path_argument,
     _rewrite_paths_argument,
     _rewrite_shell_input_file_paths,
     _shell_file_path_aliases,
+    _workspace_relative_path,
     shell_input_file_filter,
 )
 from avalan.tool.shell.settings import ShellToolSettings
@@ -173,6 +178,82 @@ async def test_shell_input_file_filter_uses_per_call_cwd(
         "paths": ["report.pdf"],
         "cwd": "nested",
     }
+
+
+async def test_shell_input_file_filter_rewrites_workspace_suffixes(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "inputs" / "batches" / "client_docs" / "report.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF-1.7")
+    settings = ShellToolSettings(workspace_root=str(tmp_path))
+    call = ToolCall(
+        id="call-1",
+        name="shell.pdfinfo",
+        arguments={
+            "path": "client_docs/report.pdf",
+            "paths": [
+                "batches/client_docs/report.pdf",
+                "./inputs/batches/client_docs/report.pdf",
+            ],
+        },
+    )
+
+    result = await _rewrite_shell_input_file_paths(
+        call,
+        ToolCallContext(input=_message(source)),
+        settings,
+    )
+
+    assert result is not None
+    filtered_call, _ = result
+    workspace_path = "inputs/batches/client_docs/report.pdf"
+    assert filtered_call.arguments == {
+        "path": workspace_path,
+        "paths": [workspace_path, workspace_path],
+    }
+
+
+async def test_shell_input_file_manifest_lists_workspace_relative_path(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "inputs" / "batches" / "client_docs" / "report.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF-1.7")
+
+    manifest = await _shell_input_file_manifest(
+        _message(source),
+        ShellToolSettings(workspace_root=str(tmp_path)),
+    )
+
+    assert manifest is not None
+    assert "report.pdf" in manifest
+    assert "inputs/batches/client_docs/report.pdf" in manifest
+    assert str(source.resolve()) not in manifest
+
+
+async def test_shell_input_file_manifest_omits_unavailable_files(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside" / "report.pdf"
+    outside.parent.mkdir()
+    outside.write_bytes(b"%PDF-1.7")
+    message = Message(
+        role=MessageRole.USER,
+        content=[
+            MessageContentText(type="text", text="inspect attachment"),
+            _file_content(outside),
+        ],
+    )
+
+    manifest = await _shell_input_file_manifest(
+        message,
+        ShellToolSettings(workspace_root=str(workspace)),
+    )
+
+    assert manifest is None
 
 
 async def test_shell_input_file_aliases_skip_files_outside_effective_cwd(
@@ -726,6 +807,30 @@ def test_add_alias_and_path_alias_helpers() -> None:
     assert _is_relative_to(Path("a/b"), Path("a"))
     assert not _is_relative_to(Path("a/b"), Path("c"))
     assert _path_has_part(Path("a/../b"), "..")
+    assert _workspace_relative_path(
+        Path("/workspace/a"), Path("/workspace")
+    ) == (Path("a"))
+    assert (
+        _workspace_relative_path(Path("/other/a"), Path("/workspace")) is None
+    )
+    assert _path_suffix_aliases(Path("a/b/c.pdf")) == (
+        "a/b/c.pdf",
+        "b/c.pdf",
+        "c.pdf",
+    )
+    assert _input_file_path_alias_values(
+        "c.pdf",
+        Path("/workspace/a/b/c.pdf"),
+        Path("/workspace"),
+    ) == (
+        "c.pdf",
+        "./c.pdf",
+        "/workspace/a/b/c.pdf",
+        "a/b/c.pdf",
+        "./a/b/c.pdf",
+        "b/c.pdf",
+        "./b/c.pdf",
+    )
 
 
 def _message(path: Path) -> Message:
@@ -746,6 +851,27 @@ def _file_content(path: Path) -> MessageContentFile:
             "local_path": str(path.resolve()),
         },
     )
+
+
+async def _shell_input_file_manifest(
+    input_value: object,
+    settings: ShellToolSettings,
+) -> str | None:
+    builder = getattr(shell_input_files, "shell_input_file_manifest", None)
+    assert callable(
+        builder
+    ), "Expected shell_input_file_manifest helper to be implemented"
+
+    manifest = builder(input_value, settings)
+    if isawaitable(manifest):
+        manifest = await manifest
+
+    if manifest is None:
+        return None
+    if isinstance(manifest, MessageContentText):
+        return manifest.text
+    assert isinstance(manifest, str)
+    return manifest
 
 
 def _generated_result(generated_file: GeneratedFile) -> ToolCallResult:
