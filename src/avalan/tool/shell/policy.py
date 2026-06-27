@@ -12,6 +12,9 @@ from .commands.helpers import (
     path_matches_sensitive_denylist,
 )
 from .commands.helpers import policy_denied as _policy_denied
+from .commands.pdftoppm import (
+    _page_size_raster_dpi_cap,
+)
 from .entities import (
     ExecutionSpec,
     GeneratedOutputPlan,
@@ -151,6 +154,7 @@ class ExecutionPolicy:
             request,
             normalized_paths,
             metadata,
+            settings=self._settings,
         )
         default_timeout_seconds, max_timeout_seconds = _timeout_limits(
             request.command,
@@ -542,18 +546,20 @@ async def _annotate_pdf_raster_metadata(
     request: ShellCommandRequest,
     paths: tuple[_NormalizedPath, ...],
     metadata: dict[str, object],
+    *,
+    settings: ShellToolSettings,
 ) -> None:
     if request.command != "pdftoppm" or len(paths) != 1:
         return
     path = paths[0]
-    if path.metadata is None:
+    if path.metadata is None or not path.metadata.is_file:
         return
     boxes = await probe_pdf_page_boxes(path.path)
     if not boxes:
         return
-    metadata[_PDF_PAGE_BOX_METADATA_KEY] = max(
+    metadata[_PDF_PAGE_BOX_METADATA_KEY] = min(
         boxes,
-        key=lambda box: box[0] * box[1],
+        key=lambda box: _page_size_raster_dpi_cap(box, settings),
     )
 
 

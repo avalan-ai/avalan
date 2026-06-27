@@ -2676,6 +2676,79 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 policy=policy,
             )
 
+    async def test_pdf_raster_rejects_directory_before_page_box_probe(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "input.pdf").mkdir()
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    workspace_root=str(root),
+                    allow_media_tools=True,
+                ),
+                resolver=_CountingResolver("/usr/bin/pdftoppm"),
+            )
+
+            with patch(
+                "avalan.tool.shell.policy.probe_pdf_page_boxes",
+                new=AsyncMock(side_effect=AssertionError("probe called")),
+            ) as probe:
+                await self._assert_denied(
+                    _request(
+                        tool_name="shell.pdftoppm",
+                        command="pdftoppm",
+                        paths=(_path("input.pdf", kind="pdf_file"),),
+                    ),
+                    ShellExecutionErrorCode.DENIED_PATH,
+                    policy=policy,
+                )
+
+        probe.assert_not_awaited()
+
+    async def test_pdf_raster_dpi_cap_uses_most_restrictive_page_box(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "mixed-boxes.pdf").write_bytes(
+                b"%PDF-1.4\n"
+                b"1 0 obj\n"
+                b"<< /Type /Page /MediaBox [0 0 500 500] >>\n"
+                b"<< /Type /Page /MediaBox [0 0 2000 50] >>\n"
+                b"endobj\n"
+            )
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    workspace_root=str(root),
+                    allow_media_tools=True,
+                    max_raster_long_edge_pixels=2048,
+                ),
+                resolver=_CountingResolver("/usr/bin/pdftoppm"),
+            )
+
+            accepted = await policy.normalize(
+                _request(
+                    tool_name="shell.pdftoppm",
+                    command="pdftoppm",
+                    options={"dpi": 73},
+                    paths=(_path("mixed-boxes.pdf", kind="pdf_file"),),
+                )
+            )
+
+            self.assertEqual(accepted.metadata["dpi"], 73)
+            await self._assert_denied(
+                _request(
+                    tool_name="shell.pdftoppm",
+                    command="pdftoppm",
+                    options={"dpi": 74},
+                    paths=(_path("mixed-boxes.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.RASTER_DPI_CAP_EXCEEDED,
+                policy=policy,
+                message="raster DPI 74 exceeds maximum 73 for PDF page size",
+            )
+
     async def test_media_paths_without_double_dash_are_disambiguated(
         self,
     ) -> None:
