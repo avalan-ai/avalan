@@ -250,12 +250,12 @@ collapse_replacement = {{ tool_name_policy.collapse_replacement | lower }}
 {% elif v is number %}
 {{ k }} = {{ v }}
 {% elif v is string %}
-{{ k }} = "{{ v }}"
+{{ k }} = {{ v | toml_value }}
 {% elif v is mapping %}
-{{ k }} = { {% for key, item in v.items() %}{{ key }} = "{{ item }}"{% if not loop.last %}, {% endif %}{% endfor %} }
+{{ k }} = { {% for key, item in v.items() %}{{ key }} = {{ item | toml_value }}{% if not loop.last %}, {% endif %}{% endfor %} }
 {% else %}
 {{ k }} = [
-{% for item in v %}    "{{ item }}"{% if not loop.last %},{% endif %}
+{% for item in v %}    {{ item | toml_value }}{% if not loop.last %},{% endif %}
 {% endfor %}
 ]
 {% endif %}

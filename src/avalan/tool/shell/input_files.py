@@ -18,10 +18,32 @@ from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
+from json import dumps as json_dumps
 from os.path import relpath
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
+
+
+async def shell_input_file_manifest(
+    input_value: Input | None,
+    settings: ShellToolSettings,
+) -> str | None:
+    """Return model-visible shell paths for attached input files."""
+    assert isinstance(settings, ShellToolSettings)
+    if not settings.input_file_manifest_enabled:
+        return None
+
+    paths = await _input_file_manifest_paths(input_value, settings)
+    if not paths:
+        return None
+
+    lines = [
+        settings.input_file_manifest_message,
+        settings.input_file_manifest_path_message,
+    ]
+    lines.extend(f"- {json_dumps(path)}" for path in paths)
+    return "\n".join(lines)
 
 
 def shell_input_file_filter(settings: ShellToolSettings) -> ToolFilter:
@@ -139,6 +161,14 @@ async def _input_file_path_aliases(
     return aliases
 
 
+async def _input_file_manifest_paths(
+    input_value: Input | None,
+    settings: ShellToolSettings,
+) -> tuple[str, ...]:
+    aliases = await _input_file_path_aliases(input_value, settings)
+    return tuple(dict.fromkeys(aliases.values()))
+
+
 async def _shell_file_path_aliases(
     context: ToolCallContext,
     settings: ShellToolSettings,
@@ -202,7 +232,11 @@ async def _add_input_file_path_aliases(
         relative_path = _cwd_relative_file_path(effective_cwd, source_path)
         if relative_path is None:
             continue
-        for alias in (filename, f"./{filename}", str(source_path)):
+        for alias in _input_file_path_alias_values(
+            filename,
+            source_path,
+            workspace_root,
+        ):
             _add_alias(
                 aliases,
                 conflicts,
@@ -239,6 +273,33 @@ async def _input_file_path(
         workspace_root,
         materialized_root,
         filename,
+    )
+
+
+def _input_file_path_alias_values(
+    filename: str,
+    source_path: Path,
+    workspace_root: Path,
+) -> tuple[str, ...]:
+    aliases = [filename, f"./{filename}", str(source_path)]
+    relative_path = _workspace_relative_path(source_path, workspace_root)
+    if relative_path is not None:
+        for suffix in _path_suffix_aliases(relative_path):
+            aliases.extend((suffix, f"./{suffix}"))
+    return tuple(dict.fromkeys(aliases))
+
+
+def _workspace_relative_path(path: Path, workspace_root: Path) -> Path | None:
+    try:
+        return path.relative_to(workspace_root)
+    except ValueError:
+        return None
+
+
+def _path_suffix_aliases(path: Path) -> tuple[str, ...]:
+    parts = path.parts
+    return tuple(
+        Path(*parts[index:]).as_posix() for index in range(len(parts))
     )
 
 

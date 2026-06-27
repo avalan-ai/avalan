@@ -48,6 +48,7 @@ from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..task.schema import TaskSchemaResolutionError, resolve_schema_ref
+from ..tool import ToolSet
 from ..tool.a2a import A2AToolSet
 from ..tool.browser import (
     HAS_BROWSER_DEPENDENCIES,
@@ -77,7 +78,7 @@ from ..tool.shell import (
 from ..tool.shell.input_files import shell_input_file_filter
 
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from importlib import import_module
 from logging import DEBUG, INFO, Logger
 from os import R_OK, access
@@ -90,6 +91,8 @@ if TYPE_CHECKING:
     from ..filters import Partitioner
 else:
     Partitioner = Any
+
+_SHELL_EXECUTION_MODE_FIELDS = frozenset({"backend", "execution_mode"})
 
 SentenceTransformerModel: type[Any] | None = None
 TextPartitioner: type[Any] | None = None
@@ -114,6 +117,112 @@ def should_append_a2a_toolset(enabled_tools: list[str] | None) -> bool:
         matches_tool_namespace("a2a.call", enabled)
         for enabled in enabled_tools
     )
+
+
+def _toolset_exposes_enabled_tool(
+    toolset: ToolSet,
+    enabled_tools: list[str] | None,
+) -> bool:
+    """Return whether a toolset retains at least one enabled tool."""
+    if enabled_tools is None:
+        return bool(toolset.tools)
+
+    tool_prefix = f"{toolset.namespace}." if toolset.namespace else ""
+    for tool in toolset.tools:
+        name = getattr(tool, "__name__", tool.__class__.__name__)
+        canonical_name = f"{tool_prefix}{name}"
+        if any(
+            matches_tool_namespace(canonical_name, enabled)
+            for enabled in enabled_tools
+        ):
+            return True
+
+    return False
+
+
+def _merge_shell_tool_settings(
+    base: ShellToolSettings | None,
+    override: ShellToolSettings | None,
+    *,
+    explicit_fields: frozenset[str] | None = None,
+) -> ShellToolSettings | None:
+    """Return shell settings with explicit overrides applied."""
+    if override is None:
+        return base
+    if base is None or explicit_fields is None:
+        return override
+
+    if not explicit_fields:
+        return base
+
+    valid_fields = {field.name for field in fields(ShellToolSettings)}
+    assert explicit_fields <= valid_fields
+    values: dict[str, object] = {}
+    execution_mode = _explicit_shell_execution_mode(
+        override,
+        explicit_fields,
+    )
+    if execution_mode is not None:
+        values["backend"] = execution_mode
+        values["execution_mode"] = execution_mode
+        if (
+            execution_mode != "container"
+            and "container" not in explicit_fields
+        ):
+            values["container"] = None
+        if execution_mode != "sandbox" and "sandbox" not in explicit_fields:
+            values["sandbox"] = None
+
+    for name in explicit_fields:
+        if name in _SHELL_EXECUTION_MODE_FIELDS:
+            continue
+        values[name] = getattr(override, name)
+
+    return replace(base, **cast(Any, values))
+
+
+def _explicit_shell_execution_mode(
+    override: ShellToolSettings | None,
+    explicit_fields: frozenset[str] | None,
+) -> str | None:
+    """Return explicitly requested shell execution mode, if any."""
+    if (
+        override is None
+        or explicit_fields is None
+        or not explicit_fields.intersection(_SHELL_EXECUTION_MODE_FIELDS)
+    ):
+        return None
+
+    execution_mode = override.execution_mode
+    assert isinstance(execution_mode, str)
+    return execution_mode
+
+
+def _shell_tool_runtime_settings(
+    shell_settings: ShellToolSettings,
+    container_runtime: ContainerToolRuntimeSettings | None,
+    isolation_runtime: IsolationToolRuntimeSettings | None,
+) -> tuple[
+    ContainerToolRuntimeSettings | None,
+    IsolationToolRuntimeSettings | None,
+]:
+    """Return runtimes compatible with the active shell backend."""
+    assert isinstance(shell_settings, ShellToolSettings)
+    execution_mode = shell_settings.execution_mode
+    if execution_mode == "container":
+        if (
+            isolation_runtime is not None
+            and isolation_runtime.mode is IsolationMode.CONTAINER
+        ):
+            return None, isolation_runtime
+        return container_runtime, None
+    if (
+        execution_mode == "sandbox"
+        and isolation_runtime is not None
+        and isolation_runtime.mode is IsolationMode.SANDBOX
+    ):
+        return None, isolation_runtime
+    return None, None
 
 
 class OrchestratorLoader:
@@ -1134,7 +1243,11 @@ class OrchestratorLoader:
             browser_settings = tool_settings.browser or browser_settings
             database_settings = tool_settings.database or database_settings
             graph_settings = tool_settings.graph or graph_settings
-            shell_settings = tool_settings.shell or shell_settings
+            shell_settings = _merge_shell_tool_settings(
+                shell_settings,
+                tool_settings.shell,
+                explicit_fields=tool_settings.shell_explicit_fields,
+            )
             container_runtime = tool_settings.container or container_runtime
             isolation_runtime = tool_settings.isolation or isolation_runtime
             extra = tool_settings.extra
@@ -1146,6 +1259,9 @@ class OrchestratorLoader:
             database=database_settings,
             graph=graph_settings,
             shell=shell_settings,
+            shell_explicit_fields=(
+                tool_settings.shell_explicit_fields if tool_settings else None
+            ),
             container=container_runtime,
             isolation=isolation_runtime,
             extra=extra,
@@ -1440,16 +1556,31 @@ class OrchestratorLoader:
             shell_settings=shell_settings,
             enabled_tools=enabled_tools,
         ):
-            active_shell_settings = shell_settings or ShellToolSettings()
+            candidate_shell_settings = shell_settings or ShellToolSettings()
+            (
+                shell_container_runtime,
+                shell_isolation_runtime,
+            ) = _shell_tool_runtime_settings(
+                candidate_shell_settings,
+                container_runtime,
+                isolation_runtime,
+            )
             shell_toolset_kwargs: dict[str, Any] = {
-                "settings": active_shell_settings,
+                "settings": candidate_shell_settings,
                 "namespace": "shell",
             }
-            if isolation_runtime is not None:
-                shell_toolset_kwargs["isolation_runtime"] = isolation_runtime
+            if shell_isolation_runtime is not None:
+                shell_toolset_kwargs["isolation_runtime"] = (
+                    shell_isolation_runtime
+                )
             else:
-                shell_toolset_kwargs["container_runtime"] = container_runtime
-            available_toolsets.append(ShellToolSet(**shell_toolset_kwargs))
+                shell_toolset_kwargs["container_runtime"] = (
+                    shell_container_runtime
+                )
+            shell_toolset = ShellToolSet(**shell_toolset_kwargs)
+            available_toolsets.append(shell_toolset)
+            if _toolset_exposes_enabled_tool(shell_toolset, enabled_tools):
+                active_shell_settings = candidate_shell_settings
 
         tool = ToolManager.create_instance(
             available_toolsets=available_toolsets,
@@ -1502,6 +1633,7 @@ class OrchestratorLoader:
                 config={"json": settings.json_config},
                 agent_config=settings.agent_config,
                 call_options=settings.call_options,
+                shell_input_file_settings=active_shell_settings,
                 template_vars=settings.template_vars,
             )
         else:
@@ -1540,6 +1672,7 @@ class OrchestratorLoader:
                 user=settings.agent_config.get("user"),
                 user_template=settings.agent_config.get("user_template"),
                 settings=engine_settings,
+                shell_input_file_settings=active_shell_settings,
                 call_options=settings.call_options,
                 template_vars=settings.template_vars,
             )
@@ -1562,6 +1695,7 @@ class OrchestratorLoader:
         agent_config: dict[str, Any],
         call_options: dict[str, Any] | None,
         template_vars: dict[str, Any] | None,
+        shell_input_file_settings: ShellToolSettings | None = None,
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
         if (
@@ -1613,6 +1747,7 @@ class OrchestratorLoader:
             user=agent_config.get("user"),
             user_template=agent_config.get("user_template"),
             settings=engine_settings,
+            shell_input_file_settings=shell_input_file_settings,
             call_options=call_options,
             template_vars=template_vars,
         )

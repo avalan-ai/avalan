@@ -3,6 +3,7 @@ from asyncio import CancelledError
 from dataclasses import asdict
 from json import dumps
 from os.path import join
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -30,6 +31,7 @@ from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
+from avalan.tool.shell import ShellToolSettings
 
 
 class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
@@ -202,6 +204,198 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(resp, "resp")
         self.assertIs(captured["input"], effective_messages)
+
+    async def test_call_injects_shell_manifest_after_user_template(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            templates = root / "templates"
+            templates.mkdir()
+            (templates / "shell_manifest_user.md").write_text(
+                "Review: {{ input }}",
+                encoding="utf-8",
+            )
+            source = root / "inputs" / "batches" / "client_docs" / "report.pdf"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"%PDF-1.7")
+            file_content = MessageContentFile(
+                type="file",
+                file={
+                    "filename": "report.pdf",
+                    "local_path": str(source.resolve()),
+                },
+            )
+            message = Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(
+                        type="text",
+                        text="summarize this file",
+                    ),
+                    file_content,
+                ],
+            )
+            self.orch._renderer = Renderer(templates_path=str(templates))
+            self.orch._user_template = "shell_manifest_user.md"
+            self.orch._shell_input_file_settings = ShellToolSettings(
+                workspace_root=str(root)
+            )
+
+            resp = await self.orch(message)
+
+        self.assertEqual(resp, "resp")
+        context = self.engine_agent.await_args.args[0]
+        model_input = context.input
+        assert isinstance(model_input, Message)
+        assert isinstance(model_input.content, list)
+        self.assertEqual(
+            model_input.content[0],
+            MessageContentText(
+                type="text",
+                text="Review: summarize this file",
+            ),
+        )
+        self.assertIs(model_input.content[1], file_content)
+        assert isinstance(model_input.content[2], MessageContentText)
+        self.assertIn("report.pdf", model_input.content[2].text)
+        self.assertIn(
+            "inputs/batches/client_docs/report.pdf",
+            model_input.content[2].text,
+        )
+
+    async def test_shell_manifest_skips_missing_targets_and_unavailable_files(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / "outside" / "report.pdf"
+            outside.parent.mkdir()
+            outside.write_bytes(b"%PDF-1.7")
+            self.orch._shell_input_file_settings = ShellToolSettings(
+                workspace_root=str(root / "workspace")
+            )
+            plain = Message(role=MessageRole.USER, content="plain")
+            unavailable = Message(
+                role=MessageRole.USER,
+                content=MessageContentFile(
+                    type="file",
+                    file={
+                        "filename": "report.pdf",
+                        "local_path": str(outside.resolve()),
+                    },
+                ),
+            )
+
+            self.assertIs(
+                await self.orch._input_messages_with_shell_manifest(plain),
+                plain,
+            )
+            self.assertIs(
+                await self.orch._input_messages_with_shell_manifest("plain"),
+                "plain",
+            )
+            self.assertIs(
+                await self.orch._input_messages_with_shell_manifest(
+                    unavailable
+                ),
+                unavailable,
+            )
+
+    async def test_shell_manifest_updates_last_user_file_message_in_lists(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "inputs" / "batches" / "client_docs" / "report.pdf"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"%PDF-1.7")
+            assistant_file = MessageContentFile(
+                type="file",
+                file={"filename": "assistant.pdf"},
+            )
+            user_file = MessageContentFile(
+                type="file",
+                file={
+                    "filename": "report.pdf",
+                    "local_path": str(source.resolve()),
+                },
+            )
+            messages = [
+                "plain",
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content=[assistant_file],
+                ),
+                Message(
+                    role=MessageRole.USER,
+                    content=[
+                        MessageContentText(type="text", text="inspect"),
+                        user_file,
+                    ],
+                ),
+            ]
+            self.orch._shell_input_file_settings = ShellToolSettings(
+                workspace_root=str(root)
+            )
+
+            result = await self.orch._input_messages_with_shell_manifest(
+                messages
+            )
+
+            assert isinstance(result, list)
+            self.assertIs(result[0], messages[0])
+            self.assertIs(result[1], messages[1])
+            assert isinstance(result[2], Message)
+            assert isinstance(result[2].content, list)
+            self.assertEqual(result[2].content[0], messages[2].content[0])
+            self.assertIs(result[2].content[1], user_file)
+            assert isinstance(result[2].content[2], MessageContentText)
+            self.assertIn(
+                "inputs/batches/client_docs/report.pdf",
+                result[2].content[2].text,
+            )
+
+    def test_append_message_text_content_handles_file_and_text_messages(
+        self,
+    ) -> None:
+        file_content = MessageContentFile(
+            type="file",
+            file={"filename": "report.pdf"},
+        )
+        file_message = Message(role=MessageRole.USER, content=file_content)
+        text_message = Message(role=MessageRole.USER, content="plain")
+
+        self.assertEqual(
+            Orchestrator._append_message_text_content(
+                file_message,
+                "manifest",
+            ),
+            [file_content, MessageContentText(type="text", text="manifest")],
+        )
+        self.assertEqual(
+            Orchestrator._append_message_text_content(
+                text_message,
+                "manifest",
+            ),
+            MessageContentText(type="text", text="manifest"),
+        )
+
+    def test_last_user_file_message_ignores_non_user_entries(self) -> None:
+        assistant_file = MessageContentFile(
+            type="file",
+            file={"filename": "report.pdf"},
+        )
+
+        self.assertIsNone(
+            Orchestrator._last_user_file_message(
+                [
+                    "plain",
+                    Message(
+                        role=MessageRole.ASSISTANT,
+                        content=[assistant_file],
+                    ),
+                ]
+            )
+        )
 
     async def test_call_triggers_events(self):
         self.engine_agent.return_value = "ok"

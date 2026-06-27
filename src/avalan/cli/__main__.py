@@ -3774,9 +3774,26 @@ class CLI:
                     help="Trusted shell execution mode.",
                 )
             elif ftype is bool or isinstance(field.default, bool):
-                group.add_argument(
-                    option, dest=dest, action="store_true", default=None
-                )
+                if (
+                    settings_cls is ShellToolSettings
+                    and prefix == "shell"
+                    and field.name == "input_file_manifest_enabled"
+                ):
+                    group.add_argument(
+                        option,
+                        dest=dest,
+                        action="store_true",
+                        default=None,
+                    )
+                    group.add_argument(
+                        f"--no-tool-{prefix}-{field.name.replace('_', '-')}",
+                        dest=dest,
+                        action="store_false",
+                    )
+                else:
+                    group.add_argument(
+                        option, dest=dest, action="store_true", default=None
+                    )
             elif ftype is int or isinstance(field.default, int):
                 group.add_argument(
                     option,

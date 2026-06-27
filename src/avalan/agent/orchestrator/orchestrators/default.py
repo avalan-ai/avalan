@@ -16,6 +16,7 @@ from ....event.manager import EventManager
 from ....memory.manager import MemoryManager
 from ....model.manager import ModelManager
 from ....tool.manager import ToolManager
+from ....tool.shell.settings import ShellToolSettings
 
 from logging import Logger
 from typing import Any, cast
@@ -44,6 +45,7 @@ class DefaultOrchestrator(Orchestrator):
         user_template: str | None = None,
         template_id: str | None = None,
         settings: TransformerEngineSettings | None = None,
+        shell_input_file_settings: ShellToolSettings | None = None,
         call_options: dict[str, Any] | None = None,
         template_vars: dict[str, Any] | None = None,
         id: UUID | None = None,
@@ -89,6 +91,7 @@ class DefaultOrchestrator(Orchestrator):
             call_options=call_options,
             id=id,
             name=name,
+            shell_input_file_settings=shell_input_file_settings,
             user=user,
             user_template=user_template,
         )

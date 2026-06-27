@@ -10,14 +10,25 @@ from uuid import uuid4
 
 from async_helpers import run_async
 
-from avalan.agent.loader import OrchestratorLoader
+from avalan.agent.loader import (
+    OrchestratorLoader,
+    _merge_shell_tool_settings,
+    _shell_tool_runtime_settings,
+)
 from avalan.container import (
+    ContainerProfileSelection,
     ContainerRuntimeEnvelopeKind,
     ContainerSurface,
     ContainerToolRuntimeSettings,
+    trusted_container_runtime_from_mapping,
     trusted_container_source,
 )
 from avalan.entities import (
+    EngineUri,
+    Message,
+    MessageContentFile,
+    MessageContentText,
+    MessageRole,
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
     ToolCall,
@@ -29,13 +40,17 @@ from avalan.entities import (
     ToolManagerSettings,
     ToolNamePolicyMode,
     ToolNameResolutionStatus,
+    TransformerEngineSettings,
 )
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManagerMode
 from avalan.isolation import (
+    IsolationEffectiveSettings,
+    IsolationMode,
     IsolationProfileSelection,
     IsolationSettings,
     IsolationToolRuntimeSettings,
+    SandboxProfileSelection,
     trusted_isolation_source,
 )
 from avalan.model.hubs.huggingface import HuggingfaceHub
@@ -220,6 +235,86 @@ async def _from_file_tool_manager_kwargs(config: str) -> dict[str, Any]:
     return dict(tm_patch.call_args.kwargs)
 
 
+async def _from_file_code_shell_toolset_kwargs(
+    config: str,
+    *,
+    tool_settings: ToolSettingsContext | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    hub = MagicMock(spec=HuggingfaceHub)
+    logger = MagicMock(spec=Logger)
+    stack = AsyncExitStack()
+    memory = MagicMock()
+    tool = MagicMock()
+    tool.__aenter__ = AsyncMock(return_value=tool)
+
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "agent.toml"
+        path.write_text(config, encoding="utf-8")
+        with (
+            patch(
+                "avalan.agent.loader.MemoryManager.create_instance",
+                new=AsyncMock(return_value=memory),
+            ),
+            patch(
+                "avalan.agent.loader.ModelManager", return_value=MagicMock()
+            ),
+            patch(
+                "avalan.agent.loader.DefaultOrchestrator",
+                return_value="orch",
+            ),
+            patch(
+                "avalan.agent.loader.ToolManager.create_instance",
+                return_value=tool,
+            ),
+            patch(
+                "avalan.agent.loader.EventManager", return_value=MagicMock()
+            ),
+            patch("avalan.agent.loader.HAS_GRAPH_DEPENDENCIES", False),
+            patch("avalan.agent.loader.HAS_CODE_DEPENDENCIES", True),
+            patch("avalan.agent.loader.HAS_BROWSER_DEPENDENCIES", False),
+            patch(
+                "avalan.agent.loader.MathToolSet",
+                side_effect=lambda *, namespace: _named_toolset(namespace),
+            ),
+            patch(
+                "avalan.agent.loader.McpToolSet",
+                side_effect=lambda *, namespace: _named_toolset(namespace),
+            ),
+            patch(
+                "avalan.agent.loader.MemoryToolSet",
+                side_effect=lambda _memory, *, namespace: _named_toolset(
+                    namespace
+                ),
+            ),
+            patch(
+                "avalan.agent.loader.CodeToolSet",
+                side_effect=lambda **_kwargs: _named_toolset("code"),
+            ) as code_patch,
+            patch(
+                "avalan.agent.loader.ShellToolSet",
+                side_effect=lambda **_kwargs: _named_toolset("shell"),
+            ) as shell_patch,
+        ):
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            result = await loader.from_file(
+                str(path),
+                agent_id=uuid4(),
+                tool_settings=tool_settings,
+            )
+
+    await stack.aclose()
+    assert result == "orch"
+    return (
+        dict(code_patch.call_args.kwargs),
+        dict(shell_patch.call_args.kwargs),
+    )
+
+
 def _shell_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
     return [
         toolset.namespace
@@ -259,6 +354,181 @@ def _shell_only_manager(kwargs: dict[str, Any]) -> ToolManager:
         enable_tools=kwargs["enable_tools"],
         settings=ToolManagerSettings(),
     )
+
+
+async def _loaded_agent_model_input(
+    config: str, input_value: object
+) -> object:
+    captured_contexts: list[Any] = []
+
+    class CapturingTemplateEngineAgent:
+        def __init__(
+            self,
+            engine: object,
+            *_args: object,
+            **_kwargs: object,
+        ) -> None:
+            self.engine = engine
+            self.input_token_count = 0
+            self.last_prompt = None
+            self.output = None
+
+        async def __call__(self, context: Any) -> object:
+            captured_contexts.append(context)
+            self.last_prompt = (context.input, None, None, None)
+            return MagicMock(
+                input_token_count=1,
+                output_token_count=1,
+                usage=None,
+            )
+
+        async def sync_messages(self) -> None:
+            return None
+
+        def __str__(self) -> str:
+            return "capturing-template-engine-agent"
+
+    fake_engine = MagicMock(model_id="m", tokenizer=None)
+    fake_engine.__enter__.return_value = fake_engine
+    fake_engine.__exit__.return_value = None
+
+    model_manager = MagicMock()
+    model_manager.__enter__.return_value = model_manager
+    model_manager.__exit__.return_value = None
+    model_manager.parse_uri.return_value = EngineUri(
+        host=None,
+        port=None,
+        user=None,
+        password=None,
+        vendor=None,
+        model_id="m",
+        params={},
+    )
+    model_manager.get_engine_settings.return_value = (
+        TransformerEngineSettings()
+    )
+    model_manager.load_engine.return_value = fake_engine
+
+    memory = MagicMock()
+    memory.participant_id = uuid4()
+    memory.permanent_message = None
+    event_manager = MagicMock()
+    event_manager.trigger = AsyncMock()
+    event_manager.aclose = AsyncMock()
+    stack = AsyncExitStack()
+
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "agent.toml"
+        path.write_text(config, encoding="utf-8")
+        try:
+            with (
+                patch(
+                    "avalan.agent.loader.MemoryManager.create_instance",
+                    new=AsyncMock(return_value=memory),
+                ),
+                patch(
+                    "avalan.agent.loader.ModelManager",
+                    return_value=model_manager,
+                ),
+                patch(
+                    "avalan.agent.loader.EventManager",
+                    return_value=event_manager,
+                ),
+                patch(
+                    "avalan.agent.orchestrator.TemplateEngineAgent",
+                    CapturingTemplateEngineAgent,
+                ),
+                patch(
+                    "avalan.agent.orchestrator.OrchestratorResponse",
+                    return_value="resp",
+                ),
+                patch("avalan.agent.loader.HAS_GRAPH_DEPENDENCIES", False),
+                patch("avalan.agent.loader.HAS_CODE_DEPENDENCIES", False),
+                patch("avalan.agent.loader.HAS_BROWSER_DEPENDENCIES", False),
+                patch(
+                    "avalan.agent.loader.MathToolSet",
+                    side_effect=lambda *, namespace: ToolSet(
+                        namespace=namespace,
+                        tools=[],
+                    ),
+                ),
+                patch(
+                    "avalan.agent.loader.McpToolSet",
+                    side_effect=lambda *, namespace: ToolSet(
+                        namespace=namespace,
+                        tools=[],
+                    ),
+                ),
+                patch(
+                    "avalan.agent.loader.MemoryToolSet",
+                    side_effect=lambda _memory, *, namespace: ToolSet(
+                        namespace=namespace,
+                        tools=[],
+                    ),
+                ),
+            ):
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                agent = await loader.from_file(str(path), agent_id=uuid4())
+                async with agent:
+                    await agent(input_value)
+        finally:
+            await stack.aclose()
+
+    assert captured_contexts
+    return captured_contexts[0].input
+
+
+def _input_text_blocks(input_value: object) -> list[str]:
+    if isinstance(input_value, str):
+        return [input_value]
+    if isinstance(input_value, Message):
+        return _content_text_blocks(input_value.content)
+    if isinstance(input_value, list):
+        texts: list[str] = []
+        for item in input_value:
+            texts.extend(_input_text_blocks(item))
+        return texts
+    return []
+
+
+def _content_text_blocks(content: object) -> list[str]:
+    if isinstance(content, str):
+        return [content]
+    if isinstance(content, MessageContentText):
+        return [content.text]
+    if isinstance(content, list):
+        texts: list[str] = []
+        for item in content:
+            texts.extend(_content_text_blocks(item))
+        return texts
+    return []
+
+
+def _input_file_blocks(input_value: object) -> list[MessageContentFile]:
+    if isinstance(input_value, Message):
+        return _content_file_blocks(input_value.content)
+    if isinstance(input_value, list):
+        files: list[MessageContentFile] = []
+        for item in input_value:
+            files.extend(_input_file_blocks(item))
+        return files
+    return []
+
+
+def _content_file_blocks(content: object) -> list[MessageContentFile]:
+    if isinstance(content, MessageContentFile):
+        return [content]
+    if isinstance(content, list):
+        files: list[MessageContentFile] = []
+        for item in content:
+            files.extend(_content_file_blocks(item))
+        return files
+    return []
 
 
 class _AgentShellPolicy(ExecutionPolicy):
@@ -489,6 +759,160 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             await loader.from_file("missing.toml", agent_id=uuid4())
         await stack.aclose()
 
+    async def test_merge_shell_tool_settings_without_base(self) -> None:
+        override = ShellToolSettings(max_head_lines=7)
+
+        self.assertIs(_merge_shell_tool_settings(None, override), override)
+
+    async def test_merge_shell_tool_settings_replaces_without_explicit_fields(
+        self,
+    ) -> None:
+        base = ShellToolSettings(workspace_root="/workspace/project")
+        override = ShellToolSettings()
+
+        self.assertIs(
+            _merge_shell_tool_settings(base, override),
+            override,
+        )
+
+    async def test_merge_shell_tool_settings_applies_explicit_default_override(
+        self,
+    ) -> None:
+        default = ShellToolSettings()
+        base = ShellToolSettings(max_head_lines=12)
+
+        merged = _merge_shell_tool_settings(
+            base,
+            default,
+            explicit_fields=frozenset({"max_head_lines"}),
+        )
+
+        assert merged is not None
+        self.assertEqual(merged.max_head_lines, default.max_head_lines)
+        self.assertEqual(merged.workspace_root, base.workspace_root)
+        self.assertIsNot(merged, default)
+        self.assertIsNot(merged, base)
+
+    async def test_merge_shell_tool_settings_applies_explicit_false_override(
+        self,
+    ) -> None:
+        base = ShellToolSettings(input_file_manifest_enabled=True)
+        override = ShellToolSettings(input_file_manifest_enabled=False)
+
+        merged = _merge_shell_tool_settings(
+            base,
+            override,
+            explicit_fields=frozenset({"input_file_manifest_enabled"}),
+        )
+
+        assert merged is not None
+        self.assertFalse(merged.input_file_manifest_enabled)
+
+    async def test_merge_shell_tool_settings_keeps_empty_explicit_base(
+        self,
+    ) -> None:
+        base = ShellToolSettings(workspace_root="/workspace/project")
+
+        self.assertIs(
+            _merge_shell_tool_settings(
+                base,
+                ShellToolSettings(),
+                explicit_fields=frozenset(),
+            ),
+            base,
+        )
+
+    async def test_merge_shell_tool_settings_pairs_backend_aliases(
+        self,
+    ) -> None:
+        base = ShellToolSettings(
+            backend="container",
+            container=ContainerProfileSelection(required=True),
+        )
+        override = ShellToolSettings(backend="local")
+
+        merged = _merge_shell_tool_settings(
+            base,
+            override,
+            explicit_fields=frozenset({"backend"}),
+        )
+
+        assert merged is not None
+        self.assertEqual(merged.backend, "local")
+        self.assertEqual(merged.execution_mode, "local")
+        self.assertIsNone(merged.container)
+
+    async def test_merge_shell_tool_settings_pairs_execution_mode_aliases(
+        self,
+    ) -> None:
+        base = ShellToolSettings(
+            execution_mode="sandbox",
+            sandbox=SandboxProfileSelection(required=True),
+        )
+        override = ShellToolSettings(execution_mode="local")
+
+        merged = _merge_shell_tool_settings(
+            base,
+            override,
+            explicit_fields=frozenset({"execution_mode"}),
+        )
+
+        assert merged is not None
+        self.assertEqual(merged.backend, "local")
+        self.assertEqual(merged.execution_mode, "local")
+        self.assertIsNone(merged.sandbox)
+
+    async def test_shell_runtime_settings_preserve_container_isolation(
+        self,
+    ) -> None:
+        container_runtime = trusted_container_runtime_from_mapping(
+            {
+                "backend": "docker",
+                "default_profile": "workspace-readonly",
+                "profiles": {
+                    "workspace-readonly": {
+                        "image": "ghcr.io/example/tools@sha256:" + "4" * 64,
+                        "workspace_root": ".",
+                    }
+                },
+            },
+            source=trusted_container_source("sdk"),
+        )
+        isolation_runtime = IsolationToolRuntimeSettings(
+            effective_settings=IsolationEffectiveSettings(
+                mode=IsolationMode.CONTAINER,
+                source=trusted_isolation_source("sdk"),
+                container=container_runtime.effective_settings,
+            )
+        )
+
+        resolved_container, resolved_isolation = _shell_tool_runtime_settings(
+            ShellToolSettings(execution_mode="container"),
+            container_runtime,
+            isolation_runtime,
+        )
+
+        self.assertIsNone(resolved_container)
+        self.assertIs(resolved_isolation, isolation_runtime)
+
+        resolved_container, resolved_isolation = _shell_tool_runtime_settings(
+            ShellToolSettings(execution_mode="container"),
+            container_runtime,
+            None,
+        )
+
+        self.assertIs(resolved_container, container_runtime)
+        self.assertIsNone(resolved_isolation)
+
+        resolved_container, resolved_isolation = _shell_tool_runtime_settings(
+            ShellToolSettings(execution_mode="sandbox"),
+            None,
+            isolation_runtime,
+        )
+
+        self.assertIsNone(resolved_container)
+        self.assertIsNone(resolved_isolation)
+
     async def test_empty_shell_section_enables_default_shell_settings(self):
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
             tmp.write(_minimal_agent_toml() + "\n[tool.shell]\n")
@@ -591,6 +1015,9 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 + 'workspace_root = "/tmp"\n'
                 + 'cwd = "fixtures"\n'
                 + 'materialized_input_files_dir = "agent-input-files"\n'
+                + "input_file_manifest_enabled = false\n"
+                + 'input_file_manifest_message = "Use attached paths:"\n'
+                + 'input_file_manifest_path_message = "Pass them to tools."\n'
                 + "max_head_lines = 12\n"
                 + "allow_hidden = true\n"
                 + 'allowed_commands = ["head", "cat"]\n'
@@ -619,6 +1046,15 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 tool_settings.shell.materialized_input_files_dir,
                 "agent-input-files",
             )
+            self.assertFalse(tool_settings.shell.input_file_manifest_enabled)
+            self.assertEqual(
+                tool_settings.shell.input_file_manifest_message,
+                "Use attached paths:",
+            )
+            self.assertEqual(
+                tool_settings.shell.input_file_manifest_path_message,
+                "Pass them to tools.",
+            )
             self.assertEqual(tool_settings.shell.max_head_lines, 12)
             self.assertTrue(tool_settings.shell.allow_hidden)
             self.assertEqual(
@@ -626,11 +1062,15 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             )
             await stack.aclose()
 
-    async def test_shell_tool_settings_override_toml(self):
+    async def test_shell_tool_settings_merges_cli_explicit_fields_with_toml(
+        self,
+    ):
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
             tmp.write(
                 _minimal_agent_toml()
                 + "\n[tool.shell]\n"
+                + 'workspace_root = "/workspace/project"\n'
+                + 'materialized_input_files_dir = "agent-input-files"\n'
                 + "max_head_lines = 12\n"
             )
             tmp.flush()
@@ -641,7 +1081,10 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 participant_id=uuid4(),
                 stack=stack,
             )
-            override = ShellToolSettings(max_head_lines=7)
+            override = ShellToolSettings(
+                allow_media_tools=True,
+                max_head_lines=ShellToolSettings().max_head_lines,
+            )
 
             with patch.object(
                 loader,
@@ -651,13 +1094,33 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 result = await loader.from_file(
                     tmp.name,
                     agent_id=uuid4(),
-                    tool_settings=ToolSettingsContext(shell=override),
+                    tool_settings=ToolSettingsContext(
+                        shell=override,
+                        shell_explicit_fields=frozenset(
+                            {
+                                "allow_media_tools",
+                                "max_head_lines",
+                            }
+                        ),
+                    ),
                 )
 
             self.assertEqual(result, "orch")
             tool_settings = from_settings.call_args.kwargs["tool_settings"]
-            self.assertIs(tool_settings.shell, override)
-            self.assertEqual(tool_settings.shell.max_head_lines, 7)
+            self.assertIsNot(tool_settings.shell, override)
+            self.assertEqual(
+                tool_settings.shell.workspace_root,
+                "/workspace/project",
+            )
+            self.assertEqual(
+                tool_settings.shell.materialized_input_files_dir,
+                "agent-input-files",
+            )
+            self.assertTrue(tool_settings.shell.allow_media_tools)
+            self.assertEqual(
+                tool_settings.shell.max_head_lines,
+                ShellToolSettings().max_head_lines,
+            )
             await stack.aclose()
 
     async def test_container_toml_sections_load_trusted_settings(self) -> None:
@@ -712,6 +1175,100 @@ profile = "workspace-readonly"
             self.assertTrue(effective.required)
             self.assertIsNone(tool_settings.extra)
             await stack.aclose()
+
+    async def test_cli_backend_local_overrides_toml_container_mode(
+        self,
+    ) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "4" * 64
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + f"""
+[tool]
+enable = ["shell.cat"]
+
+[tool.container]
+backend = "docker"
+default_profile = "workspace-readonly"
+
+[tool.container.profiles.workspace-readonly]
+image = "{image}"
+workspace_root = "."
+network = "none"
+
+[tool.shell]
+backend = "container"
+
+[tool.shell.container]
+profile = "workspace-readonly"
+
+""")
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(
+                    tmp.name,
+                    agent_id=uuid4(),
+                    tool_settings=ToolSettingsContext(
+                        shell=ShellToolSettings(backend="local"),
+                        shell_explicit_fields=frozenset({"backend"}),
+                    ),
+                )
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertEqual(tool_settings.shell.backend, "local")
+            self.assertEqual(tool_settings.shell.execution_mode, "local")
+            self.assertIsNone(tool_settings.shell.container)
+            self.assertIsNotNone(tool_settings.container)
+            await stack.aclose()
+
+    async def test_shell_local_override_filters_container_runtime_for_shell(
+        self,
+    ) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "4" * 64
+        config = _minimal_agent_toml() + f"""
+[tool]
+enable = ["shell.cat"]
+
+[tool.container]
+backend = "docker"
+default_profile = "workspace-readonly"
+
+[tool.container.profiles.workspace-readonly]
+image = "{image}"
+workspace_root = "."
+network = "none"
+
+[tool.shell]
+backend = "container"
+
+[tool.shell.container]
+profile = "workspace-readonly"
+
+"""
+
+        code_kwargs, shell_kwargs = await _from_file_code_shell_toolset_kwargs(
+            config,
+            tool_settings=ToolSettingsContext(
+                shell=ShellToolSettings(backend="local"),
+                shell_explicit_fields=frozenset({"backend"}),
+            ),
+        )
+
+        self.assertIsNotNone(code_kwargs["container_runtime"])
+        self.assertIsNone(shell_kwargs["container_runtime"])
+        self.assertNotIn("isolation_runtime", shell_kwargs)
+        self.assertEqual(shell_kwargs["settings"].backend, "local")
 
     async def test_sandbox_toml_sections_load_trusted_settings(self) -> None:
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
@@ -775,6 +1332,106 @@ profile = "host-tools"
             self.assertTrue(effective.sandbox.required)
             self.assertIsNone(tool_settings.extra)
             await stack.aclose()
+
+    async def test_cli_execution_mode_local_overrides_toml_sandbox_mode(
+        self,
+    ) -> None:
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + """
+[tool]
+enable = ["shell.cat"]
+
+[tool.sandbox]
+backend = "seatbelt"
+default_profile = "host-tools"
+
+[tool.sandbox.profiles.host-tools]
+trusted_executables = ["/bin/cat"]
+read_roots = ["/tmp"]
+scratch_roots = ["/tmp"]
+output_roots = ["/tmp"]
+child_processes = "deny"
+inherited_fds = "stdio"
+
+[tool.shell]
+backend = "sandbox"
+
+[tool.shell.sandbox]
+profile = "host-tools"
+
+""")
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(
+                    tmp.name,
+                    agent_id=uuid4(),
+                    tool_settings=ToolSettingsContext(
+                        shell=ShellToolSettings(execution_mode="local"),
+                        shell_explicit_fields=frozenset({"execution_mode"}),
+                    ),
+                )
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertEqual(tool_settings.shell.backend, "local")
+            self.assertEqual(tool_settings.shell.execution_mode, "local")
+            self.assertIsNone(tool_settings.shell.sandbox)
+            self.assertIsNotNone(tool_settings.isolation)
+            await stack.aclose()
+
+    async def test_shell_local_override_filters_isolation_runtime_for_shell(
+        self,
+    ) -> None:
+        config = _minimal_agent_toml() + """
+[tool]
+enable = ["shell.cat"]
+
+[tool.sandbox]
+backend = "seatbelt"
+default_profile = "host-tools"
+
+[tool.sandbox.profiles.host-tools]
+trusted_executables = ["/bin/cat"]
+read_roots = ["/tmp"]
+scratch_roots = ["/tmp"]
+output_roots = ["/tmp"]
+child_processes = "deny"
+inherited_fds = "stdio"
+
+[tool.shell]
+backend = "sandbox"
+
+[tool.shell.sandbox]
+profile = "host-tools"
+
+"""
+
+        (
+            _code_kwargs,
+            shell_kwargs,
+        ) = await _from_file_code_shell_toolset_kwargs(
+            config,
+            tool_settings=ToolSettingsContext(
+                shell=ShellToolSettings(execution_mode="local"),
+                shell_explicit_fields=frozenset({"execution_mode"}),
+            ),
+        )
+
+        self.assertNotIn("isolation_runtime", shell_kwargs)
+        self.assertIsNone(shell_kwargs["container_runtime"])
+        self.assertEqual(shell_kwargs["settings"].execution_mode, "local")
 
     async def test_runtime_container_requires_envelope_aware_loader(
         self,
@@ -1348,6 +2005,178 @@ profile = "host-tools"
 
                 self.assertEqual(_shell_namespaces(kwargs), ["shell"])
                 self.assertEqual(kwargs["enable_tools"], expected_enable)
+
+    async def test_from_file_shell_manifest_reaches_model_input_for_shell(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            source = (
+                workspace / "inputs" / "batches" / "client_docs" / "report.pdf"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"%PDF-1.7")
+            file_content = MessageContentFile(
+                type="file",
+                file={
+                    "filename": "report.pdf",
+                    "local_path": str(source.resolve()),
+                },
+            )
+            message = Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(
+                        type="text",
+                        text="summarize the attachment",
+                    ),
+                    file_content,
+                ],
+            )
+            base_config = """
+[agent]
+role = "assistant"
+user = "Review: {{ input }}"
+
+[engine]
+uri = "ai://local/model"
+"""
+            shell_config = base_config + f"""
+[tool]
+enable = ["shell.pdfinfo"]
+
+[tool.shell]
+workspace_root = "{workspace.as_posix()}"
+"""
+
+            shell_input = await _loaded_agent_model_input(
+                shell_config,
+                message,
+            )
+            plain_input = await _loaded_agent_model_input(
+                base_config,
+                message,
+            )
+
+        shell_text = "\n".join(_input_text_blocks(shell_input))
+        plain_text = "\n".join(_input_text_blocks(plain_input))
+        workspace_path = "inputs/batches/client_docs/report.pdf"
+
+        self.assertIn("Review: summarize the attachment", shell_text)
+        self.assertIn("report.pdf", shell_text)
+        self.assertIn(workspace_path, shell_text)
+        self.assertIn(file_content, _input_file_blocks(shell_input))
+
+        self.assertIn("Review: summarize the attachment", plain_text)
+        self.assertNotIn(workspace_path, plain_text)
+        self.assertIn(file_content, _input_file_blocks(plain_input))
+
+    async def test_from_file_shell_manifest_skips_filtered_shell_tools(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            source = (
+                workspace / "inputs" / "batches" / "client_docs" / "report.pdf"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"%PDF-1.7")
+            file_content = MessageContentFile(
+                type="file",
+                file={
+                    "filename": "report.pdf",
+                    "local_path": str(source.resolve()),
+                },
+            )
+            message = Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(
+                        type="text",
+                        text="summarize the attachment",
+                    ),
+                    file_content,
+                ],
+            )
+            config = f"""
+[agent]
+role = "assistant"
+user = "Review: {{{{ input }}}}"
+
+[engine]
+uri = "ai://local/model"
+
+[tool]
+enable = ["math.calculator"]
+
+[tool.shell]
+workspace_root = "{workspace.as_posix()}"
+"""
+
+            kwargs = await _from_file_tool_manager_kwargs(config)
+            model_input = await _loaded_agent_model_input(config, message)
+
+        settings = kwargs["settings"]
+        self.assertIsInstance(settings, ToolManagerSettings)
+        self.assertIsNone(settings.filters)
+
+        text = "\n".join(_input_text_blocks(model_input))
+        workspace_path = "inputs/batches/client_docs/report.pdf"
+
+        self.assertIn("Review: summarize the attachment", text)
+        self.assertNotIn(workspace_path, text)
+        self.assertNotIn("Attached files available to tools", text)
+        self.assertIn(file_content, _input_file_blocks(model_input))
+
+    async def test_from_file_shell_manifest_can_be_disabled(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            source = (
+                workspace / "inputs" / "batches" / "client_docs" / "report.pdf"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"%PDF-1.7")
+            file_content = MessageContentFile(
+                type="file",
+                file={
+                    "filename": "report.pdf",
+                    "local_path": str(source.resolve()),
+                },
+            )
+            message = Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(
+                        type="text",
+                        text="summarize the attachment",
+                    ),
+                    file_content,
+                ],
+            )
+            config = f"""
+[agent]
+role = "assistant"
+user = "Review: {{{{ input }}}}"
+
+[engine]
+uri = "ai://local/model"
+
+[tool]
+enable = ["shell.pdfinfo"]
+
+[tool.shell]
+workspace_root = "{workspace.as_posix()}"
+input_file_manifest_enabled = false
+"""
+
+            model_input = await _loaded_agent_model_input(config, message)
+
+        text = "\n".join(_input_text_blocks(model_input))
+
+        self.assertIn("Review: summarize the attachment", text)
+        self.assertNotIn("inputs/batches/client_docs/report.pdf", text)
+        self.assertNotIn("Attached files available to tools", text)
+        self.assertIn(file_content, _input_file_blocks(model_input))
 
     async def test_from_file_loads_tool_name_policy(self):
         kwargs = await _from_file_tool_manager_kwargs(
@@ -4495,6 +5324,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         memory = MagicMock()
         tool = MagicMock()
         event_manager = MagicMock()
+        shell_settings = ShellToolSettings(workspace_root="/workspace")
 
         settings = OrchestratorSettings(
             agent_id=uuid4(),
@@ -4506,7 +5336,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             },
             uri="ai://local/model",
             engine_config={},
-            tools=None,
+            tools=["shell.pdfinfo"],
             call_options=None,
             template_vars=None,
             memory_permanent_message=None,
@@ -4553,10 +5383,17 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 participant_id=uuid4(),
                 stack=stack,
             )
-            result = await loader.from_settings(settings)
+            result = await loader.from_settings(
+                settings,
+                tool_settings=ToolSettingsContext(shell=shell_settings),
+            )
 
             self.assertEqual(result, "json_orch")
             json_patch.assert_called_once()
+            self.assertIs(
+                json_patch.call_args.kwargs["shell_input_file_settings"],
+                shell_settings,
+            )
         await stack.aclose()
 
     async def test_load_json_orchestrator_properties(self):
@@ -4568,6 +5405,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         memory = MagicMock()
         tool = MagicMock()
         event_manager = MagicMock()
+        shell_settings = ShellToolSettings(workspace_root="/workspace")
 
         config = {
             "json": {
@@ -4596,9 +5434,14 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 agent_config=agent_config,
                 call_options=None,
                 template_vars=None,
+                shell_input_file_settings=shell_settings,
             )
 
             orch_patch.assert_called_once()
+            self.assertIs(
+                orch_patch.call_args.kwargs["shell_input_file_settings"],
+                shell_settings,
+            )
             properties = orch_patch.call_args.args[6]
             self.assertEqual(len(properties), 2)
             self.assertEqual(properties[0].name, "name")

@@ -1522,6 +1522,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
         blocks = client._format_content(
             [
+                MessageContentText(type="text", text="inspect attachment"),
                 MessageContentFile(
                     type="file",
                     file={
@@ -1529,12 +1530,30 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
                         "filename": "report.pdf",
                         "mime_type": "application/pdf",
                     },
-                )
+                ),
+                MessageContentText(
+                    type="text",
+                    text=(
+                        "Attached files available to tools:\n"
+                        "Use these path values as tool arguments.\n"
+                        '- "attachment/report.pdf"'
+                    ),
+                ),
             ]
         )
 
-        self.assertEqual(blocks[0], {"text": ""})
+        self.assertEqual(blocks[0], {"text": "inspect attachment"})
         self.assertEqual(blocks[1]["document"]["source"], {"bytes": b"abc"})
+        self.assertEqual(
+            blocks[2],
+            {
+                "text": (
+                    "Attached files available to tools:\n"
+                    "Use these path values as tool arguments.\n"
+                    '- "attachment/report.pdf"'
+                )
+            },
+        )
 
     def test_document_source_variants(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())

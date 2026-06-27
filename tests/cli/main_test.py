@@ -470,6 +470,11 @@ class CliShellToolOptionTestCase(TestCase):
                         "--tool-shell-allow-media-tools",
                         "--tool-shell-max-stdout-bytes",
                         "4096",
+                        "--no-tool-shell-input-file-manifest-enabled",
+                        "--tool-shell-input-file-manifest-message",
+                        "Use attached paths:",
+                        "--tool-shell-input-file-manifest-path-message",
+                        "Pass them to tools.",
                         "--tool-shell-executable-search-path",
                         "/usr/bin",
                         "--tool-shell-executable-path",
@@ -479,6 +484,15 @@ class CliShellToolOptionTestCase(TestCase):
 
                 self.assertTrue(args.tool_shell_allow_media_tools)
                 self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
+                self.assertFalse(args.tool_shell_input_file_manifest_enabled)
+                self.assertEqual(
+                    args.tool_shell_input_file_manifest_message,
+                    "Use attached paths:",
+                )
+                self.assertEqual(
+                    args.tool_shell_input_file_manifest_path_message,
+                    "Pass them to tools.",
+                )
                 self.assertEqual(
                     args.tool_shell_executable_search_paths, ["/usr/bin"]
                 )
@@ -504,6 +518,7 @@ class CliShellToolOptionTestCase(TestCase):
             for field in ShellToolSettings.CLI_SCALAR_FIELDS
         }
         expected |= {
+            "--no-tool-shell-input-file-manifest-enabled",
             "--tool-shell-container-profile",
             "--tool-shell-container-required",
             "--tool-shell-sandbox-profile",
@@ -535,6 +550,7 @@ class CliShellToolOptionTestCase(TestCase):
                 option
                 for option in option_strings
                 if option.startswith("--tool-shell-")
+                or option.startswith("--no-tool-shell-")
             }
 
             with self.subTest(parser=suffix):
@@ -3261,11 +3277,25 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 "--tool-shell-allow-media-tools",
                 "--tool-shell-max-stdout-bytes",
                 "4096",
+                "--no-tool-shell-input-file-manifest-enabled",
+                "--tool-shell-input-file-manifest-message",
+                "Use attached paths:",
+                "--tool-shell-input-file-manifest-path-message",
+                "Pass them to tools.",
             ]
         )
 
         self.assertTrue(args.tool_shell_allow_media_tools)
         self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
+        self.assertFalse(args.tool_shell_input_file_manifest_enabled)
+        self.assertEqual(
+            args.tool_shell_input_file_manifest_message,
+            "Use attached paths:",
+        )
+        self.assertEqual(
+            args.tool_shell_input_file_manifest_path_message,
+            "Pass them to tools.",
+        )
         with self.assertRaises(SystemExit):
             parser.parse_args(["--tool-shell-environment", "TOKEN=value"])
 
@@ -3288,6 +3318,15 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             args.tool_shell_executable_paths, [("rg", "/usr/bin/rg")]
         )
+
+    def test_negated_bool_arguments_are_limited_to_manifest_toggle(self):
+        parser = ArgumentParser()
+        CLI._add_tool_settings_arguments(
+            parser, prefix="database", settings_cls=DatabaseToolSettings
+        )
+
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--no-tool-database-read-only"])
 
     def test_add_shell_tool_settings_arguments_accepts_container_options(self):
         parser = ArgumentParser()

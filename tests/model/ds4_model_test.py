@@ -4178,6 +4178,14 @@ def test_ds4_prompt_messages_merge_system_developer_and_text_content(
         MessageContentImage(type="image_url", image_url={"url": "x"}),
         MessageContentText(type="text", text="Hello"),
         MessageContentFile(type="file", file={"filename": "x.txt"}),
+        MessageContentText(
+            type="text",
+            text=(
+                "Attached files available to tools:\n"
+                "Use these path values as tool arguments.\n"
+                '- "attachment/report.pdf"'
+            ),
+        ),
     ]
 
     system_content, messages = model._ds4_prompt_messages(
@@ -4196,7 +4204,12 @@ def test_ds4_prompt_messages_merge_system_developer_and_text_content(
     assert system_content == "System\n\nDeveloper instructions:\nDeveloper"
     assert len(messages) == 1
     assert messages[0].role is MessageRole.USER
-    assert messages[0].content == "Hello"
+    assert (
+        messages[0].content
+        == "Hello\nAttached files available to tools:\n"
+        "Use these path values as tool arguments.\n"
+        '- "attachment/report.pdf"'
+    )
 
 
 def test_ds4_prompt_messages_reject_invalid_input_and_role(

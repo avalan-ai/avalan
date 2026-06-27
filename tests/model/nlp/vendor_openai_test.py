@@ -3277,6 +3277,14 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
                 type="file",
                 file={"file_data": "YWJj", "filename": "report.pdf"},
             ),
+            MessageContentText(
+                type="text",
+                text=(
+                    "Attached files available to tools:\n"
+                    "Use these path values as tool arguments.\n"
+                    '- "attachment/report.pdf"'
+                ),
+            ),
         ]
         await self._assert_messages(
             content,
@@ -3286,6 +3294,14 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
                     "type": "input_file",
                     "file_data": "data:application/pdf;base64,YWJj",
                     "filename": "report.pdf",
+                },
+                {
+                    "type": "input_text",
+                    "text": (
+                        "Attached files available to tools:\n"
+                        "Use these path values as tool arguments.\n"
+                        '- "attachment/report.pdf"'
+                    ),
                 },
             ],
         )

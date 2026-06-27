@@ -16,6 +16,7 @@ from avalan.entities import (
     Message,
     MessageContentFile,
     MessageContentImage,
+    MessageContentText,
     MessageRole,
     MessageToolCall,
     ReasoningEffort,
@@ -1271,6 +1272,7 @@ def test_file_content_translation_and_beta_header(anthropic_mod):
         Message(
             role=MessageRole.USER,
             content=[
+                MessageContentText(type="text", text="inspect attachment"),
                 MessageContentFile(
                     type="file",
                     file={
@@ -1282,6 +1284,14 @@ def test_file_content_translation_and_beta_header(anthropic_mod):
                 ),
                 MessageContentImage(
                     type="image_url", image_url={"file_id": "img_1"}
+                ),
+                MessageContentText(
+                    type="text",
+                    text=(
+                        "Attached files available to tools:\n"
+                        "Use these path values as tool arguments.\n"
+                        '- "attachment/report.pdf"'
+                    ),
                 ),
             ],
         )
@@ -1305,6 +1315,7 @@ def test_file_content_translation_and_beta_header(anthropic_mod):
         {
             "role": "user",
             "content": [
+                {"type": "text", "text": "inspect attachment"},
                 {
                     "type": "document",
                     "source": {"type": "file", "file_id": "file_1"},
@@ -1315,6 +1326,14 @@ def test_file_content_translation_and_beta_header(anthropic_mod):
                 {
                     "type": "image",
                     "source": {"type": "file", "file_id": "img_1"},
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "Attached files available to tools:\n"
+                        "Use these path values as tool arguments.\n"
+                        '- "attachment/report.pdf"'
+                    ),
                 },
             ],
         }

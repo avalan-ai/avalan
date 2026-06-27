@@ -66,6 +66,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import fields
 from importlib import import_module
+from json import dumps as json_dumps
 from logging import Logger
 from os.path import dirname, getmtime, join
 from typing import Any, cast, overload
@@ -347,6 +348,35 @@ def _tool_settings_from_mapping(
     return settings
 
 
+def _tool_settings_explicit_fields_from_mapping(
+    mapping: Mapping[str, object] | Namespace,
+    *,
+    prefix: str | None = None,
+    settings_cls: (
+        type[BrowserToolSettings]
+        | type[DatabaseToolSettings]
+        | type[GraphToolSettings]
+        | type[ShellToolSettings]
+    ),
+) -> frozenset[str]:
+    """Return dataclass fields explicitly present in tool settings input."""
+    explicit_fields: set[str] = set()
+    for field in fields(settings_cls):
+        key = f"tool_{prefix}_{field.name}" if prefix else field.name
+        if isinstance(mapping, Namespace):
+            if hasattr(mapping, key) and getattr(mapping, key) is not None:
+                explicit_fields.add(field.name)
+        elif key in mapping and mapping[key] is not None:
+            explicit_fields.add(field.name)
+        elif (
+            prefix
+            and field.name in mapping
+            and mapping[field.name] is not None
+        ):
+            explicit_fields.add(field.name)
+    return frozenset(explicit_fields)
+
+
 def _coerce_database_tool_setting_value(
     field_name: str, value: object, *, from_cli: bool
 ) -> object:
@@ -484,6 +514,27 @@ def _shell_tool_template_settings(
         elif _is_simple_string_sequence(value):
             rendered[name] = tuple(value)
     return rendered
+
+
+def _toml_template_value(value: object) -> str:
+    """Return a TOML literal for agent blueprint templates."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return json_dumps(value, ensure_ascii=False)
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, Mapping):
+        items = ", ".join(
+            f"{key} = {_toml_template_value(item)}"
+            for key, item in sorted(value.items())
+        )
+        return "{ " + items + " }"
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
+        return (
+            "[" + ", ".join(_toml_template_value(item) for item in value) + "]"
+        )
+    raise AssertionError("unsupported TOML template value")
 
 
 def _container_tool_template_settings(
@@ -1246,6 +1297,11 @@ def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
     shell_settings = get_tool_settings(
         args, prefix="shell", settings_cls=ShellToolSettings
     )
+    shell_explicit_fields = _tool_settings_explicit_fields_from_mapping(
+        args,
+        prefix="shell",
+        settings_cls=ShellToolSettings,
+    )
     container_runtime = _agent_container_runtime_settings(
         args,
         shell_settings,
@@ -1255,6 +1311,9 @@ def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
         database=database_settings,
         graph=graph_settings,
         shell=shell_settings,
+        shell_explicit_fields=(
+            shell_explicit_fields if shell_settings is not None else None
+        ),
         container=container_runtime,
         isolation=_agent_isolation_runtime_settings(args, shell_settings),
     )
@@ -1962,6 +2021,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    env.filters["toml_value"] = _toml_template_value
     template = env.get_template("blueprint.toml")
     tool_format = getattr(args, "tool_format", None)
     tool_recovery_formats = getattr(args, "tool_recovery_format", None) or []

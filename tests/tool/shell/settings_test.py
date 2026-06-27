@@ -17,6 +17,13 @@ class ShellToolSettingsTest(TestCase):
             "workspace_root": ".",
             "cwd": ".",
             "materialized_input_files_dir": "avalan-input-files",
+            "input_file_manifest_enabled": True,
+            "input_file_manifest_message": (
+                "Attached files available to tools:"
+            ),
+            "input_file_manifest_path_message": (
+                "Use these path values as tool arguments."
+            ),
             "default_timeout_seconds": 10.0,
             "max_timeout_seconds": 60.0,
             "max_stdout_bytes": 65536,
@@ -90,6 +97,9 @@ class ShellToolSettingsTest(TestCase):
         self.assertLess(scalar_fields, field_names)
         self.assertIn("allow_media_tools", scalar_fields)
         self.assertIn("materialized_input_files_dir", scalar_fields)
+        self.assertIn("input_file_manifest_enabled", scalar_fields)
+        self.assertIn("input_file_manifest_message", scalar_fields)
+        self.assertIn("input_file_manifest_path_message", scalar_fields)
         self.assertIn("max_stdout_bytes", scalar_fields)
         self.assertNotIn("allowed_commands", scalar_fields)
         self.assertNotIn("environment", scalar_fields)
@@ -218,6 +228,8 @@ class ShellToolSettingsTest(TestCase):
             {"materialized_input_files_dir": ""},
             {"materialized_input_files_dir": "/tmp/inputs"},
             {"materialized_input_files_dir": "../inputs"},
+            {"input_file_manifest_message": ""},
+            {"input_file_manifest_path_message": ""},
             {"max_stdout_bytes": 0},
             {"max_stdin_bytes": 1},
             {"default_timeout_seconds": 61.0},
@@ -289,6 +301,7 @@ def _boolean_field_names() -> tuple[str, ...]:
         field.name
         for field in fields(ShellToolSettings)
         if field.name.startswith("allow_")
+        or field.name == "input_file_manifest_enabled"
     )
 
 
