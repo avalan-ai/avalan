@@ -227,9 +227,54 @@ async def test_shell_input_file_manifest_lists_workspace_relative_path(
     )
 
     assert manifest is not None
+    assert manifest.startswith("Attached files available to tools:\n")
+    assert "Use these path values as tool arguments." in manifest
+    assert "shell tools" not in manifest
+    assert "JSON" not in manifest
     assert "report.pdf" in manifest
     assert "inputs/batches/client_docs/report.pdf" in manifest
     assert str(source.resolve()) not in manifest
+
+
+async def test_shell_input_file_manifest_uses_custom_message(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "inputs" / "report.pdf"
+    source.parent.mkdir()
+    source.write_bytes(b"%PDF-1.7")
+
+    manifest = await _shell_input_file_manifest(
+        _message(source),
+        ShellToolSettings(
+            workspace_root=str(tmp_path),
+            input_file_manifest_message="Files for available tools:",
+            input_file_manifest_path_message="Pass these paths to tools.",
+        ),
+    )
+
+    assert manifest is not None
+    assert manifest.startswith(
+        "Files for available tools:\nPass these paths to tools.\n"
+    )
+    assert "inputs/report.pdf" in manifest
+
+
+async def test_shell_input_file_manifest_can_be_disabled(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "inputs" / "report.pdf"
+    source.parent.mkdir()
+    source.write_bytes(b"%PDF-1.7")
+
+    manifest = await _shell_input_file_manifest(
+        _message(source),
+        ShellToolSettings(
+            workspace_root=str(tmp_path),
+            input_file_manifest_enabled=False,
+        ),
+    )
+
+    assert manifest is None
 
 
 async def test_shell_input_file_manifest_omits_unavailable_files(

@@ -165,6 +165,28 @@ class GetToolSettingsTestCase(unittest.TestCase):
         self.assertIsInstance(settings, ShellToolSettings)
         self.assertTrue(settings.allow_media_tools)
 
+    def test_shell_settings_accepts_manifest_options(self):
+        args = Namespace(
+            tool_shell_input_file_manifest_enabled=False,
+            tool_shell_input_file_manifest_message="Use attached paths:",
+            tool_shell_input_file_manifest_path_message="Pass them to tools.",
+        )
+
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="shell", settings_cls=ShellToolSettings
+        )
+
+        self.assertIsInstance(settings, ShellToolSettings)
+        self.assertFalse(settings.input_file_manifest_enabled)
+        self.assertEqual(
+            settings.input_file_manifest_message,
+            "Use attached paths:",
+        )
+        self.assertEqual(
+            settings.input_file_manifest_path_message,
+            "Pass them to tools.",
+        )
+
     def test_shell_settings_executable_resolution(self):
         args = Namespace(
             tool_shell_executable_search_paths=["/usr/bin", "/bin"],

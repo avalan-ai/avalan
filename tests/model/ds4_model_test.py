@@ -1482,7 +1482,8 @@ def test_ds4_tool_role_history_renders_dsml_tool_result(
     assert '<｜DSML｜invoke name="math.calculator">' in rendered
     assert (
         '<｜DSML｜parameter name="expression" string="true">2 + 2'
-        "</｜DSML｜parameter>" in rendered
+        "</｜DSML｜parameter>"
+        in rendered
     )
     assert "<tool_result>4</tool_result>" in rendered
     model.close()
@@ -4179,8 +4180,11 @@ def test_ds4_prompt_messages_merge_system_developer_and_text_content(
         MessageContentFile(type="file", file={"filename": "x.txt"}),
         MessageContentText(
             type="text",
-            text="Attached files available to shell tools:\n"
-            '- "attachment/report.pdf"',
+            text=(
+                "Attached files available to tools:\n"
+                "Use these path values as tool arguments.\n"
+                '- "attachment/report.pdf"'
+            ),
         ),
     ]
 
@@ -4200,8 +4204,10 @@ def test_ds4_prompt_messages_merge_system_developer_and_text_content(
     assert system_content == "System\n\nDeveloper instructions:\nDeveloper"
     assert len(messages) == 1
     assert messages[0].role is MessageRole.USER
-    assert messages[0].content == (
-        "Hello\nAttached files available to shell tools:\n"
+    assert (
+        messages[0].content
+        == "Hello\nAttached files available to tools:\n"
+        "Use these path values as tool arguments.\n"
         '- "attachment/report.pdf"'
     )
 

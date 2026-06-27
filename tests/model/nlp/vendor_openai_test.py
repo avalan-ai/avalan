@@ -3279,8 +3279,11 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
             ),
             MessageContentText(
                 type="text",
-                text="Attached files available to shell tools:\n"
-                '- "attachment/report.pdf"',
+                text=(
+                    "Attached files available to tools:\n"
+                    "Use these path values as tool arguments.\n"
+                    '- "attachment/report.pdf"'
+                ),
             ),
         ]
         await self._assert_messages(
@@ -3294,8 +3297,11 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
                 },
                 {
                     "type": "input_text",
-                    "text": "Attached files available to shell tools:\n"
-                    '- "attachment/report.pdf"',
+                    "text": (
+                        "Attached files available to tools:\n"
+                        "Use these path values as tool arguments.\n"
+                        '- "attachment/report.pdf"'
+                    ),
                 },
             ],
         )

@@ -52,6 +52,9 @@ class ShellToolSettings:
         "workspace_root",
         "cwd",
         "materialized_input_files_dir",
+        "input_file_manifest_enabled",
+        "input_file_manifest_message",
+        "input_file_manifest_path_message",
         "default_timeout_seconds",
         "max_timeout_seconds",
         "max_stdout_bytes",
@@ -111,6 +114,11 @@ class ShellToolSettings:
     workspace_root: str = "."
     cwd: str = "."
     materialized_input_files_dir: str = "avalan-input-files"
+    input_file_manifest_enabled: bool = True
+    input_file_manifest_message: str = "Attached files available to tools:"
+    input_file_manifest_path_message: str = (
+        "Use these path values as tool arguments."
+    )
     default_timeout_seconds: float = 10.0
     max_timeout_seconds: float = 60.0
     max_stdout_bytes: int = 65536
@@ -196,6 +204,14 @@ class ShellToolSettings:
         _assert_relative_path(
             self.materialized_input_files_dir,
             "materialized_input_files_dir",
+        )
+        _assert_non_empty_string(
+            self.input_file_manifest_message,
+            "input_file_manifest_message",
+        )
+        _assert_non_empty_string(
+            self.input_file_manifest_path_message,
+            "input_file_manifest_path_message",
         )
         _assert_positive_timeout_order(
             self.default_timeout_seconds,
@@ -364,6 +380,7 @@ _POSITIVE_INT_FIELDS = (
 )
 
 _BOOLEAN_FIELDS = (
+    "input_file_manifest_enabled",
     "allow_media_tools",
     "allow_write",
     "allow_shell",

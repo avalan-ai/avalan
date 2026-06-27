@@ -793,6 +793,21 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
         self.assertIsNot(merged, default)
         self.assertIsNot(merged, base)
 
+    async def test_merge_shell_tool_settings_applies_explicit_false_override(
+        self,
+    ) -> None:
+        base = ShellToolSettings(input_file_manifest_enabled=True)
+        override = ShellToolSettings(input_file_manifest_enabled=False)
+
+        merged = _merge_shell_tool_settings(
+            base,
+            override,
+            explicit_fields=frozenset({"input_file_manifest_enabled"}),
+        )
+
+        assert merged is not None
+        self.assertFalse(merged.input_file_manifest_enabled)
+
     async def test_merge_shell_tool_settings_keeps_empty_explicit_base(
         self,
     ) -> None:
@@ -1000,6 +1015,9 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 + 'workspace_root = "/tmp"\n'
                 + 'cwd = "fixtures"\n'
                 + 'materialized_input_files_dir = "agent-input-files"\n'
+                + "input_file_manifest_enabled = false\n"
+                + 'input_file_manifest_message = "Use attached paths:"\n'
+                + 'input_file_manifest_path_message = "Pass them to tools."\n'
                 + "max_head_lines = 12\n"
                 + "allow_hidden = true\n"
                 + 'allowed_commands = ["head", "cat"]\n'
@@ -1027,6 +1045,15 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(
                 tool_settings.shell.materialized_input_files_dir,
                 "agent-input-files",
+            )
+            self.assertFalse(tool_settings.shell.input_file_manifest_enabled)
+            self.assertEqual(
+                tool_settings.shell.input_file_manifest_message,
+                "Use attached paths:",
+            )
+            self.assertEqual(
+                tool_settings.shell.input_file_manifest_path_message,
+                "Pass them to tools.",
             )
             self.assertEqual(tool_settings.shell.max_head_lines, 12)
             self.assertTrue(tool_settings.shell.allow_hidden)
@@ -1070,7 +1097,10 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                     tool_settings=ToolSettingsContext(
                         shell=override,
                         shell_explicit_fields=frozenset(
-                            {"allow_media_tools", "max_head_lines"}
+                            {
+                                "allow_media_tools",
+                                "max_head_lines",
+                            }
                         ),
                     ),
                 )
@@ -2040,6 +2070,56 @@ workspace_root = "{workspace.as_posix()}"
         self.assertIn("Review: summarize the attachment", plain_text)
         self.assertNotIn(workspace_path, plain_text)
         self.assertIn(file_content, _input_file_blocks(plain_input))
+
+    async def test_from_file_shell_manifest_can_be_disabled(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            source = (
+                workspace / "inputs" / "batches" / "client_docs" / "report.pdf"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"%PDF-1.7")
+            file_content = MessageContentFile(
+                type="file",
+                file={
+                    "filename": "report.pdf",
+                    "local_path": str(source.resolve()),
+                },
+            )
+            message = Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(
+                        type="text",
+                        text="summarize the attachment",
+                    ),
+                    file_content,
+                ],
+            )
+            config = f"""
+[agent]
+role = "assistant"
+user = "Review: {{{{ input }}}}"
+
+[engine]
+uri = "ai://local/model"
+
+[tool]
+enable = ["shell.pdfinfo"]
+
+[tool.shell]
+workspace_root = "{workspace.as_posix()}"
+input_file_manifest_enabled = false
+"""
+
+            model_input = await _loaded_agent_model_input(config, message)
+
+        text = "\n".join(_input_text_blocks(model_input))
+
+        self.assertIn("Review: summarize the attachment", text)
+        self.assertNotIn("inputs/batches/client_docs/report.pdf", text)
+        self.assertNotIn("Attached files available to tools", text)
+        self.assertIn(file_content, _input_file_blocks(model_input))
 
     async def test_from_file_loads_tool_name_policy(self):
         kwargs = await _from_file_tool_manager_kwargs(

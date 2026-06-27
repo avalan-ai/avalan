@@ -1533,8 +1533,11 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
                 ),
                 MessageContentText(
                     type="text",
-                    text="Attached files available to shell tools:\n"
-                    '- "attachment/report.pdf"',
+                    text=(
+                        "Attached files available to tools:\n"
+                        "Use these path values as tool arguments.\n"
+                        '- "attachment/report.pdf"'
+                    ),
                 ),
             ]
         )
@@ -1544,8 +1547,11 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             blocks[2],
             {
-                "text": "Attached files available to shell tools:\n"
-                '- "attachment/report.pdf"'
+                "text": (
+                    "Attached files available to tools:\n"
+                    "Use these path values as tool arguments.\n"
+                    '- "attachment/report.pdf"'
+                )
             },
         )
 

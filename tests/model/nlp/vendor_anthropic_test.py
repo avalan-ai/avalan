@@ -1287,8 +1287,11 @@ def test_file_content_translation_and_beta_header(anthropic_mod):
                 ),
                 MessageContentText(
                     type="text",
-                    text="Attached files available to shell tools:\n"
-                    '- "attachment/report.pdf"',
+                    text=(
+                        "Attached files available to tools:\n"
+                        "Use these path values as tool arguments.\n"
+                        '- "attachment/report.pdf"'
+                    ),
                 ),
             ],
         )
@@ -1326,8 +1329,11 @@ def test_file_content_translation_and_beta_header(anthropic_mod):
                 },
                 {
                     "type": "text",
-                    "text": "Attached files available to shell tools:\n"
-                    '- "attachment/report.pdf"',
+                    "text": (
+                        "Attached files available to tools:\n"
+                        "Use these path values as tool arguments.\n"
+                        '- "attachment/report.pdf"'
+                    ),
                 },
             ],
         }

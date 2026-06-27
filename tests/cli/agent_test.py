@@ -1361,6 +1361,11 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             tool=["shell.rg"],
             tool_shell_workspace_root="workspace",
             tool_shell_materialized_input_files_dir="agent-input-files",
+            tool_shell_input_file_manifest_enabled=False,
+            tool_shell_input_file_manifest_message=(
+                'Use "attached" paths from C:\\docs'
+            ),
+            tool_shell_input_file_manifest_path_message="Pass them to tools.",
             tool_shell_max_stdout_bytes=4096,
             tool_shell_allow_media_tools=True,
             tool_shell_allowed_commands=("rg", "cat"),
@@ -1390,6 +1395,16 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             'materialized_input_files_dir = "agent-input-files"',
             output,
         )
+        self.assertIn("input_file_manifest_enabled = false", output)
+        self.assertIn(
+            'input_file_manifest_message = "Use \\"attached\\" paths '
+            'from C:\\\\docs"',
+            output,
+        )
+        self.assertIn(
+            'input_file_manifest_path_message = "Pass them to tools."',
+            output,
+        )
         self.assertIn("max_stdout_bytes = 4096", output)
         self.assertIn("allow_media_tools = true", output)
         self.assertIn("allowed_commands = [", output)
@@ -1403,6 +1418,11 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             {
                 "workspace_root": "workspace",
                 "materialized_input_files_dir": "agent-input-files",
+                "input_file_manifest_enabled": False,
+                "input_file_manifest_message": (
+                    'Use "attached" paths from C:\\docs'
+                ),
+                "input_file_manifest_path_message": "Pass them to tools.",
                 "max_stdout_bytes": 4096,
                 "allow_media_tools": True,
                 "allowed_commands": ["rg", "cat"],
@@ -1448,6 +1468,36 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(agent_cmds._is_simple_string_sequence(("rg", 1)))
         self.assertFalse(agent_cmds._is_simple_string_mapping(("rg",)))
         self.assertFalse(agent_cmds._is_simple_string_mapping({"rg": 1}))
+
+    def test_toml_template_value_formats_supported_values(self):
+        self.assertEqual(agent_cmds._toml_template_value(True), "true")
+        self.assertEqual(agent_cmds._toml_template_value(False), "false")
+        self.assertEqual(agent_cmds._toml_template_value(7), "7")
+        self.assertEqual(
+            agent_cmds._toml_template_value('Use "quoted" paths'),
+            '"Use \\"quoted\\" paths"',
+        )
+        non_bmp_text = "Files " + chr(0x1F600)
+        self.assertEqual(
+            tomllib.loads(
+                "value = "
+                + agent_cmds._toml_template_value(non_bmp_text)
+                + "\n"
+            ),
+            {"value": non_bmp_text},
+        )
+        self.assertEqual(
+            agent_cmds._toml_template_value(("rg", "cat")),
+            '["rg", "cat"]',
+        )
+        self.assertEqual(
+            agent_cmds._toml_template_value({"rg": "/usr/bin/rg"}),
+            '{ rg = "/usr/bin/rg" }',
+        )
+
+    def test_toml_template_value_rejects_unsupported_values(self):
+        with self.assertRaises(AssertionError):
+            agent_cmds._toml_template_value(object())
 
     def test_agent_tool_settings_builds_container_runtime_from_cli(self):
         args = Namespace(

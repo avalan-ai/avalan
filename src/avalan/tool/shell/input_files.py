@@ -31,13 +31,16 @@ async def shell_input_file_manifest(
 ) -> str | None:
     """Return model-visible shell paths for attached input files."""
     assert isinstance(settings, ShellToolSettings)
+    if not settings.input_file_manifest_enabled:
+        return None
+
     paths = await _input_file_manifest_paths(input_value, settings)
     if not paths:
         return None
 
     lines = [
-        "Attached files available to shell tools:",
-        "Use these JSON string values as shell tool path arguments.",
+        settings.input_file_manifest_message,
+        settings.input_file_manifest_path_message,
     ]
     lines.extend(f"- {json_dumps(path)}" for path in paths)
     return "\n".join(lines)
