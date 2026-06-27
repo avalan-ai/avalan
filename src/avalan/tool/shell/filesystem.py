@@ -14,10 +14,19 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from re import compile as compile_pattern
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import final
 
 DEFAULT_SIGNATURE_BYTES = 8192
+PDF_PAGE_BOX_SCAN_BYTES = 1048576
+PDF_PAGE_BOX_PATTERN = compile_pattern(
+    rb"/(?:CropBox|MediaBox)\s*\[\s*"
+    rb"([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s+"
+    rb"([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s+"
+    rb"([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s+"
+    rb"([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*\]"
+)
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -170,6 +179,15 @@ async def read_pdf_signature(path: str | Path) -> bytes:
     return await read_signature(path, max_bytes=5)
 
 
+async def probe_pdf_page_boxes(
+    path: str | Path,
+    *,
+    max_bytes: int = PDF_PAGE_BOX_SCAN_BYTES,
+) -> tuple[tuple[float, float], ...]:
+    data = await read_signature(path, max_bytes=max_bytes)
+    return _probe_pdf_page_boxes(data)
+
+
 async def read_image_signature(path: str | Path) -> bytes:
     return await read_signature(path)
 
@@ -219,6 +237,18 @@ def _probe_png_dimensions(signature: bytes) -> tuple[int, int] | None:
     if width <= 0 or height <= 0:
         return None
     return width, height
+
+
+def _probe_pdf_page_boxes(data: bytes) -> tuple[tuple[float, float], ...]:
+    assert isinstance(data, bytes), "data must be bytes"
+    boxes: list[tuple[float, float]] = []
+    for match in PDF_PAGE_BOX_PATTERN.finditer(data):
+        left, bottom, right, top = (float(value) for value in match.groups())
+        width = abs(right - left)
+        height = abs(top - bottom)
+        if width > 0 and height > 0:
+            boxes.append((width, height))
+    return tuple(boxes)
 
 
 def _probe_pnm_dimensions(signature: bytes) -> tuple[int, int] | None:

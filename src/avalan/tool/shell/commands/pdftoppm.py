@@ -22,17 +22,25 @@ from .helpers import (
 )
 
 from collections.abc import Mapping
+from math import floor, sqrt
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..settings import ShellToolSettings
 
+_PDF_PAGE_BOX_METADATA_KEY = "_pdf_page_box_points"
+_PDF_POINTS_PER_INCH = 72
+
 
 def _raster_dpi_option(
     options: Mapping[str, object],
     settings: "ShellToolSettings",
+    metadata: Mapping[str, object],
 ) -> int:
-    value = options.get("dpi", min(150, settings.max_pdf_raster_dpi))
+    max_dpi, page_size_limited = _raster_dpi_cap(metadata, settings)
+    value = options.get("dpi")
+    if value is None:
+        return min(150, max_dpi)
     if not isinstance(value, int) or isinstance(value, bool):
         raise policy_denied(
             ShellExecutionErrorCode.INVALID_OPTION,
@@ -41,14 +49,69 @@ def _raster_dpi_option(
     if value < 1:
         raise policy_denied(
             ShellExecutionErrorCode.INVALID_OPTION,
-            "dpi is out of range",
+            f"dpi must be positive: {value}",
         )
-    if value > settings.max_pdf_raster_dpi:
+    if value > max_dpi:
+        page_size_detail = " for PDF page size" if page_size_limited else ""
         raise policy_denied(
             ShellExecutionErrorCode.RASTER_DPI_CAP_EXCEEDED,
-            "raster DPI is too large",
+            f"raster DPI {value} exceeds maximum {max_dpi}{page_size_detail}",
         )
     return value
+
+
+def _raster_dpi_cap(
+    metadata: Mapping[str, object],
+    settings: "ShellToolSettings",
+) -> tuple[int, bool]:
+    page_size = metadata.get(_PDF_PAGE_BOX_METADATA_KEY)
+    if page_size is None:
+        return settings.max_pdf_raster_dpi, False
+    assert isinstance(page_size, tuple), "PDF page size must be a tuple"
+    assert len(page_size) == 2, "PDF page size must have two dimensions"
+    width_points, height_points = page_size
+    assert isinstance(
+        width_points, int | float
+    ), "PDF page width must be numeric"
+    assert isinstance(
+        height_points, int | float
+    ), "PDF page height must be numeric"
+    assert not isinstance(
+        width_points, bool
+    ), "PDF page width must not be boolean"
+    assert not isinstance(
+        height_points, bool
+    ), "PDF page height must not be boolean"
+    page_size_cap = _page_size_raster_dpi_cap(
+        (float(width_points), float(height_points)),
+        settings,
+    )
+    if page_size_cap >= settings.max_pdf_raster_dpi:
+        return settings.max_pdf_raster_dpi, False
+    return page_size_cap, True
+
+
+def _page_size_raster_dpi_cap(
+    page_size: tuple[float, float],
+    settings: "ShellToolSettings",
+) -> int:
+    width_points, height_points = page_size
+    assert width_points > 0, "PDF page width must be positive"
+    assert height_points > 0, "PDF page height must be positive"
+    long_edge_cap = floor(
+        settings.max_raster_long_edge_pixels
+        * _PDF_POINTS_PER_INCH
+        / max(width_points, height_points)
+    )
+    pixel_cap = floor(
+        sqrt(
+            settings.max_raster_pixels
+            * _PDF_POINTS_PER_INCH
+            * _PDF_POINTS_PER_INCH
+            / (width_points * height_points)
+        )
+    )
+    return max(1, min(settings.max_pdf_raster_dpi, long_edge_cap, pixel_cap))
 
 
 def _generated_output_plan(
@@ -101,7 +164,7 @@ def build_argv(
             ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED,
             "generated output file count is too large",
         )
-    dpi = _raster_dpi_option(request.options, settings)
+    dpi = _raster_dpi_option(request.options, settings, context.metadata)
     output_format = _literal_option(
         request.options,
         "format",
