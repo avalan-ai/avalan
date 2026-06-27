@@ -386,12 +386,19 @@ class LocalCommandExecutor:
                         runtime_output_prefix,
                         self._settings.stream_read_chunk_bytes,
                     )
-                except (OSError, _GeneratedOutputError):
+                except (OSError, _GeneratedOutputError) as error:
                     status = ShellExecutionStatus.TOO_LARGE
                     error_code = (
                         ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED
                     )
-                    error_message = "generated output capture failed"
+                    generated_error = (
+                        str(error)
+                        if isinstance(error, _GeneratedOutputError)
+                        else ""
+                    )
+                    error_message = (
+                        generated_error or "generated output capture failed"
+                    )
             await _emit_stream_event(
                 stream,
                 kind=ToolExecutionStreamKind.PROGRESS,
@@ -916,12 +923,18 @@ async def _generated_file_dimensions(
         plan.max_raster_long_edge_pixels is not None
         and max(width, height) > plan.max_raster_long_edge_pixels
     ):
-        raise _GeneratedOutputError
+        raise _GeneratedOutputError(
+            f"generated image dimensions {width}x{height} exceed "
+            f"maximum long edge {plan.max_raster_long_edge_pixels}"
+        )
     if (
         plan.max_raster_pixels is not None
         and width * height > plan.max_raster_pixels
     ):
-        raise _GeneratedOutputError
+        raise _GeneratedOutputError(
+            f"generated image dimensions {width}x{height} exceed "
+            f"maximum pixels {plan.max_raster_pixels}"
+        )
     return width, height
 
 

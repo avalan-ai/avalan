@@ -53,7 +53,7 @@ class ShellToolSettingsTest(TestCase):
             "max_pdf_input_bytes": 104857600,
             "max_pdf_text_pages": 50,
             "max_pdf_raster_pages": 8,
-            "max_pdf_raster_dpi": 300,
+            "max_pdf_raster_dpi": 600,
             "max_raster_long_edge_pixels": 2048,
             "max_raster_pixels": 40000000,
             "max_output_files": 8,

@@ -26,6 +26,7 @@ from .filesystem import (
     ShellPathMetadata,
     inspect_path,
     probe_image_dimensions,
+    probe_pdf_page_boxes,
     read_pdf_signature,
     resolve_policy_path,
     sniff_binary,
@@ -72,6 +73,7 @@ _SECRET_ENVIRONMENT_MARKERS = (
     "CREDENTIAL",
 )
 _VIRTUAL_FILESYSTEM_ROOTS = ("dev", "proc", "sys")
+_PDF_PAGE_BOX_METADATA_KEY = "_pdf_page_box_points"
 
 
 class ExecutionPolicy:
@@ -144,6 +146,11 @@ class ExecutionPolicy:
             request.paths,
             workspace=workspace,
             settings=self._settings,
+        )
+        await _annotate_pdf_raster_metadata(
+            request,
+            normalized_paths,
+            metadata,
         )
         default_timeout_seconds, max_timeout_seconds = _timeout_limits(
             request.command,
@@ -529,6 +536,25 @@ def _wc_reads_text(options: Mapping[str, object]) -> bool:
     if lines is True or words is True:
         return True
     return count_bytes is not True
+
+
+async def _annotate_pdf_raster_metadata(
+    request: ShellCommandRequest,
+    paths: tuple[_NormalizedPath, ...],
+    metadata: dict[str, object],
+) -> None:
+    if request.command != "pdftoppm" or len(paths) != 1:
+        return
+    path = paths[0]
+    if path.metadata is None:
+        return
+    boxes = await probe_pdf_page_boxes(path.path)
+    if not boxes:
+        return
+    metadata[_PDF_PAGE_BOX_METADATA_KEY] = max(
+        boxes,
+        key=lambda box: box[0] * box[1],
+    )
 
 
 async def _enforce_text_inputs(

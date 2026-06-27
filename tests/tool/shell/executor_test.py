@@ -2132,6 +2132,10 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.status, ShellExecutionStatus.TOO_LARGE)
+        self.assertEqual(
+            result.error_message,
+            "generated image dimensions 3x2 exceed maximum long edge 2",
+        )
 
     async def test_generated_output_rejects_raster_pixel_cap(self) -> None:
         result, _ = await _run_generated_output_case(
@@ -2143,6 +2147,10 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.status, ShellExecutionStatus.TOO_LARGE)
+        self.assertEqual(
+            result.error_message,
+            "generated image dimensions 3x2 exceed maximum pixels 5",
+        )
 
     async def test_generated_output_accepts_missing_dimensions_and_page(
         self,

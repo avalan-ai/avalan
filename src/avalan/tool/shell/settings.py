@@ -148,7 +148,7 @@ class ShellToolSettings:
     max_pdf_input_bytes: int = 104857600
     max_pdf_text_pages: int = 50
     max_pdf_raster_pages: int = 8
-    max_pdf_raster_dpi: int = 300
+    max_pdf_raster_dpi: int = 600
     max_raster_long_edge_pixels: int = 2048
     max_raster_pixels: int = 40000000
     max_output_files: int = 8
