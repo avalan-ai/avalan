@@ -34,13 +34,21 @@ from avalan.tool.shell import (
     PathOperand,
     ShellCommandDefinition,
     ShellCommandRequest,
+    ShellCommandStepRequest,
+    ShellCompositionMode,
+    ShellCompositionRequest,
+    ShellCompositionResult,
+    ShellCompositionSpec,
     ShellDependencyGroup,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
+    ShellExecutionStepSpec,
     ShellOutputKind,
     ShellPathMetadata,
     ShellPolicyDenied,
     ShellSandboxCommandExecutor,
+    ShellStreamRef,
     ShellToolError,
     ShellToolSet,
     ShellToolSettings,
@@ -146,6 +154,26 @@ class ShellPublicApiTest(TestCase):
             import_module("avalan.tool.shell").ShellCommandRequest,
         )
         self.assertIs(
+            ShellCommandStepRequest,
+            import_module("avalan.tool.shell").ShellCommandStepRequest,
+        )
+        self.assertIs(
+            ShellCompositionMode,
+            import_module("avalan.tool.shell").ShellCompositionMode,
+        )
+        self.assertIs(
+            ShellCompositionRequest,
+            import_module("avalan.tool.shell").ShellCompositionRequest,
+        )
+        self.assertIs(
+            ShellCompositionResult,
+            import_module("avalan.tool.shell").ShellCompositionResult,
+        )
+        self.assertIs(
+            ShellCompositionSpec,
+            import_module("avalan.tool.shell").ShellCompositionSpec,
+        )
+        self.assertIs(
             ExecutionSpec, import_module("avalan.tool.shell").ExecutionSpec
         )
         self.assertIs(
@@ -176,7 +204,19 @@ class ShellPublicApiTest(TestCase):
             import_module("avalan.tool.shell").ShellExecutionErrorCode,
         )
         self.assertIs(
+            ShellExecutionStepResult,
+            import_module("avalan.tool.shell").ShellExecutionStepResult,
+        )
+        self.assertIs(
+            ShellExecutionStepSpec,
+            import_module("avalan.tool.shell").ShellExecutionStepSpec,
+        )
+        self.assertIs(
             ShellOutputKind, import_module("avalan.tool.shell").ShellOutputKind
+        )
+        self.assertIs(
+            ShellStreamRef,
+            import_module("avalan.tool.shell").ShellStreamRef,
         )
         self.assertIs(
             ShellCommandDefinition,

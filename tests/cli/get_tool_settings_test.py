@@ -158,12 +158,41 @@ class GetToolSettingsTestCase(unittest.TestCase):
                     )
 
     def test_shell_settings(self):
-        args = Namespace(tool_shell_allow_media_tools=True)
+        args = Namespace(
+            tool_shell_allow_media_tools=True,
+            tool_shell_allow_pipelines=True,
+            tool_shell_max_pipeline_stages=3,
+            tool_shell_max_pipeline_bytes=1024,
+            tool_shell_max_intermediate_bytes=512,
+        )
         settings = agent_cmds.get_tool_settings(
             args, prefix="shell", settings_cls=ShellToolSettings
         )
         self.assertIsInstance(settings, ShellToolSettings)
         self.assertTrue(settings.allow_media_tools)
+        self.assertTrue(settings.allow_pipelines)
+        self.assertEqual(settings.max_pipeline_stages, 3)
+        self.assertEqual(settings.max_pipeline_bytes, 1024)
+        self.assertEqual(settings.max_intermediate_bytes, 512)
+
+    def test_shell_pipeline_settings_reject_invalid_values(self):
+        cases = (
+            Namespace(tool_shell_max_pipeline_stages=True),
+            Namespace(tool_shell_max_pipeline_stages=0),
+            Namespace(tool_shell_max_pipeline_bytes=True),
+            Namespace(tool_shell_max_pipeline_bytes=0),
+            Namespace(tool_shell_max_intermediate_bytes=True),
+            Namespace(tool_shell_max_intermediate_bytes=0),
+        )
+
+        for args in cases:
+            with self.subTest(args=args):
+                with self.assertRaises(AssertionError):
+                    agent_cmds.get_tool_settings(
+                        args,
+                        prefix="shell",
+                        settings_cls=ShellToolSettings,
+                    )
 
     def test_shell_settings_accepts_manifest_options(self):
         args = Namespace(

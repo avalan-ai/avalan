@@ -31,15 +31,37 @@ from .entities import (
     ShellCommandRequest as ShellCommandRequest,
 )
 from .entities import (
+    ShellCommandStepRequest as ShellCommandStepRequest,
+)
+from .entities import (
+    ShellCompositionMode as ShellCompositionMode,
+)
+from .entities import (
+    ShellCompositionRequest as ShellCompositionRequest,
+)
+from .entities import (
+    ShellCompositionResult as ShellCompositionResult,
+)
+from .entities import (
+    ShellCompositionSpec as ShellCompositionSpec,
+)
+from .entities import (
     ShellExecutionErrorCode as ShellExecutionErrorCode,
 )
 from .entities import (
     ShellExecutionStatus as ShellExecutionStatus,
 )
 from .entities import (
+    ShellExecutionStepResult as ShellExecutionStepResult,
+)
+from .entities import (
+    ShellExecutionStepSpec as ShellExecutionStepSpec,
+)
+from .entities import (
     ShellOutputKind as ShellOutputKind,
 )
 from .entities import ShellPolicyDenied as ShellPolicyDenied
+from .entities import ShellStreamRef as ShellStreamRef
 from .entities import ShellToolError as ShellToolError
 from .executor import CommandExecutor as CommandExecutor
 from .executor import LocalCommandExecutor as LocalCommandExecutor

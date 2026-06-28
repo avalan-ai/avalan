@@ -470,6 +470,13 @@ class CliShellToolOptionTestCase(TestCase):
                         "--tool-shell-allow-media-tools",
                         "--tool-shell-max-stdout-bytes",
                         "4096",
+                        "--tool-shell-allow-pipelines",
+                        "--tool-shell-max-pipeline-stages",
+                        "3",
+                        "--tool-shell-max-pipeline-bytes",
+                        "1024",
+                        "--tool-shell-max-intermediate-bytes",
+                        "512",
                         "--no-tool-shell-input-file-manifest-enabled",
                         "--tool-shell-input-file-manifest-message",
                         "Use attached paths:",
@@ -484,6 +491,13 @@ class CliShellToolOptionTestCase(TestCase):
 
                 self.assertTrue(args.tool_shell_allow_media_tools)
                 self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
+                self.assertTrue(args.tool_shell_allow_pipelines)
+                self.assertEqual(args.tool_shell_max_pipeline_stages, 3)
+                self.assertEqual(args.tool_shell_max_pipeline_bytes, 1024)
+                self.assertEqual(
+                    args.tool_shell_max_intermediate_bytes,
+                    512,
+                )
                 self.assertFalse(args.tool_shell_input_file_manifest_enabled)
                 self.assertEqual(
                     args.tool_shell_input_file_manifest_message,
@@ -3277,6 +3291,13 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 "--tool-shell-allow-media-tools",
                 "--tool-shell-max-stdout-bytes",
                 "4096",
+                "--tool-shell-allow-pipelines",
+                "--tool-shell-max-pipeline-stages",
+                "3",
+                "--tool-shell-max-pipeline-bytes",
+                "1024",
+                "--tool-shell-max-intermediate-bytes",
+                "512",
                 "--no-tool-shell-input-file-manifest-enabled",
                 "--tool-shell-input-file-manifest-message",
                 "Use attached paths:",
@@ -3287,6 +3308,10 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(args.tool_shell_allow_media_tools)
         self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
+        self.assertTrue(args.tool_shell_allow_pipelines)
+        self.assertEqual(args.tool_shell_max_pipeline_stages, 3)
+        self.assertEqual(args.tool_shell_max_pipeline_bytes, 1024)
+        self.assertEqual(args.tool_shell_max_intermediate_bytes, 512)
         self.assertFalse(args.tool_shell_input_file_manifest_enabled)
         self.assertEqual(
             args.tool_shell_input_file_manifest_message,

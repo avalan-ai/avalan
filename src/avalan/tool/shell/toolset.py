@@ -11,11 +11,11 @@ from ...isolation import (
     SandboxEffectiveSettings,
 )
 from ...sandbox import SandboxAsyncBackend
-from .. import ToolSet
+from .. import Tool, ToolSet
 from .container import ShellContainerCommandExecutor
 from .executor import CommandExecutor, LocalCommandExecutor
 from .formatting import format_shell_result
-from .opt_in import SHELL_TOOL_NAMESPACE
+from .opt_in import SHELL_TOOL_NAMESPACE, enables_shell_pipeline
 from .policy import ExecutionPolicy
 from .sandbox import ShellSandboxCommandExecutor
 from .settings import ShellToolSettings
@@ -39,8 +39,24 @@ from .tools import (
     WcTool,
 )
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import cast
+
+
+async def _pipeline_tool_unavailable(**arguments: object) -> str:
+    """Reject shell pipeline calls before runtime support exists.
+
+    Args:
+        arguments: Structured pipeline arguments accepted by later phases.
+
+    Returns:
+        This stub never returns.
+    """
+    assert isinstance(arguments, dict)
+    raise AssertionError("shell.pipeline runtime is not implemented")
+
+
+_pipeline_tool_unavailable.__name__ = "pipeline"
 
 
 class ShellToolSet(ToolSet):
@@ -165,7 +181,7 @@ class ShellToolSet(ToolSet):
                 settings=self._settings,
             )
         )
-        tools = [
+        tools: list[Callable[..., object] | Tool | ToolSet] = [
             RgTool(
                 settings=self._settings,
                 policy=policy,
@@ -265,6 +281,13 @@ class ShellToolSet(ToolSet):
         ]
         super().__init__(namespace=namespace, tools=tools)
 
+    def with_enabled_tools(self, enable_tools: list[str]) -> "ShellToolSet":
+        if enables_shell_pipeline(
+            enable_tools, self._settings
+        ) and not _has_pipeline_tool(self.tools):
+            self.tools.append(_pipeline_tool_unavailable)
+        return cast(ShellToolSet, super().with_enabled_tools(enable_tools))
+
 
 def _container_runtime_configured(
     runtime: ContainerToolRuntimeSettings,
@@ -290,6 +313,12 @@ def _container_runtime_hooks_configured(
         or runtime.secret_resolver is not None
         or bool(runtime.audit_listeners)
     )
+
+
+def _has_pipeline_tool(
+    tools: Sequence[Callable[..., object] | Tool | ToolSet],
+) -> bool:
+    return any(getattr(tool, "__name__", "") == "pipeline" for tool in tools)
 
 
 def _isolation_runtime_hooks_configured(

@@ -3,6 +3,7 @@ from unittest import TestCase, main
 
 from avalan.tool.shell import ShellToolSettings
 from avalan.tool.shell.opt_in import (
+    enables_shell_pipeline,
     enables_shell_tools,
     normalize_shell_enabled_tools,
     should_append_shell_toolset,
@@ -42,6 +43,7 @@ class ShellOptInTest(TestCase):
             (["shell.*"], True),
             (["shell.rg"], True),
             (["shell.pipeline"], True),
+            (["shell.cat"], True),
             (["shell."], False),
             (["shellx.*"], False),
         )
@@ -49,6 +51,34 @@ class ShellOptInTest(TestCase):
         for enabled_tools, expected in cases:
             with self.subTest(enabled_tools=enabled_tools):
                 self.assertIs(enables_shell_tools(enabled_tools), expected)
+
+    def test_enables_shell_pipeline_requires_selection_and_setting(
+        self,
+    ) -> None:
+        disabled_settings = ShellToolSettings()
+        enabled_settings = ShellToolSettings(allow_pipelines=True)
+        cases = (
+            (None, enabled_settings, False),
+            ([], enabled_settings, False),
+            (["shell"], disabled_settings, False),
+            (["shell"], enabled_settings, True),
+            (["shell.*"], enabled_settings, True),
+            (["shell.pipeline"], enabled_settings, True),
+            (["shell.rg"], enabled_settings, False),
+            (["shell.cat"], enabled_settings, False),
+            (["shell."], enabled_settings, False),
+            (["shellx.*"], enabled_settings, False),
+        )
+
+        for enabled_tools, shell_settings, expected in cases:
+            with self.subTest(
+                enabled_tools=enabled_tools,
+                shell_settings=shell_settings,
+            ):
+                self.assertIs(
+                    enables_shell_pipeline(enabled_tools, shell_settings),
+                    expected,
+                )
 
     def test_should_append_truth_table(self) -> None:
         settings = ShellToolSettings()

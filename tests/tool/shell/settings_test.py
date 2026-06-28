@@ -29,6 +29,9 @@ class ShellToolSettingsTest(TestCase):
             "max_stdout_bytes": 65536,
             "max_stderr_bytes": 32768,
             "max_stdin_bytes": 0,
+            "max_pipeline_stages": 8,
+            "max_pipeline_bytes": 1048576,
+            "max_intermediate_bytes": 1048576,
             "max_arguments": 128,
             "max_argument_bytes": 8192,
             "max_command_bytes": 32768,
@@ -72,6 +75,7 @@ class ShellToolSettingsTest(TestCase):
             "default_ocr_timeout_seconds": 60.0,
             "max_ocr_timeout_seconds": 300.0,
             "tesseract_thread_limit": 1,
+            "allow_pipelines": False,
             "allow_media_tools": False,
             "allow_write": False,
             "allow_shell": False,
@@ -100,7 +104,11 @@ class ShellToolSettingsTest(TestCase):
         self.assertIn("input_file_manifest_enabled", scalar_fields)
         self.assertIn("input_file_manifest_message", scalar_fields)
         self.assertIn("input_file_manifest_path_message", scalar_fields)
+        self.assertIn("allow_pipelines", scalar_fields)
         self.assertIn("max_stdout_bytes", scalar_fields)
+        self.assertIn("max_pipeline_stages", scalar_fields)
+        self.assertIn("max_pipeline_bytes", scalar_fields)
+        self.assertIn("max_intermediate_bytes", scalar_fields)
         self.assertNotIn("allowed_commands", scalar_fields)
         self.assertNotIn("environment", scalar_fields)
         self.assertNotIn("environment_allowlist", scalar_fields)
@@ -218,6 +226,30 @@ class ShellToolSettingsTest(TestCase):
             ShellToolSettings(allow_write=True)
         with self.assertRaises(AssertionError):
             ShellToolSettings(allow_shell=True)
+
+    def test_pipeline_settings_accept_positive_boundaries(self) -> None:
+        settings = ShellToolSettings(
+            allow_pipelines=True,
+            max_pipeline_stages=1,
+            max_pipeline_bytes=1,
+            max_intermediate_bytes=1,
+        )
+
+        self.assertTrue(settings.allow_pipelines)
+        self.assertEqual(settings.max_pipeline_stages, 1)
+        self.assertEqual(settings.max_pipeline_bytes, 1)
+        self.assertEqual(settings.max_intermediate_bytes, 1)
+
+    def test_pipeline_integer_settings_reject_zero_and_negative(self) -> None:
+        for field_name in (
+            "max_pipeline_stages",
+            "max_pipeline_bytes",
+            "max_intermediate_bytes",
+        ):
+            for value in (0, -1):
+                with self.subTest(field_name=field_name, value=value):
+                    with self.assertRaises(AssertionError):
+                        ShellToolSettings(**{field_name: value})
 
     def test_rejects_invalid_scalar_settings(self) -> None:
         invalid_kwargs = (

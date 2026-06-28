@@ -60,6 +60,9 @@ class ShellToolSettings:
         "max_stdout_bytes",
         "max_stderr_bytes",
         "max_stdin_bytes",
+        "max_pipeline_stages",
+        "max_pipeline_bytes",
+        "max_intermediate_bytes",
         "max_arguments",
         "max_argument_bytes",
         "max_command_bytes",
@@ -103,6 +106,7 @@ class ShellToolSettings:
         "default_ocr_timeout_seconds",
         "max_ocr_timeout_seconds",
         "tesseract_thread_limit",
+        "allow_pipelines",
         "allow_media_tools",
         "allow_absolute_paths",
         "allow_symlinks",
@@ -124,6 +128,9 @@ class ShellToolSettings:
     max_stdout_bytes: int = 65536
     max_stderr_bytes: int = 32768
     max_stdin_bytes: int = 0
+    max_pipeline_stages: int = 8
+    max_pipeline_bytes: int = 1048576
+    max_intermediate_bytes: int = 1048576
     max_arguments: int = 128
     max_argument_bytes: int = 8192
     max_command_bytes: int = 32768
@@ -167,6 +174,7 @@ class ShellToolSettings:
     default_ocr_timeout_seconds: float = 60.0
     max_ocr_timeout_seconds: float = 300.0
     tesseract_thread_limit: int = 1
+    allow_pipelines: bool = False
     allow_media_tools: bool = False
     allow_write: bool = False
     allow_shell: bool = False
@@ -338,6 +346,9 @@ class ShellToolSettings:
 _POSITIVE_INT_FIELDS = (
     "max_stdout_bytes",
     "max_stderr_bytes",
+    "max_pipeline_stages",
+    "max_pipeline_bytes",
+    "max_intermediate_bytes",
     "max_arguments",
     "max_argument_bytes",
     "max_command_bytes",
@@ -381,6 +392,7 @@ _POSITIVE_INT_FIELDS = (
 
 _BOOLEAN_FIELDS = (
     "input_file_manifest_enabled",
+    "allow_pipelines",
     "allow_media_tools",
     "allow_write",
     "allow_shell",

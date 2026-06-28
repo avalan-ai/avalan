@@ -1,5 +1,7 @@
+from asyncio import run
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.container import (
@@ -59,6 +61,10 @@ _EXPECTED_SCHEMA_NAMES = (
     "shell.pdftoppm",
     "shell.tesseract",
 )
+_EXPECTED_SCHEMA_NAMES_WITH_PIPELINE = (
+    *_EXPECTED_SCHEMA_NAMES,
+    "shell.pipeline",
+)
 _DIGEST = "7" * 64
 _IMAGE = f"ghcr.io/example/sdk-shell@sha256:{_DIGEST}"
 
@@ -91,6 +97,47 @@ class ShellToolSetAssemblyTest(TestCase):
         )
 
         self.assertEqual(_schema_names(pipeline_enabled), ())
+
+    def test_pipeline_setting_alone_does_not_expose_pipeline(self) -> None:
+        toolset = ShellToolSet(
+            settings=ShellToolSettings(allow_pipelines=True)
+        )
+
+        self.assertEqual(_schema_names(toolset), _EXPECTED_SCHEMA_NAMES)
+
+    def test_pipeline_visibility_requires_setting_and_matching_selection(
+        self,
+    ) -> None:
+        settings = ShellToolSettings(allow_pipelines=True)
+        cases = (
+            (["shell"], _EXPECTED_SCHEMA_NAMES_WITH_PIPELINE),
+            (["shell.*"], _EXPECTED_SCHEMA_NAMES_WITH_PIPELINE),
+            (["shell.pipeline"], ("shell.pipeline",)),
+            (["shell.rg"], ("shell.rg",)),
+            (["shell.cat"], ("shell.cat",)),
+            (["shellx.*"], ()),
+        )
+
+        for enable_tools, expected in cases:
+            with self.subTest(enable_tools=enable_tools):
+                toolset = ShellToolSet(settings=settings).with_enabled_tools(
+                    enable_tools
+                )
+
+                self.assertEqual(_schema_names(toolset), expected)
+
+    def test_pipeline_stub_fails_closed_until_runtime_phase(self) -> None:
+        toolset = ShellToolSet(
+            settings=ShellToolSettings(allow_pipelines=True)
+        ).with_enabled_tools(["shell.pipeline"])
+        pipeline = toolset.tools[0]
+
+        assert callable(pipeline)
+        with self.assertRaisesRegex(
+            AssertionError,
+            "shell.pipeline runtime is not implemented",
+        ):
+            run(cast(Callable[[], Awaitable[str]], pipeline)())
 
     def test_toolset_rejects_namespaces_that_change_schema_names(
         self,
