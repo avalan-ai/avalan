@@ -83,6 +83,7 @@ EXPECTED_BUILT_IN_TOOL_NAMES = {
     "shell.head",
     "shell.jq",
     "shell.ls",
+    "shell.nl",
     "shell.pdfinfo",
     "shell.pdftoppm",
     "shell.pdftotext",

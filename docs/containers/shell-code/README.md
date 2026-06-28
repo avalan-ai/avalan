@@ -77,6 +77,7 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool shell.head \
       --tool shell.jq \
       --tool shell.ls \
+      --tool shell.nl \
       --tool shell.rg \
       --tool shell.sed \
       --tool shell.tail \

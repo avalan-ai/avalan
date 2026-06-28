@@ -631,6 +631,10 @@ async def _call_cat(tool: Tool) -> str:
     return await _call_tool(tool, "filesystem/visible.txt")
 
 
+async def _call_nl(tool: Tool) -> str:
+    return await _call_tool(tool, "filesystem/visible.txt")
+
+
 async def _call_file(tool: Tool) -> str:
     return await _call_tool(tool, ("filesystem/visible.txt",))
 
@@ -691,6 +695,7 @@ _TOOL_CALLS: dict[str, Callable[[Tool], Awaitable[str]]] = {
     "tail": _call_tail,
     "ls": _call_ls,
     "cat": _call_cat,
+    "nl": _call_nl,
     "file": _call_file,
     "find": _call_find,
     "wc": _call_wc,

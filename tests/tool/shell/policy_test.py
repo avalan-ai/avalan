@@ -1076,6 +1076,28 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     paths=(_path("file.txt"),),
                 )
             )
+            numbered = await policy.normalize(
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    paths=(_path("file.txt"),),
+                )
+            )
+            numbered_custom = await policy.normalize(
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    options={
+                        "body_numbering": "all",
+                        "number_format": "right_zero",
+                        "number_separator": "colon_space",
+                        "starting_line_number": 10,
+                        "line_increment": 5,
+                        "number_width": 4,
+                    },
+                    paths=(_path("-dash.txt"),),
+                )
+            )
             file_type = await policy.normalize(
                 _request(
                     tool_name="shell.file",
@@ -1147,6 +1169,94 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(tail.argv, ("tail", "-n", "80", "--", "-dash.txt"))
         self.assertEqual(cat.argv, ("cat", "--", "file.txt"))
+        self.assertEqual(
+            numbered.argv,
+            (
+                "nl",
+                "-b",
+                "a",
+                "-n",
+                "rn",
+                "-s\t",
+                "-v",
+                "1",
+                "-i",
+                "1",
+                "-w",
+                "6",
+                "-d",
+                "\x01\x02",
+                "-p",
+                "--",
+                "file.txt",
+            ),
+        )
+        self.assertEqual(
+            numbered.display_argv,
+            (
+                "nl",
+                "-b",
+                "a",
+                "-n",
+                "rn",
+                "-s\t",
+                "-v",
+                "1",
+                "-i",
+                "1",
+                "-w",
+                "6",
+                "-d",
+                "\x01\x02",
+                "-p",
+                "--",
+                "file.txt",
+            ),
+        )
+        self.assertEqual(
+            numbered_custom.argv,
+            (
+                "nl",
+                "-b",
+                "a",
+                "-n",
+                "rz",
+                "-s: ",
+                "-v",
+                "10",
+                "-i",
+                "5",
+                "-w",
+                "4",
+                "-d",
+                "\x01\x02",
+                "-p",
+                "--",
+                "./-dash.txt",
+            ),
+        )
+        self.assertEqual(
+            numbered_custom.display_argv,
+            (
+                "nl",
+                "-b",
+                "a",
+                "-n",
+                "rz",
+                "-s: ",
+                "-v",
+                "10",
+                "-i",
+                "5",
+                "-w",
+                "4",
+                "-d",
+                "\x01\x02",
+                "-p",
+                "--",
+                "./-dash.txt",
+            ),
+        )
         self.assertEqual(
             file_type.argv,
             ("file", "--brief", "--mime-type", "--", "file.txt"),
@@ -1652,6 +1762,90 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 ShellExecutionErrorCode.INVALID_OPTION,
             ),
             (
+                _request(tool_name="shell.nl", command="nl"),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    options={"number": True},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    options={"body_numbering": "headers"},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    options={"number_format": "center"},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    options={"number_separator": "comma"},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    options={"starting_line_number": True},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    options={"starting_line_number": 0},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    options={"line_increment": 0},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    options={"number_width": 101},
+                    paths=(_path("missing.txt"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
+                    paths=(_path("missing.txt", kind="file"),),
+                ),
+                ShellExecutionErrorCode.DENIED_PATH,
+            ),
+            (
                 _request(
                     tool_name="shell.file",
                     command="file",
@@ -1887,6 +2081,15 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 _request(
                     tool_name="shell.cat",
                     command="cat",
+                    paths=(_path("directory"),),
+                ),
+                ShellExecutionErrorCode.DENIED_PATH,
+                policy=policy,
+            )
+            await self._assert_denied(
+                _request(
+                    tool_name="shell.nl",
+                    command="nl",
                     paths=(_path("directory"),),
                 ),
                 ShellExecutionErrorCode.DENIED_PATH,
@@ -2798,6 +3001,7 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         invalid_utf8_path = _path("invalid-utf8.bin")
         cases = (
             ("cat", {}, binary_path),
+            ("nl", {}, binary_path),
             ("head", {}, binary_path),
             ("tail", {}, binary_path),
             ("wc", {"lines": True}, binary_path),
@@ -2827,7 +3031,40 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(resolver.calls, ())
 
-    async def test_full_file_size_applies_only_to_cat_and_wc_text_modes(
+    async def test_nl_rejects_reserved_section_delimiter_content(
+        self,
+    ) -> None:
+        for sequence in (
+            b"\x01\x02",
+            b"\x01\x02\x01\x02",
+            b"\x01\x02\x01\x02\x01\x02",
+        ):
+            with self.subTest(sequence=sequence):
+                with TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    (root / "reserved.txt").write_bytes(
+                        b"first\n" + sequence + b"\nsecond\n"
+                    )
+                    resolver = _CountingResolver("/usr/bin/nl")
+
+                    await self._assert_denied(
+                        _request(
+                            tool_name="shell.nl",
+                            command="nl",
+                            paths=(_path("reserved.txt"),),
+                        ),
+                        ShellExecutionErrorCode.INVALID_OPTION,
+                        policy=ExecutionPolicy(
+                            settings=ShellToolSettings(
+                                workspace_root=str(root)
+                            ),
+                            resolver=resolver,
+                        ),
+                    )
+
+                self.assertEqual(resolver.calls, ())
+
+    async def test_full_file_size_applies_to_full_text_read_modes(
         self,
     ) -> None:
         with TemporaryDirectory() as temporary_directory:
@@ -2840,6 +3077,7 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             )
             denied_cases = (
                 ("cat", {}, ShellExecutionErrorCode.TOO_LARGE),
+                ("nl", {}, ShellExecutionErrorCode.TOO_LARGE),
                 ("wc", {"lines": True}, ShellExecutionErrorCode.TOO_LARGE),
                 ("wc", {"words": True}, ShellExecutionErrorCode.TOO_LARGE),
                 ("wc", {}, ShellExecutionErrorCode.TOO_LARGE),

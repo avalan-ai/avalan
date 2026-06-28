@@ -35,6 +35,7 @@ class ShellRegistryTest(TestCase):
                 "tail",
                 "ls",
                 "cat",
+                "nl",
                 "file",
                 "find",
                 "wc",
@@ -98,6 +99,7 @@ class ShellRegistryTest(TestCase):
         }
 
         self.assertEqual(groups_by_id["rg"], ShellDependencyGroup.CORE)
+        self.assertEqual(groups_by_id["nl"], ShellDependencyGroup.CORE)
         self.assertEqual(
             groups_by_id["awk"], ShellDependencyGroup.TEXT_FILTERS
         )

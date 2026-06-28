@@ -231,6 +231,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.commands.helpers",
             "avalan.tool.shell.commands.jq",
             "avalan.tool.shell.commands.ls",
+            "avalan.tool.shell.commands.nl",
             "avalan.tool.shell.commands.pdfinfo",
             "avalan.tool.shell.commands.pdftoppm",
             "avalan.tool.shell.commands.pdftotext",

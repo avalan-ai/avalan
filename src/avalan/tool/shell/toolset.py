@@ -27,6 +27,7 @@ from .tools import (
     HeadTool,
     JqTool,
     LsTool,
+    NlTool,
     PdfInfoTool,
     PdfToPpmTool,
     PdfToTextTool,
@@ -190,6 +191,12 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
             CatTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            NlTool(
                 settings=self._settings,
                 policy=policy,
                 executor=executor,

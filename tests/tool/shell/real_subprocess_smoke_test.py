@@ -203,6 +203,22 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         self.assertIn("alpha", output)
         self.assertIn("needle", output)
 
+    async def test_nl_smoke(self) -> None:
+        await self._require_command("nl")
+        output = await _call(
+            _tool_by_name(self._toolset, "nl"),
+            "filesystem/visible.txt",
+            number_format="right_zero",
+            number_separator="colon_space",
+            starting_line_number=10,
+            line_increment=5,
+            number_width=4,
+        )
+
+        _assert_completed(self, output, "nl")
+        self.assertIn("0010: alpha", output)
+        self.assertIn("0020: needle", output)
+
     async def test_file_smoke(self) -> None:
         await self._require_command("file")
         output = await _call(

@@ -144,6 +144,85 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
         )
         self.assertIn("container", container.to_dict())
 
+    async def test_nl_container_plan_preserves_private_delimiter(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "visible.txt").write_text(
+                "hello\n\\:\\:\\:\nworld\n",
+                encoding="utf-8",
+            )
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    execution_mode="container",
+                    workspace_root=str(root),
+                ),
+                resolver=_AllResolved(),
+            )
+            spec = await policy.normalize(_nl_request("visible.txt"))
+            plan = lower_shell_execution_spec(
+                spec,
+                container_settings=_effective_settings(),
+            )
+
+        self.assertIsNotNone(plan.container_plan)
+        assert plan.container_plan is not None
+        self.assertEqual(
+            plan.container_plan.run_plan.command.argv,
+            (
+                "nl",
+                "-b",
+                "a",
+                "-n",
+                "rn",
+                "-s\t",
+                "-v",
+                "1",
+                "-i",
+                "1",
+                "-w",
+                "6",
+                "-d",
+                "\x01\x02",
+                "-p",
+                "--",
+                "visible.txt",
+            ),
+        )
+
+    async def test_nl_container_plan_uses_cwd_relative_path(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            nested = root / "nested"
+            nested.mkdir()
+            (nested / "visible.txt").write_text("hello\n", encoding="utf-8")
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    execution_mode="container",
+                    workspace_root=str(root),
+                ),
+                resolver=_AllResolved(),
+            )
+            spec = await policy.normalize(
+                _nl_request("visible.txt", cwd="nested")
+            )
+            plan = lower_shell_execution_spec(
+                spec,
+                container_settings=_effective_settings(),
+            )
+
+        self.assertIsNotNone(plan.container_plan)
+        assert plan.container_plan is not None
+        self.assertEqual(
+            plan.container_plan.run_plan.command.cwd,
+            "/workspace/nested",
+        )
+        self.assertEqual(
+            plan.container_plan.run_plan.command.argv[-1],
+            "visible.txt",
+        )
+
     async def test_required_disabled_container_plan_fails_closed(
         self,
     ) -> None:
@@ -1019,6 +1098,23 @@ def _cat_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
     return ShellCommandRequest(
         tool_name="shell.cat",
         command="cat",
+        options={},
+        paths=(
+            PathOperand(
+                name="path",
+                path=path,
+                kind="text_file",
+                access="read",
+            ),
+        ),
+        cwd=cwd,
+    )
+
+
+def _nl_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
+    return ShellCommandRequest(
+        tool_name="shell.nl",
+        command="nl",
         options={},
         paths=(
             PathOperand(

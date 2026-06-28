@@ -12,6 +12,9 @@ from .commands.helpers import (
     path_matches_sensitive_denylist,
 )
 from .commands.helpers import policy_denied as _policy_denied
+from .commands.nl import (
+    RESERVED_SECTION_DELIMITER_SEQUENCES as _NL_SECTION_DELIMITER_SEQUENCES,
+)
 from .commands.pdftoppm import (
     _page_size_raster_dpi_cap,
 )
@@ -31,6 +34,7 @@ from .filesystem import (
     probe_image_dimensions,
     probe_pdf_page_boxes,
     read_pdf_signature,
+    read_signature,
     resolve_policy_path,
     sniff_binary,
 )
@@ -499,10 +503,15 @@ async def _enforce_content_policy(
     if not paths:
         return
     match request.command:
-        case "cat":
+        case "cat" | "nl":
             await _enforce_text_inputs(
                 paths,
                 max_bytes=settings.max_full_file_bytes,
+                forbidden_sequences=(
+                    _NL_SECTION_DELIMITER_SEQUENCES
+                    if request.command == "nl"
+                    else ()
+                ),
             )
         case "head" | "tail":
             await _enforce_text_inputs(paths)
@@ -568,7 +577,10 @@ async def _enforce_text_inputs(
     *,
     max_bytes: int | None = None,
     max_total_bytes: int | None = None,
+    forbidden_sequences: tuple[bytes, ...] = (),
 ) -> None:
+    for sequence in forbidden_sequences:
+        assert isinstance(sequence, bytes), "forbidden sequences must be bytes"
     total_bytes = 0
     for path in paths:
         metadata = await _required_file_metadata(path)
@@ -588,6 +600,13 @@ async def _enforce_text_inputs(
                 ShellExecutionErrorCode.BINARY_CONTENT,
                 "binary input is disabled",
             )
+        if forbidden_sequences:
+            content = await read_signature(path.path, max_bytes=metadata.size)
+            if any(sequence in content for sequence in forbidden_sequences):
+                raise _policy_denied(
+                    ShellExecutionErrorCode.INVALID_OPTION,
+                    "input contains a reserved command delimiter",
+                )
 
 
 async def _enforce_regular_file_inputs(
