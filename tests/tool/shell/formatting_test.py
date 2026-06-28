@@ -289,6 +289,19 @@ class ShellFormattingTest(TestCase):
         self.assertNotIn("\u202e", formatted)
         self.assertNotIn("\x07", formatted)
 
+    def test_command_redaction_replaces_control_arguments(self) -> None:
+        formatted = format_shell_result(
+            _result(
+                tool_name="shell.nl",
+                command="nl",
+                argv=("nl", "-d", "\x01\x02", "--", "visible.txt"),
+                display_argv=("nl", "-d", "\x01\x02", "--", "visible.txt"),
+            )
+        )
+
+        self.assertIn("command: nl -d '[redacted]' -- visible.txt", formatted)
+        self.assertNotIn("\x01\x02", formatted)
+
     def test_redaction_covers_secret_like_assignments(self) -> None:
         formatted = format_shell_result(
             _result(

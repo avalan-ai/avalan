@@ -102,10 +102,11 @@ def format_shell_result(
     error_code = result.error_code.value if result.error_code else None
     stdout = _format_output(result.command, result.stdout, redactor)
     stderr = _format_output(result.command, result.stderr, redactor)
+    command = _format_display_argv(result.display_argv, redactor)
     lines = [
         f"tool: {redactor(result.tool_name)}",
         f"status: {result.status.value}",
-        f"command: {redactor(shell_join(result.display_argv))}",
+        f"command: {command}",
         f"cwd: {redactor(result.display_cwd)}",
         f"exit_code: {_scalar(result.exit_code, redactor)}",
         f"error_code: {_scalar(error_code, redactor)}",
@@ -142,6 +143,32 @@ def _include_stderr(result: ExecutionResult) -> bool:
             ShellExecutionStatus.SPAWN_FAILED,
         }
         or (result.exit_code is not None and result.exit_code != 0)
+    )
+
+
+def _format_display_argv(
+    display_argv: tuple[str, ...],
+    redactor: "_Redactor",
+) -> str:
+    return redactor(
+        shell_join(
+            tuple(
+                (
+                    _REDACTED_SECRET
+                    if _has_unsafe_control_character(argument)
+                    else argument
+                )
+                for argument in display_argv
+            )
+        )
+    )
+
+
+def _has_unsafe_control_character(value: str) -> bool:
+    assert isinstance(value, str)
+    return any(
+        unicode_category(character).startswith("C") and character != "\t"
+        for character in value
     )
 
 

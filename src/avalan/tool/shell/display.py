@@ -25,6 +25,7 @@ _REQUEST_ACTIONS = {
     "tail": "read",
     "ls": "list",
     "cat": "read",
+    "nl": "number",
     "file": "identify",
     "find": "find",
     "wc": "count",
@@ -42,6 +43,7 @@ _REQUEST_SUMMARIES = {
     "tail": "Read the last part of a file.",
     "ls": "List a path.",
     "cat": "Read a file.",
+    "nl": "Number file lines.",
     "file": "Identify file types.",
     "find": "Find workspace entries.",
     "wc": "Count file content.",
@@ -59,6 +61,7 @@ _PATH_TARGET_COMMANDS = frozenset(
         "tail",
         "ls",
         "cat",
+        "nl",
         "file",
         "wc",
         "awk",
@@ -234,6 +237,13 @@ def _request_details(
         case "file":
             _append_option(details, request.options, "brief")
             _append_option(details, request.options, "mime_type")
+        case "nl":
+            _append_option(details, request.options, "body_numbering")
+            _append_option(details, request.options, "number_format")
+            _append_option(details, request.options, "number_separator")
+            _append_option(details, request.options, "starting_line_number")
+            _append_option(details, request.options, "line_increment")
+            _append_option(details, request.options, "number_width")
         case "find":
             _append_option(details, request.options, "entry_type")
             _append_safe_path_option(details, request.options, "name")
@@ -339,6 +349,9 @@ def _request_metrics(
         "psm",
         "oem",
         "max_depth",
+        "starting_line_number",
+        "line_increment",
+        "number_width",
     ):
         value = request.options.get(name)
         if isinstance(value, int) and not isinstance(value, bool):
@@ -532,10 +545,21 @@ def _safe_command_argument(argument: str) -> tuple[str, bool]:
 
 def _is_unsafe_command_argument(argument: str) -> bool:
     assert isinstance(argument, str)
+    if _has_unsafe_control_character(argument):
+        return True
     return any(
         _is_unsafe_command_path_candidate(candidate)
         or is_denied_display_path(candidate)
         for candidate in _command_path_candidates(argument)
+    )
+
+
+def _has_unsafe_control_character(value: str) -> bool:
+    assert isinstance(value, str)
+    return any(
+        (ord(character) < 32 and character != "\t")
+        or 127 <= ord(character) < 160
+        for character in value
     )
 
 

@@ -23,6 +23,7 @@ SHELL_COMMANDS = (
     "tail",
     "ls",
     "cat",
+    "nl",
     "file",
     "find",
     "wc",

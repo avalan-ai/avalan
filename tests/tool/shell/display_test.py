@@ -49,6 +49,7 @@ _CALL_ARGUMENTS: dict[str, dict[str, object]] = {
     "shell.tail": {"path": "filesystem/visible.txt", "lines": 5},
     "shell.ls": {"path": "filesystem"},
     "shell.cat": {"path": "filesystem/visible.txt"},
+    "shell.nl": {"path": "filesystem/visible.txt"},
     "shell.file": {"paths": ["filesystem/visible.txt"]},
     "shell.find": {"paths": ["filesystem"], "name": "visible.txt"},
     "shell.wc": {"paths": ["filesystem/visible.txt"], "words": True},
@@ -73,6 +74,7 @@ _EXPECTED_ACTIONS = {
     "shell.tail": "read",
     "shell.ls": "list",
     "shell.cat": "read",
+    "shell.nl": "number",
     "shell.file": "identify",
     "shell.find": "find",
     "shell.wc": "count",
@@ -221,6 +223,41 @@ class ShellDisplayProjectionCallTest(TestCase):
             _detail_value(projection, "paths"),
             "filesystem/visible.txt",
         )
+
+    def test_nl_call_projection_describes_numbered_read(self) -> None:
+        projection = _call_projection(
+            "shell.nl",
+            {
+                "path": "filesystem/visible.txt",
+                "body_numbering": "all",
+                "number_format": "right_zero",
+                "number_separator": "colon_space",
+                "starting_line_number": 10,
+                "line_increment": 5,
+                "number_width": 4,
+            },
+        )
+
+        self.assertEqual(projection.action, "number")
+        self.assertEqual(projection.target, "filesystem/visible.txt")
+        self.assertIn("Number", projection.summary or "")
+        self.assertEqual(
+            _detail_value(projection, "paths"),
+            "filesystem/visible.txt",
+        )
+        self.assertEqual(_detail_value(projection, "body numbering"), "all")
+        self.assertEqual(
+            _detail_value(projection, "number format"), "right_zero"
+        )
+        self.assertEqual(
+            _detail_value(projection, "number separator"), "colon_space"
+        )
+        self.assertEqual(_detail_value(projection, "starting line number"), 10)
+        self.assertEqual(_detail_value(projection, "line increment"), 5)
+        self.assertEqual(_detail_value(projection, "number width"), 4)
+        self.assertEqual(projection.metrics["starting_line_number"], 10)
+        self.assertEqual(projection.metrics["line_increment"], 5)
+        self.assertEqual(projection.metrics["number_width"], 4)
 
     def test_path_target_projection_truncates_long_path_lists(self) -> None:
         projection = _call_projection(
@@ -920,6 +957,44 @@ class ShellDisplayProjectionTerminalTest(IsolatedAsyncioTestCase):
 
                 self.assertFalse(projection.redacted)
                 self.assertNotIn("[redacted]", payload)
+
+    def test_terminal_projection_redacts_control_display_argv(self) -> None:
+        manager = _shell_manager(["shell.nl"])
+        call = ToolCall(
+            id="call-nl",
+            name="shell.nl",
+            arguments={"path": "filesystem/visible.txt"},
+        )
+        result = ExecutionResult(
+            backend="local",
+            tool_name="shell.nl",
+            command="nl",
+            argv=("nl", "-d", "\x01\x02", "filesystem/visible.txt"),
+            display_argv=("nl", "-d", "\x01\x02", "filesystem/visible.txt"),
+            cwd=".",
+            display_cwd=".",
+            status=ShellExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout="",
+            stderr="",
+            stdout_media_type="text/plain",
+            output_kind=ShellOutputKind.TEXT,
+            error_code=ShellExecutionErrorCode.COMPLETED,
+        )
+        outcome = ToolCallResult(
+            id="result-nl",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=ShellFormattedResult("formatted", result),
+        )
+
+        projection = _terminal_projection(manager, outcome)
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertTrue(projection.redacted)
+        self.assertNotIn("\x01\x02", payload)
+        self.assertIn("[redacted]", payload)
 
 
 class _StaticResultExecutor:

@@ -22,6 +22,7 @@ from avalan.tool.shell.tools import (
     HeadTool,
     JqTool,
     LsTool,
+    NlTool,
     PdfInfoTool,
     PdfToPpmTool,
     PdfToTextTool,
@@ -320,6 +321,66 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self.assertEqual(request.timeout_seconds, 2.25)
         self.assertEqual(request.max_stdout_bytes, 400)
         self.assertEqual(request.max_stderr_bytes, 120)
+
+    async def test_nl_builds_text_file_request(self) -> None:
+        spec = _spec("nl")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("nl", stdout="     1\tbody\n"))
+        formatter = _RecordingFormatter()
+        tool = NlTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=formatter,
+        )
+
+        output = await tool(
+            "README.md",
+            cwd="docs",
+            body_numbering="all",
+            number_format="right_zero",
+            number_separator="colon_space",
+            starting_line_number=10,
+            line_increment=5,
+            number_width=4,
+            timeout_seconds=2.35,
+            max_stdout_bytes=425,
+            max_stderr_bytes=122,
+            context=ToolCallContext(),
+        )
+
+        self.assertEqual(output, "formatted:shell.nl:completed")
+        self.assertEqual(executor.specs, [spec])
+        self.assertEqual(len(policy.requests), 1)
+        request = policy.requests[0]
+        self.assertEqual(request.tool_name, "shell.nl")
+        self.assertEqual(request.command, "nl")
+        self.assertEqual(
+            request.options,
+            {
+                "body_numbering": "all",
+                "number_format": "right_zero",
+                "number_separator": "colon_space",
+                "starting_line_number": 10,
+                "line_increment": 5,
+                "number_width": 4,
+            },
+        )
+        self.assertEqual(
+            request.paths,
+            (
+                PathOperand(
+                    name="path_0",
+                    path="README.md",
+                    kind="text_file",
+                    access="read",
+                ),
+            ),
+        )
+        self.assertEqual(request.cwd, "docs")
+        self.assertEqual(request.timeout_seconds, 2.35)
+        self.assertEqual(request.max_stdout_bytes, 425)
+        self.assertEqual(request.max_stderr_bytes, 122)
 
     async def test_file_builds_regular_file_request(self) -> None:
         spec = _spec("file")
@@ -1115,6 +1176,7 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         for command, tool, arguments in (
             ("ls", _ls_tool, {}),
             ("cat", _cat_tool, {"path": "README.md"}),
+            ("nl", _nl_tool, {"path": "README.md"}),
             ("file", _file_tool, {"paths": ("README.md",)}),
             ("find", _find_tool, {"paths": ("src",)}),
             ("wc", _wc_tool, {"paths": ("README.md",)}),
@@ -1283,6 +1345,7 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
     ) -> None:
         for command, tool, arguments in (
             ("cat", _cat_tool, {"path": ""}),
+            ("nl", _nl_tool, {"path": ""}),
             ("file", _file_tool, {"paths": "README.md"}),
             ("find", _find_tool, {"paths": "src"}),
             ("wc", _wc_tool, {"paths": "README.md"}),
@@ -1681,6 +1744,12 @@ class ShellToolSchemaTest(TestCase):
                     executor=_FakeExecutor(_result("cat")),
                     formatter=_RecordingFormatter(),
                 ),
+                NlTool(
+                    settings=ShellToolSettings(),
+                    policy=_FakePolicy(_spec("nl")),  # type: ignore[arg-type]
+                    executor=_FakeExecutor(_result("nl")),
+                    formatter=_RecordingFormatter(),
+                ),
                 FileTool(
                     settings=ShellToolSettings(),
                     policy=_FakePolicy(  # type: ignore[arg-type]
@@ -1774,6 +1843,7 @@ class ShellToolSchemaTest(TestCase):
                 "shell.tail",
                 "shell.ls",
                 "shell.cat",
+                "shell.nl",
                 "shell.file",
                 "shell.find",
                 "shell.wc",
@@ -1789,6 +1859,7 @@ class ShellToolSchemaTest(TestCase):
         self.assertNotIn("context", parameters["shell.rg"]["properties"])
         self.assertNotIn("context", parameters["shell.ls"]["properties"])
         self.assertNotIn("context", parameters["shell.cat"]["properties"])
+        self.assertNotIn("context", parameters["shell.nl"]["properties"])
         self.assertNotIn("context", parameters["shell.file"]["properties"])
         self.assertNotIn("context", parameters["shell.find"]["properties"])
         self.assertNotIn("context", parameters["shell.wc"]["properties"])
@@ -1862,6 +1933,7 @@ class ShellToolSchemaTest(TestCase):
         )
         self.assertEqual(parameters["shell.ls"]["required"], [])
         self.assertEqual(parameters["shell.cat"]["required"], ["path"])
+        self.assertEqual(parameters["shell.nl"]["required"], ["path"])
         self.assertEqual(parameters["shell.file"]["required"], ["paths"])
         self.assertEqual(parameters["shell.find"]["required"], [])
         self.assertEqual(parameters["shell.wc"]["required"], ["paths"])
@@ -1875,6 +1947,34 @@ class ShellToolSchemaTest(TestCase):
         self.assertEqual(parameters["shell.pdftotext"]["required"], ["path"])
         self.assertEqual(parameters["shell.pdftoppm"]["required"], ["path"])
         self.assertEqual(parameters["shell.tesseract"]["required"], ["path"])
+        self.assertEqual(
+            set(parameters["shell.nl"]["properties"]),
+            {
+                "path",
+                "cwd",
+                "body_numbering",
+                "number_format",
+                "number_separator",
+                "starting_line_number",
+                "line_increment",
+                "number_width",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            },
+        )
+        self.assertEqual(
+            parameters["shell.nl"]["properties"]["body_numbering"]["enum"],
+            ["all", "nonempty", "none"],
+        )
+        self.assertEqual(
+            parameters["shell.nl"]["properties"]["number_format"]["enum"],
+            ["left", "right", "right_zero"],
+        )
+        self.assertEqual(
+            parameters["shell.nl"]["properties"]["number_separator"]["enum"],
+            ["colon_space", "space", "tab", "two_spaces"],
+        )
         self.assertEqual(
             set(parameters["shell.file"]["properties"]),
             {
@@ -2092,6 +2192,19 @@ def _cat_tool(
     formatter: "_RecordingFormatter",
 ) -> CatTool:
     return CatTool(
+        settings=ShellToolSettings(),
+        policy=policy,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        formatter=formatter,
+    )
+
+
+def _nl_tool(
+    policy: object,
+    executor: object,
+    formatter: "_RecordingFormatter",
+) -> NlTool:
+    return NlTool(
         settings=ShellToolSettings(),
         policy=policy,  # type: ignore[arg-type]
         executor=executor,  # type: ignore[arg-type]

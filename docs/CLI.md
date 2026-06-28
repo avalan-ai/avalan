@@ -155,6 +155,7 @@ Public shell tools:
 | `shell.tail` | Read trailing lines from one text file. | core | `coreutils` |
 | `shell.ls` | List a directory or file path. | core | `coreutils` |
 | `shell.cat` | Read a bounded text file. | core | `coreutils` |
+| `shell.nl` | Number lines in a bounded text file. | core | `coreutils` |
 | `shell.file` | Identify regular file types. | core | `file` |
 | `shell.find` | Find entries with constrained selectors. | core | `findutils` |
 | `shell.wc` | Count lines, words, or bytes. | core | `coreutils` |
