@@ -282,6 +282,20 @@ class ShellPublicApiTest(TestCase):
             [f"shell.{command_id}" for command_id in SHELL_COMMAND_IDS],
         )
 
+    def test_shell_pipeline_is_not_registered_by_default(self) -> None:
+        toolset = ShellToolSet()
+        tool_names = tuple(
+            getattr(tool, "__name__", "") for tool in toolset.tools
+        )
+        schema_names = tuple(
+            schema["function"]["name"] for schema in toolset.json_schemas()
+        )
+
+        self.assertNotIn("pipeline", SHELL_COMMAND_IDS)
+        self.assertNotIn("pipeline", SHELL_COMMAND_DEFINITIONS)
+        self.assertNotIn("pipeline", tool_names)
+        self.assertNotIn("shell.pipeline", schema_names)
+
     def test_shell_toolset_accepts_explicit_settings(self) -> None:
         settings = ShellToolSettings()
         toolset = ShellToolSet(settings=settings)

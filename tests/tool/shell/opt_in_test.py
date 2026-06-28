@@ -41,6 +41,7 @@ class ShellOptInTest(TestCase):
             (["shell"], True),
             (["shell.*"], True),
             (["shell.rg"], True),
+            (["shell.pipeline"], True),
             (["shell."], False),
             (["shellx.*"], False),
         )
@@ -58,6 +59,7 @@ class ShellOptInTest(TestCase):
             (None, ["shell"], True),
             (None, ["shell.*"], True),
             (None, ["shell.rg"], True),
+            (None, ["shell.pipeline"], True),
             (None, ["shellx.*"], False),
         )
 

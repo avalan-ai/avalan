@@ -41,8 +41,23 @@ from avalan.tool.shell import (
 )
 from avalan.tool.shell.entities import ShellFormattedResult
 
-_EXPECTED_SCHEMA_NAMES = tuple(
-    f"shell.{command_id}" for command_id in SHELL_COMMAND_IDS
+_EXPECTED_SCHEMA_NAMES = (
+    "shell.rg",
+    "shell.head",
+    "shell.tail",
+    "shell.ls",
+    "shell.cat",
+    "shell.nl",
+    "shell.file",
+    "shell.find",
+    "shell.wc",
+    "shell.awk",
+    "shell.sed",
+    "shell.jq",
+    "shell.pdfinfo",
+    "shell.pdftotext",
+    "shell.pdftoppm",
+    "shell.tesseract",
 )
 _DIGEST = "7" * 64
 _IMAGE = f"ghcr.io/example/sdk-shell@sha256:{_DIGEST}"
@@ -69,6 +84,13 @@ class ShellToolSetAssemblyTest(TestCase):
         self.assertEqual(_schema_names(all_enabled), _EXPECTED_SCHEMA_NAMES)
         self.assertEqual(_schema_names(concrete_enabled), ("shell.rg",))
         self.assertEqual(_schema_names(disabled), ())
+
+    def test_pipeline_selection_is_empty_without_pipeline_opt_in(self) -> None:
+        pipeline_enabled = ShellToolSet().with_enabled_tools(
+            ["shell.pipeline"]
+        )
+
+        self.assertEqual(_schema_names(pipeline_enabled), ())
 
     def test_toolset_rejects_namespaces_that_change_schema_names(
         self,

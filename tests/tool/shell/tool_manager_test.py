@@ -127,6 +127,31 @@ class ShellToolManagerFilteringTest(TestCase):
         self.assertEqual(diagnostic.requested_name, "shell.cat")
         self.assertIsNone(diagnostic.canonical_name)
 
+    def test_pipeline_tool_is_unknown_before_pipeline_opt_in(self) -> None:
+        manager = _shell_manager(["shell.pipeline"])
+
+        resolution = manager.resolve_tool_name("shell.pipeline")
+        diagnostic = manager.validate_tool_call(
+            ToolCall(id="call-1", name="shell.pipeline", arguments={})
+        )
+
+        self.assertTrue(manager.is_empty)
+        self.assertEqual(_tool_names(manager), ())
+        self.assertEqual(_schema_names(manager), ())
+        self.assertIs(resolution.status, ToolNameResolutionStatus.UNKNOWN)
+        self.assertIs(
+            resolution.diagnostic_code,
+            ToolCallDiagnosticCode.UNKNOWN_TOOL,
+        )
+        assert diagnostic is not None
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.UNKNOWN_TOOL,
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.RESOLVE)
+        self.assertEqual(diagnostic.requested_name, "shell.pipeline")
+        self.assertIsNone(diagnostic.canonical_name)
+
     def test_schema_and_descriptors_use_single_shell_namespace(self) -> None:
         manager = _shell_manager(["shell"])
 
