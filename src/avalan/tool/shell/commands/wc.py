@@ -1,8 +1,9 @@
-from ..entities import ShellExecutionErrorCode
+from ..entities import ShellExecutionErrorCode, ShellOutputKind
 from .base import (
     ShellCommandDefinition,
     ShellCommandPolicyContext,
     ShellDependencyGroup,
+    ShellStreamContract,
 )
 from .helpers import (
     _bool_option,
@@ -22,17 +23,6 @@ def build_argv(
         allowed_options={"lines", "words", "count_bytes"},
         command="wc",
     )
-    if not context.paths:
-        raise policy_denied(
-            ShellExecutionErrorCode.INVALID_OPTION,
-            "wc requires at least one path",
-        )
-    for path in context.paths:
-        _validate_path_kind(
-            path,
-            allowed_kinds=("file", "text_file"),
-            command="wc",
-        )
     lines = _bool_option(request.options, "lines", default=True)
     words = _bool_option(request.options, "words", default=False)
     count_bytes = _bool_option(
@@ -40,6 +30,23 @@ def build_argv(
         "count_bytes",
         default=False,
     )
+    if context.stdin_mode and count_bytes:
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "wc count_bytes cannot read stdin",
+        )
+    if not context.stdin_mode:
+        if not context.paths:
+            raise policy_denied(
+                ShellExecutionErrorCode.INVALID_OPTION,
+                "wc requires at least one path",
+            )
+        for path in context.paths:
+            _validate_path_kind(
+                path,
+                allowed_kinds=("file", "text_file"),
+                command="wc",
+            )
     if not lines and not words and not count_bytes:
         lines = True
     flags: list[str] = []
@@ -49,6 +56,9 @@ def build_argv(
         flags.append("-w")
     if count_bytes:
         flags.append("-c")
+    if context.stdin_mode:
+        argv = (context.executable_name, *flags)
+        return argv, argv, None
     path_arguments = tuple(
         _relative_argv_path(context.workspace.cwd, path.path)
         for path in context.paths
@@ -70,4 +80,8 @@ COMMAND_DEFINITION = ShellCommandDefinition(
     dependency_group=ShellDependencyGroup.CORE,
     container_package_hints=("coreutils",),
     argv_builder=build_argv,
+    stdin_contract=ShellStreamContract(
+        media_types=("text/plain",),
+        output_kinds=(ShellOutputKind.TEXT,),
+    ),
 )

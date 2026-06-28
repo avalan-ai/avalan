@@ -4,12 +4,17 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, patch
 
+from avalan.tool.shell.commands import (
+    NormalizedWorkspace,
+    ShellCommandPolicyContext,
+)
 from avalan.tool.shell.commands.find import filter_output as filter_find_output
 from avalan.tool.shell.commands.helpers import (
     _media_path_argument,
     path_matches_sensitive_denylist,
 )
 from avalan.tool.shell.commands.rg import _rg_policy_deny_globs
+from avalan.tool.shell.commands.wc import build_argv as build_wc_argv
 from avalan.tool.shell.entities import (
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
     ExecutionSpec,
@@ -3472,6 +3477,225 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         self.assertEqual(text_spec.output_kind, ShellOutputKind.TEXT)
         self.assertEqual(text_spec.stdout_media_type, "text/plain")
         self.assertEqual(resolver.calls, ("jq", "jq"))
+
+    async def test_internal_stdin_mode_builds_consumer_argv(self) -> None:
+        resolver = _CountingResolver("/usr/bin/stdin-consumer")
+        policy = ExecutionPolicy(resolver=resolver)
+        cases = (
+            (
+                "sed",
+                {"line_ranges": ("1",)},
+                "text/plain",
+                ShellOutputKind.TEXT,
+                ("sed", "-n", "-e", "1p"),
+            ),
+            (
+                "awk",
+                {},
+                "text/plain",
+                ShellOutputKind.TEXT,
+                ("awk", "-v", "OFS= ", "{ print $0 }"),
+            ),
+            (
+                "jq",
+                {"filter": "."},
+                "application/json",
+                ShellOutputKind.JSON,
+                ("jq", "--", "."),
+            ),
+            (
+                "wc",
+                {},
+                "text/plain",
+                ShellOutputKind.TEXT,
+                ("wc", "-l"),
+            ),
+        )
+
+        for (
+            command,
+            options,
+            media_type,
+            output_kind,
+            expected_argv,
+        ) in cases:
+            with self.subTest(command=command):
+                spec = await policy._normalize_stdin(
+                    _request(
+                        tool_name=f"shell.{command}",
+                        command=command,
+                        options=options,
+                    ),
+                    producer_media_type=media_type,
+                    producer_output_kind=output_kind,
+                )
+                self.assertEqual(spec.argv, expected_argv)
+                self.assertEqual(spec.display_argv, expected_argv)
+                self.assertIsNone(spec.stdin)
+                self.assertNotIn("-", spec.argv)
+
+        self.assertEqual(resolver.calls, ("sed", "awk", "jq", "wc"))
+
+    async def test_internal_stdin_denies_unsupported_consumer_before_resolver(
+        self,
+    ) -> None:
+        resolver = _CountingResolver("/usr/bin/cat")
+        policy = ExecutionPolicy(resolver=resolver)
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            await policy._normalize_stdin(
+                _request(tool_name="shell.cat", command="cat"),
+                producer_media_type="text/plain",
+                producer_output_kind=ShellOutputKind.TEXT,
+            )
+
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.DENIED_COMMAND,
+        )
+        self.assertEqual(resolver.calls, ())
+
+    async def test_internal_stdin_denies_payload_before_resolver(self) -> None:
+        resolver = _CountingResolver("/usr/bin/sed")
+        policy = ExecutionPolicy(resolver=resolver)
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            await policy._normalize_stdin(
+                _request(
+                    tool_name="shell.sed",
+                    command="sed",
+                    options={"line_ranges": ("1",)},
+                    stdin=b"input",
+                ),
+                producer_media_type="text/plain",
+                producer_output_kind=ShellOutputKind.TEXT,
+            )
+
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.STDIN_DENIED,
+        )
+        self.assertEqual(resolver.calls, ())
+
+    async def test_internal_stdin_denies_paths_before_resolver(self) -> None:
+        resolver = _CountingResolver("/usr/bin/sed")
+        policy = ExecutionPolicy(resolver=resolver)
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            await policy._normalize_stdin(
+                _request(
+                    tool_name="shell.sed",
+                    command="sed",
+                    options={"line_ranges": ("1",)},
+                    paths=(_path("file.txt"),),
+                ),
+                producer_media_type="text/plain",
+                producer_output_kind=ShellOutputKind.TEXT,
+            )
+
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.INVALID_OPTION,
+        )
+        self.assertEqual(resolver.calls, ())
+
+    async def test_internal_stdin_validates_stream_compatibility(
+        self,
+    ) -> None:
+        resolver = _CountingResolver("/usr/bin/filter")
+        policy = ExecutionPolicy(resolver=resolver)
+        cases = (
+            (
+                _request(
+                    tool_name="shell.jq",
+                    command="jq",
+                    options={"filter": "."},
+                ),
+                "text/plain",
+                ShellOutputKind.TEXT,
+            ),
+            (
+                _request(
+                    tool_name="shell.sed",
+                    command="sed",
+                    options={"line_ranges": ("1",)},
+                ),
+                "application/json",
+                ShellOutputKind.JSON,
+            ),
+        )
+
+        for request, media_type, output_kind in cases:
+            with self.subTest(command=request.command):
+                with self.assertRaises(ShellPolicyDenied) as context:
+                    await policy._normalize_stdin(
+                        request,
+                        producer_media_type=media_type,
+                        producer_output_kind=output_kind,
+                    )
+                self.assertEqual(
+                    context.exception.error_code,
+                    ShellExecutionErrorCode.UNSUPPORTED_MEDIA_SIGNATURE,
+                )
+
+        self.assertEqual(resolver.calls, ())
+
+    async def test_internal_wc_count_bytes_stdin_denied_before_resolver(
+        self,
+    ) -> None:
+        resolver = _CountingResolver("/usr/bin/wc")
+        policy = ExecutionPolicy(resolver=resolver)
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            await policy._normalize_stdin(
+                _request(
+                    tool_name="shell.wc",
+                    command="wc",
+                    options={
+                        "lines": False,
+                        "words": False,
+                        "count_bytes": True,
+                    },
+                ),
+                producer_media_type="text/plain",
+                producer_output_kind=ShellOutputKind.TEXT,
+            )
+
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.INVALID_OPTION,
+        )
+        self.assertEqual(resolver.calls, ())
+
+    def test_wc_argv_denies_count_bytes_stdin_mode(self) -> None:
+        root = Path.cwd().resolve()
+        policy_context = ShellCommandPolicyContext(
+            executable_name="wc",
+            request=_request(
+                tool_name="shell.wc",
+                command="wc",
+                options={"count_bytes": True},
+            ),
+            paths=(),
+            workspace=NormalizedWorkspace(
+                root=root,
+                cwd=root,
+                display_cwd=".",
+            ),
+            settings=ShellToolSettings(),
+            metadata={},
+            stdin_mode=True,
+            stdin_media_type="text/plain",
+            stdin_output_kind=ShellOutputKind.TEXT,
+        )
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            build_wc_argv(policy_context)
+
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.INVALID_OPTION,
+        )
 
     async def test_filter_commands_reject_invalid_options_before_resolver(
         self,

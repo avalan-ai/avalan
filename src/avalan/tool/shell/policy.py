@@ -5,6 +5,7 @@ from .commands import (
     NormalizedWorkspace as _NormalizedWorkspace,
 )
 from .commands import (
+    ShellCommandDefinition,
     ShellCommandPolicyContext,
 )
 from .commands.helpers import (
@@ -108,6 +109,44 @@ class ExecutionPolicy:
                 ShellExecutionErrorCode.STDIN_DENIED,
                 "stdin is disabled",
             )
+        return await self._normalize_request(
+            request,
+            stdin_mode=False,
+            stdin_media_type=None,
+            stdin_output_kind=None,
+        )
+
+    async def _normalize_stdin(
+        self,
+        request: ShellCommandRequest,
+        *,
+        producer_media_type: str,
+        producer_output_kind: ShellOutputKind,
+    ) -> ExecutionSpec:
+        assert isinstance(
+            request,
+            ShellCommandRequest,
+        ), "request must be a shell command request"
+        if request.stdin is not None:
+            raise _policy_denied(
+                ShellExecutionErrorCode.STDIN_DENIED,
+                "stdin is disabled",
+            )
+        return await self._normalize_request(
+            request,
+            stdin_mode=True,
+            stdin_media_type=producer_media_type,
+            stdin_output_kind=producer_output_kind,
+        )
+
+    async def _normalize_request(
+        self,
+        request: ShellCommandRequest,
+        *,
+        stdin_mode: bool,
+        stdin_media_type: str | None,
+        stdin_output_kind: ShellOutputKind | None,
+    ) -> ExecutionSpec:
         if any(path.access != "read" for path in request.paths):
             raise _policy_denied(
                 ShellExecutionErrorCode.WRITE_DENIED,
@@ -139,6 +178,13 @@ class ExecutionPolicy:
             raise _policy_denied(
                 ShellExecutionErrorCode.DENIED_COMMAND,
                 "media tools are disabled",
+            )
+        if stdin_mode:
+            _validate_stdin_mode(
+                request,
+                command_definition,
+                stdin_media_type=stdin_media_type,
+                stdin_output_kind=stdin_output_kind,
             )
         _validate_argument_budgets(request, self._settings)
         metadata = _with_local_audit_metadata(
@@ -190,6 +236,9 @@ class ExecutionPolicy:
                 workspace=workspace,
                 settings=self._settings,
                 metadata=metadata,
+                stdin_mode=stdin_mode,
+                stdin_media_type=stdin_media_type,
+                stdin_output_kind=stdin_output_kind,
             )
         )
         _validate_argv_budgets(argv, display_argv, self._settings)
@@ -549,6 +598,40 @@ def _wc_reads_text(options: Mapping[str, object]) -> bool:
     if lines is True or words is True:
         return True
     return count_bytes is not True
+
+
+def _validate_stdin_mode(
+    request: ShellCommandRequest,
+    command_definition: ShellCommandDefinition,
+    *,
+    stdin_media_type: str | None,
+    stdin_output_kind: ShellOutputKind | None,
+) -> None:
+    assert stdin_media_type is not None, "stdin_media_type is required"
+    assert stdin_output_kind is not None, "stdin_output_kind is required"
+    if request.paths:
+        raise _policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "stdin mode does not accept paths",
+        )
+    if not command_definition.stdin_contract.supports_stdin:
+        raise _policy_denied(
+            ShellExecutionErrorCode.DENIED_COMMAND,
+            "command cannot read stdin",
+        )
+    if request.command == "wc" and request.options.get("count_bytes") is True:
+        raise _policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "wc count_bytes cannot read stdin",
+        )
+    if not command_definition.stdin_contract.accepts(
+        media_type=stdin_media_type,
+        output_kind=stdin_output_kind,
+    ):
+        raise _policy_denied(
+            ShellExecutionErrorCode.UNSUPPORTED_MEDIA_SIGNATURE,
+            "unsupported stdin stream",
+        )
 
 
 async def _annotate_pdf_raster_metadata(

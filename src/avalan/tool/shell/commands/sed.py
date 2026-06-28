@@ -1,8 +1,9 @@
-from ..entities import ShellExecutionErrorCode
+from ..entities import ShellExecutionErrorCode, ShellOutputKind
 from .base import (
     ShellCommandDefinition,
     ShellCommandPolicyContext,
     ShellDependencyGroup,
+    ShellStreamContract,
 )
 from .helpers import (
     _contains_unsafe_control,
@@ -195,18 +196,22 @@ def build_argv(
         },
         command="sed",
     )
-    _validate_filter_paths(
-        context.paths, command="sed", allowed_kinds=("text_file",)
-    )
+    if not context.stdin_mode:
+        _validate_filter_paths(
+            context.paths, command="sed", allowed_kinds=("text_file",)
+        )
     selectors = _sed_selectors(request.options, context.settings)
-    path_arguments = tuple(
-        _option_safe_path_argument(context.workspace.cwd, path.path)
-        for path in context.paths
-    )
-    display_path_arguments = tuple(
-        _option_safe_display_path_argument(path.display_path)
-        for path in context.paths
-    )
+    path_arguments: tuple[str, ...] = ()
+    display_path_arguments: tuple[str, ...] = ()
+    if not context.stdin_mode:
+        path_arguments = tuple(
+            _option_safe_path_argument(context.workspace.cwd, path.path)
+            for path in context.paths
+        )
+        display_path_arguments = tuple(
+            _option_safe_display_path_argument(path.display_path)
+            for path in context.paths
+        )
     argv_parts = [context.executable_name, "-n"]
     for selector in selectors:
         argv_parts.extend(("-e", selector))
@@ -224,5 +229,9 @@ COMMAND_DEFINITION = ShellCommandDefinition(
     dependency_group=ShellDependencyGroup.TEXT_FILTERS,
     container_package_hints=("sed",),
     argv_builder=build_argv,
+    stdin_contract=ShellStreamContract(
+        media_types=("text/plain",),
+        output_kinds=(ShellOutputKind.TEXT,),
+    ),
     supports_double_dash=False,
 )

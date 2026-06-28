@@ -7,6 +7,7 @@ from .base import (
     ShellCommandDefinition,
     ShellCommandPolicyContext,
     ShellDependencyGroup,
+    ShellStreamContract,
 )
 from .helpers import (
     _bool_option,
@@ -131,9 +132,10 @@ def build_argv(
         },
         command="jq",
     )
-    _validate_filter_paths(
-        context.paths, command="jq", allowed_kinds=("json_file",)
-    )
+    if not context.stdin_mode:
+        _validate_filter_paths(
+            context.paths, command="jq", allowed_kinds=("json_file",)
+        )
     jq_filter = _required_string_option(request.options, "filter")
     if len(jq_filter.encode("utf-8")) > settings.max_jq_filter_bytes:
         raise policy_denied(
@@ -154,14 +156,21 @@ def build_argv(
         argv_parts.append("--slurp")
     if sort_keys:
         argv_parts.append("--sort-keys")
-    path_arguments = tuple(
-        _relative_argv_path(context.workspace.cwd, path.path)
-        for path in context.paths
-    )
-    display_path_arguments = tuple(path.display_path for path in context.paths)
+    path_arguments: tuple[str, ...] = ()
+    display_path_arguments: tuple[str, ...] = ()
+    if not context.stdin_mode:
+        path_arguments = tuple(
+            _relative_argv_path(context.workspace.cwd, path.path)
+            for path in context.paths
+        )
+        display_path_arguments = tuple(
+            path.display_path for path in context.paths
+        )
     argv_parts.extend(("--", jq_filter, *path_arguments))
-    display_parts = list(argv_parts[: -len(path_arguments)])
-    display_parts.extend(display_path_arguments)
+    display_parts = list(argv_parts)
+    if path_arguments:
+        display_parts = list(argv_parts[: -len(path_arguments)])
+        display_parts.extend(display_path_arguments)
     return tuple(argv_parts), tuple(display_parts), None
 
 
@@ -180,4 +189,8 @@ COMMAND_DEFINITION = ShellCommandDefinition(
     container_package_hints=("jq",),
     argv_builder=build_argv,
     output_contract=output_contract,
+    stdin_contract=ShellStreamContract(
+        media_types=("application/json",),
+        output_kinds=(ShellOutputKind.JSON,),
+    ),
 )

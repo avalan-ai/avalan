@@ -1,6 +1,7 @@
 from importlib import import_module
 from unittest import TestCase, main
 
+from avalan.tool.shell.commands.base import ShellStreamContract
 from avalan.tool.shell.entities import ShellOutputKind
 from avalan.tool.shell.registry import (
     SHELL_COMMAND_DEFINITIONS,
@@ -23,6 +24,16 @@ def _text_output_contract(request: object) -> tuple[str, ShellOutputKind]:
 
 def _uppercase_output_filter(value: str) -> str:
     return value.upper()
+
+
+_TEXT_STDIN_CONTRACT = ShellStreamContract(
+    media_types=("text/plain",),
+    output_kinds=(ShellOutputKind.TEXT,),
+)
+_JSON_STDIN_CONTRACT = ShellStreamContract(
+    media_types=("application/json",),
+    output_kinds=(ShellOutputKind.JSON,),
+)
 
 
 class ShellRegistryTest(TestCase):
@@ -130,12 +141,29 @@ class ShellRegistryTest(TestCase):
             for command in SHELL_COMMANDS
             if command.media_risk
         }
+        stdin_commands = {
+            command.logical_id
+            for command in SHELL_COMMANDS
+            if command.stdin_contract.supports_stdin
+        }
         no_double_dash_commands = {
             command.logical_id
             for command in SHELL_COMMANDS
             if not command.supports_double_dash
         }
 
+        self.assertEqual(stdin_commands, {"awk", "sed", "jq", "wc"})
+        for command in SHELL_COMMANDS:
+            expected_stdin_contract = ShellStreamContract()
+            if command.logical_id in {"awk", "sed", "wc"}:
+                expected_stdin_contract = _TEXT_STDIN_CONTRACT
+            elif command.logical_id == "jq":
+                expected_stdin_contract = _JSON_STDIN_CONTRACT
+            with self.subTest(stdin_contract=command.logical_id):
+                self.assertEqual(
+                    command.stdin_contract,
+                    expected_stdin_contract,
+                )
         self.assertEqual(
             media_commands,
             {"pdfinfo", "pdftotext", "pdftoppm", "tesseract"},
@@ -168,6 +196,7 @@ class ShellRegistryTest(TestCase):
             "container_package_hints": (),
             "argv_builder": None,
             "output_contract": None,
+            "stdin_contract": None,
             "output_filter": None,
             "public": 1,
             "media_risk": 1,
@@ -184,10 +213,12 @@ class ShellRegistryTest(TestCase):
             **{
                 **valid,
                 "output_contract": _text_output_contract,
+                "stdin_contract": _TEXT_STDIN_CONTRACT,
                 "output_filter": _uppercase_output_filter,
             }
         )
         self.assertIs(definition.output_contract, _text_output_contract)
+        self.assertEqual(definition.stdin_contract, _TEXT_STDIN_CONTRACT)
         self.assertIs(definition.output_filter, _uppercase_output_filter)
 
     def test_command_definition_defaults_format_text_output(self) -> None:
@@ -203,9 +234,44 @@ class ShellRegistryTest(TestCase):
             definition.output_contract(object()),
             ("text/plain", ShellOutputKind.TEXT),
         )
+        self.assertEqual(definition.stdin_contract, ShellStreamContract())
         self.assertEqual(definition.output_filter("visible"), "visible")
         with self.assertRaises(AssertionError):
             definition.output_filter(object())  # type: ignore[arg-type]
+
+    def test_stream_contract_rejects_invalid_metadata(self) -> None:
+        valid = {
+            "media_types": ("text/plain",),
+            "output_kinds": (ShellOutputKind.TEXT,),
+        }
+        invalid_values = {
+            "media_types": [
+                ["text/plain"],
+                ("",),
+                ("text",),
+                ("text/plain", "text/plain"),
+            ],
+            "output_kinds": [
+                [ShellOutputKind.TEXT],
+                ("text",),
+                (ShellOutputKind.TEXT, ShellOutputKind.TEXT),
+            ],
+        }
+        for field_name, values in invalid_values.items():
+            for value in values:
+                with self.subTest(field_name=field_name, value=value):
+                    kwargs = dict(valid)
+                    kwargs[field_name] = value
+                    with self.assertRaises(AssertionError):
+                        ShellStreamContract(**kwargs)  # type: ignore[arg-type]
+
+        for kwargs in (
+            {"media_types": ("text/plain",)},
+            {"output_kinds": (ShellOutputKind.TEXT,)},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    ShellStreamContract(**kwargs)  # type: ignore[arg-type]
 
     def test_command_output_filters_reject_invalid_values(self) -> None:
         for command_id in ("rg", "ls", "find"):
