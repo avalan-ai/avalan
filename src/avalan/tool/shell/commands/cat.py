@@ -1,3 +1,4 @@
+from ..entities import ShellCommandRequest, ShellOutputKind
 from .base import (
     ShellCommandDefinition,
     ShellCommandPolicyContext,
@@ -20,7 +21,7 @@ def build_argv(
     )
     path = _single_path(
         context.paths,
-        allowed_kinds=("file", "text_file"),
+        allowed_kinds=("file", "json_file", "text_file"),
         command="cat",
     )
     path_argument = _relative_argv_path(context.workspace.cwd, path.path)
@@ -31,10 +32,19 @@ def build_argv(
     )
 
 
+def output_contract(
+    request: ShellCommandRequest,
+) -> tuple[str, ShellOutputKind]:
+    if any(path.kind == "json_file" for path in request.paths):
+        return "application/json", ShellOutputKind.JSON
+    return "text/plain", ShellOutputKind.TEXT
+
+
 COMMAND_DEFINITION = ShellCommandDefinition(
     logical_id="cat",
     executable_name="cat",
     dependency_group=ShellDependencyGroup.CORE,
     container_package_hints=("coreutils",),
     argv_builder=build_argv,
+    output_contract=output_contract,
 )

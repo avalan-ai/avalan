@@ -24,9 +24,16 @@ from .entities import (
     GeneratedOutputPlan,
     PathOperand,
     ShellCommandRequest,
+    ShellCommandStepRequest,
+    ShellCompositionMode,
+    ShellCompositionRequest,
+    ShellCompositionSpec,
     ShellExecutionErrorCode,
     ShellExecutionModeValue,
+    ShellExecutionStepSpec,
     ShellOutputKind,
+    ShellPathKind,
+    ShellStreamRef,
     _create_execution_spec_from_policy,
 )
 from .filesystem import (
@@ -82,6 +89,29 @@ _SECRET_ENVIRONMENT_MARKERS = (
 )
 _VIRTUAL_FILESYSTEM_ROOTS = ("dev", "proc", "sys")
 _PDF_PAGE_BOX_METADATA_KEY = "_pdf_page_box_points"
+_COMPOSITION_MODES: tuple[ShellCompositionMode, ...] = (
+    "pipeline",
+    "serial",
+    "parallel",
+)
+_COMPOSITION_PATH_KINDS: Mapping[str, ShellPathKind] = {
+    "awk": "text_file",
+    "cat": "text_file",
+    "file": "file",
+    "find": "any",
+    "head": "text_file",
+    "jq": "json_file",
+    "ls": "any",
+    "nl": "text_file",
+    "pdfinfo": "pdf_file",
+    "pdftoppm": "pdf_file",
+    "pdftotext": "pdf_file",
+    "rg": "any",
+    "sed": "text_file",
+    "tail": "text_file",
+    "tesseract": "image_file",
+    "wc": "text_file",
+}
 
 
 class ExecutionPolicy:
@@ -114,6 +144,88 @@ class ExecutionPolicy:
             stdin_mode=False,
             stdin_media_type=None,
             stdin_output_kind=None,
+        )
+
+    async def normalize_composition(
+        self,
+        request: ShellCompositionRequest,
+    ) -> ShellCompositionSpec:
+        assert isinstance(
+            request,
+            ShellCompositionRequest,
+        ), "request must be a shell composition request"
+        if not self._settings.allow_pipelines:
+            raise _policy_denied(
+                ShellExecutionErrorCode.POLICY_DENIED,
+                "shell pipelines are disabled",
+            )
+        mode = _validated_composition_mode(request.mode)
+        steps = _validated_composition_steps(request.steps)
+        _validate_composition_stage_count(
+            steps,
+            max_pipeline_stages=self._settings.max_pipeline_stages,
+        )
+        stdin_refs = _composition_stdin_refs(mode, steps)
+        composition_metadata: dict[str, object] = {}
+        timeout_seconds = _normalized_timeout(
+            request.timeout_seconds,
+            self._settings.default_timeout_seconds,
+            self._settings.max_timeout_seconds,
+            composition_metadata,
+        )
+        max_stdout_bytes = _normalized_byte_budget(
+            request.max_stdout_bytes,
+            self._settings.max_pipeline_bytes,
+            "max_stdout_bytes",
+            composition_metadata,
+        )
+        max_stderr_bytes = _normalized_byte_budget(
+            request.max_stderr_bytes,
+            self._settings.max_stderr_bytes,
+            "max_stderr_bytes",
+            composition_metadata,
+        )
+        max_intermediate_bytes = _normalized_byte_budget(
+            request.max_intermediate_bytes,
+            self._settings.max_intermediate_bytes,
+            "max_intermediate_bytes",
+            composition_metadata,
+        )
+
+        normalized_steps: list[ShellExecutionStepSpec] = []
+        specs_by_id: dict[str, ExecutionSpec] = {}
+        for step, stdin_from in zip(steps, stdin_refs, strict=True):
+            command_request = _composition_command_request(step)
+            if stdin_from is None:
+                spec = await self.normalize(command_request)
+            else:
+                producer = specs_by_id[stdin_from.step_id]
+                spec = await self._normalize_stdin(
+                    command_request,
+                    producer_media_type=producer.stdout_media_type,
+                    producer_output_kind=producer.output_kind,
+                )
+            if spec.output_plan is not None:
+                raise _policy_denied(
+                    ShellExecutionErrorCode.DENIED_COMMAND,
+                    "generated outputs are disabled in compositions",
+                )
+            specs_by_id[step.id] = spec
+            normalized_steps.append(
+                ShellExecutionStepSpec(
+                    id=step.id,
+                    spec=spec,
+                    stdin_from=stdin_from,
+                )
+            )
+
+        return ShellCompositionSpec(
+            mode=mode,
+            steps=tuple(normalized_steps),
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+            max_intermediate_bytes=max_intermediate_bytes,
         )
 
     async def _normalize_stdin(
@@ -320,6 +432,169 @@ class ExecutionPolicy:
             max_stderr_bytes=max_stderr_bytes,
             metadata=metadata,
         )
+
+
+def _validated_composition_mode(
+    mode: object,
+) -> ShellCompositionMode:
+    if mode not in _COMPOSITION_MODES:
+        raise _policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "composition mode is unsupported",
+        )
+    return mode
+
+
+def _validated_composition_steps(
+    steps: tuple[ShellCommandStepRequest, ...],
+) -> tuple[ShellCommandStepRequest, ...]:
+    if not steps:
+        raise _policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "composition requires at least one step",
+        )
+    step_ids: set[str] = set()
+    for step in steps:
+        if step.id in step_ids:
+            raise _policy_denied(
+                ShellExecutionErrorCode.INVALID_OPTION,
+                "composition step ids must be unique",
+            )
+        step_ids.add(step.id)
+    return tuple(steps)
+
+
+def _validate_composition_stage_count(
+    steps: tuple[ShellCommandStepRequest, ...],
+    *,
+    max_pipeline_stages: int,
+) -> None:
+    if len(steps) > max_pipeline_stages:
+        raise _policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "composition has too many steps",
+        )
+
+
+def _composition_stdin_refs(
+    mode: ShellCompositionMode,
+    steps: tuple[ShellCommandStepRequest, ...],
+) -> tuple[ShellStreamRef | None, ...]:
+    step_indexes = {step.id: index for index, step in enumerate(steps)}
+    if mode == "pipeline":
+        return _pipeline_stdin_refs(steps)
+    if mode == "serial":
+        return _serial_stdin_refs(steps, step_indexes)
+    return _parallel_stdin_refs(steps)
+
+
+def _pipeline_stdin_refs(
+    steps: tuple[ShellCommandStepRequest, ...],
+) -> tuple[ShellStreamRef | None, ...]:
+    stdin_refs: list[ShellStreamRef | None] = []
+    for index, step in enumerate(steps):
+        if index == 0:
+            if step.stdin_from is not None:
+                raise _policy_denied(
+                    ShellExecutionErrorCode.INVALID_OPTION,
+                    "first pipeline step cannot read stdin",
+                )
+            stdin_refs.append(None)
+            continue
+        expected_ref = ShellStreamRef(
+            step_id=steps[index - 1].id,
+            stream="stdout",
+        )
+        if step.stdin_from is not None:
+            _validate_composition_ref(step.stdin_from)
+        if step.stdin_from is not None and step.stdin_from != expected_ref:
+            raise _policy_denied(
+                ShellExecutionErrorCode.INVALID_OPTION,
+                "pipeline stdin_from must reference the previous step",
+            )
+        stdin_refs.append(expected_ref)
+    return tuple(stdin_refs)
+
+
+def _serial_stdin_refs(
+    steps: tuple[ShellCommandStepRequest, ...],
+    step_indexes: dict[str, int],
+) -> tuple[ShellStreamRef | None, ...]:
+    stdin_refs: list[ShellStreamRef | None] = []
+    for index, step in enumerate(steps):
+        stdin_from = step.stdin_from
+        if stdin_from is None:
+            stdin_refs.append(None)
+            continue
+        _validate_composition_ref(stdin_from)
+        producer_index = step_indexes.get(stdin_from.step_id)
+        if producer_index is None:
+            raise _policy_denied(
+                ShellExecutionErrorCode.INVALID_OPTION,
+                "stdin_from references an unknown step",
+            )
+        if producer_index >= index:
+            raise _policy_denied(
+                ShellExecutionErrorCode.INVALID_OPTION,
+                "serial stdin_from must reference an earlier step",
+            )
+        stdin_refs.append(stdin_from)
+    return tuple(stdin_refs)
+
+
+def _parallel_stdin_refs(
+    steps: tuple[ShellCommandStepRequest, ...],
+) -> tuple[None, ...]:
+    for step in steps:
+        if step.stdin_from is not None:
+            raise _policy_denied(
+                ShellExecutionErrorCode.INVALID_OPTION,
+                "parallel composition steps cannot read stdin",
+            )
+    return tuple(None for _ in steps)
+
+
+def _validate_composition_ref(stdin_from: ShellStreamRef) -> None:
+    if stdin_from.stream != "stdout":
+        raise _policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "stdin_from stream must be stdout",
+        )
+
+
+def _composition_command_request(
+    step: ShellCommandStepRequest,
+) -> ShellCommandRequest:
+    return ShellCommandRequest(
+        tool_name=f"shell.{step.command}",
+        command=step.command,
+        options=step.options,
+        paths=_composition_path_operands(step),
+        cwd=step.cwd,
+    )
+
+
+def _composition_path_operands(
+    step: ShellCommandStepRequest,
+) -> tuple[PathOperand, ...]:
+    return tuple(
+        PathOperand(
+            name=f"path_{index}",
+            path=path,
+            kind=_composition_path_kind(step.command, path),
+            access="read",
+        )
+        for index, path in enumerate(step.paths)
+    )
+
+
+def _composition_path_kind(
+    command: str,
+    path: str,
+) -> ShellPathKind:
+    if command == "cat" and PurePosixPath(path).suffix.lower() == ".json":
+        return "json_file"
+    return _COMPOSITION_PATH_KINDS.get(command, "any")
 
 
 async def _normalized_workspace(
