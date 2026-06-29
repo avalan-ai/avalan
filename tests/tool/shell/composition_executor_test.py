@@ -5,11 +5,16 @@ from asyncio import (
     sleep,
     wait_for,
 )
+from asyncio import (
+    wait as asyncio_wait,
+)
 from asyncio.subprocess import DEVNULL, PIPE
 from collections.abc import Awaitable, Callable
+from os import fstat as os_fstat
+from os import pipe as os_pipe_real
 from pathlib import Path
 from sys import executable as python_executable
-from typing import Literal
+from typing import Any, Literal
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
@@ -126,6 +131,484 @@ class LocalCompositionExecutorTest(IsolatedAsyncioTestCase):
         )
         self.assertFalse(result.steps[0].metadata["stdout_visible"])
         self.assertTrue(result.steps[-1].metadata["stdout_visible"])
+
+    async def test_native_pipeline_executes_through_os_pipes(self) -> None:
+        spec = _composition(
+            ("read", "count"),
+            steps={
+                "read": _step(
+                    "read",
+                    "cat",
+                    _python_spec(
+                        "cat",
+                        "from sys import stdout\n"
+                        "stdout.write('one\\ntwo\\nthree\\n')\n",
+                    ),
+                ),
+                "count": _step(
+                    "count",
+                    "wc",
+                    _python_spec(
+                        "wc",
+                        "from sys import stdin, stdout\n"
+                        "stdout.write(f'{stdin.read().count(chr(10))}\\n')\n",
+                    ),
+                    stdin_from="read",
+                ),
+            },
+        )
+
+        result = await LocalCompositionExecutor(
+            settings=ShellToolSettings(pipeline_transport="native")
+        ).execute_composition(spec)
+
+        self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
+        self.assertEqual(result.stdout, "3\n")
+        self.assertEqual(result.metadata["pipeline_transport"], "native")
+        self.assertEqual(result.steps[0].stdout, "")
+        self.assertEqual(result.steps[0].stdout_bytes, 0)
+        self.assertFalse(result.steps[0].metadata["stdout_capture_available"])
+        self.assertTrue(result.steps[-1].metadata["stdout_capture_available"])
+
+    async def test_native_pipeline_treats_pipe_characters_as_data(
+        self,
+    ) -> None:
+        spec = _composition(
+            ("read", "count"),
+            steps={
+                "read": _step(
+                    "read",
+                    "cat",
+                    _python_spec(
+                        "cat",
+                        "from sys import argv, stdout\n"
+                        "stdout.write(argv[1] + '\\n')\n",
+                        argv=(
+                            python_executable,
+                            "-u",
+                            "-c",
+                            (
+                                "from sys import argv, stdout\n"
+                                "stdout.write(argv[1] + '\\n')\n"
+                            ),
+                            "literal | wc -l",
+                        ),
+                    ),
+                ),
+                "count": _step(
+                    "count",
+                    "wc",
+                    _python_spec(
+                        "wc",
+                        "from sys import stdin, stdout\n"
+                        "stdout.write(f'{stdin.read().count(chr(10))}\\n')\n",
+                    ),
+                    stdin_from="read",
+                ),
+            },
+        )
+
+        result = await LocalCompositionExecutor(
+            settings=ShellToolSettings(pipeline_transport="native")
+        ).execute_composition(spec)
+
+        self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
+        self.assertEqual(result.stdout, "1\n")
+
+    async def test_native_pipeline_closes_parent_fds_for_eof(self) -> None:
+        spec = _composition(
+            ("read", "finish"),
+            steps={
+                "read": _step(
+                    "read",
+                    "cat",
+                    _python_spec(
+                        "cat",
+                        "from sys import stdout\nstdout.write('payload')\n",
+                    ),
+                ),
+                "finish": _step(
+                    "finish",
+                    "wc",
+                    _python_spec(
+                        "wc",
+                        "from sys import stdin, stdout\n"
+                        "stdin.read()\n"
+                        "stdout.write('closed\\n')\n",
+                    ),
+                    stdin_from="read",
+                ),
+            },
+            timeout_seconds=1.0,
+        )
+
+        result = await LocalCompositionExecutor(
+            settings=ShellToolSettings(pipeline_transport="native")
+        ).execute_composition(spec)
+
+        self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
+        self.assertEqual(result.stdout, "closed\n")
+
+    async def test_native_pipeline_downstream_early_exit_completes(
+        self,
+    ) -> None:
+        spec = _composition(
+            ("produce", "finish"),
+            steps={
+                "produce": _step(
+                    "produce",
+                    "cat",
+                    _python_spec(
+                        "cat",
+                        "from sys import exit, stdout\n"
+                        "try:\n"
+                        "    for _ in range(10000):\n"
+                        "        stdout.write('x' * 8192)\n"
+                        "        stdout.flush()\n"
+                        "except BrokenPipeError:\n"
+                        "    exit(0)\n",
+                    ),
+                ),
+                "finish": _step(
+                    "finish",
+                    "wc",
+                    _python_spec(
+                        "wc",
+                        "from sys import stdout\nstdout.write('done\\n')\n",
+                    ),
+                    stdin_from="produce",
+                ),
+            },
+            timeout_seconds=2.0,
+        )
+
+        result = await LocalCompositionExecutor(
+            settings=ShellToolSettings(pipeline_transport="native")
+        ).execute_composition(spec)
+
+        self.assertFalse(result.timed_out)
+        self.assertEqual(result.stdout, "done\n")
+
+    async def test_native_pipeline_downstream_early_exit_pipefail_nonzero(
+        self,
+    ) -> None:
+        spec = _composition(
+            ("produce", "finish"),
+            steps={
+                "produce": _step(
+                    "produce",
+                    "cat",
+                    _python_spec(
+                        "cat",
+                        "from sys import stdout\n"
+                        "for _ in range(10000):\n"
+                        "    stdout.write('x' * 8192)\n"
+                        "    stdout.flush()\n",
+                    ),
+                ),
+                "finish": _step(
+                    "finish",
+                    "wc",
+                    _python_spec(
+                        "wc",
+                        "from sys import stdout\nstdout.write('done\\n')\n",
+                    ),
+                    stdin_from="produce",
+                ),
+            },
+            timeout_seconds=2.0,
+        )
+
+        result = await LocalCompositionExecutor(
+            settings=ShellToolSettings(pipeline_transport="native")
+        ).execute_composition(spec)
+
+        self.assertEqual(result.status, ShellExecutionStatus.NONZERO_EXIT)
+        self.assertEqual(
+            result.steps[0].status, ShellExecutionStatus.NONZERO_EXIT
+        )
+        self.assertNotEqual(result.steps[0].exit_code, 0)
+        self.assertEqual(result.stdout, "done\n")
+
+    async def test_native_pipeline_preserves_final_stdout_cap(self) -> None:
+        spec = _composition(
+            ("read", "final"),
+            steps={
+                "read": _step(
+                    "read",
+                    "cat",
+                    _python_spec(
+                        "cat",
+                        "from sys import stdout\nstdout.write('input')\n",
+                    ),
+                ),
+                "final": _step(
+                    "final",
+                    "wc",
+                    _python_spec(
+                        "wc",
+                        "from sys import stdout\nstdout.write('abcdef')\n",
+                    ),
+                    stdin_from="read",
+                ),
+            },
+            max_stdout_bytes=3,
+        )
+
+        result = await LocalCompositionExecutor(
+            settings=ShellToolSettings(pipeline_transport="native")
+        ).execute_composition(spec)
+
+        self.assertEqual(result.stdout, "abc")
+        self.assertEqual(result.stdout_bytes, 3)
+        self.assertTrue(result.stdout_truncated)
+        self.assertTrue(result.steps[-1].stdout_truncated)
+
+    async def test_native_pipeline_intermediate_capture_is_unavailable(
+        self,
+    ) -> None:
+        spec = _composition(
+            ("read", "final"),
+            steps={
+                "read": _step(
+                    "read",
+                    "cat",
+                    _python_spec(
+                        "cat",
+                        "from sys import stdout\nstdout.write('abcdef')\n",
+                    ),
+                ),
+                "final": _step(
+                    "final",
+                    "wc",
+                    _python_spec(
+                        "wc",
+                        "from sys import stdin, stdout\n"
+                        "stdout.write(str(len(stdin.read())) + '\\n')\n",
+                    ),
+                    stdin_from="read",
+                ),
+            },
+            max_intermediate_bytes=1,
+        )
+
+        result = await LocalCompositionExecutor(
+            settings=ShellToolSettings(pipeline_transport="native")
+        ).execute_composition(spec)
+
+        self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
+        self.assertEqual(result.stdout, "6\n")
+        self.assertEqual(result.steps[0].stdout_bytes, 0)
+        self.assertFalse(result.steps[0].stdout_truncated)
+        self.assertFalse(result.steps[0].metadata["stdout_capture_available"])
+
+    async def test_native_pipeline_spawn_failure_closes_parent_pipe_fds(
+        self,
+    ) -> None:
+        fds: list[int] = []
+
+        def recording_pipe() -> tuple[int, int]:
+            read_fd, write_fd = os_pipe_real()
+            fds.extend((read_fd, write_fd))
+            return read_fd, write_fd
+
+        first = _TerminableProcess(stdout=b"", stderr=b"")
+        spec = _composition(
+            ("first", "second"),
+            steps={
+                "first": _step("first", "cat", _direct_spec("cat")),
+                "second": _step(
+                    "second",
+                    "wc",
+                    _direct_spec("wc"),
+                    stdin_from="first",
+                ),
+            },
+        )
+
+        with patch(
+            "avalan.tool.shell.composition_executor.os_pipe",
+            new=recording_pipe,
+        ):
+            with patch(
+                "avalan.tool.shell.process.create_subprocess_exec",
+                new=_fake_process_sequence([first, OSError("failed")]),
+            ):
+                result = await LocalCompositionExecutor(
+                    settings=ShellToolSettings(pipeline_transport="native")
+                ).execute_composition(spec)
+
+        self.assertEqual(result.status, ShellExecutionStatus.SPAWN_FAILED)
+        self.assertEqual(first.terminate_count, 1)
+        _assert_pipe_fds_closed(self, fds)
+
+    async def test_native_pipeline_pipe_open_failure_fails_closed(
+        self,
+    ) -> None:
+        spec = _composition(
+            ("first", "second"),
+            steps={
+                "first": _step("first", "cat", _direct_spec("cat")),
+                "second": _step(
+                    "second",
+                    "wc",
+                    _direct_spec("wc"),
+                    stdin_from="first",
+                ),
+            },
+        )
+
+        with patch(
+            "avalan.tool.shell.composition_executor.os_pipe",
+            side_effect=OSError("pipe failed"),
+        ):
+            result = await LocalCompositionExecutor(
+                settings=ShellToolSettings(pipeline_transport="native")
+            ).execute_composition(spec)
+
+        self.assertEqual(result.status, ShellExecutionStatus.SPAWN_FAILED)
+        self.assertEqual(
+            tuple(step.status for step in result.steps),
+            (
+                ShellExecutionStatus.SPAWN_FAILED,
+                ShellExecutionStatus.SPAWN_FAILED,
+            ),
+        )
+
+    async def test_native_pipeline_timeout_closes_parent_pipe_fds(
+        self,
+    ) -> None:
+        fds: list[int] = []
+        second_spawn_started = Event()
+        first = _TerminableProcess(stdout=b"", stderr=b"")
+        spawn_count = 0
+        spec = _composition(
+            ("first", "second"),
+            steps={
+                "first": _step("first", "cat", _direct_spec("cat")),
+                "second": _step(
+                    "second",
+                    "wc",
+                    _direct_spec("wc"),
+                    stdin_from="first",
+                ),
+            },
+            timeout_seconds=1.0,
+        )
+
+        def recording_pipe() -> tuple[int, int]:
+            read_fd, write_fd = os_pipe_real()
+            fds.extend((read_fd, write_fd))
+            return read_fd, write_fd
+
+        async def block_second_spawn(
+            *args: object,
+            **kwargs: object,
+        ) -> _BlockingProcess:
+            nonlocal spawn_count
+            spawn_count += 1
+            if spawn_count == 1:
+                _record_spawned_process(first, args, kwargs)
+                return first
+            second_spawn_started.set()
+            await sleep(10)
+            raise AssertionError("blocked spawn unexpectedly completed")
+
+        async def force_timeout_after_second_spawn(
+            awaitables: set[Any],
+            *,
+            timeout: float | None = None,
+            return_when: Any = None,
+        ) -> tuple[set[Any], set[Any]]:
+            if timeout == spec.timeout_seconds:
+                await wait_for(second_spawn_started.wait(), timeout=1)
+                return set(), set(awaitables)
+            wait_kwargs: dict[str, Any] = {}
+            if timeout is not None:
+                wait_kwargs["timeout"] = timeout
+            if return_when is not None:
+                wait_kwargs["return_when"] = return_when
+            return await asyncio_wait(awaitables, **wait_kwargs)
+
+        with patch(
+            "avalan.tool.shell.composition_executor.os_pipe",
+            new=recording_pipe,
+        ):
+            with patch(
+                "avalan.tool.shell.process.create_subprocess_exec",
+                new=block_second_spawn,
+            ):
+                with patch(
+                    "avalan.tool.shell.composition_executor.wait",
+                    new=force_timeout_after_second_spawn,
+                ):
+                    result = await LocalCompositionExecutor(
+                        settings=ShellToolSettings(pipeline_transport="native")
+                    ).execute_composition(spec)
+
+        self.assertEqual(result.status, ShellExecutionStatus.TIMEOUT)
+        self.assertTrue(result.timed_out)
+        self.assertEqual(first.terminate_count, 1)
+        _assert_pipe_fds_closed(self, fds)
+
+    async def test_native_pipeline_cancellation_closes_parent_pipe_fds(
+        self,
+    ) -> None:
+        fds: list[int] = []
+        second_spawn_started = Event()
+        first = _TerminableProcess(stdout=b"", stderr=b"")
+        spawn_count = 0
+        spec = _composition(
+            ("first", "second"),
+            steps={
+                "first": _step("first", "cat", _direct_spec("cat")),
+                "second": _step(
+                    "second",
+                    "wc",
+                    _direct_spec("wc"),
+                    stdin_from="first",
+                ),
+            },
+            timeout_seconds=10.0,
+        )
+
+        def recording_pipe() -> tuple[int, int]:
+            read_fd, write_fd = os_pipe_real()
+            fds.extend((read_fd, write_fd))
+            return read_fd, write_fd
+
+        async def block_second_spawn(
+            *args: object,
+            **kwargs: object,
+        ) -> _BlockingProcess:
+            nonlocal spawn_count
+            spawn_count += 1
+            if spawn_count == 1:
+                _record_spawned_process(first, args, kwargs)
+                return first
+            second_spawn_started.set()
+            await sleep(10)
+            raise AssertionError("blocked spawn unexpectedly completed")
+
+        with patch(
+            "avalan.tool.shell.composition_executor.os_pipe",
+            new=recording_pipe,
+        ):
+            with patch(
+                "avalan.tool.shell.process.create_subprocess_exec",
+                new=block_second_spawn,
+            ):
+                running = create_task(
+                    LocalCompositionExecutor(
+                        settings=ShellToolSettings(pipeline_transport="native")
+                    ).execute_composition(spec)
+                )
+                await wait_for(second_spawn_started.wait(), timeout=1)
+                running.cancel()
+                await _expect_cancelled(running)
+
+        self.assertEqual(first.kill_count, 1)
+        _assert_pipe_fds_closed(self, fds)
 
     async def test_pipeline_rg_no_matches_can_still_complete(self) -> None:
         spec = _composition(
@@ -1995,6 +2478,7 @@ def _python_spec(
     command: str,
     script: str,
     *,
+    argv: tuple[str, ...] | None = None,
     metadata: dict[str, object] | None = None,
     stdout_media_type: str = "text/plain",
     output_kind: ShellOutputKind = ShellOutputKind.TEXT,
@@ -2004,7 +2488,7 @@ def _python_spec(
     return _direct_spec(
         command,
         executable=python_executable,
-        argv=(python_executable, "-u", "-c", script),
+        argv=(python_executable, "-u", "-c", script) if argv is None else argv,
         metadata=metadata,
         stdout_media_type=stdout_media_type,
         output_kind=output_kind,
@@ -2120,17 +2604,35 @@ def _fake_process_sequence(
         item = items[index]
         if isinstance(item, Exception):
             raise item
-        item.spawn_args = args
-        item.spawn_kwargs = kwargs
-        if kwargs.get("stdin") == DEVNULL:
-            item.stdin = _FakeStdin()
-            item.stdin.closed = True
-        else:
-            self_stdin = item.stdin
-            self_stdin.closed = kwargs.get("stdin") is not PIPE
+        _record_spawned_process(item, args, kwargs)
         return item
 
     return fake_create_subprocess_exec
+
+
+def _record_spawned_process(
+    process: _BlockingProcess,
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> None:
+    process.spawn_args = args
+    process.spawn_kwargs = kwargs
+    if kwargs.get("stdin") == DEVNULL:
+        process.stdin = _FakeStdin()
+        process.stdin.closed = True
+        return
+    process.stdin.closed = kwargs.get("stdin") is not PIPE
+
+
+def _assert_pipe_fds_closed(
+    test_case: IsolatedAsyncioTestCase,
+    fds: list[int],
+) -> None:
+    test_case.assertGreater(len(fds), 0)
+    for fd in fds:
+        with test_case.subTest(fd=fd):
+            with test_case.assertRaises(OSError):
+                os_fstat(fd)
 
 
 if __name__ == "__main__":

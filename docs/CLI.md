@@ -131,19 +131,21 @@ Use these flags only from trusted operator configuration:
 
 | Flag | Effect |
 | --- | --- |
-| `--tool-shell-allow-pipelines` | Expose `shell.pipeline` when the enabled tool selection includes `shell.pipeline`, `shell`, or `shell.*`. |
 | `--tool-shell-max-pipeline-stages N` | Cap the number of stages in one composition. |
 | `--tool-shell-max-pipeline-bytes N` | Cap final aggregate pipeline stdout bytes. |
-| `--tool-shell-max-intermediate-bytes N` | Cap stdout bytes retained or routed between stages. |
+| `--tool-shell-max-intermediate-bytes N` | Cap stdout bytes Avalan retains or routes between stages in buffered transport. |
+| `--tool-shell-pipeline-transport {buffered,native}` | Choose whether `shell.pipeline` routes bytes through Avalan buffers or native OS pipes. |
+| `--tool-shell-allow-pipelines` | Expose `shell.pipeline` when the enabled tool selection includes `shell.pipeline`, `shell`, or `shell.*`. |
 
 ```bash
 avalan agent run docs/examples/agent_shell_pipeline.toml \
   --tool shell.pipeline \
   --tool-shell-workspace-root . \
-  --tool-shell-allow-pipelines \
   --tool-shell-max-pipeline-stages 3 \
   --tool-shell-max-pipeline-bytes 1048576 \
-  --tool-shell-max-intermediate-bytes 262144
+  --tool-shell-max-intermediate-bytes 262144 \
+  --tool-shell-pipeline-transport buffered \
+  --tool-shell-allow-pipelines
 ```
 
 Flow and task runtimes can use the same pipeline settings when the host
@@ -168,8 +170,9 @@ avalan task worker \
   --store-dsn "$AVALAN_TASK_STORE_DSN" \
   --queue default \
   --tool shell.pipeline \
-  --tool-shell-allow-pipelines \
-  --tool-shell-max-pipeline-stages 3
+  --tool-shell-max-pipeline-stages 3 \
+  --tool-shell-pipeline-transport buffered \
+  --tool-shell-allow-pipelines
 ```
 
 Trusted deployment TOML may select isolated shell execution. `[tool.sandbox]`
@@ -689,6 +692,10 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES]
                         [--tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES]
                         [--tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES]
+                        [--tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES]
+                        [--tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES]
+                        [--tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES]
+                        [--tool-shell-pipeline-transport {buffered,native}]
                         [--tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS]
                         [--tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES]
                         [--tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES]
@@ -725,10 +732,6 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES]
                         [--tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI]
                         [--tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES]
-                        [--tool-shell-allow-pipelines]
-                        [--tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES]
-                        [--tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES]
-                        [--tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES]
                         [--tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES]
                         [--tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES]
                         [--tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS]
@@ -736,6 +739,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS]
                         [--tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS]
                         [--tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT]
+                        [--tool-shell-allow-pipelines]
                         [--tool-shell-allow-media-tools]
                         [--tool-shell-allow-absolute-paths]
                         [--tool-shell-allow-symlinks]
@@ -971,6 +975,11 @@ shell tool settings:
   --tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES
   --tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES
   --tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES
+  --tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES
+  --tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES
+  --tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES
+  --tool-shell-pipeline-transport {buffered,native}
+                        Trusted shell pipeline byte transport.
   --tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS
   --tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES
   --tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES
@@ -1007,10 +1016,6 @@ shell tool settings:
   --tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES
   --tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI
   --tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES
-  --tool-shell-allow-pipelines
-  --tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES
-  --tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES
-  --tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES
   --tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES
   --tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES
   --tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS
@@ -1018,6 +1023,7 @@ shell tool settings:
   --tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS
   --tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS
   --tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT
+  --tool-shell-allow-pipelines
   --tool-shell-allow-media-tools
   --tool-shell-allow-absolute-paths
   --tool-shell-allow-symlinks
@@ -2033,6 +2039,10 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                        [--tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES]
                        [--tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES]
                        [--tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES]
+                       [--tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES]
+                       [--tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES]
+                       [--tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES]
+                       [--tool-shell-pipeline-transport {buffered,native}]
                        [--tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS]
                        [--tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES]
                        [--tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES]
@@ -2069,10 +2079,6 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                        [--tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES]
                        [--tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI]
                        [--tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES]
-                       [--tool-shell-allow-pipelines]
-                       [--tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES]
-                       [--tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES]
-                       [--tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES]
                        [--tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES]
                        [--tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES]
                        [--tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS]
@@ -2080,6 +2086,7 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                        [--tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS]
                        [--tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS]
                        [--tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT]
+                       [--tool-shell-allow-pipelines]
                        [--tool-shell-allow-media-tools] [--tool-shell-allow-absolute-paths]
                        [--tool-shell-allow-symlinks] [--tool-shell-allow-hidden]
                        [--tool-shell-executable-search-path TOOL_SHELL_EXECUTABLE_SEARCH_PATHS]
@@ -2182,6 +2189,11 @@ shell tool settings:
   --tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES
   --tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES
   --tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES
+  --tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES
+  --tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES
+  --tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES
+  --tool-shell-pipeline-transport {buffered,native}
+                        Trusted shell pipeline byte transport.
   --tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS
   --tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES
   --tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES
@@ -2218,10 +2230,6 @@ shell tool settings:
   --tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES
   --tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI
   --tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES
-  --tool-shell-allow-pipelines
-  --tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES
-  --tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES
-  --tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES
   --tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES
   --tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES
   --tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS
@@ -2229,6 +2237,7 @@ shell tool settings:
   --tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS
   --tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS
   --tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT
+  --tool-shell-allow-pipelines
   --tool-shell-allow-media-tools
   --tool-shell-allow-absolute-paths
   --tool-shell-allow-symlinks

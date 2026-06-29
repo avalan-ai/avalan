@@ -37,7 +37,7 @@ from .process import (
     _wait_for_process_or_reader_failure,
     _write_stdin_and_wait,
 )
-from .settings import ShellToolSettings
+from .settings import ShellPipelineTransport, ShellToolSettings
 
 from asyncio import (
     FIRST_COMPLETED,
@@ -48,7 +48,10 @@ from asyncio import (
     wait,
 )
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
+from os import close as os_close
+from os import pipe as os_pipe
 from time import perf_counter
 from typing import Any, Protocol, cast, final
 
@@ -147,6 +150,7 @@ class LocalCompositionExecutor:
             spec,
             stream=stream,
             chunk_size=self._settings.stream_read_chunk_bytes,
+            transport=self._settings.pipeline_transport,
         )
         worker = create_task(self._run_pipeline(spec, state, stream=stream))
         try:
@@ -191,8 +195,21 @@ class LocalCompositionExecutor:
                 stage.step.spec.resource_class for stage in state.stages
             )
             async with self._process_runtime.limit_many(resource_classes):
+                try:
+                    state.open_native_pipes()
+                except OSError:
+                    state.mark_error(
+                        ShellExecutionStatus.SPAWN_FAILED,
+                        "process spawn failed",
+                    )
+                    await state.close_stdin_writers()
+                    return state.result(
+                        status=ShellExecutionStatus.SPAWN_FAILED,
+                        duration_ms=_duration_ms(start_time),
+                        error_message="process spawn failed",
+                    )
                 for stage in state.stages:
-                    if not await self._spawn_pipeline_stage(stage):
+                    if not await self._spawn_pipeline_stage(stage, state):
                         await state.close_stdin_writers()
                         await state.terminate_processes()
                         await state.drain_tasks()
@@ -241,13 +258,17 @@ class LocalCompositionExecutor:
     async def _spawn_pipeline_stage(
         self,
         stage: "_PipelineStage",
+        state: "_PipelineState",
     ) -> bool:
         stage.start_time = perf_counter()
         try:
             stage.process = await self._process_runtime.spawn(
                 stage.step.spec,
                 stdin_mode="devnull" if stage.index == 0 else "pipe",
+                stdin_fd=state.stdin_fd_for_stage(stage),
+                stdout_fd=state.stdout_fd_for_stage(stage),
             )
+            state.stage_spawned(stage)
         except (OSError, ValueError):
             stage.mark_error(
                 ShellExecutionStatus.SPAWN_FAILED,
@@ -652,6 +673,8 @@ class _PipelineStage:
     step: ShellExecutionStepSpec
     index: int
     stdout_visible: bool
+    pipeline_transport: ShellPipelineTransport
+    stdout_capture_available: bool
     process: object | None = None
     start_time: float = 0.0
     stdout_capture: _StreamCapture = field(default_factory=_StreamCapture)
@@ -676,16 +699,22 @@ class _PipelineState:
         *,
         stream: Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None,
         chunk_size: int,
+        transport: ShellPipelineTransport,
     ) -> None:
         self._spec = spec
         self._stream = stream
         self._chunk_size = chunk_size
+        self._transport = transport
         final_index = len(spec.steps) - 1
         self.stages = [
             _PipelineStage(
                 step=step,
                 index=index,
                 stdout_visible=index == final_index,
+                pipeline_transport=transport,
+                stdout_capture_available=(
+                    transport != "native" or index == final_index
+                ),
             )
             for index, step in enumerate(spec.steps)
         ]
@@ -693,6 +722,27 @@ class _PipelineState:
         self._task_roles: dict[Task[Any], str] = {}
         self._error_status: ShellExecutionStatus | None = None
         self._error_message: str | None = None
+        self._native_pipes: _NativePipelinePipes | None = None
+
+    def open_native_pipes(self) -> None:
+        if self._transport != "native":
+            return
+        self._native_pipes = _NativePipelinePipes(len(self.stages))
+
+    def stdin_fd_for_stage(self, stage: _PipelineStage) -> int | None:
+        if self._native_pipes is None:
+            return None
+        return self._native_pipes.stdin_fd(stage.index)
+
+    def stdout_fd_for_stage(self, stage: _PipelineStage) -> int | None:
+        if self._native_pipes is None:
+            return None
+        return self._native_pipes.stdout_fd(stage.index)
+
+    def stage_spawned(self, stage: _PipelineStage) -> None:
+        if self._native_pipes is None:
+            return
+        self._native_pipes.stage_spawned(stage.index)
 
     def mark_error(
         self,
@@ -746,15 +796,16 @@ class _PipelineState:
                 )
                 self._add_task(stdout_task, "reader")
             else:
-                pump_task = create_task(
-                    _pump_intermediate_stdout(
-                        stage,
-                        self.stages[index + 1],
-                        max_bytes=self._spec.max_intermediate_bytes,
-                        chunk_size=self._chunk_size,
+                if self._transport == "buffered":
+                    pump_task = create_task(
+                        _pump_intermediate_stdout(
+                            stage,
+                            self.stages[index + 1],
+                            max_bytes=self._spec.max_intermediate_bytes,
+                            chunk_size=self._chunk_size,
+                        )
                     )
-                )
-                self._add_task(pump_task, "pump")
+                    self._add_task(pump_task, "pump")
             wait_task = create_task(process.wait())
             self._add_task(wait_task, "wait")
 
@@ -798,8 +849,14 @@ class _PipelineState:
         return None
 
     async def close_stdin_writers(self) -> None:
+        self.close_native_fds()
         for process in self._processes():
             await _close_stdin_writer(getattr(process, "stdin", None))
+
+    def close_native_fds(self) -> None:
+        if self._native_pipes is None:
+            return
+        self._native_pipes.close_all()
 
     async def terminate_processes(self) -> None:
         await gather(
@@ -867,7 +924,10 @@ class _PipelineState:
             duration_ms=duration_ms,
             error_code=SHELL_STATUS_ERROR_CODES[result_status],
             error_message=result_error_message,
-            metadata={"mode": self._spec.mode},
+            metadata={
+                "mode": self._spec.mode,
+                "pipeline_transport": self._transport,
+            },
         )
 
     def _add_task(self, task: Task[Any], role: str) -> None:
@@ -885,6 +945,56 @@ class _PipelineState:
 
 class _IntermediateTooLarge(Exception):
     pass
+
+
+@final
+class _NativePipelinePipes:
+    def __init__(self, stage_count: int) -> None:
+        assert stage_count > 0, "stage_count must be positive"
+        self._pipes: list[list[int | None]] = []
+        try:
+            for _ in range(stage_count - 1):
+                read_fd, write_fd = os_pipe()
+                self._pipes.append([read_fd, write_fd])
+        except OSError:
+            self.close_all()
+            raise
+
+    def stdin_fd(self, stage_index: int) -> int | None:
+        assert stage_index >= 0, "stage_index must be non-negative"
+        if stage_index == 0:
+            return None
+        read_fd = self._pipes[stage_index - 1][0]
+        assert read_fd is not None, "native pipeline stdin fd is closed"
+        return read_fd
+
+    def stdout_fd(self, stage_index: int) -> int | None:
+        assert stage_index >= 0, "stage_index must be non-negative"
+        if stage_index >= len(self._pipes):
+            return None
+        write_fd = self._pipes[stage_index][1]
+        assert write_fd is not None, "native pipeline stdout fd is closed"
+        return write_fd
+
+    def stage_spawned(self, stage_index: int) -> None:
+        assert stage_index >= 0, "stage_index must be non-negative"
+        if stage_index > 0:
+            self._close_pipe_end(stage_index - 1, 0)
+        if stage_index < len(self._pipes):
+            self._close_pipe_end(stage_index, 1)
+
+    def close_all(self) -> None:
+        for pipe_index in range(len(self._pipes)):
+            self._close_pipe_end(pipe_index, 0)
+            self._close_pipe_end(pipe_index, 1)
+
+    def _close_pipe_end(self, pipe_index: int, end_index: int) -> None:
+        fd = self._pipes[pipe_index][end_index]
+        if fd is None:
+            return
+        self._pipes[pipe_index][end_index] = None
+        with suppress(OSError):
+            os_close(fd)
 
 
 async def _pump_intermediate_stdout(
@@ -1177,7 +1287,10 @@ def _step_result_from_pipeline_stage(
         error_code=SHELL_STATUS_ERROR_CODES[status],
         error_message=error_message,
         metadata=_step_metadata(
-            stage.step, stdout_visible=stage.stdout_visible
+            stage.step,
+            stdout_visible=stage.stdout_visible,
+            pipeline_transport=stage.pipeline_transport,
+            stdout_capture_available=stage.stdout_capture_available,
         ),
     )
 
@@ -1410,6 +1523,8 @@ def _step_metadata(
     metadata: dict[str, object] | None = None,
     *,
     stdout_visible: bool = True,
+    pipeline_transport: ShellPipelineTransport | None = None,
+    stdout_capture_available: bool | None = None,
 ) -> dict[str, object]:
     result_metadata = dict(
         step.spec.metadata if metadata is None else metadata
@@ -1429,6 +1544,10 @@ def _step_metadata(
             "step_id": step.stdin_from.step_id,
             "stream": step.stdin_from.stream,
         }
+    if pipeline_transport is not None:
+        result_metadata["pipeline_transport"] = pipeline_transport
+    if stdout_capture_available is not None:
+        result_metadata["stdout_capture_available"] = stdout_capture_available
     return result_metadata
 
 

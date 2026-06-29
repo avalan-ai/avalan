@@ -32,6 +32,7 @@ class ShellToolSettingsTest(TestCase):
             "max_pipeline_stages": 8,
             "max_pipeline_bytes": 1048576,
             "max_intermediate_bytes": 1048576,
+            "pipeline_transport": "buffered",
             "max_arguments": 128,
             "max_argument_bytes": 8192,
             "max_command_bytes": 32768,
@@ -109,6 +110,7 @@ class ShellToolSettingsTest(TestCase):
         self.assertIn("max_pipeline_stages", scalar_fields)
         self.assertIn("max_pipeline_bytes", scalar_fields)
         self.assertIn("max_intermediate_bytes", scalar_fields)
+        self.assertIn("pipeline_transport", scalar_fields)
         self.assertNotIn("allowed_commands", scalar_fields)
         self.assertNotIn("environment", scalar_fields)
         self.assertNotIn("environment_allowlist", scalar_fields)
@@ -233,12 +235,14 @@ class ShellToolSettingsTest(TestCase):
             max_pipeline_stages=1,
             max_pipeline_bytes=1,
             max_intermediate_bytes=1,
+            pipeline_transport="native",
         )
 
         self.assertTrue(settings.allow_pipelines)
         self.assertEqual(settings.max_pipeline_stages, 1)
         self.assertEqual(settings.max_pipeline_bytes, 1)
         self.assertEqual(settings.max_intermediate_bytes, 1)
+        self.assertEqual(settings.pipeline_transport, "native")
 
     def test_pipeline_integer_settings_reject_zero_and_negative(self) -> None:
         for field_name in (
@@ -262,6 +266,7 @@ class ShellToolSettingsTest(TestCase):
             {"materialized_input_files_dir": "../inputs"},
             {"input_file_manifest_message": ""},
             {"input_file_manifest_path_message": ""},
+            {"pipeline_transport": "shell"},
             {"max_stdout_bytes": 0},
             {"max_stdin_bytes": 1},
             {"default_timeout_seconds": 61.0},

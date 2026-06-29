@@ -144,11 +144,15 @@ class ShellProcessRuntime:
         *,
         runtime_output_prefix: Path | None = None,
         stdin_mode: ShellProcessStdinMode = "spec",
+        stdin_fd: int | None = None,
+        stdout_fd: int | None = None,
     ) -> Any:
         return await _spawn_process(
             spec,
             runtime_output_prefix=runtime_output_prefix,
             stdin_mode=stdin_mode,
+            stdin_fd=stdin_fd,
+            stdout_fd=stdout_fd,
         )
 
 
@@ -157,6 +161,8 @@ async def _spawn_process(
     *,
     runtime_output_prefix: Path | None = None,
     stdin_mode: ShellProcessStdinMode = "spec",
+    stdin_fd: int | None = None,
+    stdout_fd: int | None = None,
 ) -> Any:
     return await create_subprocess_exec(
         *_spawn_argv(
@@ -165,26 +171,45 @@ async def _spawn_process(
         ),
         cwd=spec.cwd,
         env=spec.env,
-        stdin=_stdin_target(spec, stdin_mode),
-        stdout=PIPE,
+        stdin=_stdin_target(spec, stdin_mode, stdin_fd=stdin_fd),
+        stdout=_stdout_target(stdout_fd),
         stderr=PIPE,
         start_new_session=os_name == "posix",
     )
 
 
 def _stdin_target(
-    spec: ExecutionSpec, stdin_mode: ShellProcessStdinMode
+    spec: ExecutionSpec,
+    stdin_mode: ShellProcessStdinMode,
+    *,
+    stdin_fd: int | None = None,
 ) -> int:
     assert stdin_mode in (
         "spec",
         "pipe",
         "devnull",
     ), "stdin_mode must be spec, pipe, or devnull"
+    if stdin_fd is not None:
+        _assert_stdio_fd(stdin_fd, "stdin_fd")
+        return stdin_fd
     if stdin_mode == "pipe":
         return PIPE
     if stdin_mode == "devnull":
         return DEVNULL
     return PIPE if spec.stdin is not None else DEVNULL
+
+
+def _stdout_target(stdout_fd: int | None) -> int:
+    if stdout_fd is None:
+        return PIPE
+    _assert_stdio_fd(stdout_fd, "stdout_fd")
+    return stdout_fd
+
+
+def _assert_stdio_fd(value: object, name: str) -> None:
+    assert isinstance(value, int), f"{name} must be an integer file descriptor"
+    assert not isinstance(value, bool), f"{name} must be an integer"
+    assert value >= 0, f"{name} must be non-negative"
 
 
 async def _terminate_process_group(process: object) -> None:

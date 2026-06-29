@@ -279,6 +279,7 @@ allow_pipelines = true
 max_pipeline_stages = 3
 max_pipeline_bytes = 1048576
 max_intermediate_bytes = 262144
+pipeline_transport = "buffered"
 max_stdout_bytes = 65536
 max_stderr_bytes = 32768
 allowed_commands = ["cat", "rg", "wc", "sed", "awk", "jq"]
@@ -342,6 +343,16 @@ stage metadata when the runtime projects safe events, and redacted or
 truncated before display, task, MCP, A2A, server, or audit output. Stderr is
 collected per stage and contributes to the formatted result without making
 private host paths public.
+
+Pipeline transport defaults to `buffered`, which reads intermediate stdout in
+Avalan and writes it to the next structured subprocess stdin. Trusted runtime
+configuration may set `pipeline_transport = "native"` to connect adjacent
+subprocesses with OS pipes/file descriptors. Native transport still uses the
+same structured command specs and per-stage argv handling; it does not lower
+pipelines to shell syntax. In native transport, intermediate stdout bypasses
+Avalan capture, so intermediate stdout bytes/truncation are reported
+unavailable and `max_intermediate_bytes` is not enforced between stages. Final
+stdout/stderr caps and per-stage stderr capture still apply.
 
 Full byte-stream pipelines are local-only. When shell execution is
 `backend = "sandbox"` or `backend = "container"`, `mode = "pipeline"` and any

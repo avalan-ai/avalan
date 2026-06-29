@@ -3810,6 +3810,18 @@ class CLI:
                     default=None,
                     help="Trusted shell execution mode.",
                 )
+            elif (
+                settings_cls is ShellToolSettings
+                and prefix == "shell"
+                and field.name == "pipeline_transport"
+            ):
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    choices=("buffered", "native"),
+                    default=None,
+                    help="Trusted shell pipeline byte transport.",
+                )
             elif ftype is bool or isinstance(field.default, bool):
                 if (
                     settings_cls is ShellToolSettings

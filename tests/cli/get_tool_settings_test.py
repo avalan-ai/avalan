@@ -164,6 +164,7 @@ class GetToolSettingsTestCase(unittest.TestCase):
             tool_shell_max_pipeline_stages=3,
             tool_shell_max_pipeline_bytes=1024,
             tool_shell_max_intermediate_bytes=512,
+            tool_shell_pipeline_transport="native",
         )
         settings = agent_cmds.get_tool_settings(
             args, prefix="shell", settings_cls=ShellToolSettings
@@ -174,6 +175,7 @@ class GetToolSettingsTestCase(unittest.TestCase):
         self.assertEqual(settings.max_pipeline_stages, 3)
         self.assertEqual(settings.max_pipeline_bytes, 1024)
         self.assertEqual(settings.max_intermediate_bytes, 512)
+        self.assertEqual(settings.pipeline_transport, "native")
 
     def test_shell_pipeline_explicit_fields_are_tracked(self):
         args = Namespace(
@@ -181,6 +183,7 @@ class GetToolSettingsTestCase(unittest.TestCase):
             tool_shell_max_pipeline_stages=3,
             tool_shell_max_pipeline_bytes=None,
             tool_shell_max_intermediate_bytes=512,
+            tool_shell_pipeline_transport="native",
         )
 
         explicit_fields = (
@@ -198,6 +201,7 @@ class GetToolSettingsTestCase(unittest.TestCase):
                     "allow_pipelines",
                     "max_pipeline_stages",
                     "max_intermediate_bytes",
+                    "pipeline_transport",
                 }
             ),
         )
@@ -210,6 +214,7 @@ class GetToolSettingsTestCase(unittest.TestCase):
             Namespace(tool_shell_max_pipeline_bytes=0),
             Namespace(tool_shell_max_intermediate_bytes=True),
             Namespace(tool_shell_max_intermediate_bytes=0),
+            Namespace(tool_shell_pipeline_transport="shell"),
         )
 
         for args in cases:
