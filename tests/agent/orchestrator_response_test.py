@@ -10954,18 +10954,18 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         )
         resp.__aiter__()
 
+        outcome = _ToolExecutionOutcome(
+            call=call,
+            context=ToolCallContext(input=resp._input),
+            planned_index=0,
+            result=result,
+        )
+
         async def complete_batch() -> list[_ToolExecutionOutcome]:
-            return [
-                _ToolExecutionOutcome(
-                    call=call,
-                    context=ToolCallContext(input=resp._input),
-                    planned_index=0,
-                    result=result,
-                )
-            ]
+            return [outcome]
 
         task = create_task(complete_batch())
-        await task
+        self.assertEqual(await task, [outcome])
         resp._pending_tool_batch_task = task
         resp._consume_pending_tool_batch(task)
 
