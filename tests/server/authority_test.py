@@ -12,11 +12,21 @@ class RemoteRuntimeAuthorityTestCase(TestCase):
     def test_detects_runtime_authority_key_variants(self) -> None:
         self.assertFalse(remote_runtime_authority_key(""))
         self.assertFalse(remote_runtime_authority_key("metadata"))
+        self.assertFalse(remote_runtime_authority_key("shellfish"))
+        self.assertFalse(remote_runtime_authority_key("shelley"))
         self.assertTrue(remote_runtime_authority_key("runtimeProfile"))
         self.assertTrue(remote_runtime_authority_key("isolation"))
         self.assertTrue(remote_runtime_authority_key("isolation_policy"))
         self.assertTrue(remote_runtime_authority_key("sandboxProfile"))
         self.assertTrue(remote_runtime_authority_key("sandbox_roots"))
+        self.assertTrue(remote_runtime_authority_key("allow_pipelines"))
+        self.assertTrue(remote_runtime_authority_key("allowShell"))
+        self.assertTrue(remote_runtime_authority_key("shell"))
+        self.assertTrue(remote_runtime_authority_key("shellRuntime"))
+        self.assertTrue(remote_runtime_authority_key("tool_shell_backend"))
+        self.assertTrue(
+            remote_runtime_authority_key("tool.shell.allow_pipelines")
+        )
         self.assertTrue(remote_runtime_authority_key("tool_backend"))
         self.assertTrue(remote_runtime_authority_key("secretName"))
         for key in (
@@ -106,6 +116,7 @@ class RemoteRuntimeAuthorityTestCase(TestCase):
                     "type": "object",
                     "properties": {
                         "mode": {"type": "string"},
+                        "allow_pipelines": {"type": "boolean"},
                         "resources": {
                             "type": "object",
                             "properties": {

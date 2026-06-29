@@ -26,6 +26,7 @@ from avalan.entities import (
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
 )
@@ -37,6 +38,9 @@ from avalan.server.entities import (
 )
 from avalan.tool import a2a as a2a_module
 from avalan.tool.a2a import A2ACallTool, A2AToolSet
+from avalan.tool.manager import ToolManager
+from avalan.tool.shell.settings import ShellToolSettings
+from avalan.tool.shell.toolset import ShellToolSet
 
 
 class _FakeSdkClient:
@@ -632,6 +636,47 @@ class A2AToolSetTestCase(TestCase):
         self.assertEqual(len(toolset.tools), 1)
         self.assertEqual(cast(Any, toolset.tools[0]).__name__, "call")
 
+    def test_a2a_call_schema_does_not_collide_with_shell_pipeline(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            available_toolsets=[
+                A2AToolSet(),
+                ShellToolSet(settings=ShellToolSettings(allow_pipelines=True)),
+            ],
+            enable_tools=["a2a.call", "shell.pipeline"],
+        )
+
+        names = {descriptor.name for descriptor in manager.list_tools()}
+        self.assertEqual(names, {"a2a.call", "shell.pipeline"})
+        self.assertEqual(
+            len(
+                {
+                    schema["function"]["name"]
+                    for schema in manager.json_schemas() or []
+                }
+            ),
+            2,
+        )
+
+        a2a_descriptor = manager.describe_tool("a2a.call")
+        pipeline_descriptor = manager.describe_tool("shell.pipeline")
+        self.assertIsNotNone(a2a_descriptor)
+        self.assertIsNotNone(pipeline_descriptor)
+        assert a2a_descriptor is not None
+        assert pipeline_descriptor is not None
+        a2a_properties = a2a_descriptor.schema["function"]["parameters"][
+            "properties"
+        ]
+        pipeline_properties = pipeline_descriptor.schema["function"][
+            "parameters"
+        ]["properties"]
+        self.assertIn("uri", a2a_properties)
+        self.assertIn("name", a2a_properties)
+        self.assertNotIn("steps", a2a_properties)
+        self.assertIn("steps", pipeline_properties)
+        self.assertNotIn("uri", pipeline_properties)
+
 
 class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
     async def test_calls_sdk_v1_router_and_streams_status(self) -> None:
@@ -790,6 +835,146 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_served_pipeline_enabled_agent_streams_over_a2a(
+        self,
+    ) -> None:
+        try:
+            from avalan.server.a2a import router as a2a_router
+        except ImportError as exc:
+            self.skipTest(f"A2A SDK routes unavailable: {exc}")
+
+        served_manager = _a2a_pipeline_manager(allow_pipelines=True)
+        self.assertIsNotNone(served_manager.describe_tool("shell.pipeline"))
+        app, stack, loader, orchestrator = _a2a_e2e_app(
+            "test.a2a.tool.pipeline",
+            tool=served_manager,
+        )
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def stream(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        async def fake_orchestrate(
+            *args: object, **kwargs: object
+        ) -> tuple["_CanonicalResponse", UUID, int]:
+            self.assertIs(args[2], orchestrator)
+            return (
+                _CanonicalResponse(
+                    _a2a_pipeline_items_for_served_orchestrator(args[2])
+                ),
+                uuid4(),
+                123,
+            )
+
+        a2a_router.install_a2a_routes(
+            app,
+            prefix="/a2a",
+            name="run",
+            description="Run the pipeline agent.",
+        )
+
+        async with stack:
+            with patch.object(a2a_router, "orchestrate", fake_orchestrate):
+                tool = A2ACallTool(
+                    client_params={
+                        "transport": ASGITransport(app=app),
+                        "base_url": "http://testserver",
+                    },
+                    call_params={"request_id": "req-1"},
+                )
+                result = await tool(
+                    "/a2a",
+                    "run",
+                    {"input_string": "Use the configured pipeline tool."},
+                    context=ToolCallContext(stream_event=stream),
+                )
+
+        self.assertEqual(loader.from_file_calls, 1)
+        self.assertEqual(orchestrator.sync_count, 1)
+        structured = cast(dict[str, Any], result["structuredContent"])
+        artifacts = cast(list[dict[str, Any]], structured["artifacts"])
+        pipeline_artifacts = [
+            artifact
+            for artifact in artifacts
+            if artifact.get("name") == "shell.pipeline"
+        ]
+        self.assertTrue(pipeline_artifacts)
+        payload = str(result) + "".join(
+            event.content or "" for event in events
+        )
+        self.assertIn("stage warning", payload)
+        self.assertIn("counted 2 lines", payload)
+        self.assertIn("2\n", payload)
+        self.assertNotIn("INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK", payload)
+        self.assertTrue(
+            any(
+                event.kind is ToolExecutionStreamKind.STDERR
+                for event in events
+            )
+        )
+
+    async def test_default_denied_served_agent_reports_pipeline_over_a2a(
+        self,
+    ) -> None:
+        try:
+            from avalan.server.a2a import router as a2a_router
+        except ImportError as exc:
+            self.skipTest(f"A2A SDK routes unavailable: {exc}")
+
+        served_manager = _a2a_pipeline_manager(allow_pipelines=False)
+        self.assertIsNone(served_manager.describe_tool("shell.pipeline"))
+        app, stack, loader, orchestrator = _a2a_e2e_app(
+            "test.a2a.tool.pipeline.denied",
+            tool=served_manager,
+        )
+
+        async def fake_orchestrate(
+            *args: object, **kwargs: object
+        ) -> tuple["_CanonicalResponse", UUID, int]:
+            self.assertIs(args[2], orchestrator)
+            return (
+                _CanonicalResponse(
+                    _a2a_pipeline_items_for_served_orchestrator(args[2])
+                ),
+                uuid4(),
+                123,
+            )
+
+        a2a_router.install_a2a_routes(
+            app,
+            prefix="/a2a",
+            name="run",
+            description="Run the default-denied agent.",
+        )
+
+        async with stack:
+            with patch.object(a2a_router, "orchestrate", fake_orchestrate):
+                tool = A2ACallTool(
+                    client_params={
+                        "transport": ASGITransport(app=app),
+                        "base_url": "http://testserver",
+                    },
+                    call_params={"request_id": "req-1"},
+                )
+                result = await tool(
+                    "/a2a",
+                    "run",
+                    {"input_string": "Try shell.pipeline."},
+                    context=ToolCallContext(),
+                )
+
+        self.assertEqual(loader.from_file_calls, 1)
+        self.assertEqual(orchestrator.sync_count, 1)
+        structured = cast(dict[str, Any], result["structuredContent"])
+        artifacts = cast(list[dict[str, Any]], structured["artifacts"])
+        diagnostic_artifact = next(
+            artifact
+            for artifact in artifacts
+            if artifact.get("name") == "shell.pipeline"
+        )
+        self.assertIn("tool.disabled", diagnostic_artifact["text"])
+        self.assertIn("allow_pipelines", diagnostic_artifact["text"])
+
 
 def _struct(payload: dict[str, object]) -> Any:
     struct_pb2 = import_module("google.protobuf.struct_pb2")
@@ -907,9 +1092,14 @@ def _completed_a2a_responses(
 class _E2EOrchestrator:
     model_ids = {"test-model"}
 
-    def __init__(self) -> None:
+    def __init__(self, tool: ToolManager | None = None) -> None:
         self.id = UUID(int=2)
         self.sync_count = 0
+        self._tool = tool
+
+    @property
+    def tool(self) -> ToolManager | None:
+        return self._tool
 
     async def sync_messages(self) -> None:
         self.sync_count += 1
@@ -943,10 +1133,17 @@ class _CanonicalResponse:
     output_token_count = 0
     _response_iterator = None
 
+    def __init__(
+        self, items: Sequence[CanonicalStreamItem] | None = None
+    ) -> None:
+        self._items = items
+
     async def to_str(self) -> str:
         return ""
 
     def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+        if self._items is not None:
+            return _iter_canonical_items(self._items)
         return self._iter()
 
     async def _iter(self) -> AsyncIterator[CanonicalStreamItem]:
@@ -993,3 +1190,218 @@ class _CanonicalResponse:
             channel=StreamChannel.CONTROL,
             terminal_outcome=StreamTerminalOutcome.COMPLETED,
         )
+
+
+def _a2a_e2e_app(
+    logger_name: str,
+    *,
+    tool: ToolManager | None = None,
+) -> tuple[FastAPI, AsyncExitStack, _E2ELoader, _E2EOrchestrator]:
+    app = FastAPI()
+    app.state.logger = getLogger(logger_name)
+    orchestrator = _E2EOrchestrator(tool)
+    loader = _E2ELoader(orchestrator)
+    stack = AsyncExitStack()
+    app.state.ctx = OrchestratorContext(
+        participant_id=UUID(int=1),
+        specs_path="agent.toml",
+    )
+    app.state.loader = loader
+    app.state.stack = stack
+    app.state.agent_id = None
+    return app, stack, loader, orchestrator
+
+
+def _a2a_pipeline_manager(*, allow_pipelines: bool) -> ToolManager:
+    return ToolManager.create_instance(
+        available_toolsets=[
+            ShellToolSet(
+                settings=ShellToolSettings(allow_pipelines=allow_pipelines)
+            )
+        ],
+        enable_tools=["shell.pipeline"],
+    )
+
+
+def _a2a_pipeline_items_for_served_orchestrator(
+    orchestrator: object,
+) -> list[CanonicalStreamItem]:
+    tool = getattr(orchestrator, "tool", None)
+    assert isinstance(tool, ToolManager)
+    if tool.describe_tool("shell.pipeline") is None:
+        return _a2a_pipeline_denied_items()
+    return _a2a_pipeline_success_items()
+
+
+def _a2a_pipeline_success_items() -> list[CanonicalStreamItem]:
+    correlation = StreamItemCorrelation(tool_call_id="call-pipeline")
+    arguments = {
+        "steps": [
+            {"id": "read", "command": "cat", "paths": ["input.txt"]},
+            {
+                "id": "count",
+                "command": "wc",
+                "options": {"lines": True},
+                "stdin_from": {"step_id": "read", "stream": "stdout"},
+            },
+        ]
+    }
+    return [
+        _a2a_item(0, StreamItemKind.STREAM_STARTED),
+        _a2a_item(
+            1,
+            StreamItemKind.TOOL_CALL_READY,
+            correlation=correlation,
+            data={"name": "shell.pipeline", "arguments": arguments},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _a2a_item(2, StreamItemKind.TOOL_CALL_DONE, correlation=correlation),
+        _a2a_item(
+            3,
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            correlation=correlation,
+            data={"name": "shell.pipeline", "arguments": arguments},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _a2a_item(
+            4,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation=correlation,
+            text_delta="stage warning\n",
+            data={"category": "stderr", "content": "stage warning\n"},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _a2a_item(
+            5,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            correlation=correlation,
+            data={
+                "category": "progress",
+                "content": "counted 2 lines",
+                "progress": 0.5,
+                "metadata": {
+                    "intermediate_stdout": (
+                        "INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK"
+                    ),
+                },
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _a2a_item(
+            6,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation=correlation,
+            text_delta="2\n",
+            data={"category": "stdout", "content": "2\n"},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _a2a_item(
+            7,
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            correlation=correlation,
+            data={
+                "name": "shell.pipeline",
+                "arguments": arguments,
+                "result": (
+                    "tool: shell.pipeline\nstatus: completed\nstdout:\n2\n"
+                ),
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _a2a_item(8, StreamItemKind.ANSWER_DELTA, text_delta="done"),
+        _a2a_item(9, StreamItemKind.ANSWER_DONE),
+        _a2a_item(10, StreamItemKind.USAGE_COMPLETED, usage={}),
+        _a2a_item(
+            11,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    ]
+
+
+def _a2a_pipeline_denied_items() -> list[CanonicalStreamItem]:
+    correlation = StreamItemCorrelation(tool_call_id="call-pipeline")
+    diagnostic = {
+        "id": "diag-pipeline",
+        "call_id": "call-pipeline",
+        "code": "tool.disabled",
+        "message": "shell.pipeline requires allow_pipelines=true.",
+    }
+    return [
+        _a2a_item(0, StreamItemKind.STREAM_STARTED),
+        _a2a_item(
+            1,
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            correlation=correlation,
+            data={
+                "name": "shell.pipeline",
+                "arguments": {"steps": []},
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _a2a_item(
+            2,
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            correlation=correlation,
+            data={
+                "name": "shell.pipeline",
+                "arguments": {"steps": []},
+                "error": f"{diagnostic['code']}: {diagnostic['message']}",
+                "diagnostic": diagnostic,
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _a2a_item(3, StreamItemKind.USAGE_COMPLETED, usage={}),
+        _a2a_item(
+            4,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    ]
+
+
+def _a2a_item(
+    sequence: int,
+    kind: StreamItemKind,
+    *,
+    channel: StreamChannel | None = None,
+    **kwargs: Any,
+) -> CanonicalStreamItem:
+    if channel is None:
+        channel = {
+            StreamItemKind.ANSWER_DELTA: StreamChannel.ANSWER,
+            StreamItemKind.ANSWER_DONE: StreamChannel.ANSWER,
+            StreamItemKind.TOOL_CALL_READY: StreamChannel.TOOL_CALL,
+            StreamItemKind.TOOL_CALL_DONE: StreamChannel.TOOL_CALL,
+            StreamItemKind.TOOL_EXECUTION_STARTED: (
+                StreamChannel.TOOL_EXECUTION
+            ),
+            StreamItemKind.TOOL_EXECUTION_OUTPUT: StreamChannel.TOOL_EXECUTION,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS: (
+                StreamChannel.TOOL_EXECUTION
+            ),
+            StreamItemKind.TOOL_EXECUTION_COMPLETED: (
+                StreamChannel.TOOL_EXECUTION
+            ),
+            StreamItemKind.TOOL_EXECUTION_ERROR: StreamChannel.TOOL_EXECUTION,
+            StreamItemKind.TOOL_EXECUTION_CANCELLED: (
+                StreamChannel.TOOL_EXECUTION
+            ),
+            StreamItemKind.USAGE_COMPLETED: StreamChannel.USAGE,
+        }.get(kind, StreamChannel.CONTROL)
+    return CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=sequence,
+        kind=kind,
+        channel=channel,
+        **kwargs,
+    )
+
+
+async def _iter_canonical_items(
+    items: Sequence[CanonicalStreamItem],
+) -> AsyncIterator[CanonicalStreamItem]:
+    for item in items:
+        yield item

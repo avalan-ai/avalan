@@ -300,6 +300,126 @@ async def _run_same_canonical_stream_projects_through_protocols() -> None:
     )
 
 
+def test_shell_pipeline_stage_streams_project_safely() -> None:
+    asyncio.run(_run_shell_pipeline_stage_streams_project_safely())
+
+
+async def _run_shell_pipeline_stage_streams_project_safely() -> None:
+    call = StreamItemCorrelation(tool_call_id="call-pipeline")
+    items = (
+        _stream_item(0, StreamItemKind.STREAM_STARTED),
+        _stream_item(
+            1,
+            StreamItemKind.TOOL_CALL_READY,
+            correlation=call,
+            data={"name": "shell.pipeline", "arguments": {"steps": []}},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _stream_item(2, StreamItemKind.TOOL_CALL_DONE, correlation=call),
+        _stream_item(
+            3,
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            correlation=call,
+            data={"name": "shell.pipeline"},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _stream_item(
+            4,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            correlation=call,
+            data={
+                "category": "progress",
+                "content": "stage read started",
+                "progress": 0.25,
+                "metadata": {
+                    "private_runtime": "SECRET_RUNTIME",
+                    "intermediate_stdout": (
+                        "INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK"
+                    ),
+                },
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _stream_item(
+            5,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation=call,
+            text_delta="stage warning\n",
+            data={
+                "category": "stderr",
+                "content": "stage warning\n",
+                "metadata": {"private_path": "/secret/root"},
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _stream_item(
+            6,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation=call,
+            text_delta="2\n",
+            data={"category": "stdout", "content": "2\n"},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _stream_item(
+            7,
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            correlation=call,
+            data={
+                "name": "shell.pipeline",
+                "result": "tool: shell.pipeline\nstdout:\n2\n",
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _stream_item(8, StreamItemKind.ANSWER_DELTA, text_delta="done"),
+        _stream_item(9, StreamItemKind.ANSWER_DONE),
+        _stream_item(10, StreamItemKind.USAGE_COMPLETED, usage={}),
+        _stream_item(
+            11,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    )
+
+    payloads = await _collect_mcp_payloads(
+        _CanonicalResponse(items),
+        "shell-pipeline",
+    )
+    resources = [
+        _mcp_resource(payload)
+        for payload in payloads
+        if payload.get("method") == "notifications/resources/updated"
+        and "delta" in _mcp_resource(payload)
+    ]
+    resource_text_parts: list[str] = []
+    for resource in resources:
+        delta = cast(dict[str, object], resource["delta"])
+        set_payload = cast(dict[str, str], delta["set"])
+        resource_text_parts.append(set_payload["text"])
+    resource_text = "".join(resource_text_parts)
+    result_payload = next(
+        payload for payload in payloads if "result" in payload
+    )
+    structured = cast(
+        dict[str, object],
+        cast(dict[str, object], result_payload["result"])["structuredContent"],
+    )
+    tool_call = cast(list[dict[str, object]], structured["toolCalls"])[0]
+
+    assert [resource["uri"] for resource in resources]
+    assert [resource["name"] for resource in tool_call["resources"]] == [
+        "progress",
+        "stderr",
+        "stdout",
+    ]
+    assert "stage read started" in resource_text
+    assert "stage warning\n" in resource_text
+    assert "2\n" in resource_text
+    projected = dumps(payloads, sort_keys=True)
+    assert "SECRET_RUNTIME" not in projected
+    assert "/secret/root" not in projected
+    assert "INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK" not in projected
+
+
 def test_terminal_outcome_traces_project_through_protocols() -> None:
     asyncio.run(_run_terminal_outcome_traces_project_through_protocols())
 

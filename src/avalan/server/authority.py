@@ -149,6 +149,13 @@ _REMOTE_RUNTIME_AUTHORITY_PREFIXES = (
     "runtime",
     "sandbox",
 )
+_REMOTE_SHELL_AUTHORITY_KEYS = frozenset({"shell"})
+_REMOTE_SHELL_AUTHORITY_PREFIXES = ("shellruntime",)
+_REMOTE_SHELL_AUTHORITY_MARKERS = (
+    "allowpipeline",
+    "allowpipelines",
+    "allowshell",
+)
 _JSON_SCHEMA_DECLARATION_MAP_KEYS = frozenset(
     {
         "$defs",
@@ -187,6 +194,14 @@ def remote_runtime_authority_key(key: object) -> bool:
     if not normalized:
         return False
     if normalized in _REMOTE_RUNTIME_AUTHORITY_KEYS:
+        return True
+    if normalized in _REMOTE_SHELL_AUTHORITY_KEYS:
+        return True
+    if normalized.startswith(_REMOTE_SHELL_AUTHORITY_PREFIXES):
+        return True
+    if any(marker in normalized for marker in _REMOTE_SHELL_AUTHORITY_MARKERS):
+        return True
+    if normalized.startswith("toolshell"):
         return True
     if normalized.startswith(_REMOTE_RUNTIME_AUTHORITY_PREFIXES):
         return True

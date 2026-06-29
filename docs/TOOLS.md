@@ -208,6 +208,12 @@ expose a full agent that can stream status, return artifacts, and keep task
 state. A common topology is a coordinating Avalan agent with `mcp.call` for
 services and `a2a.call` for specialist agents.
 
+MCP and A2A requests execute the served agent's configured capabilities. They
+do not grant arbitrary local shell authority to the remote caller. A served
+agent can expose `shell.pipeline` only when its trusted agent configuration
+enables that tool and sets `[tool.shell] allow_pipelines = true`; MCP/A2A
+payloads cannot enable pipelines or alter shell runtime settings.
+
 ## Shell Tools
 
 Shell tools are not arbitrary shell execution. They are wrappers around
