@@ -2029,6 +2029,7 @@ def _shell_pipeline_flow_source(*, private_cwd: bool = False) -> str:
         ref = "shell.pipeline"
 
         [nodes.pipeline.config.arguments]
+        mode = "pipeline"
         max_stdout_bytes = 1024
 
         [[nodes.pipeline.config.arguments.steps]]

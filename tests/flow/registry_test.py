@@ -892,6 +892,124 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_tool_node_binds_string_enum_argument_as_literal(
+        self,
+    ) -> None:
+        descriptor = ToolDescriptor(
+            name="shell.pipeline",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["pipeline", "serial", "parallel"],
+                    },
+                    "steps": {"type": "array"},
+                },
+                "required": ["mode", "steps"],
+            },
+        )
+        registry = tool_flow_node_registry(StaticToolResolver([descriptor]))
+        steps = [
+            {
+                "id": "read",
+                "command": "cat",
+                "paths": ["visible.txt"],
+            }
+        ]
+        node = registry.build(
+            FlowNodeDefinition(
+                name="pipeline",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="shell.pipeline",
+                config={
+                    "arguments": {
+                        "mode": "pipeline",
+                        "steps": steps,
+                    },
+                },
+            )
+        )
+
+        self.assertEqual(
+            await node.execute_async({"payload": {"ignored": "input"}}),
+            {
+                "mode": "pipeline",
+                "steps": steps,
+            },
+        )
+
+    async def test_tool_node_prefers_selector_over_string_enum_literal(
+        self,
+    ) -> None:
+        descriptor = ToolDescriptor(
+            name="shell.pipeline",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["pipeline", "serial", "parallel"],
+                    },
+                },
+                "required": ["mode"],
+            },
+        )
+        registry = tool_flow_node_registry(StaticToolResolver([descriptor]))
+        node = registry.build(
+            FlowNodeDefinition(
+                name="pipeline",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="shell.pipeline",
+                input="payload",
+                config={"arguments": {"mode": "pipeline"}},
+            )
+        )
+
+        self.assertEqual(
+            await node.execute_async({"payload": {"pipeline": "serial"}}),
+            {"mode": "serial"},
+        )
+
+    async def test_tool_node_keeps_non_enum_string_arguments_as_selectors(
+        self,
+    ) -> None:
+        descriptor = ToolDescriptor(
+            name="string_echo",
+            parameter_schema={
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+            },
+        )
+        registry = tool_flow_node_registry(StaticToolResolver([descriptor]))
+        node = registry.build(
+            FlowNodeDefinition(
+                name="echo",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="string_echo",
+                input="payload",
+                config={"arguments": {"value": "left"}},
+            )
+        )
+
+        self.assertEqual(
+            await node.execute_async({"payload": {"left": "resolved"}}),
+            {"value": "resolved"},
+        )
+
+        with self.assertRaises(FlowNodeConfigurationError) as context:
+            await node.execute_async({"payload": {"right": "ignored"}})
+
+        self.assertEqual(
+            context.exception.code,
+            "flow.unresolved_argument_selector",
+        )
+        self.assertEqual(
+            context.exception.path,
+            "nodes.echo.config.arguments.value",
+        )
+
     async def test_tool_node_binds_and_rejects_array_argument_selectors(
         self,
     ) -> None:

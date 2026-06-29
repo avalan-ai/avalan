@@ -1014,20 +1014,28 @@ def _tool_node_arguments(
 ) -> dict[str, object]:
     bindings = definition.config.get("arguments")
     source = _node_input_value(definition, inputs)
+    properties = _tool_parameter_properties(descriptor)
     if bindings is not None:
         assert isinstance(bindings, Mapping)
+        parameter_schemas: dict[str, Mapping[str, object]] = {}
+        if properties is not None:
+            parameter_schemas = {
+                name: cast(Mapping[str, object], schema)
+                for name, schema in properties.items()
+                if isinstance(schema, Mapping)
+            }
         return {
             str(name): _argument_binding_value(
                 source,
                 selector,
                 definition,
                 name,
+                parameter_schemas.get(name, {}),
             )
             for name, selector in bindings.items()
             if isinstance(name, str)
         }
 
-    properties = _tool_parameter_properties(descriptor)
     parameters = (
         frozenset(properties) if properties is not None else frozenset()
     )
@@ -1077,10 +1085,27 @@ def _argument_binding_value(
     value: object,
     definition: FlowNodeDefinition,
     name: object,
+    parameter_schema: Mapping[str, object],
 ) -> object:
     if isinstance(value, str):
-        return _select_argument(source, value, definition, name)
+        try:
+            return _select_argument(source, value, definition, name)
+        except FlowNodeConfigurationError as error:
+            if (
+                error.code == "flow.unresolved_argument_selector"
+                and _matches_string_enum(value, parameter_schema)
+            ):
+                return value
+            raise
     return _copy_flow_value(value)
+
+
+def _matches_string_enum(
+    value: str,
+    parameter_schema: Mapping[str, object],
+) -> bool:
+    enum_values = parameter_schema.get("enum")
+    return isinstance(enum_values, list | tuple) and value in enum_values
 
 
 def _tool_parameter_names(descriptor: ToolDescriptor) -> frozenset[str]:
