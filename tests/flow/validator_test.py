@@ -1191,7 +1191,7 @@ class FlowValidatorTestCase(TestCase):
                                 ref=ref,
                                 config=config,
                             ),
-                        )
+                        ),
                     ),
                     registry,
                 )
@@ -1446,7 +1446,7 @@ class FlowValidatorTestCase(TestCase):
                                 ref=ref,
                                 config=config,
                             ),
-                        )
+                        ),
                     ),
                     registry,
                 )

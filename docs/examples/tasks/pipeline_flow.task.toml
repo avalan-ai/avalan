@@ -1,0 +1,51 @@
+[task]
+name = "pipeline_flow"
+version = "1"
+description = "Run a flow tool node backed by shell.pipeline."
+labels = ["example", "flow", "shell-pipeline"]
+
+[input]
+type = "string"
+description = "Prompt text used to trigger the flow."
+
+[output]
+type = "text"
+description = "Formatted shell.pipeline result text."
+
+[execution]
+type = "flow"
+ref = "pipeline_flow.flow.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 120
+
+[privacy]
+input = "drop"
+files = "drop"
+
+[limits]
+input_bytes = 4096
+output_bytes = 8192
+total_tokens = 1000
+
+# Flow-backed shell.pipeline tasks require explicit runtime tool settings.
+# Direct execution and validation should provide an enabled resolver, for
+# example:
+#
+# poetry run avalan task run docs/examples/tasks/pipeline_flow.task.toml \
+#   --ephemeral \
+#   --input "count README lines" \
+#   --tool shell.pipeline \
+#   --tool-shell-allow-pipelines \
+#   --tool-shell-max-pipeline-stages 3
+#
+# Queued workers fail closed unless the operator starts them with equivalent
+# worker settings:
+#
+# poetry run avalan task worker \
+#   --store-dsn "$AVALAN_TASK_STORE_DSN" \
+#   --queue default \
+#   --tool shell.pipeline \
+#   --tool-shell-allow-pipelines \
+#   --tool-shell-max-pipeline-stages 3

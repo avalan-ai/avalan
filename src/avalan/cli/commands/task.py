@@ -1,5 +1,6 @@
 from ...agent.loader import OrchestratorLoader
 from ...cli.theme import Theme
+from ...entities import ToolManagerSettings, ToolNamePolicySettings
 from ...filesystem import read_text
 from ...flow import (
     Flow,
@@ -46,6 +47,7 @@ from ...task import (
     TaskTargetRunnerRegistry,
     TaskTargetType,
     TaskValidationCategory,
+    TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
@@ -84,6 +86,33 @@ from ...task.targets.agent import (
     AgentTaskTargetRunner,
 )
 from ...task.targets.flow import FlowTaskTargetRunner, task_flow_node_registry
+from ...tool import ToolSet
+from ...tool.browser import (
+    HAS_BROWSER_DEPENDENCIES,
+    BrowserToolSet,
+    BrowserToolSettings,
+)
+from ...tool.code import HAS_CODE_DEPENDENCIES, CodeToolSet
+from ...tool.context import ToolSettingsContext
+from ...tool.database.settings import DatabaseToolSettings
+from ...tool.database.toolset import DatabaseToolSet
+from ...tool.graph import HAS_GRAPH_DEPENDENCIES, GraphToolSet
+from ...tool.graph_settings import GraphToolSettings
+from ...tool.manager import ToolManager
+from ...tool.math import MathToolSet
+from ...tool.shell import (
+    ShellToolSet,
+    ShellToolSettings,
+    normalize_shell_enabled_tools,
+    should_append_shell_toolset,
+)
+from .agent import (
+    _agent_container_runtime_settings,
+    _agent_isolation_runtime_settings,
+    _agent_tool_name_policy,
+    _agent_tool_settings,
+    get_tool_settings,
+)
 
 from argparse import Namespace
 from asyncio import run as asyncio_run
@@ -92,7 +121,7 @@ from binascii import Error as BinasciiError
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from json import JSONDecodeError
 from json import dumps as json_dumps
 from json import loads as json_loads
@@ -104,7 +133,7 @@ from re import fullmatch
 from sys import exc_info
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from types import TracebackType
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from uuid import uuid4
 
 from rich.console import Console
@@ -122,6 +151,11 @@ class TaskCliInput:
 class _TaskCliFileSpec:
     field: str
     descriptor: Mapping[str, object]
+
+
+class _TaskCliClientContextKwargs(TypedDict, total=False):
+    tool_settings: ToolSettingsContext
+    flow_tool_resolver: FlowToolResolver
 
 
 _AVALAN_INPUT_TYPE_SCHEMA_KEY = "x-avalan-input-type"
@@ -245,12 +279,25 @@ async def _task_validate(
     if issues:
         _print_issues(console, "Task definition is invalid.", issues)
         return False
-    flow_issues = await _validate_task_flow_reference(
-        definition_path,
-        load_result.definition,
-    )
-    if flow_issues:
-        _print_issues(console, "Task definition is invalid.", flow_issues)
+    try:
+        tool_settings = _task_tool_settings(load_result.definition, args)
+        tool_manager = _task_flow_tool_manager(args)
+        async with AsyncExitStack() as stack:
+            flow_tool_resolver = await _task_flow_tool_resolver(
+                stack,
+                tool_manager,
+            )
+            target_issues = await _validate_task_target_reference(
+                definition_path,
+                load_result.definition,
+                tool_settings=tool_settings,
+                flow_tool_resolver=flow_tool_resolver,
+            )
+    except (AssertionError, ImportError, OSError) as exc:
+        _print_task_execution_error(console, exc)
+        return False
+    if target_issues:
+        _print_issues(console, "Task definition is invalid.", target_issues)
         return False
 
     task_input: TaskCliInput | None = None
@@ -284,6 +331,61 @@ async def _task_validate(
     return True
 
 
+async def _validate_task_target_reference(
+    definition_path: Path,
+    definition: TaskDefinition,
+    *,
+    tool_settings: ToolSettingsContext,
+    flow_tool_resolver: FlowToolResolver | None = None,
+) -> tuple[TaskValidationIssue, ...]:
+    assert isinstance(definition_path, Path)
+    assert isinstance(definition, TaskDefinition)
+    assert isinstance(tool_settings, ToolSettingsContext)
+    if definition.execution.type == TaskTargetType.AGENT:
+        agent_ref = Path(definition.execution.ref)
+        agent_path = (
+            agent_ref
+            if agent_ref.is_absolute()
+            else definition_path.parent / agent_ref
+        )
+        if not agent_path.exists():
+            return ()
+    agent_target = _agent_task_target(
+        definition_path.parent,
+        hub=None,
+        logger=getLogger("avalan.task"),
+        stack=AsyncExitStack(),
+        tool_settings=tool_settings,
+        require_shell_pipeline_opt_in=definition.run.mode == RunMode.QUEUE,
+    )
+    runner = _task_cli_target_runner(
+        definition_path.parent,
+        agent_target=agent_target,
+        flow_state_store=InMemoryFlowStateStore(),
+        flow_tool_resolver=flow_tool_resolver,
+    )
+    try:
+        return await runner.validate_definition(
+            definition,
+            TaskValidationContext(
+                execution_roots=(definition_path.parent,),
+                file_converters=default_file_converters(),
+            ),
+        )
+    except OSError:
+        if definition.execution.type == TaskTargetType.FLOW:
+            return (
+                TaskValidationIssue(
+                    code="flow.read_failed",
+                    path="execution.ref",
+                    message="Flow definition could not be read.",
+                    hint="Use a readable flow TOML file.",
+                    category=TaskValidationCategory.UNSUPPORTED,
+                ),
+            )
+        raise
+
+
 async def _validate_task_flow_reference(
     definition_path: Path,
     definition: TaskDefinition,
@@ -310,6 +412,7 @@ async def _validate_task_flow_reference(
         hub=None,
         logger=getLogger("avalan.task"),
         stack=AsyncExitStack(),
+        tool_settings=ToolSettingsContext(),
     )
     loader = FlowDefinitionLoader(
         registry=task_flow_node_registry(
@@ -636,23 +739,36 @@ async def _task_run(
     if dsn is None and not ephemeral:
         _print_missing_store(diagnostic_console)
         return False
-    client_context = _task_cli_client_context(
-        definition_path,
-        dsn=dsn,
-        schema=_task_store_schema(args),
-        queue=False,
-        ephemeral=ephemeral,
-        hub=hub,
-        logger=logger,
-        input_value=task_input.value,
-    )
     try:
-        async with client_context as client:
-            result = await client.run(
-                definition,
-                input_value=task_input.value,
-                metadata=_task_command_metadata(ephemeral=ephemeral),
+        tool_settings = _task_tool_settings(definition, args)
+        tool_manager = _task_flow_tool_manager(args)
+        async with AsyncExitStack() as stack:
+            flow_tool_resolver = await _task_flow_tool_resolver(
+                stack,
+                tool_manager,
             )
+            client_kwargs: _TaskCliClientContextKwargs = {}
+            if _task_tool_settings_configured(tool_settings):
+                client_kwargs["tool_settings"] = tool_settings
+            if flow_tool_resolver is not None:
+                client_kwargs["flow_tool_resolver"] = flow_tool_resolver
+            client_context = _task_cli_client_context(
+                definition_path,
+                dsn=dsn,
+                schema=_task_store_schema(args),
+                queue=False,
+                ephemeral=ephemeral,
+                hub=hub,
+                logger=logger,
+                input_value=task_input.value,
+                **client_kwargs,
+            )
+            async with client_context as client:
+                result = await client.run(
+                    definition,
+                    input_value=task_input.value,
+                    metadata=_task_command_metadata(ephemeral=ephemeral),
+                )
     except (
         AssertionError,
         ImportError,
@@ -712,45 +828,60 @@ async def _task_enqueue(
     if dsn is None:
         _print_missing_store(console)
         return False
-    client_context = _task_cli_client_context(
-        definition_path,
-        dsn=dsn,
-        schema=_task_store_schema(args),
-        queue=True,
-        ephemeral=False,
-        hub=hub,
-        logger=logger,
-    )
     try:
-        async with client_context as client:
-            submission = await client.enqueue(
-                definition,
-                input_value=task_input.value,
-                queue_name=_task_cli_queue_name(args),
-                queue_metadata=_safe_queue_metadata(args),
+        tool_settings = _task_tool_settings(definition, args)
+        tool_manager = _task_flow_tool_manager(args)
+        async with AsyncExitStack() as stack:
+            flow_tool_resolver = await _task_flow_tool_resolver(
+                stack,
+                tool_manager,
             )
-            console.print(
-                f"Task enqueued: {submission.run.run_id}",
-                markup=False,
+            client_kwargs: _TaskCliClientContextKwargs = {}
+            if _task_tool_settings_configured(tool_settings):
+                client_kwargs["tool_settings"] = tool_settings
+            if flow_tool_resolver is not None:
+                client_kwargs["flow_tool_resolver"] = flow_tool_resolver
+            client_context = _task_cli_client_context(
+                definition_path,
+                dsn=dsn,
+                schema=_task_store_schema(args),
+                queue=True,
+                ephemeral=False,
+                hub=hub,
+                logger=logger,
+                **client_kwargs,
             )
-            console.print(f"state {submission.run.state.value}", markup=False)
-            if bool(getattr(args, "wait", False)):
-                output = await client.wait(
-                    submission.run.run_id,
-                    timeout_seconds=getattr(args, "wait_timeout", None),
-                    poll_interval_seconds=getattr(
-                        args,
-                        "poll_interval",
-                        1.0,
-                    ),
+            async with client_context as client:
+                submission = await client.enqueue(
+                    definition,
+                    input_value=task_input.value,
+                    queue_name=_task_cli_queue_name(args),
+                    queue_metadata=_safe_queue_metadata(args),
                 )
                 console.print(
-                    f"Task finished: {output.run_id}",
+                    f"Task enqueued: {submission.run.run_id}",
                     markup=False,
                 )
-                console.print(f"state {output.state.value}", markup=False)
-                _print_task_result(console, output.output_summary)
-                return output.ready
+                console.print(
+                    f"state {submission.run.state.value}", markup=False
+                )
+                if bool(getattr(args, "wait", False)):
+                    output = await client.wait(
+                        submission.run.run_id,
+                        timeout_seconds=getattr(args, "wait_timeout", None),
+                        poll_interval_seconds=getattr(
+                            args,
+                            "poll_interval",
+                            1.0,
+                        ),
+                    )
+                    console.print(
+                        f"Task finished: {output.run_id}",
+                        markup=False,
+                    )
+                    console.print(f"state {output.state.value}", markup=False)
+                    _print_task_result(console, output.output_summary)
+                    return output.ready
     except (
         AssertionError,
         ImportError,
@@ -938,19 +1069,37 @@ async def _task_worker(
     )
     try:
         shutdown = shutdown or TaskWorkerShutdown()
+        tool_settings = _task_tool_settings(
+            None,
+            args,
+            force_shell_pipeline_closed=True,
+        )
+        tool_manager = _task_flow_tool_manager(args)
         database = _task_pgsql_database(dsn, _task_store_schema(args))
         store = PgsqlTaskStore(database)
         queue = PgsqlTaskQueue(database)
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(database)
+            flow_tool_resolver = await _task_flow_tool_resolver(
+                stack,
+                tool_manager,
+            )
+            agent_target = _agent_task_target(
+                Path.cwd(),
+                hub=hub,
+                logger=logger,
+                stack=stack,
+                tool_settings=tool_settings,
+                require_shell_pipeline_opt_in=True,
+            )
             worker = TaskWorker(
                 store,
                 queue,
-                target=_agent_task_target(
+                target=_task_cli_target_runner(
                     Path.cwd(),
-                    hub=hub,
-                    logger=logger,
-                    stack=stack,
+                    agent_target=agent_target,
+                    flow_state_store=PgsqlFlowStateStore(database),
+                    flow_tool_resolver=flow_tool_resolver,
                 ),
                 hmac_provider=_task_hmac_provider(),
                 worker_id=getattr(args, "worker_id", None),
@@ -1043,6 +1192,163 @@ async def _load_definition_for_execution(
     return definition_path, definition, task_input
 
 
+def _task_tool_settings(
+    definition: TaskDefinition | None,
+    args: Namespace,
+    *,
+    force_shell_pipeline_closed: bool = False,
+) -> ToolSettingsContext:
+    _ = definition
+    settings = _agent_tool_settings(args)
+    if not force_shell_pipeline_closed:
+        return settings
+    explicit_fields = set(settings.shell_explicit_fields or ())
+    shell_settings = settings.shell
+    if "allow_pipelines" not in explicit_fields:
+        explicit_fields.add("allow_pipelines")
+        if shell_settings is None:
+            shell_settings = ShellToolSettings(allow_pipelines=False)
+        elif shell_settings.allow_pipelines:
+            shell_settings = replace(shell_settings, allow_pipelines=False)
+    elif shell_settings is None:
+        shell_settings = ShellToolSettings(allow_pipelines=False)
+    return replace(
+        settings,
+        shell=shell_settings,
+        shell_explicit_fields=frozenset(explicit_fields),
+    )
+
+
+def _task_tool_settings_configured(settings: ToolSettingsContext) -> bool:
+    assert isinstance(settings, ToolSettingsContext)
+    return any(
+        value is not None
+        for value in (
+            settings.browser,
+            settings.database,
+            settings.graph,
+            settings.shell,
+            settings.container,
+            settings.isolation,
+            settings.extra,
+        )
+    )
+
+
+async def _task_flow_tool_resolver(
+    stack: AsyncExitStack,
+    tool_manager: ToolManager | None,
+) -> FlowToolResolver | None:
+    assert isinstance(stack, AsyncExitStack)
+    if tool_manager is None:
+        return None
+    return cast(
+        FlowToolResolver, await stack.enter_async_context(tool_manager)
+    )
+
+
+def _task_flow_tool_manager(args: Namespace) -> ToolManager | None:
+    shell_settings = get_tool_settings(
+        args,
+        prefix="shell",
+        settings_cls=ShellToolSettings,
+    )
+    container_runtime = _agent_container_runtime_settings(
+        args,
+        shell_settings,
+    )
+    isolation_runtime = _agent_isolation_runtime_settings(
+        args,
+        shell_settings,
+    )
+    assert not (
+        container_runtime is not None and isolation_runtime is not None
+    ), "shell execution cannot mix container and sandbox runtimes"
+    enabled_tools = normalize_shell_enabled_tools(_task_enabled_tools(args))
+    if not enabled_tools and shell_settings is not None:
+        enabled_tools = ["shell"]
+    if not enabled_tools:
+        return None
+    available_toolsets: list[ToolSet] = [MathToolSet(namespace="math")]
+    if HAS_GRAPH_DEPENDENCIES:
+        available_toolsets.append(
+            GraphToolSet(
+                settings=get_tool_settings(
+                    args,
+                    prefix="graph",
+                    settings_cls=GraphToolSettings,
+                )
+                or GraphToolSettings(),
+                namespace="graph",
+            )
+        )
+    if HAS_CODE_DEPENDENCIES:
+        available_toolsets.append(CodeToolSet(namespace="code"))
+    if HAS_BROWSER_DEPENDENCIES:
+        available_toolsets.append(
+            BrowserToolSet(
+                settings=get_tool_settings(
+                    args,
+                    prefix="browser",
+                    settings_cls=BrowserToolSettings,
+                )
+                or BrowserToolSettings(),
+                namespace="browser",
+            )
+        )
+    database_settings = get_tool_settings(
+        args,
+        prefix="database",
+        settings_cls=DatabaseToolSettings,
+    )
+    if database_settings is not None:
+        available_toolsets.append(
+            DatabaseToolSet(settings=database_settings, namespace="database")
+        )
+    if should_append_shell_toolset(
+        shell_settings=shell_settings,
+        enabled_tools=enabled_tools,
+    ):
+        shell_settings = shell_settings or ShellToolSettings()
+        if isolation_runtime is not None:
+            shell_toolset = ShellToolSet(
+                settings=shell_settings,
+                namespace="shell",
+                isolation_runtime=isolation_runtime,
+            )
+        elif container_runtime is not None:
+            shell_toolset = ShellToolSet(
+                settings=shell_settings,
+                namespace="shell",
+                container_runtime=container_runtime,
+            )
+        else:
+            shell_toolset = ShellToolSet(
+                settings=shell_settings,
+                namespace="shell",
+            )
+        available_toolsets.append(shell_toolset)
+    return ToolManager.create_instance(
+        available_toolsets=available_toolsets,
+        enable_tools=enabled_tools,
+        settings=ToolManagerSettings(
+            tool_name_policy=(
+                _agent_tool_name_policy(args) or ToolNamePolicySettings()
+            )
+        ),
+    )
+
+
+def _task_enabled_tools(args: Namespace) -> list[str]:
+    tools = (getattr(args, "tool", None) or []) + (
+        getattr(args, "tools", None) or []
+    )
+    assert isinstance(tools, list)
+    for tool in tools:
+        assert isinstance(tool, str) and tool.strip()
+    return tools
+
+
 def _task_cli_client_context(
     definition_path: Path,
     *,
@@ -1053,6 +1359,7 @@ def _task_cli_client_context(
     hub: object | None,
     logger: Logger | None,
     input_value: object = None,
+    tool_settings: ToolSettingsContext | None = None,
     flow_tool_resolver: FlowToolResolver | None = None,
     flow_concurrency_limit: int = 1,
     event_observer: TaskSanitizedEventObserver | None = None,
@@ -1075,11 +1382,13 @@ def _task_cli_client_context(
         hub=hub,
         logger=logger,
         stack=stack,
+        tool_settings=tool_settings or ToolSettingsContext(),
+        require_shell_pipeline_opt_in=queue,
     )
     if ephemeral:
         memory_store = InMemoryTaskStore()
         target = _task_cli_target_runner(
-            definition_path,
+            definition_path.parent,
             agent_target=agent_target,
             flow_state_store=InMemoryFlowStateStore(task_store=memory_store),
             flow_tool_resolver=flow_tool_resolver,
@@ -1102,7 +1411,7 @@ def _task_cli_client_context(
     pgsql_store = PgsqlTaskStore(database)
     task_queue = PgsqlTaskQueue(database) if queue else None
     target = _task_cli_target_runner(
-        definition_path,
+        definition_path.parent,
         agent_target=agent_target,
         flow_state_store=PgsqlFlowStateStore(database),
         flow_tool_resolver=flow_tool_resolver,
@@ -1125,7 +1434,7 @@ def _task_cli_client_context(
 
 
 def _task_cli_target_runner(
-    definition_path: Path,
+    ref_base: Path,
     *,
     agent_target: TaskTargetRunner,
     flow_state_store: FlowStateStore,
@@ -1136,15 +1445,15 @@ def _task_cli_target_runner(
         agent_target,
         {
             TaskTargetType.FLOW: FlowTaskTargetRunner(
-                ref_base=definition_path.parent,
+                ref_base=ref_base,
                 strict_resolver=_task_strict_flow_resolver(
-                    definition_path.parent,
+                    ref_base,
                     agent_runner=agent_target,
                     tool_resolver=flow_tool_resolver,
                 ),
                 flow_state_store=flow_state_store,
                 agent_runner=agent_target,
-                execution_roots=(definition_path.parent,),
+                execution_roots=(ref_base,),
                 tool_resolver=flow_tool_resolver,
                 concurrency_limit=flow_concurrency_limit,
             )
@@ -1187,6 +1496,8 @@ def _agent_task_target(
     hub: object | None,
     logger: Logger | None,
     stack: AsyncExitStack,
+    tool_settings: ToolSettingsContext | None = None,
+    require_shell_pipeline_opt_in: bool = False,
 ) -> AgentTaskTargetRunner:
     return AgentTaskTargetRunner(
         cast(
@@ -1199,6 +1510,8 @@ def _agent_task_target(
             ),
         ),
         ref_base=ref_base,
+        tool_settings=tool_settings or ToolSettingsContext(),
+        require_shell_pipeline_opt_in=require_shell_pipeline_opt_in,
     )
 
 

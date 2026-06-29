@@ -2184,10 +2184,47 @@ class CLI:
             default=None,
             help="Request a descriptor conversion as field=name[:json].",
         )
+        task_tool_parser = ArgumentParser(add_help=False)
+        task_tool_parser.add_argument(
+            "--tool",
+            type=str,
+            action="append",
+            help="Enable a tool for task agent or strict flow tool nodes.",
+        )
+        task_tool_parser.add_argument(
+            "--tools",
+            type=str,
+            action="append",
+            help=(
+                "Enable tools matching a namespace for task agent or strict "
+                "flow tool nodes."
+            ),
+        )
+        CLI._add_tool_name_policy_arguments(task_tool_parser)
+        CLI._add_tool_settings_arguments(
+            task_tool_parser,
+            prefix="browser",
+            settings_cls=BrowserToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            task_tool_parser,
+            prefix="database",
+            settings_cls=DatabaseToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            task_tool_parser,
+            prefix="graph",
+            settings_cls=GraphToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            task_tool_parser,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
+        )
         task_validate_parser = task_command_parsers.add_parser(
             name="validate",
             description="Validate an intelligence task definition",
-            parents=[global_parser, task_input_parser],
+            parents=[global_parser, task_input_parser, task_tool_parser],
         )
         task_validate_parser.add_argument(
             "definition",
@@ -2197,7 +2234,7 @@ class CLI:
         task_run_parser = task_command_parsers.add_parser(
             name="run",
             description="Run an intelligence task directly",
-            parents=[global_parser, task_input_parser],
+            parents=[global_parser, task_input_parser, task_tool_parser],
         )
         task_run_parser.add_argument(
             "definition",
@@ -2244,7 +2281,7 @@ class CLI:
         task_enqueue_parser = task_command_parsers.add_parser(
             name="enqueue",
             description="Enqueue an intelligence task run",
-            parents=[global_parser, task_input_parser],
+            parents=[global_parser, task_input_parser, task_tool_parser],
         )
         task_enqueue_parser.add_argument(
             "definition",
@@ -2434,7 +2471,7 @@ class CLI:
         task_worker_parser = task_command_parsers.add_parser(
             name="worker",
             description="Run a task queue worker",
-            parents=[global_parser],
+            parents=[global_parser, task_tool_parser],
         )
         task_worker_parser.add_argument(
             "--queue",

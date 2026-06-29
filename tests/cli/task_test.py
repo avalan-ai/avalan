@@ -304,6 +304,9 @@ class _FakeResource:
         if self.close_error is not None:
             raise self.close_error
 
+    async def connection(self) -> object:
+        raise AssertionError("database connection is not expected")
+
 
 class _FakeTaskWorker:
     instances: list["_FakeTaskWorker"] = []
@@ -972,6 +975,28 @@ class CliTaskValidateTestCase(TestCase):
         self.assertIn("flow.read_failed", output)
         self.assertNotIn("private-flow.toml", output)
 
+    def test_validate_reports_pipeline_tool_setup_errors(self) -> None:
+        console = Console(record=True, width=160)
+
+        with (
+            patch.object(
+                task_cmds,
+                "_task_tool_settings",
+                side_effect=ImportError("private optional dependency"),
+            ),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            result = task_cmds.task_validate(
+                Namespace(definition=str(FIXTURE_ROOT / "minimal.task.toml")),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("dependency.missing", output)
+        self.assertNotIn("private optional dependency", output)
+
     def test_validate_missing_file_prints_safe_diagnostic(self) -> None:
         console = Console(record=True, width=160)
 
@@ -991,6 +1016,281 @@ class CliTaskValidateTestCase(TestCase):
 class CliTaskCommandShellTestCase(TestCase):
     def setUp(self) -> None:
         self.theme = MagicMock()
+
+    def test_worker_tool_settings_force_pipeline_closed_without_opt_in(
+        self,
+    ) -> None:
+        settings = task_cmds._task_tool_settings(
+            None,
+            Namespace(),
+            force_shell_pipeline_closed=True,
+        )
+
+        self.assertIsNotNone(settings.shell)
+        assert settings.shell is not None
+        self.assertFalse(settings.shell.allow_pipelines)
+        self.assertEqual(
+            settings.shell_explicit_fields,
+            frozenset({"allow_pipelines"}),
+        )
+
+    def test_worker_tool_settings_preserve_operator_pipeline_opt_in(
+        self,
+    ) -> None:
+        settings = task_cmds._task_tool_settings(
+            None,
+            Namespace(tool_shell_allow_pipelines=True),
+            force_shell_pipeline_closed=True,
+        )
+
+        self.assertIsNotNone(settings.shell)
+        assert settings.shell is not None
+        self.assertTrue(settings.shell.allow_pipelines)
+        self.assertEqual(
+            settings.shell_explicit_fields,
+            frozenset({"allow_pipelines"}),
+        )
+
+    def test_worker_tool_settings_closes_implicit_pipeline_opt_in(
+        self,
+    ) -> None:
+        with patch.object(
+            task_cmds,
+            "_agent_tool_settings",
+            return_value=task_cmds.ToolSettingsContext(
+                shell=task_cmds.ShellToolSettings(allow_pipelines=True),
+                shell_explicit_fields=frozenset({"backend"}),
+            ),
+        ):
+            settings = task_cmds._task_tool_settings(
+                None,
+                Namespace(),
+                force_shell_pipeline_closed=True,
+            )
+
+        self.assertIsNotNone(settings.shell)
+        assert settings.shell is not None
+        self.assertFalse(settings.shell.allow_pipelines)
+        self.assertEqual(
+            settings.shell_explicit_fields,
+            frozenset({"backend", "allow_pipelines"}),
+        )
+
+    def test_worker_tool_settings_closes_missing_explicit_shell_settings(
+        self,
+    ) -> None:
+        with patch.object(
+            task_cmds,
+            "_agent_tool_settings",
+            return_value=task_cmds.ToolSettingsContext(
+                shell=None,
+                shell_explicit_fields=frozenset({"allow_pipelines"}),
+            ),
+        ):
+            settings = task_cmds._task_tool_settings(
+                None,
+                Namespace(),
+                force_shell_pipeline_closed=True,
+            )
+
+        self.assertIsNotNone(settings.shell)
+        assert settings.shell is not None
+        self.assertFalse(settings.shell.allow_pipelines)
+        self.assertEqual(
+            settings.shell_explicit_fields,
+            frozenset({"allow_pipelines"}),
+        )
+
+    def test_task_enabled_tools_collects_direct_and_namespace_flags(
+        self,
+    ) -> None:
+        self.assertEqual(
+            task_cmds._task_enabled_tools(
+                Namespace(tool=["shell.pipeline"], tools=["math"])
+            ),
+            ["shell.pipeline", "math"],
+        )
+
+    def test_task_flow_tool_resolver_enters_configured_manager(self) -> None:
+        class _ResolverContext:
+            def __init__(self) -> None:
+                self.entered = False
+                self.exited = False
+                self.resolver = object()
+
+            async def __aenter__(self) -> object:
+                self.entered = True
+                return self.resolver
+
+            async def __aexit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                traceback: object | None,
+            ) -> bool | None:
+                self.exited = True
+                return None
+
+        async def exercise() -> tuple[object | None, bool]:
+            context = _ResolverContext()
+            async with AsyncExitStack() as stack:
+                resolver = await task_cmds._task_flow_tool_resolver(
+                    stack,
+                    cast(Any, context),
+                )
+                self.assertTrue(context.entered)
+                self.assertIs(resolver, context.resolver)
+            return resolver, context.exited
+
+        resolver, exited = asyncio_run(exercise())
+
+        self.assertIsNotNone(resolver)
+        self.assertTrue(exited)
+
+    def test_task_flow_tool_manager_builds_available_toolsets(self) -> None:
+        manager = object()
+        math_toolset = object()
+        graph_toolset = object()
+        code_toolset = object()
+        browser_toolset = object()
+        database_toolset = object()
+        shell_toolset = object()
+
+        with (
+            patch.object(task_cmds, "HAS_GRAPH_DEPENDENCIES", True),
+            patch.object(task_cmds, "HAS_CODE_DEPENDENCIES", True),
+            patch.object(task_cmds, "HAS_BROWSER_DEPENDENCIES", True),
+            patch.object(
+                task_cmds, "MathToolSet", return_value=math_toolset
+            ) as math_constructor,
+            patch.object(
+                task_cmds, "GraphToolSet", return_value=graph_toolset
+            ) as graph_constructor,
+            patch.object(
+                task_cmds, "CodeToolSet", return_value=code_toolset
+            ) as code_constructor,
+            patch.object(
+                task_cmds, "BrowserToolSet", return_value=browser_toolset
+            ) as browser_constructor,
+            patch.object(
+                task_cmds,
+                "DatabaseToolSet",
+                return_value=database_toolset,
+            ) as database_constructor,
+            patch.object(
+                task_cmds, "ShellToolSet", return_value=shell_toolset
+            ) as shell_constructor,
+            patch.object(
+                task_cmds.ToolManager,
+                "create_instance",
+                return_value=manager,
+            ) as create_instance,
+        ):
+            result = task_cmds._task_flow_tool_manager(
+                Namespace(
+                    tool=[],
+                    tools=[],
+                    tool_shell_allow_pipelines=True,
+                    tool_database_dsn="sqlite:///:memory:",
+                )
+            )
+
+        self.assertIs(result, manager)
+        math_constructor.assert_called_once_with(namespace="math")
+        graph_constructor.assert_called_once()
+        code_constructor.assert_called_once_with(namespace="code")
+        browser_constructor.assert_called_once()
+        database_constructor.assert_called_once()
+        shell_constructor.assert_called_once()
+        self.assertEqual(
+            create_instance.call_args.kwargs["available_toolsets"],
+            [
+                math_toolset,
+                graph_toolset,
+                code_toolset,
+                browser_toolset,
+                database_toolset,
+                shell_toolset,
+            ],
+        )
+        self.assertEqual(
+            create_instance.call_args.kwargs["enable_tools"],
+            ["shell"],
+        )
+
+    def test_task_flow_tool_manager_uses_isolation_runtime(self) -> None:
+        manager = object()
+        isolation_runtime = object()
+        shell_toolset = object()
+
+        with (
+            patch.object(
+                task_cmds,
+                "_agent_container_runtime_settings",
+                return_value=None,
+            ),
+            patch.object(
+                task_cmds,
+                "_agent_isolation_runtime_settings",
+                return_value=isolation_runtime,
+            ),
+            patch.object(task_cmds, "MathToolSet", return_value=object()),
+            patch.object(
+                task_cmds, "ShellToolSet", return_value=shell_toolset
+            ) as shell_constructor,
+            patch.object(
+                task_cmds.ToolManager,
+                "create_instance",
+                return_value=manager,
+            ),
+        ):
+            result = task_cmds._task_flow_tool_manager(
+                Namespace(tool=["shell"], tools=[])
+            )
+
+        self.assertIs(result, manager)
+        shell_constructor.assert_called_once()
+        self.assertIs(
+            shell_constructor.call_args.kwargs["isolation_runtime"],
+            isolation_runtime,
+        )
+
+    def test_task_flow_tool_manager_uses_container_runtime(self) -> None:
+        manager = object()
+        container_runtime = object()
+        shell_toolset = object()
+
+        with (
+            patch.object(
+                task_cmds,
+                "_agent_container_runtime_settings",
+                return_value=container_runtime,
+            ),
+            patch.object(
+                task_cmds,
+                "_agent_isolation_runtime_settings",
+                return_value=None,
+            ),
+            patch.object(task_cmds, "MathToolSet", return_value=object()),
+            patch.object(
+                task_cmds, "ShellToolSet", return_value=shell_toolset
+            ) as shell_constructor,
+            patch.object(
+                task_cmds.ToolManager,
+                "create_instance",
+                return_value=manager,
+            ),
+        ):
+            result = task_cmds._task_flow_tool_manager(
+                Namespace(tool=["shell"], tools=[])
+            )
+
+        self.assertIs(result, manager)
+        shell_constructor.assert_called_once()
+        self.assertIs(
+            shell_constructor.call_args.kwargs["container_runtime"],
+            container_runtime,
+        )
 
     def test_inspection_commands_require_durable_store(self) -> None:
         commands = [
@@ -1473,6 +1773,72 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertEqual(client.input_value, "Ada Lovelace")
         self.assertIn("Task run completed (non-durable): run-1", output)
         self.assertIn('"privacy":"<redacted>"', output)
+
+    def test_run_passes_pipeline_tool_context_to_client_factory(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+        settings = task_cmds.ToolSettingsContext(
+            shell=task_cmds.ShellToolSettings(allow_pipelines=True),
+        )
+        flow_resolver = object()
+        client = _FakeTaskClient(
+            run_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-1",
+                    state=TaskRunState.SUCCEEDED,
+                    result=SimpleNamespace(
+                        output_summary={"privacy": "<redacted>"}
+                    ),
+                )
+            )
+        )
+        captured_kwargs: dict[str, object] = {}
+
+        def client_context(
+            definition_path: Path,
+            **kwargs: object,
+        ) -> _FakeTaskClientContext:
+            _ = definition_path
+            captured_kwargs.update(kwargs)
+            return _FakeTaskClientContext(client)
+
+        with (
+            patch.object(
+                task_cmds, "_task_tool_settings", return_value=settings
+            ),
+            patch.object(
+                task_cmds, "_task_flow_tool_manager", return_value=object()
+            ),
+            patch.object(
+                task_cmds,
+                "_task_flow_tool_resolver",
+                AsyncMock(return_value=flow_resolver),
+            ),
+            patch.object(
+                task_cmds,
+                "_task_cli_client_context",
+                side_effect=client_context,
+            ),
+        ):
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(FIXTURE_ROOT / "minimal.task.toml"),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertTrue(result)
+        self.assertIs(captured_kwargs["tool_settings"], settings)
+        self.assertIs(captured_kwargs["flow_tool_resolver"], flow_resolver)
 
     def test_run_json_prints_only_structured_output(self) -> None:
         stream = StringIO()
@@ -2784,6 +3150,78 @@ class CliTaskCommandShellTestCase(TestCase):
         )
         self.assertIn("Task enqueued: run-queued", console.export_text())
 
+    def test_enqueue_passes_pipeline_tool_context_to_client_factory(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+        settings = task_cmds.ToolSettingsContext(
+            shell=task_cmds.ShellToolSettings(allow_pipelines=True),
+        )
+        flow_resolver = object()
+        client = _FakeTaskClient(
+            enqueue_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-queued",
+                    state=TaskRunState.QUEUED,
+                )
+            )
+        )
+        captured_kwargs: dict[str, object] = {}
+
+        def client_context(
+            definition_path: Path,
+            **kwargs: object,
+        ) -> _FakeTaskClientContext:
+            _ = definition_path
+            captured_kwargs.update(kwargs)
+            return _FakeTaskClientContext(client)
+
+        with TemporaryDirectory() as tmpdir:
+            definition = Path(tmpdir) / "queued.task.toml"
+            _write_queued_definition(definition)
+            with (
+                patch.object(
+                    task_cmds, "_task_tool_settings", return_value=settings
+                ),
+                patch.object(
+                    task_cmds,
+                    "_task_flow_tool_manager",
+                    return_value=object(),
+                ),
+                patch.object(
+                    task_cmds,
+                    "_task_flow_tool_resolver",
+                    AsyncMock(return_value=flow_resolver),
+                ),
+                patch.object(
+                    task_cmds,
+                    "_task_cli_client_context",
+                    side_effect=client_context,
+                ),
+            ):
+                result = task_cmds.task_enqueue(
+                    Namespace(
+                        definition=str(definition),
+                        task_input="Ada",
+                        task_input_json=None,
+                        task_input_fields=(),
+                        task_files=(),
+                        store_dsn="postgresql://db/tasks",
+                        store_schema=None,
+                        wait=False,
+                        wait_timeout=None,
+                        poll_interval=1.0,
+                        ephemeral=False,
+                        queue="priority-documents",
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertTrue(result)
+        self.assertIs(captured_kwargs["tool_settings"], settings)
+        self.assertIs(captured_kwargs["flow_tool_resolver"], flow_resolver)
+
     def test_enqueue_reports_wait_timeout(self) -> None:
         console = Console(record=True, width=160)
         client = _FakeTaskClient(
@@ -3936,6 +4374,88 @@ class CliTaskCommandShellTestCase(TestCase):
 
         self.assertIsNotNone(target)
         self.assertIsNotNone(database)
+
+    def test_target_reference_validation_reraises_agent_read_errors(
+        self,
+    ) -> None:
+        class _FailingRunner:
+            async def validate_definition(
+                self,
+                definition: TaskDefinition,
+                context: object,
+            ) -> tuple[TaskValidationIssue, ...]:
+                _ = definition, context
+                raise OSError("private agent read failure")
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "agent.toml").write_text("", encoding="utf-8")
+            definition = TaskDefinition(
+                task=TaskMetadata(name="agent", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.text(),
+                execution=TaskExecutionTarget.agent("agent.toml"),
+            )
+
+            with (
+                patch.object(
+                    task_cmds, "_agent_task_target", return_value=object()
+                ),
+                patch.object(
+                    task_cmds,
+                    "_task_cli_target_runner",
+                    return_value=_FailingRunner(),
+                ),
+            ):
+                with self.assertRaises(OSError):
+                    asyncio_run(
+                        task_cmds._validate_task_target_reference(
+                            root / "task.toml",
+                            definition,
+                            tool_settings=task_cmds.ToolSettingsContext(),
+                        )
+                    )
+
+    def test_flow_reference_validation_skips_non_flow_targets(self) -> None:
+        issues = asyncio_run(
+            task_cmds._validate_task_flow_reference(
+                Path("task.toml"),
+                _flow_task_context(
+                    TaskExecutionTarget.agent("agent.toml")
+                ).definition,
+            )
+        )
+
+        self.assertEqual(issues, ())
+
+    def test_flow_reference_validation_reports_relative_read_failure(
+        self,
+    ) -> None:
+        loader = MagicMock()
+        loader.load_validation_result = AsyncMock(
+            side_effect=OSError("private flow path")
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            with patch(
+                "avalan.cli.commands.task.FlowDefinitionLoader",
+                return_value=loader,
+            ):
+                issues = asyncio_run(
+                    task_cmds._validate_task_flow_reference(
+                        root / "task.toml",
+                        _flow_task_context(
+                            TaskExecutionTarget.flow("flow.toml")
+                        ).definition,
+                    )
+                )
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "flow.read_failed")
+        loader.load_validation_result.assert_called_once_with(
+            root / "flow.toml"
+        )
 
     def test_flow_resolver_loads_flow_and_reports_load_issues(self) -> None:
         with TemporaryDirectory() as temporary_directory:

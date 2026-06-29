@@ -421,6 +421,34 @@ class EmptyToolResolver:
         raise AssertionError("tool execution is not expected")
 
 
+class StaticToolResolver(EmptyToolResolver):
+    def __init__(self, descriptors: tuple[ToolDescriptor, ...]) -> None:
+        self._descriptors = descriptors
+
+    def list_tools(self) -> list[ToolDescriptor]:
+        return list(self._descriptors)
+
+    def resolve_tool_name(
+        self,
+        name: str,
+        *,
+        provider_originated: bool = False,
+    ) -> ToolNameResolution:
+        _ = provider_originated
+        for descriptor in self._descriptors:
+            if descriptor.name == name:
+                return ToolNameResolution(
+                    requested_name=name,
+                    status=ToolNameResolutionStatus.EXACT,
+                    canonical_name=descriptor.name,
+                    candidates=[descriptor.name],
+                )
+        return super().resolve_tool_name(
+            name,
+            provider_originated=provider_originated,
+        )
+
+
 def _page_result(
     page_index: int,
     content: bytes,
@@ -1049,6 +1077,56 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
 
         self.assertEqual(issues[0].code, "flow.unknown_node_type")
         self.assertEqual(issues[0].path, "nodes.missing.type")
+
+    def test_strict_validation_reports_missing_pipeline_tool_resolver(
+        self,
+    ) -> None:
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_pipeline_definition()
+        )
+
+        issues = self._run_validate(
+            runner,
+            self._definition(),
+            TaskValidationContext(),
+        )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [("flow.unsupported_node_type", "nodes.pipeline.type")],
+        )
+
+    def test_strict_validation_accepts_pipeline_tool_resolver(self) -> None:
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_pipeline_definition(),
+            tool_resolver=StaticToolResolver(
+                (
+                    ToolDescriptor(
+                        name="shell.pipeline",
+                        parameter_schema={
+                            "type": "object",
+                            "properties": {
+                                "steps": {"type": "array"},
+                            },
+                        },
+                        return_schema={
+                            "type": "string",
+                            "description": (
+                                "Formatted shell composition result."
+                            ),
+                        },
+                    ),
+                )
+            ),
+        )
+
+        issues = self._run_validate(
+            runner,
+            self._definition(),
+            TaskValidationContext(),
+        )
+
+        self.assertEqual(issues, ())
 
     def test_strict_validation_rejects_invalid_resolver_result_safely(
         self,
@@ -6877,7 +6955,7 @@ def _strict_echo_definition() -> FlowDefinition:
             FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
         ),
         outputs=(
-            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+            FlowOutputDefinition(name="answer", type=FlowOutputType.JSON),
         ),
         entry_behavior=FlowEntryBehavior(node="echo"),
         output_behavior=FlowOutputBehavior(outputs={"answer": "echo.value"}),
@@ -6888,6 +6966,50 @@ def _strict_echo_definition() -> FlowDefinition:
                 mappings=(
                     FlowInputMapping(target="value", source="input.prompt"),
                 ),
+            ),
+        ),
+    )
+
+
+def _strict_pipeline_definition() -> FlowDefinition:
+    return FlowDefinition(
+        name="task-pipeline",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.JSON),
+        ),
+        entry_behavior=FlowEntryBehavior(node="pipeline"),
+        output_behavior=FlowOutputBehavior(
+            outputs={"answer": "pipeline.result"}
+        ),
+        nodes=(
+            FlowNodeDefinition(
+                name="pipeline",
+                type="tool",
+                ref="shell.pipeline",
+                config={
+                    "arguments": {
+                        "steps": (
+                            {
+                                "id": "read",
+                                "command": "cat",
+                                "paths": ("README.md",),
+                            },
+                            {
+                                "id": "count",
+                                "command": "wc",
+                                "options": {"lines": True},
+                                "stdin_from": {
+                                    "step_id": "read",
+                                    "stream": "stdout",
+                                },
+                            },
+                        ),
+                    }
+                },
             ),
         ),
     )

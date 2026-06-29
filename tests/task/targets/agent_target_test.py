@@ -63,6 +63,8 @@ from avalan.task.store import TaskExecutionContext
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
 from avalan.task.targets import agent as agent_module
+from avalan.tool.context import ToolSettingsContext
+from avalan.tool.shell import ShellToolSettings
 
 
 class FakeResponse:
@@ -207,6 +209,7 @@ class FakeLoader:
         self.inputs: list[object] = []
         self.entered = 0
         self.exited = 0
+        self.tool_settings: list[object | None] = []
 
     def next_response(self) -> object | None:
         if self.responses:
@@ -226,6 +229,7 @@ class FakeLoader:
         self.agent_ids.append(agent_id)
         self.disable_memory_values.append(disable_memory)
         self.uris.append(uri)
+        self.tool_settings.append(tool_settings)
         return FakeOrchestrator(self)
 
 
@@ -450,6 +454,132 @@ schema_ref = "schemas/answer.json"
             )
 
         self.assertEqual(issues, ())
+
+    def test_pipeline_agent_validation_requires_runtime_opt_in_when_forced(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "pipeline.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Pipeline"
+task = "Inspect files."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+
+[tool]
+enable = ["shell.pipeline"]
+
+[tool.shell]
+allow_pipelines = true
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(
+                FakeLoader(),
+                ref_base=root,
+                require_shell_pipeline_opt_in=True,
+            )
+            issues = self._run_validate(
+                runner,
+                self._definition(
+                    execution=TaskExecutionTarget.agent("agents/pipeline.toml")
+                ),
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [("execution.shell_pipeline_disabled", "execution.ref")],
+        )
+        rendered = " ".join(issues[0].as_dict().values())
+        self.assertNotIn("agents/pipeline.toml", rendered)
+
+    def test_pipeline_agent_validation_uses_runtime_opt_in(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "pipeline.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Pipeline"
+task = "Inspect files."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+
+[tool]
+enable = ["shell.pipeline"]
+
+[tool.shell]
+allow_pipelines = true
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(
+                FakeLoader(),
+                ref_base=root,
+                tool_settings=ToolSettingsContext(
+                    shell=ShellToolSettings(allow_pipelines=True),
+                ),
+                require_shell_pipeline_opt_in=True,
+            )
+            issues = self._run_validate(
+                runner,
+                self._definition(
+                    execution=TaskExecutionTarget.agent("agents/pipeline.toml")
+                ),
+            )
+
+        self.assertEqual(issues, ())
+
+    def test_pipeline_agent_config_helpers_cover_defensive_shapes(
+        self,
+    ) -> None:
+        cases: tuple[Mapping[str, object], ...] = (
+            {},
+            {"tool": object()},
+            {"tool": {"enable": []}},
+            {"tool": {"enable": object()}},
+            {"tool": {"enable": ["shell.pipeline"]}},
+            {"tool": {"enable": ["shell.pipeline"], "shell": object()}},
+            {
+                "tool": {
+                    "enable": ["shell.pipeline"],
+                    "shell": {"allow_pipelines": False},
+                }
+            },
+        )
+
+        for config in cases:
+            with self.subTest(config=config):
+                self.assertFalse(
+                    agent_module._agent_config_enables_shell_pipeline(config)
+                )
+
+        self.assertTrue(
+            agent_module._agent_config_enables_shell_pipeline(
+                {
+                    "tool": {
+                        "enable": "shell",
+                        "shell": {"allow_pipelines": True},
+                    }
+                }
+            )
+        )
+        self.assertEqual(
+            agent_module._agent_enabled_tools("shell.pipeline"),
+            ("shell.pipeline",),
+        )
+        self.assertEqual(agent_module._agent_enabled_tools(object()), ())
+        self.assertEqual(
+            agent_module._agent_enabled_tools(["shell", object()]),
+            ("shell",),
+        )
 
     def test_agent_schema_helpers_cover_invalid_shapes(self) -> None:
         definition = self._definition(
@@ -1033,6 +1163,27 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(loader.uris, ["ai://override", "ai://override"])
         self.assertEqual(loader.inputs, ["private prompt", "second prompt"])
         self.assertTrue(loader.paths[0].endswith("agents/valid.toml"))
+        self.assertEqual(loader.tool_settings, [None, None])
+
+    async def test_run_passes_tool_settings_to_agent_loader(self) -> None:
+        loader = FakeLoader(response_text="ok")
+        tool_settings = ToolSettingsContext(
+            shell=ShellToolSettings(allow_pipelines=True),
+        )
+        runner = AgentTaskTargetRunner(
+            loader,
+            tool_settings=tool_settings,
+        )
+
+        output = await runner.run(
+            self._context(
+                self._definition(output=TaskOutputContract.text()),
+                "input",
+            )
+        )
+
+        self.assertEqual(output, "ok")
+        self.assertEqual(loader.tool_settings, [tool_settings])
 
     async def test_run_maps_json_input_and_structured_output(self) -> None:
         loader = FakeLoader(response_text='{"answer":"ok"}')

@@ -25,6 +25,11 @@ runtime configuration.
   returns a structured invoice extraction object.
 - [poc_extraction/flow_task.toml](poc_extraction/flow_task.toml) runs the same
   extraction through a native flow with an agent node.
+- [pipeline_agent.task.toml](pipeline_agent.task.toml) runs an agent whose TOML
+  explicitly opts into `shell.pipeline`.
+- [pipeline_flow.task.toml](pipeline_flow.task.toml) runs a flow `tool` node
+  backed by `shell.pipeline` when the CLI runtime provides explicit tool
+  settings, returning the formatted pipeline result text.
 - [local_multimodal_media.task.toml](local_multimodal_media.task.toml) shows a
   local multimodal media contract without downloading a model in CI.
 - [queued_file_task.task.toml](queued_file_task.task.toml) shows a queued file
@@ -78,6 +83,17 @@ poetry run avalan task run docs/examples/tasks/poc_extraction/task.toml --epheme
 poetry run avalan task run docs/examples/tasks/poc_extraction/flow_task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
 
 poetry run avalan flow run docs/examples/tasks/poc_extraction/flow.toml --pdf ./sample.pdf --json --output extraction.json
+
+poetry run avalan task run docs/examples/tasks/pipeline_agent.task.toml \
+  --ephemeral \
+  --input "Count TODO lines under src and summarize the result"
+
+poetry run avalan task run docs/examples/tasks/pipeline_flow.task.toml \
+  --ephemeral \
+  --input "count README lines" \
+  --tool shell.pipeline \
+  --tool-shell-allow-pipelines \
+  --tool-shell-max-pipeline-stages 3
 ```
 
 Queue examples require PostgreSQL task storage, a migrated schema, HMAC keys,
@@ -91,6 +107,13 @@ poetry run avalan task enqueue docs/examples/tasks/queued_file_task.task.toml \
   --file-mime documents=application/pdf \
   --file-conversion documents=text \
   --wait
+
+poetry run avalan task worker \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --queue default \
+  --tool shell.pipeline \
+  --tool-shell-allow-pipelines \
+  --tool-shell-max-pipeline-stages 3
 ```
 
 For local text models, use a file task with `file_conversions` and request a

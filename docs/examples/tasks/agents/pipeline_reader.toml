@@ -1,0 +1,33 @@
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-4.1-mini"
+
+[tool]
+enable = [
+    "shell.pipeline",
+]
+
+[tool.shell]
+workspace_root = "."
+cwd = "."
+allow_pipelines = true
+max_pipeline_stages = 3
+max_pipeline_bytes = 1048576
+max_intermediate_bytes = 262144
+max_stdout_bytes = 65536
+max_stderr_bytes = 32768
+allowed_commands = [
+    "rg",
+    "head",
+    "wc",
+]
+
+[run]
+max_new_tokens = 1024
+
+[agent]
+name = "TaskPipelineReader"
+role = """
+Answer workspace questions by using the enabled structured shell pipeline.
+Pass only structured shell.pipeline arguments; do not compose shell strings or
+embed pipe characters in command arguments.
+"""
