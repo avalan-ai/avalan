@@ -84,6 +84,7 @@ class _ToolExecutionOutcome:
     context: ToolCallContext
     planned_index: int
     result: ToolCallOutcome | None
+    history_recorded: bool = False
 
 
 @dataclass(kw_only=True, slots=True)
@@ -1222,7 +1223,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             tool_messages = []
             tool_outcomes = []
             for outcome in completed_outcomes:
-                self._record_tool_outcome(outcome.result)
+                if not outcome.history_recorded:
+                    self._record_tool_outcome(outcome.result)
                 self._tool_context = outcome.context
                 tool_result = outcome.result
                 if not isinstance(
@@ -1518,9 +1520,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         outcomes = task.result()
         ordered = sorted(outcomes, key=lambda outcome: outcome.planned_index)
         for outcome in ordered:
+            self._record_tool_outcome(outcome.result)
             self._put_staging_item(
                 self._tool_result_outcomes,
-                outcome,
+                replace(outcome, history_recorded=True),
                 "tool result outcome",
             )
 
