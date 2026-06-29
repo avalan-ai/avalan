@@ -12,9 +12,13 @@ from ...isolation import (
 )
 from ...sandbox import SandboxAsyncBackend
 from .. import Tool, ToolSet
+from .composition_executor import CompositionExecutor, LocalCompositionExecutor
 from .container import ShellContainerCommandExecutor
 from .executor import CommandExecutor, LocalCommandExecutor
-from .formatting import format_shell_result
+from .formatting import (
+    format_shell_composition_result,
+    format_shell_result,
+)
 from .opt_in import SHELL_TOOL_NAMESPACE, enables_shell_pipeline
 from .policy import ExecutionPolicy
 from .process import ShellProcessRuntime
@@ -32,8 +36,10 @@ from .tools import (
     PdfInfoTool,
     PdfToPpmTool,
     PdfToTextTool,
+    PipelineTool,
     RgTool,
     SedTool,
+    ShellCompositionResultFormatter,
     ShellResultFormatter,
     TailTool,
     TesseractTool,
@@ -44,23 +50,8 @@ from collections.abc import Callable, Sequence
 from typing import cast
 
 
-async def _pipeline_tool_unavailable(**arguments: object) -> str:
-    """Reject shell pipeline calls before runtime support exists.
-
-    Args:
-        arguments: Structured pipeline arguments accepted by later phases.
-
-    Returns:
-        This stub never returns.
-    """
-    assert isinstance(arguments, dict)
-    raise AssertionError("shell.pipeline runtime is not implemented")
-
-
-_pipeline_tool_unavailable.__name__ = "pipeline"
-
-
 class ShellToolSet(ToolSet):
+    _pipeline_tool: PipelineTool
     _settings: ShellToolSettings
     _process_runtime: ShellProcessRuntime
 
@@ -69,7 +60,9 @@ class ShellToolSet(ToolSet):
         settings: ShellToolSettings | None = None,
         *,
         executor: CommandExecutor | None = None,
+        composition_executor: CompositionExecutor | None = None,
         formatter: ShellResultFormatter | None = None,
+        composition_formatter: ShellCompositionResultFormatter | None = None,
         namespace: str | None = "shell",
         policy: ExecutionPolicy | None = None,
         container_runtime: ContainerToolRuntimeSettings | None = None,
@@ -187,6 +180,26 @@ class ShellToolSet(ToolSet):
                 settings=self._settings,
             )
         )
+        composition_executor = (
+            composition_executor
+            or LocalCompositionExecutor(
+                settings=self._settings,
+                command_executor=executor,
+                process_runtime=self._process_runtime,
+            )
+        )
+        composition_formatter = composition_formatter or (
+            lambda result: format_shell_composition_result(
+                result,
+                settings=self._settings,
+            )
+        )
+        self._pipeline_tool = PipelineTool(
+            settings=self._settings,
+            policy=policy,
+            executor=composition_executor,
+            formatter=composition_formatter,
+        )
         tools: list[Callable[..., object] | Tool | ToolSet] = [
             RgTool(
                 settings=self._settings,
@@ -295,7 +308,7 @@ class ShellToolSet(ToolSet):
         if enables_shell_pipeline(
             enable_tools, self._settings
         ) and not _has_pipeline_tool(self.tools):
-            self.tools.append(_pipeline_tool_unavailable)
+            self.tools.append(self._pipeline_tool)
         return cast(ShellToolSet, super().with_enabled_tools(enable_tools))
 
 

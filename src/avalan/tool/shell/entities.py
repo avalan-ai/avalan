@@ -841,3 +841,38 @@ class ShellFormattedResult(str):
         self,
     ) -> tuple[type["ShellFormattedResult"], tuple[str, ExecutionResult]]:
         return (self.__class__, (str(self), self.execution_result))
+
+
+class ShellFormattedCompositionResult(str):
+    composition_result: ShellCompositionResult
+
+    def __new__(
+        cls,
+        value: str,
+        composition_result: ShellCompositionResult,
+    ) -> "ShellFormattedCompositionResult":
+        assert isinstance(value, str), "value must be a string"
+        assert isinstance(
+            composition_result,
+            ShellCompositionResult,
+        ), "composition_result must be a shell composition result"
+        formatted = str.__new__(cls, value)
+        formatted.composition_result = composition_result
+        return formatted
+
+    def __copy__(self) -> "ShellFormattedCompositionResult":
+        return self
+
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "ShellFormattedCompositionResult":
+        return self
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        type["ShellFormattedCompositionResult"],
+        tuple[str, ShellCompositionResult],
+    ]:
+        return (self.__class__, (str(self), self.composition_result))

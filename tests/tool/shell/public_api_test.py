@@ -46,6 +46,8 @@ from avalan.tool.shell import (
     ShellExecutionStatus,
     ShellExecutionStepResult,
     ShellExecutionStepSpec,
+    ShellFormattedCompositionResult,
+    ShellFormattedResult,
     ShellOutputKind,
     ShellPathMetadata,
     ShellPolicyDenied,
@@ -227,6 +229,14 @@ class ShellPublicApiTest(TestCase):
         self.assertIs(
             ShellStreamRef,
             import_module("avalan.tool.shell").ShellStreamRef,
+        )
+        self.assertIs(
+            ShellFormattedResult,
+            import_module("avalan.tool.shell").ShellFormattedResult,
+        )
+        self.assertIs(
+            ShellFormattedCompositionResult,
+            import_module("avalan.tool.shell").ShellFormattedCompositionResult,
         )
         self.assertIs(
             ShellCommandDefinition,

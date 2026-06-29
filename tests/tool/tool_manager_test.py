@@ -220,6 +220,23 @@ class ToolManagerCreationTestCase(TestCase):
             ),
         )
 
+    def test_string_schema_length_validation_edges(self):
+        self.assertIsNone(
+            ToolManager._schema_validation_error(
+                1,
+                {"type": ["string", "integer"], "minLength": 1},
+                "$.value",
+            )
+        )
+        self.assertEqual(
+            ToolManager._schema_validation_error(
+                "abcd",
+                {"type": "string", "maxLength": 3},
+                "$.value",
+            ),
+            "$.value must contain at most 3 character(s).",
+        )
+
     def test_get_calls_consumes_recovery_parser_output(self):
         call_id = _uuid4()
         manager = ToolManager.create_instance(

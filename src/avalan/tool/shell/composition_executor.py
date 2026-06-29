@@ -161,12 +161,14 @@ class LocalCompositionExecutor:
             await state.drain_tasks()
             worker.cancel()
             await gather(worker, return_exceptions=True)
-            return state.result(
+            result = state.result(
                 status=ShellExecutionStatus.TIMEOUT,
                 duration_ms=_duration_ms(start_time),
                 timed_out=True,
                 error_message="composition timed out",
             )
+            await _emit_step_completion_progress(stream, result.steps)
+            return result
         except CancelledError:
             await state.close_stdin_writers()
             await state.kill_processes()
@@ -204,17 +206,31 @@ class LocalCompositionExecutor:
                         content="process started",
                         metadata=_stage_stream_metadata(stage),
                     )
+                    await _emit_stream_event(
+                        stream,
+                        kind=ToolExecutionStreamKind.PROGRESS,
+                        content="started",
+                        progress=0.0,
+                        metadata=_stage_stream_metadata(stage),
+                    )
                     state.start_stderr_reader(stage)
                 state.start_stdout_routes()
                 pipeline_error = await state.wait_for_tasks()
                 if pipeline_error is not None:
                     status, error_message = pipeline_error
-                    return state.result(
+                    result = state.result(
                         status=status,
                         duration_ms=_duration_ms(start_time),
                         error_message=error_message,
                     )
-                return state.result(duration_ms=_duration_ms(start_time))
+                    await _emit_step_completion_progress(
+                        stream,
+                        result.steps,
+                    )
+                    return result
+                result = state.result(duration_ms=_duration_ms(start_time))
+                await _emit_step_completion_progress(stream, result.steps)
+                return result
         except Exception:
             await state.close_stdin_writers()
             await state.kill_processes()
@@ -305,11 +321,18 @@ class LocalCompositionExecutor:
         stream: Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None,
     ) -> None:
         by_id: dict[str, ShellExecutionStepResult] = {}
+        final_index = len(spec.steps) - 1
         for index, step in enumerate(spec.steps):
+            stdout_visible = index == final_index
             if step.stdin_from is None:
                 result = await self._command_executor.execute(
                     step.spec,
-                    stream=_stage_stream_callback(stream, step, index),
+                    stream=_stage_stream_callback(
+                        stream,
+                        step,
+                        index,
+                        stdout_visible=stdout_visible,
+                    ),
                 )
             else:
                 producer = by_id.get(step.stdin_from.step_id)
@@ -335,9 +358,18 @@ class LocalCompositionExecutor:
                 result = await self._execute_step_with_stdin(
                     step,
                     stdin,
-                    stream=_stage_stream_callback(stream, step, index),
+                    stream=_stage_stream_callback(
+                        stream,
+                        step,
+                        index,
+                        stdout_visible=stdout_visible,
+                    ),
                 )
-            step_result = _step_result_from_execution(step, result)
+            step_result = _step_result_from_execution(
+                step,
+                result,
+                stdout_visible=stdout_visible,
+            )
             results.append(step_result)
             by_id[step.id] = step_result
             if step.id in referenced_step_ids:
@@ -362,7 +394,12 @@ class LocalCompositionExecutor:
                 create_task(
                     self._command_executor.execute(
                         step.spec,
-                        stream=_stage_stream_callback(stream, step, index),
+                        stream=_stage_stream_callback(
+                            stream,
+                            step,
+                            index,
+                            stdout_visible=False,
+                        ),
                     )
                 )
             ] = step
@@ -1287,15 +1324,20 @@ def _stage_stream_callback(
     stream: Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None,
     step: ShellExecutionStepSpec,
     stage_index: int,
+    *,
+    stdout_visible: bool = True,
 ) -> Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None:
     if stream is None:
         return None
 
     async def forward(event: ToolExecutionStreamEvent) -> None:
+        if event.kind is ToolExecutionStreamKind.STDOUT and not stdout_visible:
+            return
         metadata = dict(event.metadata)
         metadata.update(
             {
                 "command": step.spec.command,
+                "stage_id": step.id,
                 "stage_index": stage_index,
                 "step_id": step.id,
             }
@@ -1315,6 +1357,29 @@ def _stage_stream_callback(
 def _stage_stream_metadata(stage: _PipelineStage) -> dict[str, object]:
     return {
         "command": stage.step.spec.command,
+        "stage_id": stage.step.id,
         "stage_index": stage.index,
         "step_id": stage.step.id,
     }
+
+
+async def _emit_step_completion_progress(
+    stream: Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None,
+    steps: tuple[ShellExecutionStepResult, ...],
+) -> None:
+    if stream is None:
+        return
+    for index, step in enumerate(steps):
+        await _emit_stream_event(
+            stream,
+            kind=ToolExecutionStreamKind.PROGRESS,
+            content=step.status.value,
+            progress=1.0,
+            metadata={
+                "command": step.command,
+                "stage_id": step.id,
+                "stage_index": index,
+                "status": step.status.value,
+                "step_id": step.id,
+            },
+        )

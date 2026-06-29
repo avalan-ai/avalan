@@ -27,18 +27,30 @@ from avalan.tool.shell import (
     PathOperand,
     ShellCommandDefinition,
     ShellCommandRequest,
+    ShellCommandStepRequest,
+    ShellCompositionRequest,
+    ShellCompositionResult,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
     ShellOutputKind,
+    ShellStreamRef,
     ShellToolSet,
     ShellToolSettings,
     TrustedExecutableResolver,
 )
 from avalan.tool.shell.display import (
     project_shell_command_request,
+    project_shell_composition_request,
+    project_shell_composition_result,
     project_shell_execution_result,
+    project_shell_tool_display,
 )
-from avalan.tool.shell.entities import ShellFormattedResult, ShellPathKind
+from avalan.tool.shell.entities import (
+    ShellFormattedCompositionResult,
+    ShellFormattedResult,
+    ShellPathKind,
+)
 
 _CALL_ARGUMENTS: dict[str, dict[str, object]] = {
     "shell.rg": {
@@ -108,6 +120,63 @@ class ShellDisplayProjectionCallTest(TestCase):
 
         assert descriptor is not None
         self.assertIsNone(descriptor.project_display(call))
+
+    def test_unknown_pipeline_command_payload_does_not_project(self) -> None:
+        manager = _shell_manager(["shell.pipeline"], allow_pipelines=True)
+        raw_command = "unknown PRIVATE_RAW_PAYLOAD_DO_NOT_LEAK"
+        call = ToolCall(
+            id="call-pipeline",
+            name="shell.pipeline",
+            arguments={
+                "steps": [
+                    {
+                        "id": "read",
+                        "command": raw_command,
+                    }
+                ]
+            },
+        )
+        descriptor = manager.describe_tool_call(call)
+
+        assert descriptor is not None
+        projection = descriptor.project_display(call)
+
+        self.assertIsNone(projection)
+
+    def test_pipeline_call_projection_handles_argument_edges(self) -> None:
+        manager = _shell_manager(["shell.pipeline"], allow_pipelines=True)
+        missing_call = ToolCall(
+            id="call-pipeline-missing",
+            name="shell.pipeline",
+            arguments=None,
+        )
+        invalid_call = ToolCall(
+            id="call-pipeline-invalid",
+            name="shell.pipeline",
+            arguments=cast(dict[str, ToolValue], ["not", "a", "dict"]),
+        )
+        valid_call = ToolCall(
+            id="call-pipeline-valid",
+            name="shell.pipeline",
+            arguments={
+                "steps": [
+                    {
+                        "id": "read",
+                        "command": "cat",
+                    }
+                ]
+            },
+        )
+        descriptor = manager.describe_tool("shell.pipeline")
+
+        assert descriptor is not None
+        self.assertIsNone(descriptor.project_display(missing_call))
+        self.assertIsNone(descriptor.project_display(invalid_call))
+        projection = descriptor.project_display(valid_call)
+
+        self.assertIsInstance(projection, ToolDisplayProjection)
+        assert isinstance(projection, ToolDisplayProjection)
+        self.assertEqual(projection.target, "cat")
 
     def test_none_call_arguments_use_tool_defaults(self) -> None:
         manager = _shell_manager(["shell.ls"])
@@ -479,6 +548,133 @@ class ShellDisplayProjectionCallTest(TestCase):
                 self.assertNotIn(name, payload)
                 self.assertIn("[redacted]", payload)
 
+    def test_composition_request_projection_shows_stage_chain_and_caps(
+        self,
+    ) -> None:
+        projection = project_shell_composition_request(
+            ShellCompositionRequest(
+                mode="pipeline",
+                steps=(
+                    ShellCommandStepRequest(
+                        id="read",
+                        command="cat",
+                        paths=("filesystem/visible.txt",),
+                        cwd="filesystem",
+                    ),
+                    ShellCommandStepRequest(
+                        id="count",
+                        command="wc",
+                        options={"lines": True},
+                        stdin_from=ShellStreamRef(
+                            step_id="read",
+                            stream="stdout",
+                        ),
+                        cwd="filesystem",
+                    ),
+                ),
+                timeout_seconds=2.5,
+                max_stdout_bytes=128,
+                max_stderr_bytes=64,
+                max_intermediate_bytes=256,
+            )
+        )
+
+        self.assertEqual(projection.action, "pipeline")
+        self.assertEqual(projection.label, "shell.pipeline")
+        self.assertEqual(projection.target, "cat | wc")
+        self.assertEqual(projection.scope, "filesystem")
+        self.assertEqual(_detail_value(projection, "mode"), "pipeline")
+        self.assertEqual(_detail_value(projection, "stage chain"), "cat | wc")
+        self.assertEqual(_detail_value(projection, "cwd"), "filesystem")
+        self.assertEqual(
+            _detail_value(projection, "caps"),
+            "timeout=2.5, stdout=128, stderr=64, intermediate=256",
+        )
+        self.assertEqual(projection.metrics["stage_count"], 2)
+
+    def test_composition_request_projection_redacts_unsafe_cwd(self) -> None:
+        projection = project_shell_composition_request(
+            ShellCompositionRequest(
+                steps=(
+                    ShellCommandStepRequest(
+                        id="read",
+                        command="cat",
+                        cwd="/Users/mariano/private",
+                    ),
+                )
+            )
+        )
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertTrue(projection.redacted)
+        self.assertNotIn("/Users/mariano/private", payload)
+        self.assertIn("[redacted]", payload)
+
+    def test_composition_request_projection_redacts_unknown_command(
+        self,
+    ) -> None:
+        raw_command = "unknown PRIVATE_RAW_PAYLOAD_DO_NOT_LEAK"
+        projection = project_shell_composition_request(
+            ShellCompositionRequest(
+                steps=(
+                    ShellCommandStepRequest(
+                        id="read",
+                        command=raw_command,
+                    ),
+                )
+            )
+        )
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertTrue(projection.redacted)
+        self.assertEqual(projection.target, "[redacted]")
+        self.assertNotIn(raw_command, payload)
+        self.assertIn("[redacted]", payload)
+
+    def test_generic_shell_display_projects_composition_request(self) -> None:
+        call = ToolCall(
+            id="call-pipeline",
+            name="shell.pipeline",
+            arguments={"steps": [{"id": "read", "command": "cat"}]},
+        )
+        projection = project_shell_tool_display(
+            call=call,
+            request=ShellCompositionRequest(
+                steps=(
+                    ShellCommandStepRequest(
+                        id="read",
+                        command="cat",
+                    ),
+                )
+            ),
+        )
+
+        self.assertIsInstance(projection, ToolDisplayProjection)
+        assert isinstance(projection, ToolDisplayProjection)
+        self.assertEqual(projection.label, "shell.pipeline")
+        self.assertEqual(projection.target, "cat")
+
+    def test_composition_request_projection_reports_mixed_cwd(self) -> None:
+        projection = project_shell_composition_request(
+            ShellCompositionRequest(
+                steps=(
+                    ShellCommandStepRequest(
+                        id="read",
+                        command="cat",
+                        cwd="input",
+                    ),
+                    ShellCommandStepRequest(
+                        id="count",
+                        command="wc",
+                        cwd="output",
+                    ),
+                )
+            )
+        )
+
+        self.assertEqual(projection.scope, "mixed cwd")
+        self.assertEqual(_detail_value(projection, "cwd"), "mixed cwd")
+
 
 class ShellDisplayProjectionTerminalTest(IsolatedAsyncioTestCase):
     def test_formatted_result_supports_copy_and_asdict(self) -> None:
@@ -525,6 +721,20 @@ class ShellDisplayProjectionTerminalTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(restored, ShellFormattedResult)
         self.assertEqual(restored, "formatted")
         self.assertEqual(restored.execution_result, result)
+
+    def test_formatted_composition_result_supports_copy_and_pickle(
+        self,
+    ) -> None:
+        result = _composition_result()
+        formatted = ShellFormattedCompositionResult("formatted", result)
+
+        restored = pickle_loads(pickle_dumps(formatted))
+
+        self.assertIs(copy(formatted), formatted)
+        self.assertIs(deepcopy(formatted), formatted)
+        self.assertIsInstance(restored, ShellFormattedCompositionResult)
+        self.assertEqual(restored, "formatted")
+        self.assertEqual(restored.composition_result, result)
 
     def test_error_outcome_without_execution_result_does_not_project(
         self,
@@ -587,6 +797,137 @@ class ShellDisplayProjectionTerminalTest(IsolatedAsyncioTestCase):
 
         assert descriptor is not None
         self.assertIsNone(descriptor.project_display(call, outcome))
+
+    def test_composition_result_projection_omits_raw_stream_content(
+        self,
+    ) -> None:
+        projection = project_shell_composition_result(
+            _composition_result(
+                stdout="FINAL_STDOUT_SHOULD_NOT_APPEAR",
+                stderr="RAW_STDERR_SHOULD_NOT_APPEAR",
+            )
+        )
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertEqual(projection.action, "pipeline")
+        self.assertEqual(projection.target, "cat | wc")
+        self.assertEqual(projection.status, "completed")
+        self.assertEqual(
+            _detail_value(projection, "stage statuses"),
+            "read:completed, count:completed",
+        )
+        self.assertEqual(_detail_value(projection, "stdout bytes"), 30)
+        self.assertEqual(_detail_value(projection, "stderr bytes"), 28)
+        self.assertNotIn("INTERMEDIATE_STDOUT_SHOULD_NOT_APPEAR", payload)
+        self.assertNotIn("FINAL_STDOUT_SHOULD_NOT_APPEAR", payload)
+        self.assertNotIn("RAW_STDERR_SHOULD_NOT_APPEAR", payload)
+        self.assertNotIn("PRIVATE_METADATA", payload)
+
+    def test_composition_result_carrier_outcome_projects_result(self) -> None:
+        manager = _shell_manager(
+            ["shell.pipeline"],
+            allow_pipelines=True,
+        )
+        call = ToolCall(
+            id="call-pipeline",
+            name="shell.pipeline",
+            arguments={
+                "steps": [
+                    {"id": "read", "command": "cat"},
+                    {
+                        "id": "count",
+                        "command": "wc",
+                        "stdin_from": {
+                            "step_id": "read",
+                            "stream": "stdout",
+                        },
+                    },
+                ]
+            },
+        )
+        result = _composition_result()
+        outcome = ToolCallResult(
+            id="result-pipeline",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=ShellFormattedCompositionResult("formatted", result),
+        )
+
+        projection = _terminal_projection(manager, outcome)
+
+        self.assertEqual(projection.label, "shell.pipeline")
+        self.assertEqual(
+            projection.summary,
+            "Pipeline completed: read:completed, count:completed.",
+        )
+        self.assertEqual(projection.status, "completed")
+
+    def test_composition_result_attribute_carrier_projects_result(
+        self,
+    ) -> None:
+        manager = _shell_manager(
+            ["shell.pipeline"],
+            allow_pipelines=True,
+        )
+        call = ToolCall(
+            id="call-pipeline",
+            name="shell.pipeline",
+            arguments={"steps": [{"id": "read", "command": "cat"}]},
+        )
+        result = _composition_result()
+        outcome = ToolCallResult(
+            id="result-pipeline",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=cast(ToolValue, _CompositionResultCarrier(result)),
+        )
+
+        projection = _terminal_projection(manager, outcome)
+
+        self.assertEqual(projection.label, "shell.pipeline")
+        self.assertEqual(projection.status, "completed")
+
+    def test_composition_result_projection_covers_error_summaries(
+        self,
+    ) -> None:
+        failed = project_shell_composition_result(
+            _composition_result(
+                status=ShellExecutionStatus.NONZERO_EXIT,
+                failed_step_status=ShellExecutionStatus.NONZERO_EXIT,
+                step_error_message=None,
+                error_message=None,
+            )
+        )
+        aggregate_with_message = project_shell_composition_result(
+            _composition_result(
+                status=ShellExecutionStatus.TIMEOUT,
+                failed_step_status=ShellExecutionStatus.COMPLETED,
+                error_message="aggregate timed out",
+            )
+        )
+        aggregate_without_message = project_shell_composition_result(
+            _composition_result(
+                status=ShellExecutionStatus.TIMEOUT,
+                failed_step_status=ShellExecutionStatus.COMPLETED,
+                error_message=None,
+            )
+        )
+
+        self.assertEqual(
+            failed.summary,
+            "Pipeline failed at count: nonzero_exit. "
+            "Stages: read:completed, count:nonzero_exit.",
+        )
+        self.assertEqual(
+            aggregate_with_message.summary,
+            "Pipeline ended with timeout: aggregate timed out.",
+        )
+        self.assertEqual(
+            aggregate_without_message.summary,
+            "Pipeline ended with timeout.",
+        )
 
     async def test_successful_execution_projection_uses_result_facts(
         self,
@@ -1050,11 +1391,13 @@ def _shell_manager(
     enabled_tools: list[str],
     *,
     executor: _StaticResultExecutor | None = None,
+    allow_pipelines: bool = False,
 ) -> ToolManager:
     fixture_root = Path(__file__).parent / "fixtures"
     settings = ShellToolSettings(
         workspace_root=str(fixture_root),
         allow_media_tools=True,
+        allow_pipelines=allow_pipelines,
     )
     resolver = TrustedExecutableResolver(
         executable_paths={
@@ -1071,6 +1414,65 @@ def _shell_manager(
         ],
         enable_tools=enabled_tools,
         settings=ToolManagerSettings(),
+    )
+
+
+def _composition_result(
+    *,
+    stdout: str = "final stdout",
+    stderr: str = "",
+    status: ShellExecutionStatus = ShellExecutionStatus.COMPLETED,
+    failed_step_status: ShellExecutionStatus | None = None,
+    step_error_message: str | None = None,
+    error_message: str | None = None,
+) -> ShellCompositionResult:
+    count_status = status if failed_step_status is None else failed_step_status
+    return ShellCompositionResult(
+        mode="pipeline",
+        status=status,
+        stdout=stdout,
+        stderr=stderr,
+        steps=(
+            ShellExecutionStepResult(
+                id="read",
+                command="cat",
+                status=ShellExecutionStatus.COMPLETED,
+                exit_code=0,
+                stdout="INTERMEDIATE_STDOUT_SHOULD_NOT_APPEAR",
+                stderr=stderr,
+                stdout_bytes=35,
+                stderr_bytes=len(stderr.encode()),
+                stdout_truncated=False,
+                stderr_truncated=False,
+                duration_ms=3,
+                metadata={
+                    "display_cwd": ".",
+                    "private": "PRIVATE_METADATA",
+                },
+            ),
+            ShellExecutionStepResult(
+                id="count",
+                command="wc",
+                status=count_status,
+                exit_code=(
+                    0 if count_status is ShellExecutionStatus.COMPLETED else 1
+                ),
+                stdout=stdout,
+                stderr="",
+                stdout_bytes=len(stdout.encode()),
+                stderr_bytes=0,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                duration_ms=4,
+                error_message=step_error_message,
+                metadata={"display_cwd": "."},
+            ),
+        ),
+        stdout_bytes=len(stdout.encode()),
+        stderr_bytes=len(stderr.encode()),
+        duration_ms=9,
+        error_message=error_message,
+        metadata={"private": "PRIVATE_RESULT_METADATA"},
     )
 
 
@@ -1239,6 +1641,11 @@ def _has_detail(
 class _ExecutionResultCarrier:
     def __init__(self, execution_result: ExecutionResult) -> None:
         self.execution_result = execution_result
+
+
+class _CompositionResultCarrier:
+    def __init__(self, composition_result: ShellCompositionResult) -> None:
+        self.composition_result = composition_result
 
 
 class _InvalidExecutionResultCarrier:

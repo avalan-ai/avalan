@@ -1,7 +1,6 @@
 from asyncio import Event, create_task, gather, run, sleep, wait_for
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import patch
 
@@ -35,14 +34,20 @@ from avalan.tool.shell import (
     ExecutionSpec,
     LocalCommandExecutor,
     ShellCommandDefinition,
+    ShellCompositionResult,
+    ShellCompositionSpec,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
     ShellOutputKind,
     ShellToolSet,
     ShellToolSettings,
     TrustedExecutableResolver,
     unavailable_executable_lookup,
 )
-from avalan.tool.shell.entities import ShellFormattedResult
+from avalan.tool.shell.entities import (
+    ShellFormattedCompositionResult,
+    ShellFormattedResult,
+)
 from avalan.tool.shell.process import ShellProcessRuntime
 
 _EXPECTED_SCHEMA_NAMES = (
@@ -128,18 +133,42 @@ class ShellToolSetAssemblyTest(TestCase):
 
                 self.assertEqual(_schema_names(toolset), expected)
 
-    def test_pipeline_stub_fails_closed_until_runtime_phase(self) -> None:
+    def test_pipeline_tool_executes_through_composition_executor(self) -> None:
+        settings = ShellToolSettings(allow_pipelines=True)
+        composition_executor = _RecordingCompositionExecutor()
         toolset = ShellToolSet(
-            settings=ShellToolSettings(allow_pipelines=True)
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            composition_executor=composition_executor,
         ).with_enabled_tools(["shell.pipeline"])
         pipeline = toolset.tools[0]
 
         assert callable(pipeline)
-        with self.assertRaisesRegex(
-            AssertionError,
-            "shell.pipeline runtime is not implemented",
-        ):
-            run(cast(Callable[[], Awaitable[str]], pipeline)())
+        output = run(
+            pipeline(
+                steps=(
+                    {"id": "list", "command": "ls"},
+                    {
+                        "id": "count",
+                        "command": "wc",
+                        "stdin_from": {
+                            "step_id": "list",
+                            "stream": "stdout",
+                        },
+                    },
+                ),
+                context=ToolCallContext(),
+            )
+        )
+
+        self.assertIsInstance(output, ShellFormattedCompositionResult)
+        self.assertIn("tool: shell.pipeline", output)
+        self.assertIn("status: completed", output)
+        self.assertEqual(composition_executor.modes, ["pipeline"])
+        self.assertEqual(
+            [step.id for step in composition_executor.specs[0].steps],
+            ["list", "count"],
+        )
 
     def test_toolset_rejects_namespaces_that_change_schema_names(
         self,
@@ -912,6 +941,56 @@ class _StreamingExecutor(CommandExecutor):
             output_kind=ShellOutputKind.TEXT,
             stdout_bytes=4,
             stderr_bytes=0,
+        )
+
+
+class _RecordingCompositionExecutor:
+    def __init__(self) -> None:
+        self.modes: list[str] = []
+        self.specs: list[ShellCompositionSpec] = []
+
+    async def execute_composition(
+        self,
+        spec: ShellCompositionSpec,
+        *,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ShellCompositionResult:
+        self.modes.append(spec.mode)
+        self.specs.append(spec)
+        if stream is not None:
+            await stream(
+                ToolExecutionStreamEvent(
+                    kind=ToolExecutionStreamKind.STDOUT,
+                    content="2\n",
+                    metadata={"stage_id": "count", "stage_index": 1},
+                )
+            )
+        return ShellCompositionResult(
+            mode=spec.mode,
+            status=ShellExecutionStatus.COMPLETED,
+            stdout="2\n",
+            stderr="",
+            steps=tuple(
+                ShellExecutionStepResult(
+                    id=step.id,
+                    command=step.spec.command,
+                    status=ShellExecutionStatus.COMPLETED,
+                    exit_code=0,
+                    stdout="2\n" if index == len(spec.steps) - 1 else "",
+                    stderr="",
+                    stdout_bytes=2 if index == len(spec.steps) - 1 else 0,
+                    stderr_bytes=0,
+                    stdout_truncated=False,
+                    stderr_truncated=False,
+                    duration_ms=1,
+                )
+                for index, step in enumerate(spec.steps)
+            ),
+            stdout_bytes=2,
+            stderr_bytes=0,
+            duration_ms=2,
         )
 
 

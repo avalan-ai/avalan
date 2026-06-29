@@ -62,6 +62,10 @@ from .entities import (
     ShellExecutionStepSpec as ShellExecutionStepSpec,
 )
 from .entities import (
+    ShellFormattedCompositionResult as ShellFormattedCompositionResult,
+)
+from .entities import ShellFormattedResult as ShellFormattedResult
+from .entities import (
     ShellOutputKind as ShellOutputKind,
 )
 from .entities import ShellPolicyDenied as ShellPolicyDenied

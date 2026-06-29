@@ -27,6 +27,7 @@ from avalan.tool.shell import (
     ExecutionPolicy,
     ExecutionResult,
     ExecutionSpec,
+    ShellCommandDefinition,
     ShellCommandRequest,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
@@ -151,6 +152,46 @@ class ShellToolManagerFilteringTest(TestCase):
         self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.RESOLVE)
         self.assertEqual(diagnostic.requested_name, "shell.pipeline")
         self.assertIsNone(diagnostic.canonical_name)
+
+    def test_pipeline_tool_schema_is_nested_and_provider_safe(self) -> None:
+        manager = _pipeline_shell_manager(["shell.pipeline"])
+
+        self.assertEqual(_tool_names(manager), ("shell.pipeline",))
+        self.assertEqual(_schema_names(manager), ("shell.pipeline",))
+        descriptor = manager.describe_tool("shell.pipeline")
+        assert descriptor is not None
+        assert descriptor.parameter_schema is not None
+        properties = descriptor.parameter_schema["properties"]
+        steps_schema = properties["steps"]
+        assert isinstance(steps_schema, dict)
+        step_schema = steps_schema["items"]
+        assert isinstance(step_schema, dict)
+
+        self.assertEqual(step_schema["required"], ["command", "id"])
+        self.assertFalse(step_schema["additionalProperties"])
+        self.assertEqual(steps_schema["minItems"], 1)
+        self.assertEqual(
+            sorted(step_schema["properties"]),
+            ["command", "cwd", "id", "options", "paths", "stdin_from"],
+        )
+        self.assertEqual(step_schema["properties"]["id"]["minLength"], 1)
+        self.assertEqual(
+            step_schema["properties"]["command"]["minLength"],
+            1,
+        )
+        stdin_schema = step_schema["properties"]["stdin_from"]
+        assert isinstance(stdin_schema, dict)
+        self.assertEqual(
+            stdin_schema["properties"]["step_id"]["minLength"],
+            1,
+        )
+        self.assertEqual(
+            stdin_schema["properties"]["stream"]["enum"],
+            ["stdout"],
+        )
+        provider_name = _provider_safe_name(manager, "shell.pipeline")
+        self.assertTrue(provider_name.startswith("avl_"))
+        self.assertNotIn(".", provider_name)
 
     def test_schema_and_descriptors_use_single_shell_namespace(self) -> None:
         manager = _shell_manager(["shell"])
@@ -352,6 +393,115 @@ class ShellToolManagerExecutionTest(IsolatedAsyncioTestCase):
         self.assertIs(outcome.stage, ToolCallDiagnosticStage.RESOLVE)
         self.assertEqual(outcome.details["candidates"], ["shell.cat"])
 
+    async def test_malformed_pipeline_arguments_stop_before_execution(
+        self,
+    ) -> None:
+        manager = _pipeline_shell_manager(["shell.pipeline"])
+
+        outcome = await manager.execute_call(
+            ToolCall(
+                id="call-1",
+                name="shell.pipeline",
+                arguments={
+                    "steps": [
+                        {
+                            "id": "read",
+                            "command": "cat",
+                            "unexpected": True,
+                        }
+                    ]
+                },
+            ),
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(
+            outcome.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.VALIDATE)
+        self.assertEqual(outcome.canonical_name, "shell.pipeline")
+        self.assertIn("$.steps[0].unexpected is not allowed", outcome.message)
+
+    async def test_malformed_pipeline_stdin_ref_fails_schema_validation(
+        self,
+    ) -> None:
+        manager = _pipeline_shell_manager(["shell.pipeline"])
+
+        outcome = await manager.execute_call(
+            ToolCall(
+                id="call-1",
+                name="shell.pipeline",
+                arguments={
+                    "steps": [
+                        {"id": "read", "command": "cat"},
+                        {
+                            "id": "count",
+                            "command": "wc",
+                            "stdin_from": {
+                                "step_id": "read",
+                                "stream": "stderr",
+                            },
+                        },
+                    ]
+                },
+            ),
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(
+            outcome.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertIn(
+            "$.steps[1].stdin_from.stream must be one of ['stdout']",
+            outcome.message,
+        )
+
+    async def test_pipeline_empty_steps_and_blank_strings_fail_schema(
+        self,
+    ) -> None:
+        manager = _pipeline_shell_manager(["shell.pipeline"])
+        cases: tuple[tuple[dict[str, object], str], ...] = (
+            (
+                {"steps": []},
+                "$.steps must contain at least 1 item(s).",
+            ),
+            (
+                {"steps": [{"id": "", "command": "cat"}]},
+                "$.steps[0].id must contain at least 1 character(s).",
+            ),
+            (
+                {"steps": [{"id": "read", "command": ""}]},
+                "$.steps[0].command must contain at least 1 character(s).",
+            ),
+        )
+
+        for arguments, message in cases:
+            with self.subTest(arguments=arguments):
+                outcome = await manager.execute_call(
+                    ToolCall(
+                        id="call-1",
+                        name="shell.pipeline",
+                        arguments=arguments,
+                    ),
+                    context=ToolCallContext(),
+                )
+
+                self.assertIsInstance(outcome, ToolCallDiagnostic)
+                assert isinstance(outcome, ToolCallDiagnostic)
+                self.assertIs(
+                    outcome.code,
+                    ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+                )
+                self.assertIs(outcome.stage, ToolCallDiagnosticStage.VALIDATE)
+                self.assertEqual(outcome.canonical_name, "shell.pipeline")
+                self.assertIn(message, outcome.message)
+
 
 class ShellToolWrapperStaticGuardTest(TestCase):
     def test_wrapper_source_does_not_import_executor_escape_hatches(
@@ -426,6 +576,27 @@ def _shell_manager(enabled_tools: list[str]) -> ToolManager:
     )
 
 
+def _pipeline_shell_manager(enabled_tools: list[str]) -> ToolManager:
+    fixture_root = Path(__file__).parent / "fixtures"
+    settings = ShellToolSettings(
+        workspace_root=str(fixture_root),
+        allow_media_tools=True,
+        allow_pipelines=True,
+    )
+    return ToolManager.create_instance(
+        available_toolsets=[
+            ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings, resolver=_AllResolved()
+                ),
+            )
+        ],
+        enable_tools=enabled_tools,
+        settings=ToolManagerSettings(),
+    )
+
+
 def _unavailable_shell_manager(enabled_tools: list[str]) -> ToolManager:
     fixture_root = Path(__file__).parent / "fixtures"
     settings = ShellToolSettings(
@@ -493,6 +664,14 @@ class _RecordingExecutor:
     async def execute(self, spec: ExecutionSpec) -> ExecutionResult:
         self.calls += 1
         raise AssertionError("executor should not be called")
+
+
+class _AllResolved:
+    async def resolve(
+        self,
+        command: ShellCommandDefinition,
+    ) -> str | None:
+        return f"/trusted/bin/{command.executable_name}"
 
 
 def _tool_names(manager: ToolManager) -> tuple[str, ...]:

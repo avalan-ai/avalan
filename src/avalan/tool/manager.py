@@ -1156,6 +1156,10 @@ class ToolManager:
             return None
 
         schema_type = schema.get("type")
+        if schema_type == "string" or (
+            isinstance(schema_type, list) and "string" in schema_type
+        ):
+            return cls._string_schema_validation_error(value, schema, path)
         if schema_type == "object" or (
             isinstance(schema_type, list) and "object" in schema_type
         ):
@@ -1252,6 +1256,25 @@ class ToolManager:
                 )
                 if error is not None:
                     return error
+        return None
+
+    @classmethod
+    def _string_schema_validation_error(
+        cls,
+        value: Any,
+        schema: dict[str, Any],
+        path: str,
+    ) -> str | None:
+        if not isinstance(value, str):
+            return None
+
+        min_length = schema.get("minLength")
+        if isinstance(min_length, int) and len(value) < min_length:
+            return f"{path} must contain at least {min_length} character(s)."
+
+        max_length = schema.get("maxLength")
+        if isinstance(max_length, int) and len(value) > max_length:
+            return f"{path} must contain at most {max_length} character(s)."
         return None
 
     @classmethod

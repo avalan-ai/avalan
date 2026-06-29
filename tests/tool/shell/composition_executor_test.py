@@ -972,6 +972,203 @@ class LocalCompositionExecutorTest(IsolatedAsyncioTestCase):
         self.assertTrue(result.steps[0].stderr_truncated)
         self.assertIn("[warn:rg]", result.stderr)
 
+    async def test_pipeline_streams_final_stdout_and_stage_stderr_only(
+        self,
+    ) -> None:
+        spec = _composition(
+            ("read", "count"),
+            steps={
+                "read": _step(
+                    "read",
+                    "cat",
+                    _python_spec(
+                        "cat",
+                        "from sys import stdout, stderr\n"
+                        "stdout.write('INTERMEDIATE_STDOUT')\n"
+                        "stderr.write('read warning\\n')\n",
+                    ),
+                ),
+                "count": _step(
+                    "count",
+                    "wc",
+                    _python_spec(
+                        "wc",
+                        "from sys import stdin, stdout, stderr\n"
+                        "stdin.read()\n"
+                        "stdout.write('FINAL_STDOUT')\n"
+                        "stderr.write('count warning\\n')\n",
+                    ),
+                    stdin_from="read",
+                ),
+            },
+        )
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def record(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        result = await LocalCompositionExecutor().execute_composition(
+            spec,
+            stream=record,
+        )
+
+        self.assertEqual(result.stdout, "FINAL_STDOUT")
+        stdout_events = [
+            event
+            for event in events
+            if event.kind is ToolExecutionStreamKind.STDOUT
+        ]
+        stderr_events = [
+            event
+            for event in events
+            if event.kind is ToolExecutionStreamKind.STDERR
+        ]
+        progress_events = [
+            event
+            for event in events
+            if event.kind is ToolExecutionStreamKind.PROGRESS
+        ]
+
+        self.assertEqual(
+            [event.content for event in stdout_events], ["FINAL_STDOUT"]
+        )
+        self.assertNotIn(
+            "INTERMEDIATE_STDOUT",
+            "".join(event.content or "" for event in events),
+        )
+        self.assertEqual(
+            sorted(
+                [
+                    (
+                        event.content,
+                        event.metadata["stage_id"],
+                        event.metadata["stage_index"],
+                    )
+                    for event in stderr_events
+                ],
+                key=lambda item: item[2],
+            ),
+            [
+                (
+                    "read warning\n",
+                    "read",
+                    0,
+                ),
+                ("count warning\n", "count", 1),
+            ],
+        )
+        self.assertTrue(
+            any(
+                event.content == "completed"
+                and event.metadata.get("stage_id") == "count"
+                for event in progress_events
+            )
+        )
+
+    async def test_serial_stream_suppresses_non_final_stdout(self) -> None:
+        spec = _composition(
+            ("first", "second"),
+            mode="serial",
+            steps={
+                "first": _step("first", "first", _direct_spec("first")),
+                "second": _step("second", "second", _direct_spec("second")),
+            },
+        )
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def record(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        result = await LocalCompositionExecutor(
+            command_executor=_StreamingCommandExecutor(),
+        ).execute_composition(spec, stream=record)
+
+        self.assertEqual(result.stdout, "second stdout\n")
+        self.assertEqual(
+            [
+                event.content
+                for event in events
+                if event.kind is ToolExecutionStreamKind.STDOUT
+            ],
+            ["second stdout\n"],
+        )
+        self.assertNotIn(
+            "first stdout\n",
+            "".join(event.content or "" for event in events),
+        )
+        self.assertEqual(
+            [
+                (
+                    event.content,
+                    event.metadata["stage_id"],
+                    event.metadata["stage_index"],
+                )
+                for event in events
+                if event.kind is ToolExecutionStreamKind.STDERR
+            ],
+            [
+                ("first stderr\n", "first", 0),
+                ("second stderr\n", "second", 1),
+            ],
+        )
+
+    async def test_parallel_stream_suppresses_all_stdout(self) -> None:
+        spec = _composition(
+            ("first", "second"),
+            mode="parallel",
+            steps={
+                "first": _step("first", "first", _direct_spec("first")),
+                "second": _step("second", "second", _direct_spec("second")),
+            },
+        )
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def record(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        result = await LocalCompositionExecutor(
+            command_executor=_StreamingCommandExecutor(),
+        ).execute_composition(spec, stream=record)
+
+        self.assertEqual(
+            result.stdout,
+            "[first:first]\nfirst stdout\n[second:second]\nsecond stdout\n",
+        )
+        self.assertEqual(
+            [
+                event.content
+                for event in events
+                if event.kind is ToolExecutionStreamKind.STDOUT
+            ],
+            [],
+        )
+        self.assertNotIn(
+            "first stdout\n",
+            "".join(event.content or "" for event in events),
+        )
+        self.assertNotIn(
+            "second stdout\n",
+            "".join(event.content or "" for event in events),
+        )
+        self.assertEqual(
+            sorted(
+                [
+                    (
+                        event.content,
+                        event.metadata["stage_id"],
+                        event.metadata["stage_index"],
+                    )
+                    for event in events
+                    if event.kind is ToolExecutionStreamKind.STDERR
+                ],
+                key=lambda item: item[2],
+            ),
+            [
+                ("first stderr\n", "first", 0),
+                ("second stderr\n", "second", 1),
+            ],
+        )
+
     async def test_serial_routing_overflow_returns_too_large(self) -> None:
         spec = _composition(
             ("read", "count"),
@@ -1531,6 +1728,33 @@ class _RecordingCommandExecutor:
         if delay:
             await sleep(delay)
         return self._results[spec.command]
+
+
+class _StreamingCommandExecutor:
+    async def execute(
+        self,
+        spec: ExecutionSpec,
+        *,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ExecutionResult:
+        stdout = f"{spec.command} stdout\n"
+        stderr = f"{spec.command} stderr\n"
+        if stream is not None:
+            await stream(
+                ToolExecutionStreamEvent(
+                    kind=ToolExecutionStreamKind.STDOUT,
+                    content=stdout,
+                )
+            )
+            await stream(
+                ToolExecutionStreamEvent(
+                    kind=ToolExecutionStreamKind.STDERR,
+                    content=stderr,
+                )
+            )
+        return _execution_result(spec, stdout=stdout, stderr=stderr)
 
 
 class _BlockingCommandExecutor:
