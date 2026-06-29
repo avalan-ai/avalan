@@ -25,7 +25,9 @@ type = "tool"
 ref = "shell.pipeline"
 
 [nodes.pipeline.config.arguments]
+mode = "pipeline"
 max_stdout_bytes = 1024
+max_intermediate_bytes = 262144
 
 [[nodes.pipeline.config.arguments.steps]]
 id = "read"

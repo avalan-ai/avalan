@@ -91,7 +91,7 @@ enabled.
 | `memory` | `memory.message.read`, `memory.read`, `memory.list`, `memory.stores` | Retrieve prior messages and permanent memory partitions. |
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `tesseract` | Read, inspect, search, and transform workspace files under policy limits. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `tesseract`, `pipeline` | Read, inspect, search, transform, and compose workspace file operations under policy limits. `shell.pipeline` also requires `allow_pipelines = true`. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -230,6 +230,7 @@ cwd = "."
 materialized_input_files_dir = "avalan-input-files"
 max_stdout_bytes = 65536
 allow_media_tools = false
+allow_pipelines = false
 ```
 
 Media tools such as `shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`, and
@@ -257,6 +258,103 @@ or secrets.
 See [Isolation execution](ISOLATION.md) for the supported mode/backend matrix,
 policy fields, examples, approval behavior, diagnostics, and real-runtime
 test gates.
+
+### Structured Shell Pipelines
+
+`shell.pipeline` composes existing shell tools through structured JSON
+arguments. It is not a shell string runner: Avalan never evaluates
+model-supplied `cmd | other_cmd`, `bash -c`, `/bin/sh -c`, arbitrary
+executables, redirections, command substitutions, or public stdin. The tool is
+default-denied and appears only when trusted configuration both selects
+`shell.pipeline`, `shell`, or `shell.*` and sets `allow_pipelines = true`.
+
+```toml
+[tool]
+enable = ["shell.pipeline"]
+
+[tool.shell]
+workspace_root = "."
+cwd = "."
+allow_pipelines = true
+max_pipeline_stages = 3
+max_pipeline_bytes = 1048576
+max_intermediate_bytes = 262144
+max_stdout_bytes = 65536
+max_stderr_bytes = 32768
+allowed_commands = ["cat", "rg", "wc", "sed", "awk", "jq"]
+```
+
+A model-facing call is an object with ordered `steps`. Each step has a stable
+`id`, a known shell `command`, optional command-specific `options`, optional
+workspace-relative `paths`, optional `cwd`, and optional `stdin_from`. Stream
+references are typed objects and currently support only `stdout`.
+
+```json
+{
+  "mode": "pipeline",
+  "steps": [
+    {
+      "id": "search",
+      "command": "rg",
+      "options": {"pattern": "class ShellToolSettings"},
+      "paths": ["src/avalan/tool/shell"]
+    },
+    {
+      "id": "count",
+      "command": "wc",
+      "options": {"lines": true},
+      "stdin_from": {"step_id": "search", "stream": "stdout"}
+    }
+  ],
+  "timeout_seconds": 10,
+  "max_stdout_bytes": 8192,
+  "max_stderr_bytes": 8192,
+  "max_intermediate_bytes": 262144
+}
+```
+
+`mode = "pipeline"` is a linear byte pipeline. The first step cannot read
+stdin, and each later step either omits `stdin_from` and implicitly reads the
+previous step's stdout or explicitly references the previous step's stdout.
+`mode = "serial"` runs shell-local steps in order and permits `stdin_from`
+only from an earlier step. `mode = "parallel"` runs independent shell-local
+steps and rejects `stdin_from`.
+
+Policy normalization happens before execution:
+
+- `allow_pipelines` must be true and stage count must fit
+  `max_pipeline_stages`.
+- Each command is normalized by the same shell command policy used for direct
+  `shell.cat`, `shell.rg`, `shell.jq`, and other tools.
+- `allowed_commands`, path policy, cwd policy, executable resolution, timeout
+  limits, argument budgets, output byte caps, and media gates still apply.
+- `stdin_from` references must name existing earlier stages and stream
+  `stdout`.
+- Text and JSON stream contracts are checked before bytes are routed.
+- Generated-output commands such as page rasterization and OCR output files
+  are not valid producers inside v1 byte pipelines.
+- Public `ShellCommandRequest.stdin` and the `"-"` path sentinel remain
+  denied.
+
+Only final-stage stdout is user-visible by default. Intermediate stdout is
+transport data: it is capped by `max_intermediate_bytes`, included only in
+stage metadata when the runtime projects safe events, and redacted or
+truncated before display, task, MCP, A2A, server, or audit output. Stderr is
+collected per stage and contributes to the formatted result without making
+private host paths public.
+
+Full byte-stream pipelines are local-only in v1. When shell execution is
+`backend = "sandbox"` or `backend = "container"`, `mode = "pipeline"` and any
+composition with `stdin_from` fail closed with a policy-denied result stating
+that a trusted structured runner is required. Isolated `serial` or `parallel`
+compositions without stdin routing may delegate through the existing
+single-command executor when the selected backend and profile can enforce the
+individual commands. Avalan does not lower any isolated composition to shell
+text.
+
+See [agent_shell_pipeline.toml](examples/agent_shell_pipeline.toml),
+[shell_pipeline.flow.toml](examples/flows/shell_pipeline.flow.toml), and the
+pipeline task examples in [docs/examples/tasks](examples/tasks/README.md).
 
 ## Database Tools
 
@@ -431,3 +529,5 @@ local runs often use `harmony`, while DS4 native tool calls use `dsml`.
 - [FLOWS.md](FLOWS.md) - Tool calls inside multi-step workflows.
 - [TASKS.md](TASKS.md) - Durable task execution.
 - [CLI.md](CLI.md) - Complete CLI flags.
+- [SHELL_PIPELINE_TRACEABILITY.md](SHELL_PIPELINE_TRACEABILITY.md) - Pipeline
+  requirement-to-test inventory.

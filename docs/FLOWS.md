@@ -195,6 +195,52 @@ Tool nodes execute only through explicitly enabled tools. For the example
 above, run with `--tool math.calculator` or enable the tool in the application
 runtime.
 
+Strict tool nodes can also pin a structured shell pipeline. The flow stores
+the tool arguments as TOML data, not as a shell command string:
+
+```toml
+[nodes.pipeline]
+type = "tool"
+ref = "shell.pipeline"
+
+[nodes.pipeline.config.arguments]
+max_stdout_bytes = 1024
+max_intermediate_bytes = 262144
+
+[[nodes.pipeline.config.arguments.steps]]
+id = "read"
+command = "cat"
+paths = ["README.md"]
+
+[[nodes.pipeline.config.arguments.steps]]
+id = "count"
+command = "wc"
+options = { lines = true }
+
+[nodes.pipeline.config.arguments.steps.stdin_from]
+step_id = "read"
+stream = "stdout"
+```
+
+The tracked example needs a runtime that registers a `ToolManager` with
+`shell.pipeline` enabled and `allow_pipelines = true`. The standalone
+`avalan flow validate` command uses the default CLI flow registry and does not
+accept tool-runtime flags. In the repository, the exact validation scope is:
+
+```sh
+poetry run pytest \
+    tests/flow/validator_test.py::FlowValidatorTestCase::test_docs_shell_pipeline_flow_examples_validate_with_runtime \
+    -q
+```
+
+Use an SDK/programmatic validator with a configured `ToolManager` when
+validation must include `shell.pipeline` availability outside the test suite.
+
+`shell.pipeline` tool nodes fail closed unless the runtime enables
+`shell.pipeline` and trusted shell settings set `allow_pipelines = true`.
+Byte-stream pipelines are local-only in v1; sandbox and container byte
+pipelines require a future trusted structured runner.
+
 ## Branching and Review
 
 Flows can route based on state or output. Common branches include:

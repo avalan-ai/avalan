@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest import TestCase, main
 
 from async_helpers import run_async
@@ -1248,6 +1249,36 @@ class FlowValidatorTestCase(TestCase):
         )
 
         self.assertTrue(result.ok, result.public_diagnostics)
+
+    def test_docs_shell_pipeline_flow_examples_validate_with_runtime(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.pipeline"],
+            available_toolsets=[
+                ShellToolSet(settings=ShellToolSettings(allow_pipelines=True))
+            ],
+            settings=ToolManagerSettings(),
+        )
+        loader = flow_loader.FlowDefinitionLoader(
+            tool_flow_node_registry(manager)
+        )
+        root = Path(__file__).resolve().parents[2]
+        examples = (
+            root / "docs" / "examples" / "flows" / "shell_pipeline.flow.toml",
+            root / "docs" / "examples" / "tasks" / "pipeline_flow.flow.toml",
+        )
+
+        for example_path in examples:
+            with self.subTest(example=example_path.name):
+                result = run_async(loader.load_validation_result(example_path))
+
+                self.assertTrue(result.ok, result.public_diagnostics)
+                assert result.definition is not None
+                self.assertEqual(
+                    result.definition.nodes[0].ref,
+                    "shell.pipeline",
+                )
 
     def test_validate_flow_definition_rejects_strict_tool_refs(
         self,

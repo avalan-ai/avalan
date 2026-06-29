@@ -28,8 +28,9 @@ runtime configuration.
 - [pipeline_agent.task.toml](pipeline_agent.task.toml) runs an agent whose TOML
   explicitly opts into `shell.pipeline`.
 - [pipeline_flow.task.toml](pipeline_flow.task.toml) runs a flow `tool` node
-  backed by `shell.pipeline` when the CLI runtime provides explicit tool
-  settings, returning the formatted pipeline result text.
+  backed by `shell.pipeline` when an SDK, host, or worker runtime provides a
+  configured tool resolver and trusted shell settings, returning the formatted
+  pipeline result text.
 - [local_multimodal_media.task.toml](local_multimodal_media.task.toml) shows a
   local multimodal media contract without downloading a model in CI.
 - [queued_file_task.task.toml](queued_file_task.task.toml) shows a queued file
@@ -86,14 +87,20 @@ poetry run avalan flow run docs/examples/tasks/poc_extraction/flow.toml --pdf ./
 
 poetry run avalan task run docs/examples/tasks/pipeline_agent.task.toml \
   --ephemeral \
-  --input "Count TODO lines under src and summarize the result"
+  --input "Count shell.pipeline mentions under src and summarize the result"
+```
 
-poetry run avalan task run docs/examples/tasks/pipeline_flow.task.toml \
-  --ephemeral \
-  --input "count README lines" \
-  --tool shell.pipeline \
-  --tool-shell-allow-pipelines \
-  --tool-shell-max-pipeline-stages 3
+The `pipeline_flow.task.toml` example is a flow-backed fixture for runtimes
+that supply a `ToolManager` with `shell.pipeline` enabled. The standalone task
+CLI uses the default flow validator for this target, which does not register
+strict tool nodes, so CI covers it through focused loader/validator tests
+rather than as a direct `task run` command:
+
+```bash
+poetry run pytest \
+  tests/flow/validator_test.py::FlowValidatorTestCase::test_docs_shell_pipeline_flow_examples_validate_with_runtime \
+  tests/task/task_loader_test.py::TaskDefinitionLoaderTest::test_docs_shell_pipeline_task_examples_load \
+  -q
 ```
 
 Queue examples require PostgreSQL task storage, a migrated schema, HMAC keys,

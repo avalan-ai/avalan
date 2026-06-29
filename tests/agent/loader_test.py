@@ -985,6 +985,45 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(tool_settings.shell.max_intermediate_bytes, 512)
             await stack.aclose()
 
+    async def test_docs_shell_pipeline_agent_example_builds_settings(self):
+        example_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "examples"
+            / "agent_shell_pipeline.toml"
+        )
+        stack = AsyncExitStack()
+        loader = OrchestratorLoader(
+            hub=MagicMock(spec=HuggingfaceHub),
+            logger=MagicMock(spec=Logger),
+            participant_id=uuid4(),
+            stack=stack,
+        )
+
+        with patch.object(
+            loader,
+            "from_settings",
+            new=AsyncMock(return_value="orch"),
+        ) as from_settings:
+            result = await loader.from_file(
+                str(example_path), agent_id=uuid4()
+            )
+
+        self.assertEqual(result, "orch")
+        settings = from_settings.call_args.args[0]
+        self.assertEqual(settings.tools, ["shell.pipeline"])
+        tool_settings = from_settings.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        self.assertTrue(tool_settings.shell.allow_pipelines)
+        self.assertEqual(tool_settings.shell.max_pipeline_stages, 3)
+        self.assertEqual(tool_settings.shell.max_pipeline_bytes, 1048576)
+        self.assertEqual(tool_settings.shell.max_intermediate_bytes, 262144)
+        self.assertEqual(
+            tool_settings.shell.allowed_commands,
+            ("rg", "head", "wc"),
+        )
+        await stack.aclose()
+
     async def test_from_file_pipeline_opt_in_exposes_schema_and_filter(self):
         kwargs = await _from_file_tool_manager_kwargs(
             _minimal_agent_toml()

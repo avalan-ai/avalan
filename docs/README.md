@@ -53,6 +53,9 @@ agents and workflows across local and hosted models.
 - [Isolation traceability](ISOLATION_TRACEABILITY.md) - Map isolation agenda
   phases and release-readiness safety claims to concrete test files and
   commands.
+- [Shell pipeline traceability](SHELL_PIPELINE_TRACEABILITY.md) - Map the
+  structured shell pipeline agenda, examples, integration surfaces, and
+  release gates to concrete tests.
 - [Task file delivery](task_file_delivery.md) - Understand direct and queued
   file descriptors, provider references, conversion, local backends, and the
   file-delivery capability matrix.

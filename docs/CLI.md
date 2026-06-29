@@ -125,6 +125,53 @@ avalan agent run \
   --tool-shell-max-stdout-bytes 65536
 ```
 
+Structured shell pipelines are a separate explicit opt-in. The model receives
+`shell.pipeline` as a typed tool with `steps` objects, not as a shell string.
+Use these flags only from trusted operator configuration:
+
+| Flag | Effect |
+| --- | --- |
+| `--tool-shell-allow-pipelines` | Expose `shell.pipeline` when the enabled tool selection includes `shell.pipeline`, `shell`, or `shell.*`. |
+| `--tool-shell-max-pipeline-stages N` | Cap the number of stages in one composition. |
+| `--tool-shell-max-pipeline-bytes N` | Cap final aggregate pipeline stdout bytes. |
+| `--tool-shell-max-intermediate-bytes N` | Cap stdout bytes retained or routed between stages. |
+
+```bash
+avalan agent run docs/examples/agent_shell_pipeline.toml \
+  --tool shell.pipeline \
+  --tool-shell-workspace-root . \
+  --tool-shell-allow-pipelines \
+  --tool-shell-max-pipeline-stages 3 \
+  --tool-shell-max-pipeline-bytes 1048576 \
+  --tool-shell-max-intermediate-bytes 262144
+```
+
+Flow and task runtimes can use the same pipeline settings when the host
+application builds a `ToolManager` for strict tool nodes. The standalone
+`avalan flow validate` command uses the default CLI flow registry and does not
+accept tool-runtime flags, so it is not the runtime-availability validator for
+these examples. The tracked flow-backed pipeline examples are validated in CI
+with a configured `ToolManager`:
+
+```bash
+poetry run pytest \
+  tests/flow/validator_test.py::FlowValidatorTestCase::test_docs_shell_pipeline_flow_examples_validate_with_runtime \
+  tests/task/task_loader_test.py::TaskDefinitionLoaderTest::test_docs_shell_pipeline_task_examples_load \
+  -q
+```
+
+Queued task workers fail closed for `shell.pipeline` unless the worker process
+is started with explicit operator pipeline settings:
+
+```bash
+avalan task worker \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --queue default \
+  --tool shell.pipeline \
+  --tool-shell-allow-pipelines \
+  --tool-shell-max-pipeline-stages 3
+```
+
 Trusted deployment TOML may select isolated shell execution. `[tool.sandbox]`
 and `[tool.container]` define operator-controlled profiles; `[tool.shell.sandbox]`
 and `[tool.shell.container]` select one of those profiles for shell tools.
@@ -139,6 +186,9 @@ container backends are `docker` and `apple-container`. Container policy flags
 require `--tool-shell-backend container`; sandbox policy flags require
 `--tool-shell-backend sandbox`. See [Isolation execution](ISOLATION.md) for
 trusted policy fields, platform limits, approval behavior, and diagnostics.
+Full byte-stream pipelines are local-only in v1; sandbox or container
+`mode="pipeline"` and any `stdin_from` composition fail closed until a trusted
+structured runner is supplied.
 
 Use `shell` or `shell.*` to enable the full namespace, or a concrete name such
 as `shell.rg` for one command. An empty `[tool.shell]` section enables shell
@@ -676,6 +726,10 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES]
                         [--tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI]
                         [--tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES]
+                        [--tool-shell-allow-pipelines]
+                        [--tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES]
+                        [--tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES]
+                        [--tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES]
                         [--tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES]
                         [--tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES]
                         [--tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS]
@@ -954,6 +1008,10 @@ shell tool settings:
   --tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES
   --tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI
   --tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES
+  --tool-shell-allow-pipelines
+  --tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES
+  --tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES
+  --tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES
   --tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES
   --tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES
   --tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS
@@ -2012,6 +2070,10 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                        [--tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES]
                        [--tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI]
                        [--tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES]
+                       [--tool-shell-allow-pipelines]
+                       [--tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES]
+                       [--tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES]
+                       [--tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES]
                        [--tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES]
                        [--tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES]
                        [--tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS]
@@ -2157,6 +2219,10 @@ shell tool settings:
   --tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES
   --tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI
   --tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES
+  --tool-shell-allow-pipelines
+  --tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES
+  --tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES
+  --tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES
   --tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES
   --tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES
   --tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS

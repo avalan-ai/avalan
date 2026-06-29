@@ -34,7 +34,7 @@ Inspect the configured workspace with the enabled structured shell pipeline.
 Use shell.pipeline only with structured step objects; never compose shell text
 or pass pipes inside an argument string.
 
-Example shell.pipeline arguments for counting TODO lines:
+Example shell.pipeline arguments for counting shell pipeline mentions:
 
 {
   "mode": "pipeline",
@@ -42,7 +42,7 @@ Example shell.pipeline arguments for counting TODO lines:
     {
       "id": "search",
       "command": "rg",
-      "options": {"pattern": "TODO"},
+      "options": {"pattern": "shell.pipeline"},
       "paths": ["src"]
     },
     {
