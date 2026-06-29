@@ -1,3 +1,6 @@
+from .composition_executor import (
+    BackendBoundaryCompositionExecutor as BackendBoundaryCompositionExecutor,
+)
 from .composition_executor import CompositionExecutor as CompositionExecutor
 from .composition_executor import (
     LocalCompositionExecutor as LocalCompositionExecutor,

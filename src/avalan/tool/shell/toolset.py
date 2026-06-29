@@ -12,7 +12,11 @@ from ...isolation import (
 )
 from ...sandbox import SandboxAsyncBackend
 from .. import Tool, ToolSet
-from .composition_executor import CompositionExecutor, LocalCompositionExecutor
+from .composition_executor import (
+    BackendBoundaryCompositionExecutor,
+    CompositionExecutor,
+    LocalCompositionExecutor,
+)
 from .container import ShellContainerCommandExecutor
 from .executor import CommandExecutor, LocalCommandExecutor
 from .formatting import (
@@ -47,7 +51,7 @@ from .tools import (
 )
 
 from collections.abc import Callable, Sequence
-from typing import cast
+from typing import Literal, cast
 
 
 class ShellToolSet(ToolSet):
@@ -104,6 +108,12 @@ class ShellToolSet(ToolSet):
         assert not (
             execution_mode != "local" and executor is not None
         ), "custom shell executors require shell execution mode local"
+        assert not (
+            execution_mode != "local" and composition_executor is not None
+        ), (
+            "custom shell composition executors require shell execution mode "
+            "local"
+        )
         if isolation_runtime is not None:
             assert isinstance(isolation_runtime, IsolationToolRuntimeSettings)
             assert not _isolation_runtime_hooks_configured(
@@ -180,12 +190,20 @@ class ShellToolSet(ToolSet):
                 settings=self._settings,
             )
         )
-        composition_executor = (
-            composition_executor
-            or LocalCompositionExecutor(
+        composition_executor = composition_executor or (
+            LocalCompositionExecutor(
                 settings=self._settings,
                 command_executor=executor,
                 process_runtime=self._process_runtime,
+            )
+            if execution_mode == "local"
+            else BackendBoundaryCompositionExecutor(
+                backend=cast(
+                    Literal["sandbox", "container"],
+                    execution_mode,
+                ),
+                command_executor=executor,
+                settings=self._settings,
             )
         )
         composition_formatter = composition_formatter or (

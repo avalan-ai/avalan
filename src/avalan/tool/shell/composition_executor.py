@@ -9,6 +9,7 @@ from .entities import (
     ShellCompositionResult,
     ShellCompositionSpec,
     ShellExecutionErrorCode,
+    ShellExecutionModeValue,
     ShellExecutionStatus,
     ShellExecutionStepResult,
     ShellExecutionStepSpec,
@@ -576,6 +577,76 @@ class LocalCompositionExecutor:
 
 
 @final
+class BackendBoundaryCompositionExecutor:
+    """Delegate isolated serial/parallel and deny byte pipelines.
+
+    Sandbox and container byte pipelines require a future trusted structured
+    runner. They must not be lowered to shell text or shell evaluation.
+    """
+
+    def __init__(
+        self,
+        *,
+        backend: ShellExecutionModeValue,
+        command_executor: CommandExecutor,
+        settings: ShellToolSettings | None = None,
+    ) -> None:
+        assert backend in {
+            "sandbox",
+            "container",
+        }, "backend must be sandbox or container"
+        assert hasattr(
+            command_executor,
+            "execute",
+        ), "command_executor must execute commands"
+        self._backend = backend
+        self._delegate = LocalCompositionExecutor(
+            settings=settings,
+            command_executor=command_executor,
+        )
+
+    async def execute_composition(
+        self,
+        spec: ShellCompositionSpec,
+        *,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ShellCompositionResult:
+        if not isinstance(spec, ShellCompositionSpec):
+            raise NotImplementedError(
+                "isolated shell composition execution is not implemented"
+            )
+        start_time = perf_counter()
+        backend_error = _backend_boundary_error(spec, self._backend)
+        if backend_error is not None:
+            return _composition_not_started_result(
+                spec,
+                status=ShellExecutionStatus.POLICY_DENIED,
+                start_time=start_time,
+                error_message=backend_error,
+            )
+        if spec.mode == "pipeline" or _has_stdin_routing(spec):
+            return _composition_not_started_result(
+                spec,
+                status=ShellExecutionStatus.POLICY_DENIED,
+                start_time=start_time,
+                error_message=_isolated_byte_pipeline_error(self._backend),
+            )
+        if spec.mode == "serial":
+            return await self._delegate.execute_composition(
+                spec,
+                stream=stream,
+            )
+        if spec.mode == "parallel":
+            return await self._delegate.execute_composition(
+                spec,
+                stream=stream,
+            )
+        raise NotImplementedError("unsupported shell composition mode")
+
+
+@final
 @dataclass(slots=True)
 class _PipelineStage:
     step: ShellExecutionStepSpec
@@ -953,6 +1024,21 @@ def _pipeline_not_started_result(
     start_time: float,
     error_message: str,
 ) -> ShellCompositionResult:
+    return _composition_not_started_result(
+        spec,
+        status=status,
+        start_time=start_time,
+        error_message=error_message,
+    )
+
+
+def _composition_not_started_result(
+    spec: ShellCompositionSpec,
+    *,
+    status: ShellExecutionStatus,
+    start_time: float,
+    error_message: str,
+) -> ShellCompositionResult:
     final_index = len(spec.steps) - 1
     return _composition_result(
         spec,
@@ -968,6 +1054,32 @@ def _pipeline_not_started_result(
         status=status,
         duration_ms=_duration_ms(start_time),
         error_message=error_message,
+    )
+
+
+def _backend_boundary_error(
+    spec: ShellCompositionSpec,
+    backend: ShellExecutionModeValue,
+) -> str | None:
+    for step in spec.steps:
+        if step.spec.backend != backend:
+            return (
+                f"{backend} composition cannot run "
+                f"{step.spec.backend} shell specs"
+            )
+    return None
+
+
+def _has_stdin_routing(spec: ShellCompositionSpec) -> bool:
+    return any(step.stdin_from is not None for step in spec.steps)
+
+
+def _isolated_byte_pipeline_error(
+    backend: ShellExecutionModeValue,
+) -> str:
+    return (
+        f"{backend} byte pipelines require a trusted structured runner "
+        "and cannot be lowered to shell evaluation"
     )
 
 

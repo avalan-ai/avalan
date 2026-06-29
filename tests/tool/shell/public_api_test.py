@@ -22,6 +22,7 @@ from avalan.tool.shell import (
     SHELL_COMMAND_IDS,
     SHELL_COMMANDS,
     SHELL_STATUS_ERROR_CODES,
+    BackendBoundaryCompositionExecutor,
     CommandExecutor,
     CompositionExecutor,
     ExecutableLookup,
@@ -97,6 +98,12 @@ class ShellPublicApiTest(TestCase):
         self.assertIs(
             LocalCompositionExecutor,
             import_module("avalan.tool.shell").LocalCompositionExecutor,
+        )
+        self.assertIs(
+            BackendBoundaryCompositionExecutor,
+            import_module(
+                "avalan.tool.shell"
+            ).BackendBoundaryCompositionExecutor,
         )
         self.assertIs(
             ShellSandboxCommandExecutor,
