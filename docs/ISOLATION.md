@@ -236,14 +236,13 @@ unavailable profiles, image or pull denials, invalid paths, unsafe secrets,
 network denials, timeouts, cancellations, output validation failures, cleanup
 uncertainty, stale durable metadata, stale approvals, and unsupported surfaces.
 
-`shell.pipeline` has an additional v1 boundary: full byte-stream pipelines are
-supported only by the local composition executor. A sandbox or container plan
-with `mode = "pipeline"` or any `stdin_from` byte routing is policy-denied
+`shell.pipeline` has an additional backend boundary: full byte-stream pipelines
+are supported only by the local composition executor. A sandbox or container
+plan with `mode = "pipeline"` or any `stdin_from` byte routing is policy-denied
 with a structured result instead of falling back to host execution or lowering
 the composition to shell text. Isolated `serial` and `parallel` compositions
 without stdin routing may run only through the selected backend's existing
-single-command executor. A future trusted structured runner can add isolated
-byte pipelines without changing model-facing schemas.
+single-command executor.
 
 Optional local fallback is allowed only when the profile is not required and
 policy permits local execution. Required `sandbox` execution does not become

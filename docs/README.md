@@ -50,12 +50,8 @@ agents and workflows across local and hosted models.
 - [Isolation execution](ISOLATION.md) - Configure local, sandbox, and
   container execution modes, trusted policy fields, approval behavior,
   fail-closed semantics, diagnostics, and optional live-runtime gates.
-- [Isolation traceability](ISOLATION_TRACEABILITY.md) - Map isolation agenda
-  phases and release-readiness safety claims to concrete test files and
-  commands.
-- [Shell pipeline traceability](SHELL_PIPELINE_TRACEABILITY.md) - Map the
-  structured shell pipeline agenda, examples, integration surfaces, and
-  release gates to concrete tests.
+- [Isolation traceability](ISOLATION_TRACEABILITY.md) - Map isolation safety
+  claims to concrete test files and commands.
 - [Task file delivery](task_file_delivery.md) - Understand direct and queued
   file descriptors, provider references, conversion, local backends, and the
   file-delivery capability matrix.

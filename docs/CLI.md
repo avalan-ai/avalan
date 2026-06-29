@@ -186,9 +186,8 @@ container backends are `docker` and `apple-container`. Container policy flags
 require `--tool-shell-backend container`; sandbox policy flags require
 `--tool-shell-backend sandbox`. See [Isolation execution](ISOLATION.md) for
 trusted policy fields, platform limits, approval behavior, and diagnostics.
-Full byte-stream pipelines are local-only in v1; sandbox or container
-`mode="pipeline"` and any `stdin_from` composition fail closed until a trusted
-structured runner is supplied.
+Full byte-stream pipelines are local-only; sandbox or container
+`mode="pipeline"` and any `stdin_from` composition fail closed.
 
 Use `shell` or `shell.*` to enable the full namespace, or a concrete name such
 as `shell.rg` for one command. An empty `[tool.shell]` section enables shell

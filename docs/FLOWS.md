@@ -238,8 +238,8 @@ validation must include `shell.pipeline` availability outside the test suite.
 
 `shell.pipeline` tool nodes fail closed unless the runtime enables
 `shell.pipeline` and trusted shell settings set `allow_pipelines = true`.
-Byte-stream pipelines are local-only in v1; sandbox and container byte
-pipelines require a future trusted structured runner.
+Byte-stream pipelines are local-only; sandbox and container byte pipelines fail
+closed.
 
 ## Branching and Review
 

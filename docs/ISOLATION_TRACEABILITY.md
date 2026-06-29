@@ -1,9 +1,9 @@
 # Isolation Traceability
 
-This matrix maps the isolation agenda to concrete verification files and
-commands. It is a documentation aid, not a replacement for the full test
-suite. "Partial" means existing tests cover part of the requirement and the
-remaining gap is listed in the notes.
+This matrix maps isolation safety claims to concrete verification files and
+commands. It is a documentation aid, not a replacement for the full test suite.
+"Partial" means existing tests cover part of the requirement and the remaining
+gap is listed in the notes.
 
 ## Commands
 
@@ -33,7 +33,7 @@ remaining gap is listed in the notes.
 | Phase 10: documentation | Supported modes, backends, policy fields, setup, examples, test gates, platform limits, security posture, fail-closed behavior, approval behavior, and diagnostics are documented. | `docs/ISOLATION.md`, `docs/CONTAINERS.md`, `docs/TOOLS.md`, `docs/INSTALL.md`, `docs/CLI.md` | Covered by documentation changes. |
 | Phase 10: traceability | Requirement-to-test mapping exists for isolation phases and safety claims. | `docs/ISOLATION_TRACEABILITY.md` | Covered by documentation changes. |
 | Phase 10: diagnostics | Stable diagnostic inventory, public dictionaries, audit metadata, and model-facing formatting are covered. | `tests/isolation/isolation_settings_test.py` | Covered by `stable_isolation_diagnostic_inventory()`. |
-| Phase 10: removed-backend sweep | Active docs and CLI-help-adjacent files do not claim support for Podman, nerdctl, containerd/nerdctl, Microsoft containers, Windows Docker, WSL2, Hyper-V, or removed env gates. | Search command: `rg -n "podman|nerdctl|containerd|Windows Docker|WSL2|Hyper-V|Microsoft container|microsoft container|AVALAN_CONTAINER_PODMAN|AVALAN_CONTAINER_NERDCTL|AVALAN_CONTAINER_WINDOWS" docs README.md src/avalan/cli src/avalan/tool` | Covered for active docs and CLI help. Matches in `docs/ISOLATION.md` and this file are explicit non-support statements. Historical specs and inventory/negative tests intentionally retain removed terms. |
+| Phase 10: removed-backend sweep | Active docs and CLI-help-adjacent files do not claim support for Podman, nerdctl, containerd/nerdctl, Microsoft containers, Windows Docker, WSL2, Hyper-V, or removed env gates. | Search command: `rg -n "podman|nerdctl|containerd|Windows Docker|WSL2|Hyper-V|Microsoft container|microsoft container|AVALAN_CONTAINER_PODMAN|AVALAN_CONTAINER_NERDCTL|AVALAN_CONTAINER_WINDOWS" docs README.md src/avalan/cli src/avalan/tool` | Covered for active docs and CLI help. Matches in `docs/ISOLATION.md` and this file are explicit non-support statements. Internal inventory and negative tests intentionally retain removed terms. |
 
 ## Phase 10 Safety Claims
 

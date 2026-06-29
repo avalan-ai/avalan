@@ -332,7 +332,7 @@ Policy normalization happens before execution:
   `stdout`.
 - Text and JSON stream contracts are checked before bytes are routed.
 - Generated-output commands such as page rasterization and OCR output files
-  are not valid producers inside v1 byte pipelines.
+  are not valid producers inside byte pipelines.
 - Public `ShellCommandRequest.stdin` and the `"-"` path sentinel remain
   denied.
 
@@ -343,14 +343,13 @@ truncated before display, task, MCP, A2A, server, or audit output. Stderr is
 collected per stage and contributes to the formatted result without making
 private host paths public.
 
-Full byte-stream pipelines are local-only in v1. When shell execution is
+Full byte-stream pipelines are local-only. When shell execution is
 `backend = "sandbox"` or `backend = "container"`, `mode = "pipeline"` and any
-composition with `stdin_from` fail closed with a policy-denied result stating
-that a trusted structured runner is required. Isolated `serial` or `parallel`
-compositions without stdin routing may delegate through the existing
-single-command executor when the selected backend and profile can enforce the
-individual commands. Avalan does not lower any isolated composition to shell
-text.
+composition with `stdin_from` fail closed with a policy-denied result. Isolated
+`serial` or `parallel` compositions without stdin routing may delegate through
+the existing single-command executor when the selected backend and profile can
+enforce the individual commands. Avalan does not lower any isolated composition
+to shell text.
 
 See [agent_shell_pipeline.toml](examples/agent_shell_pipeline.toml),
 [shell_pipeline.flow.toml](examples/flows/shell_pipeline.flow.toml), and the
@@ -529,5 +528,3 @@ local runs often use `harmony`, while DS4 native tool calls use `dsml`.
 - [FLOWS.md](FLOWS.md) - Tool calls inside multi-step workflows.
 - [TASKS.md](TASKS.md) - Durable task execution.
 - [CLI.md](CLI.md) - Complete CLI flags.
-- [SHELL_PIPELINE_TRACEABILITY.md](SHELL_PIPELINE_TRACEABILITY.md) - Pipeline
-  requirement-to-test inventory.
