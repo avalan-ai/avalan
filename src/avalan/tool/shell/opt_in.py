@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 SHELL_TOOL_NAMESPACE = "shell"
 SHELL_TOOL_WILDCARD = "shell.*"
+SHELL_PIPELINE_TOOL = "shell.pipeline"
 
 
 def normalize_shell_enabled_tools(
@@ -36,6 +37,27 @@ def enables_shell_tools(enabled_tools: Sequence[str] | None) -> bool:
         or (
             tool_name.startswith(f"{SHELL_TOOL_NAMESPACE}.")
             and len(tool_name) > len(f"{SHELL_TOOL_NAMESPACE}.")
+        )
+        for tool_name in enabled_tools
+    )
+
+
+def enables_shell_pipeline(
+    enabled_tools: Sequence[str] | None,
+    shell_settings: ShellToolSettings | None,
+) -> bool:
+    """Return whether selection and trusted settings expose pipelines."""
+    if not shell_settings or not shell_settings.allow_pipelines:
+        return False
+    if enabled_tools is None:
+        return False
+
+    return any(
+        tool_name
+        in (
+            SHELL_TOOL_NAMESPACE,
+            SHELL_TOOL_WILDCARD,
+            SHELL_PIPELINE_TOOL,
         )
         for tool_name in enabled_tools
     )

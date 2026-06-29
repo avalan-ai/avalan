@@ -1,8 +1,9 @@
-from ..entities import ShellExecutionErrorCode
+from ..entities import ShellExecutionErrorCode, ShellOutputKind
 from .base import (
     ShellCommandDefinition,
     ShellCommandPolicyContext,
     ShellDependencyGroup,
+    ShellStreamContract,
 )
 from .helpers import (
     _contains_unsafe_control,
@@ -174,9 +175,10 @@ def build_argv(
         },
         command="awk",
     )
-    _validate_filter_paths(
-        context.paths, command="awk", allowed_kinds=("text_file",)
-    )
+    if not context.stdin_mode:
+        _validate_filter_paths(
+            context.paths, command="awk", allowed_kinds=("text_file",)
+        )
     fields = _awk_fields(request.options.get("fields"), settings)
     field_separator = _literal_option(
         request.options,
@@ -227,16 +229,22 @@ def build_argv(
     if pattern is not None:
         argv_parts.extend(("-v", f"pat={pattern}"))
     argv_parts.append(program)
-    path_arguments = tuple(
-        _awk_path_argument(context.workspace.cwd, path.path)
-        for path in context.paths
-    )
-    display_path_arguments = tuple(
-        _awk_display_path_argument(path.display_path) for path in context.paths
-    )
+    path_arguments: tuple[str, ...] = ()
+    display_path_arguments: tuple[str, ...] = ()
+    if not context.stdin_mode:
+        path_arguments = tuple(
+            _awk_path_argument(context.workspace.cwd, path.path)
+            for path in context.paths
+        )
+        display_path_arguments = tuple(
+            _awk_display_path_argument(path.display_path)
+            for path in context.paths
+        )
     argv_parts.extend(path_arguments)
-    display_parts = list(argv_parts[: -len(path_arguments)])
-    display_parts.extend(display_path_arguments)
+    display_parts = list(argv_parts)
+    if path_arguments:
+        display_parts = list(argv_parts[: -len(path_arguments)])
+        display_parts.extend(display_path_arguments)
     return tuple(argv_parts), tuple(display_parts), None
 
 
@@ -246,5 +254,9 @@ COMMAND_DEFINITION = ShellCommandDefinition(
     dependency_group=ShellDependencyGroup.TEXT_FILTERS,
     container_package_hints=("gawk", "mawk"),
     argv_builder=build_argv,
+    stdin_contract=ShellStreamContract(
+        media_types=("text/plain",),
+        output_kinds=(ShellOutputKind.TEXT,),
+    ),
     supports_double_dash=False,
 )

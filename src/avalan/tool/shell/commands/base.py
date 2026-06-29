@@ -2,6 +2,9 @@ from ....types import (
     assert_bool as _assert_bool,
 )
 from ....types import (
+    assert_media_type as _assert_media_type,
+)
+from ....types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
 from ....types import (
@@ -62,6 +65,59 @@ def default_output_filter(value: str) -> str:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ShellStreamContract:
+    media_types: tuple[str, ...] = ()
+    output_kinds: tuple[ShellOutputKind, ...] = ()
+
+    def __post_init__(self) -> None:
+        assert isinstance(
+            self.media_types, tuple
+        ), "media_types must be a tuple"
+        assert isinstance(
+            self.output_kinds, tuple
+        ), "output_kinds must be a tuple"
+        assert bool(self.media_types) == bool(
+            self.output_kinds
+        ), "media_types and output_kinds must both be empty or populated"
+        assert len(set(self.media_types)) == len(
+            self.media_types
+        ), "media_types must not contain duplicates"
+        assert len(set(self.output_kinds)) == len(
+            self.output_kinds
+        ), "output_kinds must not contain duplicates"
+        for media_type in self.media_types:
+            _assert_media_type(media_type, "media_types")
+        for output_kind in self.output_kinds:
+            assert isinstance(
+                output_kind,
+                ShellOutputKind,
+            ), "output_kinds must contain shell output kinds"
+
+    def accepts(
+        self,
+        *,
+        media_type: str,
+        output_kind: ShellOutputKind,
+    ) -> bool:
+        _assert_media_type(media_type, "media_type")
+        assert isinstance(
+            output_kind,
+            ShellOutputKind,
+        ), "output_kind must be a shell output kind"
+        return (
+            media_type in self.media_types and output_kind in self.output_kinds
+        )
+
+    @property
+    def supports_stdin(self) -> bool:
+        return bool(self.media_types)
+
+
+DEFAULT_STDIN_CONTRACT = ShellStreamContract()
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class NormalizedWorkspace:
     root: Path
     cwd: Path
@@ -86,6 +142,26 @@ class ShellCommandPolicyContext:
     workspace: NormalizedWorkspace
     settings: "ShellToolSettings"
     metadata: dict[str, object]
+    stdin_mode: bool = False
+    stdin_media_type: str | None = None
+    stdin_output_kind: ShellOutputKind | None = None
+
+    def __post_init__(self) -> None:
+        _assert_bool(self.stdin_mode, "stdin_mode")
+        if self.stdin_media_type is not None:
+            _assert_media_type(self.stdin_media_type, "stdin_media_type")
+        if self.stdin_output_kind is not None:
+            assert isinstance(
+                self.stdin_output_kind,
+                ShellOutputKind,
+            ), "stdin_output_kind must be a shell output kind"
+        if self.stdin_mode:
+            assert (
+                self.stdin_media_type is not None
+            ), "stdin_media_type is required in stdin mode"
+            assert (
+                self.stdin_output_kind is not None
+            ), "stdin_output_kind is required in stdin mode"
 
 
 @final
@@ -97,6 +173,7 @@ class ShellCommandDefinition:
     container_package_hints: tuple[str, ...]
     argv_builder: ShellCommandArgvBuilder
     output_contract: ShellCommandOutputContract = default_output_contract
+    stdin_contract: ShellStreamContract = DEFAULT_STDIN_CONTRACT
     output_filter: ShellCommandOutputFilter = default_output_filter
     public: bool = True
     media_risk: bool = False
@@ -120,6 +197,10 @@ class ShellCommandDefinition:
         assert callable(
             self.output_contract
         ), "output_contract must be callable"
+        assert isinstance(
+            self.stdin_contract,
+            ShellStreamContract,
+        ), "stdin_contract must be a shell stream contract"
         assert callable(self.output_filter), "output_filter must be callable"
         _assert_bool(self.public, "public")
         _assert_bool(self.media_risk, "media_risk")

@@ -624,6 +624,54 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             {"code": "tool.invalid_arguments", "retryable": False},
         )
 
+    async def test_execute_flow_plan_preserves_raw_pipeline_stage_output(
+        self,
+    ) -> None:
+        output = (
+            "tool: shell.pipeline\n"
+            "status: policy_denied\n"
+            "stage_count: 2\n"
+            "stage_chain: cat | wc\n"
+            "\n"
+            "stages:\n"
+            "- index: 0\n"
+            "  command: cat\n"
+            "- index: 1\n"
+            "  command: wc\n"
+        )
+        node = FlowNodePlan(
+            name="pipeline",
+            type="tool",
+            kind=FlowNodeKind.TOOL,
+            config={"output_mode": "raw"},
+            output_contracts=(
+                FlowNodeContract(name="result", type=FlowOutputType.JSON),
+            ),
+            metadata={"private": "private-shell-root"},
+        )
+        plan = self._plan(
+            entry_node="pipeline",
+            outputs={"answer": "pipeline.result"},
+            nodes=(node,),
+        )
+
+        result = await execute_flow_plan(
+            plan,
+            lambda _node, _inputs: output,
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"answer": output})
+        self.assertIn("stage_chain: cat | wc", result.outputs["answer"])
+        self.assertNotIn(
+            "private-shell-root",
+            str(result.trace.as_public_dict()),
+        )
+        self.assertNotIn(
+            "private-shell-root",
+            str(result.public_diagnostics),
+        )
+
     async def test_execute_flow_plan_keeps_raw_tool_contract_pruning(
         self,
     ) -> None:

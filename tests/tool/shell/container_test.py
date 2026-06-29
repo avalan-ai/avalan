@@ -57,6 +57,7 @@ from avalan.tool.shell import (
     ExecutionResult,
     ExecutionSpec,
     GeneratedOutputPlan,
+    LocalCompositionExecutor,
     PathOperand,
     ShellCommandDefinition,
     ShellCommandRequest,
@@ -77,6 +78,7 @@ from avalan.tool.shell.container import (
 from avalan.tool.shell.entities import (
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
     ShellExecutionErrorCode,
+    ShellFormattedCompositionResult,
 )
 from avalan.tool.shell.executor import CommandExecutor
 
@@ -946,6 +948,30 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
 
 
 class ShellContainerToolSetTest(IsolatedAsyncioTestCase):
+    async def test_container_mode_rejects_custom_composition_executor(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+            )
+
+            with self.assertRaisesRegex(
+                AssertionError,
+                "custom shell composition executors require",
+            ):
+                ShellToolSet(
+                    settings=settings,
+                    policy=ExecutionPolicy(
+                        settings=settings,
+                        resolver=_AllResolved(),
+                    ),
+                    container_settings=_effective_settings(required=True),
+                    composition_executor=LocalCompositionExecutor(),
+                )
+
     async def test_toolset_uses_container_executor_without_schema_exposure(
         self,
     ) -> None:
@@ -1055,6 +1081,101 @@ class ShellContainerToolSetTest(IsolatedAsyncioTestCase):
                             ),
                         )
                     self.assertEqual(context.exception.error_code, error_code)
+
+    async def test_toolset_pipeline_fails_closed_for_container(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "visible.txt").write_text("hello\n", encoding="utf-8")
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+                allow_pipelines=True,
+            )
+            toolset = ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                container_settings=_effective_settings(required=True),
+                container_backend=None,
+            ).with_enabled_tools(["shell.pipeline"])
+            call = cast(
+                Callable[..., Awaitable[str]],
+                _tool_by_name(toolset, "pipeline"),
+            )
+            output = await call(
+                steps=(
+                    {
+                        "id": "read",
+                        "command": "cat",
+                        "paths": ("visible.txt",),
+                    },
+                    {
+                        "id": "count",
+                        "command": "wc",
+                        "stdin_from": {
+                            "step_id": "read",
+                            "stream": "stdout",
+                        },
+                    },
+                ),
+                context=ToolCallContext(),
+            )
+
+        self.assertIsInstance(output, ShellFormattedCompositionResult)
+        formatted = cast(ShellFormattedCompositionResult, output)
+        self.assertEqual(
+            formatted.composition_result.status,
+            ShellExecutionStatus.POLICY_DENIED,
+        )
+        self.assertIn("container byte pipelines", output)
+        self.assertIn("cannot be lowered to shell evaluation", output)
+        self.assertIn(
+            "trusted structured runner",
+            formatted.composition_result.error_message or "",
+        )
+
+    async def test_pipeline_path_guard_precedes_container_denial(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+                allow_pipelines=True,
+            )
+            toolset = ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                container_settings=_effective_settings(required=True),
+                container_backend=None,
+            ).with_enabled_tools(["shell.pipeline"])
+            call = cast(
+                Callable[..., Awaitable[str]],
+                _tool_by_name(toolset, "pipeline"),
+            )
+            output = await call(
+                steps=(
+                    {
+                        "id": "read",
+                        "command": "cat",
+                        "paths": ("../outside.txt",),
+                    },
+                ),
+                context=ToolCallContext(),
+            )
+
+        formatted = cast(ShellFormattedCompositionResult, output)
+        self.assertEqual(
+            formatted.composition_result.error_code,
+            ShellExecutionErrorCode.TRAVERSAL,
+        )
+        self.assertNotIn("byte pipelines", output)
 
 
 class ShellContainerValueTest(TestCase):

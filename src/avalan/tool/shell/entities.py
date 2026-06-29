@@ -20,6 +20,12 @@ from ...types import (
     assert_optional_non_negative_int as _assert_optional_non_negative_int,
 )
 from ...types import (
+    assert_positive_int as _assert_positive_int,
+)
+from ...types import (
+    assert_positive_number as _assert_positive_number,
+)
+from ...types import (
     assert_safe_path_name as _assert_safe_path_name,
 )
 from ...types import (
@@ -54,7 +60,31 @@ ShellPathKind = Literal[
 ShellPathAccess = Literal["read", "create", "write"]
 ShellResourceClass = Literal["standard", "heavy"]
 ShellExecutionModeValue = Literal["local", "sandbox", "container"]
+ShellCompositionMode = Literal["pipeline", "serial", "parallel"]
+DEFAULT_MAX_PIPELINE_STAGES = 8
 GENERATED_OUTPUT_PREFIX_PLACEHOLDER = "__AVALAN_GENERATED_OUTPUT_PREFIX__"
+_SHELL_COMPOSITION_MODES: tuple[ShellCompositionMode, ...] = (
+    "pipeline",
+    "serial",
+    "parallel",
+)
+
+
+def _assert_composition_mode(value: object, field_name: str) -> None:
+    _assert_non_empty_string(value, field_name)
+    assert (
+        value in _SHELL_COMPOSITION_MODES
+    ), f"{field_name} must be pipeline, serial, or parallel"
+
+
+def _assert_stage_count_at_most(
+    stage_count: int,
+    max_pipeline_stages: int,
+) -> None:
+    _assert_positive_int(max_pipeline_stages, "max_pipeline_stages")
+    assert (
+        stage_count <= max_pipeline_stages
+    ), "steps must not exceed max_pipeline_stages"
 
 
 class ShellExecutionStatus(StrEnum):
@@ -224,6 +254,100 @@ class ShellCommandRequest:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ShellStreamRef:
+    step_id: str
+    stream: Literal["stdout"]
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.step_id, "step_id")
+        assert self.stream == "stdout", "stream must be stdout"
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellCommandStepRequest:
+    id: str
+    command: str
+    options: dict[str, object] = field(default_factory=dict)
+    paths: tuple[str, ...] = ()
+    cwd: str | None = None
+    stdin_from: ShellStreamRef | None = None
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.id, "id")
+        _assert_non_empty_string(self.command, "command")
+        assert isinstance(self.options, dict), "options must be a dictionary"
+        _assert_string_tuple(self.paths, "paths")
+        if self.cwd is not None:
+            _assert_non_empty_string(self.cwd, "cwd")
+        if self.stdin_from is not None:
+            assert isinstance(
+                self.stdin_from,
+                ShellStreamRef,
+            ), "stdin_from must be a shell stream reference"
+        object.__setattr__(self, "options", dict(self.options))
+        object.__setattr__(self, "paths", tuple(self.paths))
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellCompositionRequest:
+    mode: ShellCompositionMode = "pipeline"
+    steps: tuple[ShellCommandStepRequest, ...]
+    timeout_seconds: float | None = None
+    max_stdout_bytes: int | None = None
+    max_stderr_bytes: int | None = None
+    max_intermediate_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        _assert_composition_mode(self.mode, "mode")
+        assert isinstance(self.steps, tuple), "steps must be a tuple"
+        assert self.steps, "steps must not be empty"
+        step_ids: set[str] = set()
+        for step in self.steps:
+            assert isinstance(
+                step,
+                ShellCommandStepRequest,
+            ), "steps must contain shell command step requests"
+            assert step.id not in step_ids, "steps must have unique ids"
+            step_ids.add(step.id)
+        for step in self.steps:
+            if step.stdin_from is not None:
+                assert (
+                    step.stdin_from.step_id in step_ids
+                ), "stdin_from must reference a known step"
+        _assert_optional_bounded_number(
+            self.timeout_seconds,
+            "timeout_seconds",
+            min_value=0,
+            min_inclusive=False,
+        )
+        _assert_optional_non_negative_int(
+            self.max_stdout_bytes,
+            "max_stdout_bytes",
+        )
+        _assert_optional_non_negative_int(
+            self.max_stderr_bytes,
+            "max_stderr_bytes",
+        )
+        _assert_optional_non_negative_int(
+            self.max_intermediate_bytes,
+            "max_intermediate_bytes",
+        )
+        object.__setattr__(self, "steps", tuple(self.steps))
+
+    def validate_stage_count(
+        self,
+        max_pipeline_stages: int = DEFAULT_MAX_PIPELINE_STAGES,
+    ) -> None:
+        _assert_stage_count_at_most(
+            len(self.steps),
+            max_pipeline_stages,
+        )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ExecutionSpec:
     _policy_owned: InitVar[object]
     backend: ShellExecutionModeValue
@@ -353,6 +477,72 @@ def _create_execution_spec_from_policy(
         max_stderr_bytes=max_stderr_bytes,
         metadata=dict(metadata if metadata is not None else {}),
     )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellExecutionStepSpec:
+    id: str
+    spec: ExecutionSpec
+    stdin_from: ShellStreamRef | None = None
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.id, "id")
+        assert isinstance(
+            self.spec,
+            ExecutionSpec,
+        ), "spec must be a shell execution spec"
+        if self.stdin_from is not None:
+            assert isinstance(
+                self.stdin_from,
+                ShellStreamRef,
+            ), "stdin_from must be a shell stream reference"
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellCompositionSpec:
+    mode: ShellCompositionMode
+    steps: tuple[ShellExecutionStepSpec, ...]
+    timeout_seconds: float
+    max_stdout_bytes: int
+    max_stderr_bytes: int
+    max_intermediate_bytes: int
+
+    def __post_init__(self) -> None:
+        _assert_composition_mode(self.mode, "mode")
+        assert isinstance(self.steps, tuple), "steps must be a tuple"
+        assert self.steps, "steps must not be empty"
+        step_ids: set[str] = set()
+        for step in self.steps:
+            assert isinstance(
+                step,
+                ShellExecutionStepSpec,
+            ), "steps must contain shell execution step specs"
+            assert step.id not in step_ids, "steps must have unique ids"
+            step_ids.add(step.id)
+        for step in self.steps:
+            if step.stdin_from is not None:
+                assert (
+                    step.stdin_from.step_id in step_ids
+                ), "stdin_from must reference a known step"
+        _assert_positive_number(self.timeout_seconds, "timeout_seconds")
+        _assert_non_negative_int(self.max_stdout_bytes, "max_stdout_bytes")
+        _assert_non_negative_int(self.max_stderr_bytes, "max_stderr_bytes")
+        _assert_non_negative_int(
+            self.max_intermediate_bytes,
+            "max_intermediate_bytes",
+        )
+        object.__setattr__(self, "steps", tuple(self.steps))
+
+    def validate_stage_count(
+        self,
+        max_pipeline_stages: int = DEFAULT_MAX_PIPELINE_STAGES,
+    ) -> None:
+        _assert_stage_count_at_most(
+            len(self.steps),
+            max_pipeline_stages,
+        )
 
 
 @final
@@ -520,6 +710,107 @@ class ExecutionResult:
         object.__setattr__(self, "metadata", dict(self.metadata))
 
 
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellExecutionStepResult:
+    id: str
+    command: str
+    status: ShellExecutionStatus
+    exit_code: int | None
+    stdout: str
+    stderr: str
+    stdout_bytes: int
+    stderr_bytes: int
+    stdout_truncated: bool
+    stderr_truncated: bool
+    duration_ms: int
+    error_code: ShellExecutionErrorCode | None = None
+    error_message: str | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.id, "id")
+        _assert_non_empty_string(self.command, "command")
+        assert isinstance(
+            self.status,
+            ShellExecutionStatus,
+        ), "status must be a shell execution status"
+        if self.exit_code is not None:
+            _assert_int(self.exit_code, "exit_code")
+        assert isinstance(self.stdout, str), "stdout must be a string"
+        assert isinstance(self.stderr, str), "stderr must be a string"
+        _assert_non_negative_int(self.stdout_bytes, "stdout_bytes")
+        _assert_non_negative_int(self.stderr_bytes, "stderr_bytes")
+        _assert_bool(self.stdout_truncated, "stdout_truncated")
+        _assert_bool(self.stderr_truncated, "stderr_truncated")
+        _assert_non_negative_int(self.duration_ms, "duration_ms")
+        if self.error_code is not None:
+            assert isinstance(
+                self.error_code,
+                ShellExecutionErrorCode,
+            ), "error_code must be a shell execution error code"
+        if self.error_message is not None:
+            _assert_non_empty_string(self.error_message, "error_message")
+        assert isinstance(self.metadata, dict), "metadata must be a dictionary"
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellCompositionResult:
+    mode: ShellCompositionMode
+    status: ShellExecutionStatus
+    stdout: str
+    stderr: str
+    steps: tuple[ShellExecutionStepResult, ...]
+    stdout_bytes: int = 0
+    stderr_bytes: int = 0
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+    timed_out: bool = False
+    cancelled: bool = False
+    duration_ms: int = 0
+    error_code: ShellExecutionErrorCode | None = None
+    error_message: str | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _assert_composition_mode(self.mode, "mode")
+        assert isinstance(
+            self.status,
+            ShellExecutionStatus,
+        ), "status must be a shell execution status"
+        assert isinstance(self.stdout, str), "stdout must be a string"
+        assert isinstance(self.stderr, str), "stderr must be a string"
+        assert isinstance(self.steps, tuple), "steps must be a tuple"
+        assert self.steps, "steps must not be empty"
+        step_ids: set[str] = set()
+        for step in self.steps:
+            assert isinstance(
+                step,
+                ShellExecutionStepResult,
+            ), "steps must contain shell execution step results"
+            assert step.id not in step_ids, "steps must have unique ids"
+            step_ids.add(step.id)
+        _assert_non_negative_int(self.stdout_bytes, "stdout_bytes")
+        _assert_non_negative_int(self.stderr_bytes, "stderr_bytes")
+        _assert_bool(self.stdout_truncated, "stdout_truncated")
+        _assert_bool(self.stderr_truncated, "stderr_truncated")
+        _assert_bool(self.timed_out, "timed_out")
+        _assert_bool(self.cancelled, "cancelled")
+        _assert_non_negative_int(self.duration_ms, "duration_ms")
+        if self.error_code is not None:
+            assert isinstance(
+                self.error_code,
+                ShellExecutionErrorCode,
+            ), "error_code must be a shell execution error code"
+        if self.error_message is not None:
+            _assert_non_empty_string(self.error_message, "error_message")
+        assert isinstance(self.metadata, dict), "metadata must be a dictionary"
+        object.__setattr__(self, "steps", tuple(self.steps))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+
 class ShellFormattedResult(str):
     execution_result: ExecutionResult
 
@@ -550,3 +841,38 @@ class ShellFormattedResult(str):
         self,
     ) -> tuple[type["ShellFormattedResult"], tuple[str, ExecutionResult]]:
         return (self.__class__, (str(self), self.execution_result))
+
+
+class ShellFormattedCompositionResult(str):
+    composition_result: ShellCompositionResult
+
+    def __new__(
+        cls,
+        value: str,
+        composition_result: ShellCompositionResult,
+    ) -> "ShellFormattedCompositionResult":
+        assert isinstance(value, str), "value must be a string"
+        assert isinstance(
+            composition_result,
+            ShellCompositionResult,
+        ), "composition_result must be a shell composition result"
+        formatted = str.__new__(cls, value)
+        formatted.composition_result = composition_result
+        return formatted
+
+    def __copy__(self) -> "ShellFormattedCompositionResult":
+        return self
+
+    def __deepcopy__(
+        self,
+        memo: dict[int, object],
+    ) -> "ShellFormattedCompositionResult":
+        return self
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        type["ShellFormattedCompositionResult"],
+        tuple[str, ShellCompositionResult],
+    ]:
+        return (self.__class__, (str(self), self.composition_result))

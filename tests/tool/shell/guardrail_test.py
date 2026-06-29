@@ -69,7 +69,7 @@ DIRECT_IO_ALLOWED_MODULES = {
     SHELL_SOURCE_ROOT / "filesystem.py",
 }
 DIRECT_SPAWN_ALLOWED_MODULES = {
-    SHELL_SOURCE_ROOT / "executor.py",
+    SHELL_SOURCE_ROOT / "process.py",
 }
 OUTPUT_FILTER_ALLOWED_MODULES = {
     COMMAND_SOURCE_ROOT / "find.py",
@@ -90,27 +90,39 @@ class ShellGuardrailTest(TestCase):
 
     def test_shell_runtime_never_uses_shell_evaluation(self) -> None:
         for source_path, tree in _shell_trees():
+            shell_spawn_names = _async_subprocess_call_names(
+                tree,
+                "create_subprocess_shell",
+            )
+            exec_spawn_names = _async_subprocess_call_names(
+                tree,
+                "create_subprocess_exec",
+            )
             with self.subTest(source_path=source_path):
                 self.assertFalse(
                     _imports_module(tree, "subprocess"),
                     f"{source_path} imports sync subprocess",
                 )
                 self.assertFalse(
-                    _calls_name(tree, "create_subprocess_shell"),
+                    _calls_any_name(tree, shell_spawn_names),
                     f"{source_path} uses shell subprocess creation",
                 )
+                if source_path not in DIRECT_SPAWN_ALLOWED_MODULES:
+                    self.assertFalse(
+                        _calls_any_name(tree, exec_spawn_names),
+                        f"{source_path} directly creates subprocesses",
+                    )
                 for call in _calls(tree):
                     self.assertFalse(
                         _has_shell_true_keyword(call),
                         f"{source_path} passes shell=True",
                     )
                     call_name = _call_name(call)
-                    if source_path not in DIRECT_SPAWN_ALLOWED_MODULES:
-                        self.assertNotIn(
-                            call_name,
-                            SYNC_SUBPROCESS_CALLS,
-                            f"{source_path} calls sync subprocess API",
-                        )
+                    self.assertNotIn(
+                        call_name,
+                        SYNC_SUBPROCESS_CALLS,
+                        f"{source_path} calls sync subprocess API",
+                    )
                     if call_name == "system" and _call_base_name(call) == "os":
                         self.fail(f"{source_path} calls os.system")
                 for value in _string_constants(tree):
@@ -121,6 +133,39 @@ class ShellGuardrailTest(TestCase):
                         ),
                         f"{source_path} contains shell evaluation text",
                     )
+
+    def test_shell_runtime_guardrail_detects_aliased_async_spawn(
+        self,
+    ) -> None:
+        tree = parse(
+            "from asyncio import create_subprocess_exec as spawn_exec\n"
+            "from asyncio import create_subprocess_shell as spawn_shell\n"
+            "from asyncio.subprocess import "
+            "create_subprocess_exec as spawn_exec_submodule\n"
+            "async def run():\n"
+            "    await spawn_exec('tool')\n"
+            "    await spawn_exec_submodule('tool')\n"
+            "    await spawn_shell('tool')\n"
+        )
+
+        self.assertTrue(
+            _calls_any_name(
+                tree,
+                _async_subprocess_call_names(
+                    tree,
+                    "create_subprocess_exec",
+                ),
+            )
+        )
+        self.assertTrue(
+            _calls_any_name(
+                tree,
+                _async_subprocess_call_names(
+                    tree,
+                    "create_subprocess_shell",
+                ),
+            )
+        )
 
     def test_shell_runtime_uses_async_filesystem_boundary(self) -> None:
         for source_path, tree in _shell_trees():
@@ -320,6 +365,23 @@ def _call_base_name(call: Call) -> str:
 
 def _calls_name(tree: AST, name: str) -> bool:
     return any(_call_name(call) == name for call in _calls(tree))
+
+
+def _calls_any_name(tree: AST, names: set[str]) -> bool:
+    return any(_call_name(call) in names for call in _calls(tree))
+
+
+def _async_subprocess_call_names(tree: AST, imported_name: str) -> set[str]:
+    names = {imported_name}
+    for node in walk(tree):
+        if not isinstance(node, ImportFrom):
+            continue
+        if node.module not in {"asyncio", "asyncio.subprocess"}:
+            continue
+        for alias in node.names:
+            if alias.name == imported_name:
+                names.add(alias.asname or alias.name)
+    return names
 
 
 def _has_shell_true_keyword(call: Call) -> bool:

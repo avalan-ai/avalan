@@ -13,6 +13,7 @@ from ..entities import (
     ToolNameResolutionStatus,
     ToolValue,
 )
+from ..tool.shell.opt_in import SHELL_PIPELINE_TOOL
 from ..utils import tool_call_diagnostic_payload, tool_call_error_payload
 from .definition import (
     FlowDefinition,
@@ -634,14 +635,51 @@ def _tool_node_descriptor(
         ToolNameResolutionStatus.EXACT,
         ToolNameResolutionStatus.ALIAS,
     }:
+        message, hint = _tool_ref_resolution_message(
+            requested_name,
+            resolution.status,
+        )
         raise FlowNodeConfigurationError(
             code=f"flow.tool_{resolution.status.value}",
             path=path,
-            message="Tool flow node ref does not resolve to one enabled tool.",
-            hint="Use an enabled avalan tool name or unambiguous alias.",
+            message=message,
+            hint=hint,
         )
     assert resolution.canonical_name is not None
     return descriptors[resolution.canonical_name]
+
+
+def _tool_ref_resolution_message(
+    requested_name: str,
+    status: ToolNameResolutionStatus,
+) -> tuple[str, str]:
+    assert isinstance(requested_name, str) and requested_name.strip()
+    assert isinstance(status, ToolNameResolutionStatus)
+    if requested_name == SHELL_PIPELINE_TOOL:
+        if status is ToolNameResolutionStatus.DISABLED:
+            return (
+                "shell.pipeline is disabled for this flow.",
+                (
+                    "Enable shell.pipeline and set trusted shell "
+                    "allow_pipelines=true before running the flow."
+                ),
+            )
+        return (
+            "shell.pipeline is not available in this flow runtime.",
+            (
+                "Provide a shell tool resolver, enable shell.pipeline, and "
+                "set trusted shell allow_pipelines=true."
+            ),
+        )
+    if status is ToolNameResolutionStatus.DISABLED:
+        return (
+            "Tool flow node ref is disabled.",
+            "Enable the referenced tool for strict flow tool nodes.",
+        )
+    return (
+        "Tool flow node ref does not resolve to one enabled tool.",
+        "Use an enabled avalan tool name or unambiguous alias.",
+    )
 
 
 def _node_input_value(
@@ -848,13 +886,7 @@ def _validate_tool_node_bindings(
                 message="Tool node argument binding is unknown.",
                 hint="Bind only declared tool parameters.",
             )
-        if not isinstance(selector, str) or not selector.strip():
-            raise FlowNodeConfigurationError(
-                code="flow.invalid_argument_selector",
-                path=f"{path}.{name}",
-                message="Tool node argument selector is invalid.",
-                hint="Use a non-empty dotted input selector.",
-            )
+        _validate_argument_binding_value(selector, path=f"{path}.{name}")
     missing = sorted(required - set(bindings))
     if missing:
         raise FlowNodeConfigurationError(
@@ -863,6 +895,43 @@ def _validate_tool_node_bindings(
             message="Tool node argument binding is missing.",
             hint="Bind every required tool parameter.",
         )
+
+
+def _validate_argument_binding_value(value: object, *, path: str) -> None:
+    assert isinstance(path, str) and path.strip()
+    if isinstance(value, str):
+        if value.strip():
+            return
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_argument_selector",
+            path=path,
+            message="Tool node argument selector is invalid.",
+            hint="Use a non-empty dotted input selector.",
+        )
+    try:
+        _validate_argument_literal(value)
+    except AssertionError:
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_argument_literal",
+            path=path,
+            message="Tool node argument literal is invalid.",
+            hint="Use a JSON-compatible literal argument value.",
+        ) from None
+
+
+def _validate_argument_literal(value: object) -> None:
+    if value is None or isinstance(value, bool | int | float | str):
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            assert isinstance(key, str) and key.strip()
+            _validate_argument_literal(item)
+        return
+    if isinstance(value, list | tuple):
+        for item in value:
+            _validate_argument_literal(item)
+        return
+    raise AssertionError("literal must be JSON-compatible")
 
 
 def _validate_tool_node_output_mode(definition: FlowNodeDefinition) -> None:
@@ -945,17 +1014,28 @@ def _tool_node_arguments(
 ) -> dict[str, object]:
     bindings = definition.config.get("arguments")
     source = _node_input_value(definition, inputs)
+    properties = _tool_parameter_properties(descriptor)
     if bindings is not None:
         assert isinstance(bindings, Mapping)
+        parameter_schemas: dict[str, Mapping[str, object]] = {}
+        if properties is not None:
+            parameter_schemas = {
+                name: cast(Mapping[str, object], schema)
+                for name, schema in properties.items()
+                if isinstance(schema, Mapping)
+            }
         return {
-            str(name): _select_argument(
-                source, str(selector), definition, name
+            str(name): _argument_binding_value(
+                source,
+                selector,
+                definition,
+                name,
+                parameter_schemas.get(name, {}),
             )
             for name, selector in bindings.items()
-            if isinstance(name, str) and isinstance(selector, str)
+            if isinstance(name, str)
         }
 
-    properties = _tool_parameter_properties(descriptor)
     parameters = (
         frozenset(properties) if properties is not None else frozenset()
     )
@@ -998,6 +1078,34 @@ def _select_argument(
             message="Tool node argument selector cannot be resolved.",
             hint="Reference a value available on the node input.",
         ) from None
+
+
+def _argument_binding_value(
+    source: object,
+    value: object,
+    definition: FlowNodeDefinition,
+    name: object,
+    parameter_schema: Mapping[str, object],
+) -> object:
+    if isinstance(value, str):
+        try:
+            return _select_argument(source, value, definition, name)
+        except FlowNodeConfigurationError as error:
+            if (
+                error.code == "flow.unresolved_argument_selector"
+                and _matches_string_enum(value, parameter_schema)
+            ):
+                return value
+            raise
+    return _copy_flow_value(value)
+
+
+def _matches_string_enum(
+    value: str,
+    parameter_schema: Mapping[str, object],
+) -> bool:
+    enum_values = parameter_schema.get("enum")
+    return isinstance(enum_values, list | tuple) and value in enum_values
 
 
 def _tool_parameter_names(descriptor: ToolDescriptor) -> frozenset[str]:

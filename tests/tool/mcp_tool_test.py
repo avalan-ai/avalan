@@ -33,6 +33,8 @@ from avalan.server.routers import mcp as mcp_router
 from avalan.tool import mcp as mcp_module
 from avalan.tool.manager import ToolManager
 from avalan.tool.mcp import McpCallTool, McpToolSet
+from avalan.tool.shell.settings import ShellToolSettings
+from avalan.tool.shell.toolset import ShellToolSet
 
 
 class _FakeResponse:
@@ -630,6 +632,45 @@ class McpToolSetTestCase(TestCase):
         self.assertEqual(len(toolset.tools), 1)
         self.assertEqual(toolset.tools[0].__name__, "call")
 
+    def test_mcp_call_schema_does_not_collide_with_shell_pipeline(self):
+        manager = ToolManager.create_instance(
+            available_toolsets=[
+                McpToolSet(),
+                ShellToolSet(settings=ShellToolSettings(allow_pipelines=True)),
+            ],
+            enable_tools=["mcp.call", "shell.pipeline"],
+        )
+
+        names = {descriptor.name for descriptor in manager.list_tools()}
+        self.assertEqual(names, {"mcp.call", "shell.pipeline"})
+        self.assertEqual(
+            len(
+                {
+                    schema["function"]["name"]
+                    for schema in manager.json_schemas() or []
+                }
+            ),
+            2,
+        )
+
+        mcp_descriptor = manager.describe_tool("mcp.call")
+        pipeline_descriptor = manager.describe_tool("shell.pipeline")
+        self.assertIsNotNone(mcp_descriptor)
+        self.assertIsNotNone(pipeline_descriptor)
+        assert mcp_descriptor is not None
+        assert pipeline_descriptor is not None
+        mcp_properties = mcp_descriptor.schema["function"]["parameters"][
+            "properties"
+        ]
+        pipeline_properties = pipeline_descriptor.schema["function"][
+            "parameters"
+        ]["properties"]
+        self.assertIn("uri", mcp_properties)
+        self.assertIn("name", mcp_properties)
+        self.assertNotIn("steps", mcp_properties)
+        self.assertIn("steps", pipeline_properties)
+        self.assertNotIn("uri", pipeline_properties)
+
 
 class McpCallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
     async def test_calls_real_mcp_router_and_streams_remote_events(self):
@@ -720,12 +761,126 @@ class McpCallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
         )
         orchestrator.sync_messages.assert_awaited_once()
 
+    async def test_served_pipeline_enabled_agent_streams_over_mcp(self):
+        app = FastAPI()
+        served_manager = _mcp_pipeline_manager(allow_pipelines=True)
+        self.assertIsNotNone(served_manager.describe_tool("shell.pipeline"))
+        orchestrator = _E2EOrchestrator(served_manager)
+        app.state.logger = getLogger("test.mcp.tool.pipeline")
+        app.state.orchestrator = orchestrator
+        app.include_router(mcp_router.create_router(), prefix="/mcp")
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def stream(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        async def fake_orchestrate(*args: object, **kwargs: object):
+            served_orchestrator = args[2]
+            self.assertIs(served_orchestrator, orchestrator)
+            return (
+                _CanonicalResponse(
+                    _mcp_pipeline_items_for_served_orchestrator(
+                        served_orchestrator
+                    )
+                ),
+                uuid4(),
+                123,
+            )
+
+        with (
+            patch.object(mcp_router, "Orchestrator", _E2EOrchestrator),
+            patch.object(mcp_router, "resolve_model_id", return_value="gpt"),
+            patch.object(mcp_router, "orchestrate", fake_orchestrate),
+        ):
+            tool = McpCallTool(
+                client_params={
+                    "transport": ASGITransport(app=app),
+                    "base_url": "http://testserver",
+                },
+                call_params={"request_id": "req-1"},
+            )
+            result = await tool(
+                "/mcp",
+                "run",
+                {"input_string": "Use the configured pipeline tool."},
+                context=ToolCallContext(stream_event=stream),
+            )
+
+        structured = result["structuredContent"]
+        tool_call = structured["toolCalls"][0]
+        self.assertEqual(tool_call["name"], "shell.pipeline")
+        self.assertEqual(
+            [resource["name"] for resource in tool_call["resources"]],
+            ["stderr", "progress", "stdout"],
+        )
+        payload = str(result) + "".join(
+            event.content or "" for event in events
+        )
+        self.assertIn("stage warning", payload)
+        self.assertIn("counted 2 lines", payload)
+        self.assertIn("2\n", payload)
+        self.assertNotIn("INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK", payload)
+
+    async def test_default_denied_served_agent_reports_pipeline_diagnostic(
+        self,
+    ):
+        app = FastAPI()
+        served_manager = _mcp_pipeline_manager(allow_pipelines=False)
+        self.assertIsNone(served_manager.describe_tool("shell.pipeline"))
+        orchestrator = _E2EOrchestrator(served_manager)
+        app.state.logger = getLogger("test.mcp.tool.pipeline.denied")
+        app.state.orchestrator = orchestrator
+        app.include_router(mcp_router.create_router(), prefix="/mcp")
+
+        async def fake_orchestrate(*args: object, **kwargs: object):
+            served_orchestrator = args[2]
+            self.assertIs(served_orchestrator, orchestrator)
+            return (
+                _CanonicalResponse(
+                    _mcp_pipeline_items_for_served_orchestrator(
+                        served_orchestrator
+                    )
+                ),
+                uuid4(),
+                123,
+            )
+
+        with (
+            patch.object(mcp_router, "Orchestrator", _E2EOrchestrator),
+            patch.object(mcp_router, "resolve_model_id", return_value="gpt"),
+            patch.object(mcp_router, "orchestrate", fake_orchestrate),
+        ):
+            tool = McpCallTool(
+                client_params={
+                    "transport": ASGITransport(app=app),
+                    "base_url": "http://testserver",
+                },
+                call_params={"request_id": "req-1"},
+            )
+            result = await tool(
+                "/mcp",
+                "run",
+                {"input_string": "Try shell.pipeline."},
+                context=ToolCallContext(),
+            )
+
+        structured = result["structuredContent"]
+        tool_call = structured["toolCalls"][0]
+        self.assertEqual(tool_call["name"], "shell.pipeline")
+        self.assertEqual(tool_call["diagnostic"]["code"], "tool.disabled")
+        self.assertIn("allow_pipelines", tool_call["diagnostic"]["message"])
+
 
 class _E2EOrchestrator:
     sync_messages: AsyncMock
 
-    def __init__(self) -> None:
+    def __init__(self, tool: ToolManager | None = None) -> None:
         self.sync_messages = AsyncMock()
+        self._tool = tool
+
+    @property
+    def tool(self) -> ToolManager | None:
+        return self._tool
 
 
 class _CanonicalResponse:
@@ -840,3 +995,178 @@ def _mcp_e2e_items(
             terminal_outcome=StreamTerminalOutcome.COMPLETED,
         ),
     ]
+
+
+def _mcp_pipeline_manager(*, allow_pipelines: bool) -> ToolManager:
+    return ToolManager.create_instance(
+        available_toolsets=[
+            ShellToolSet(
+                settings=ShellToolSettings(allow_pipelines=allow_pipelines)
+            )
+        ],
+        enable_tools=["shell.pipeline"],
+    )
+
+
+def _mcp_pipeline_items_for_served_orchestrator(
+    orchestrator: object,
+) -> list[CanonicalStreamItem]:
+    tool = getattr(orchestrator, "tool", None)
+    assert isinstance(tool, ToolManager)
+    if tool.describe_tool("shell.pipeline") is None:
+        return _mcp_pipeline_denied_items()
+    return _mcp_pipeline_success_items()
+
+
+def _mcp_pipeline_success_items() -> list[CanonicalStreamItem]:
+    correlation = StreamItemCorrelation(tool_call_id="call-pipeline")
+    arguments = {
+        "steps": [
+            {"id": "read", "command": "cat", "paths": ["input.txt"]},
+            {
+                "id": "count",
+                "command": "wc",
+                "options": {"lines": True},
+                "stdin_from": {"step_id": "read", "stream": "stdout"},
+            },
+        ]
+    }
+    return [
+        _mcp_item(0, StreamItemKind.STREAM_STARTED),
+        _mcp_item(
+            1,
+            StreamItemKind.TOOL_CALL_READY,
+            correlation=correlation,
+            data={"name": "shell.pipeline", "arguments": arguments},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _mcp_item(2, StreamItemKind.TOOL_CALL_DONE, correlation=correlation),
+        _mcp_item(
+            3,
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            correlation=correlation,
+            data={"name": "shell.pipeline", "arguments": arguments},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _mcp_item(
+            4,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation=correlation,
+            text_delta="stage warning\n",
+            data={"category": "stderr", "content": "stage warning\n"},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _mcp_item(
+            5,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            correlation=correlation,
+            data={
+                "category": "progress",
+                "content": "counted 2 lines",
+                "progress": 0.5,
+                "metadata": {
+                    "intermediate_stdout": (
+                        "INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK"
+                    ),
+                },
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _mcp_item(
+            6,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation=correlation,
+            text_delta="2\n",
+            data={"category": "stdout", "content": "2\n"},
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _mcp_item(
+            7,
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            correlation=correlation,
+            data={
+                "name": "shell.pipeline",
+                "arguments": arguments,
+                "result": (
+                    "tool: shell.pipeline\nstatus: completed\nstdout:\n2\n"
+                ),
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _mcp_item(8, StreamItemKind.ANSWER_DELTA, text_delta="done"),
+        _mcp_item(9, StreamItemKind.ANSWER_DONE),
+        _mcp_item(10, StreamItemKind.USAGE_COMPLETED, usage={}),
+        _mcp_item(
+            11,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    ]
+
+
+def _mcp_pipeline_denied_items() -> list[CanonicalStreamItem]:
+    correlation = StreamItemCorrelation(tool_call_id="call-pipeline")
+    diagnostic = {
+        "id": "diag-pipeline",
+        "call_id": "call-pipeline",
+        "code": "tool.disabled",
+        "message": "shell.pipeline requires allow_pipelines=true.",
+    }
+    return [
+        _mcp_item(0, StreamItemKind.STREAM_STARTED),
+        _mcp_item(
+            1,
+            StreamItemKind.STREAM_DIAGNOSTIC,
+            channel=StreamChannel.CONTROL,
+            correlation=correlation,
+            text_delta=diagnostic["message"],
+            data={
+                "name": "shell.pipeline",
+                "arguments": {"steps": []},
+                "diagnostic": diagnostic,
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        ),
+        _mcp_item(2, StreamItemKind.USAGE_COMPLETED, usage={}),
+        _mcp_item(
+            3,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    ]
+
+
+def _mcp_item(
+    sequence: int,
+    kind: StreamItemKind,
+    *,
+    channel: StreamChannel | None = None,
+    **kwargs: Any,
+) -> CanonicalStreamItem:
+    if channel is None:
+        channel = {
+            StreamItemKind.ANSWER_DELTA: StreamChannel.ANSWER,
+            StreamItemKind.ANSWER_DONE: StreamChannel.ANSWER,
+            StreamItemKind.TOOL_CALL_READY: StreamChannel.TOOL_CALL,
+            StreamItemKind.TOOL_CALL_DONE: StreamChannel.TOOL_CALL,
+            StreamItemKind.TOOL_EXECUTION_STARTED: (
+                StreamChannel.TOOL_EXECUTION
+            ),
+            StreamItemKind.TOOL_EXECUTION_OUTPUT: StreamChannel.TOOL_EXECUTION,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS: (
+                StreamChannel.TOOL_EXECUTION
+            ),
+            StreamItemKind.TOOL_EXECUTION_COMPLETED: (
+                StreamChannel.TOOL_EXECUTION
+            ),
+            StreamItemKind.USAGE_COMPLETED: StreamChannel.USAGE,
+        }.get(kind, StreamChannel.CONTROL)
+    return CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=sequence,
+        kind=kind,
+        channel=channel,
+        **kwargs,
+    )

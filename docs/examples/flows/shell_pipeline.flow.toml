@@ -1,0 +1,44 @@
+[flow]
+name = "shell_pipeline"
+version = "1"
+
+[[inputs]]
+name = "payload"
+type = "object"
+
+[[outputs]]
+name = "answer"
+type = "json"
+
+[entry]
+type = "node"
+node = "pipeline"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+answer = "pipeline.result"
+
+[nodes.pipeline]
+type = "tool"
+ref = "shell.pipeline"
+
+[nodes.pipeline.config.arguments]
+mode = "pipeline"
+max_stdout_bytes = 1024
+max_intermediate_bytes = 262144
+
+[[nodes.pipeline.config.arguments.steps]]
+id = "read"
+command = "cat"
+paths = ["README.md"]
+
+[[nodes.pipeline.config.arguments.steps]]
+id = "count"
+command = "wc"
+options = { lines = true }
+
+[nodes.pipeline.config.arguments.steps.stdin_from]
+step_id = "read"
+stream = "stdout"

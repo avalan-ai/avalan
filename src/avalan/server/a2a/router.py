@@ -87,6 +87,15 @@ _A2A_FILE_METADATA_KEYS = frozenset(
         "name",
     }
 )
+_A2A_TOOL_RESOURCE_CATEGORIES = frozenset(
+    {
+        "log",
+        "logs",
+        "progress",
+        "stderr",
+        "stdout",
+    }
+)
 
 
 def install_a2a_routes(
@@ -1200,9 +1209,10 @@ class A2AResponseTranslator:
         tool_name = data.get("name") or item.metadata.get("tool_name")
         if isinstance(tool_name, str) and tool_name:
             metadata["tool_name"] = tool_name
-        text = item.text_delta or ""
-        if not text and data:
-            text = str(data)
+        category = _a2a_tool_item_category(data)
+        if category is not None:
+            metadata["category"] = category
+        text = _a2a_tool_item_text(item, data)
         if text:
             await self._add_text_artifact(
                 artifact_id=tool_call_id,
@@ -1247,3 +1257,62 @@ class A2AResponseTranslator:
             last_chunk=True,
         )
         self._open_artifacts.discard(artifact_id)
+
+
+def _a2a_tool_item_category(data: Mapping[str, object]) -> str | None:
+    category = data.get("category")
+    if (
+        not isinstance(category, str)
+        or category not in _A2A_TOOL_RESOURCE_CATEGORIES
+    ):
+        return None
+    return "logs" if category == "log" else category
+
+
+def _a2a_tool_item_text(
+    item: CanonicalStreamItem,
+    data: Mapping[str, object],
+) -> str:
+    if item.text_delta:
+        return item.text_delta
+    if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
+        content = data.get("content")
+        return content if isinstance(content, str) else ""
+    if item.kind is StreamItemKind.TOOL_EXECUTION_PROGRESS:
+        content = data.get("content")
+        if isinstance(content, str):
+            return content
+        progress = data.get("progress")
+        return (
+            dumps({"progress": progress}, separators=(",", ":"))
+            if progress is not None
+            else ""
+        )
+    if item.kind not in (
+        StreamItemKind.TOOL_EXECUTION_COMPLETED,
+        StreamItemKind.TOOL_EXECUTION_ERROR,
+        StreamItemKind.TOOL_EXECUTION_CANCELLED,
+    ):
+        return ""
+    for key in ("result", "error", "message"):
+        payload = data.get(key)
+        if payload is None:
+            continue
+        if isinstance(payload, str):
+            return payload
+        if isinstance(payload, bool | int | float | list | dict):
+            return dumps(payload, separators=(",", ":"))
+    return _a2a_public_diagnostic_text(data.get("diagnostic"))
+
+
+def _a2a_public_diagnostic_text(payload: object) -> str:
+    if not isinstance(payload, Mapping):
+        return ""
+    parts: list[str] = []
+    for key in ("code", "message"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            parts.append(value)
+    if not parts:
+        return ""
+    return ": ".join(parts)

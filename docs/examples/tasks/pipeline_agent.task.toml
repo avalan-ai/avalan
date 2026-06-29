@@ -1,0 +1,41 @@
+[task]
+name = "pipeline_agent"
+version = "1"
+description = "Run an agent that has explicitly enabled shell.pipeline."
+labels = ["example", "agent", "shell-pipeline"]
+
+[input]
+type = "string"
+description = "Workspace question for the pipeline-enabled agent."
+
+[output]
+type = "text"
+description = "Answer text."
+
+[execution]
+type = "agent"
+ref = "agents/pipeline_reader.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 180
+
+[privacy]
+input = "drop"
+files = "drop"
+
+[limits]
+input_bytes = 4096
+output_bytes = 8192
+total_tokens = 4000
+
+# The referenced agent TOML opts into shell.pipeline under [tool] and
+# [tool.shell]. Queued execution still requires the operator to start workers
+# with matching runtime settings, for example:
+#
+# poetry run avalan task worker \
+#   --store-dsn "$AVALAN_TASK_STORE_DSN" \
+#   --queue default \
+#   --tool shell.pipeline \
+#   --tool-shell-allow-pipelines \
+#   --tool-shell-max-pipeline-stages 3

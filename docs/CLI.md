@@ -125,6 +125,56 @@ avalan agent run \
   --tool-shell-max-stdout-bytes 65536
 ```
 
+Structured shell pipelines are a separate explicit opt-in. The model receives
+`shell.pipeline` as a typed tool with `steps` objects, not as a shell string.
+Use these flags only from trusted operator configuration:
+
+| Flag | Effect |
+| --- | --- |
+| `--tool-shell-max-pipeline-stages N` | Cap the number of stages in one composition. |
+| `--tool-shell-max-pipeline-bytes N` | Cap final aggregate pipeline stdout bytes. |
+| `--tool-shell-max-intermediate-bytes N` | Cap stdout bytes Avalan retains or routes between stages in buffered transport. |
+| `--tool-shell-pipeline-transport {buffered,native}` | Choose whether `shell.pipeline` routes bytes through Avalan buffers or native OS pipes. |
+| `--tool-shell-allow-pipelines` | Expose `shell.pipeline` when the enabled tool selection includes `shell.pipeline`, `shell`, or `shell.*`. |
+
+```bash
+avalan agent run docs/examples/agent_shell_pipeline.toml \
+  --tool shell.pipeline \
+  --tool-shell-workspace-root . \
+  --tool-shell-max-pipeline-stages 3 \
+  --tool-shell-max-pipeline-bytes 1048576 \
+  --tool-shell-max-intermediate-bytes 262144 \
+  --tool-shell-pipeline-transport buffered \
+  --tool-shell-allow-pipelines
+```
+
+Flow and task runtimes can use the same pipeline settings when the host
+application builds a `ToolManager` for strict tool nodes. The standalone
+`avalan flow validate` command uses the default CLI flow registry and does not
+accept tool-runtime flags, so it is not the runtime-availability validator for
+these examples. The tracked flow-backed pipeline examples are validated in CI
+with a configured `ToolManager`:
+
+```bash
+poetry run pytest \
+  tests/flow/validator_test.py::FlowValidatorTestCase::test_docs_shell_pipeline_flow_examples_validate_with_runtime \
+  tests/task/task_loader_test.py::TaskDefinitionLoaderTest::test_docs_shell_pipeline_task_examples_load \
+  -q
+```
+
+Queued task workers fail closed for `shell.pipeline` unless the worker process
+is started with explicit operator pipeline settings:
+
+```bash
+avalan task worker \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --queue default \
+  --tool shell.pipeline \
+  --tool-shell-max-pipeline-stages 3 \
+  --tool-shell-pipeline-transport buffered \
+  --tool-shell-allow-pipelines
+```
+
 Trusted deployment TOML may select isolated shell execution. `[tool.sandbox]`
 and `[tool.container]` define operator-controlled profiles; `[tool.shell.sandbox]`
 and `[tool.shell.container]` select one of those profiles for shell tools.
@@ -139,6 +189,8 @@ container backends are `docker` and `apple-container`. Container policy flags
 require `--tool-shell-backend container`; sandbox policy flags require
 `--tool-shell-backend sandbox`. See [Isolation execution](ISOLATION.md) for
 trusted policy fields, platform limits, approval behavior, and diagnostics.
+Full byte-stream pipelines are local-only; sandbox or container
+`mode="pipeline"` and any `stdin_from` composition fail closed.
 
 Use `shell` or `shell.*` to enable the full namespace, or a concrete name such
 as `shell.rg` for one command. An empty `[tool.shell]` section enables shell
@@ -640,6 +692,10 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES]
                         [--tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES]
                         [--tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES]
+                        [--tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES]
+                        [--tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES]
+                        [--tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES]
+                        [--tool-shell-pipeline-transport {buffered,native}]
                         [--tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS]
                         [--tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES]
                         [--tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES]
@@ -683,6 +739,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS]
                         [--tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS]
                         [--tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT]
+                        [--tool-shell-allow-pipelines]
                         [--tool-shell-allow-media-tools]
                         [--tool-shell-allow-absolute-paths]
                         [--tool-shell-allow-symlinks]
@@ -918,6 +975,11 @@ shell tool settings:
   --tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES
   --tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES
   --tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES
+  --tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES
+  --tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES
+  --tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES
+  --tool-shell-pipeline-transport {buffered,native}
+                        Trusted shell pipeline byte transport.
   --tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS
   --tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES
   --tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES
@@ -961,6 +1023,7 @@ shell tool settings:
   --tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS
   --tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS
   --tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT
+  --tool-shell-allow-pipelines
   --tool-shell-allow-media-tools
   --tool-shell-allow-absolute-paths
   --tool-shell-allow-symlinks
@@ -1976,6 +2039,10 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                        [--tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES]
                        [--tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES]
                        [--tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES]
+                       [--tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES]
+                       [--tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES]
+                       [--tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES]
+                       [--tool-shell-pipeline-transport {buffered,native}]
                        [--tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS]
                        [--tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES]
                        [--tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES]
@@ -2019,6 +2086,7 @@ usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                        [--tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS]
                        [--tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS]
                        [--tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT]
+                       [--tool-shell-allow-pipelines]
                        [--tool-shell-allow-media-tools] [--tool-shell-allow-absolute-paths]
                        [--tool-shell-allow-symlinks] [--tool-shell-allow-hidden]
                        [--tool-shell-executable-search-path TOOL_SHELL_EXECUTABLE_SEARCH_PATHS]
@@ -2121,6 +2189,11 @@ shell tool settings:
   --tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES
   --tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES
   --tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES
+  --tool-shell-max-pipeline-stages TOOL_SHELL_MAX_PIPELINE_STAGES
+  --tool-shell-max-pipeline-bytes TOOL_SHELL_MAX_PIPELINE_BYTES
+  --tool-shell-max-intermediate-bytes TOOL_SHELL_MAX_INTERMEDIATE_BYTES
+  --tool-shell-pipeline-transport {buffered,native}
+                        Trusted shell pipeline byte transport.
   --tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS
   --tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES
   --tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES
@@ -2164,6 +2237,7 @@ shell tool settings:
   --tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS
   --tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS
   --tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT
+  --tool-shell-allow-pipelines
   --tool-shell-allow-media-tools
   --tool-shell-allow-absolute-paths
   --tool-shell-allow-symlinks

@@ -11,7 +11,12 @@ from .entities import (
     GeneratedFile,
     PathOperand,
     ShellCommandRequest,
+    ShellCommandStepRequest,
+    ShellCompositionRequest,
+    ShellCompositionResult,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
+    ShellFormattedCompositionResult,
     ShellFormattedResult,
 )
 from .registry import SHELL_COMMAND_DEFINITIONS
@@ -84,16 +89,21 @@ def project_shell_tool_display(
     *,
     call: ToolCall,
     outcome: ToolCallOutcome | None = None,
-    request: ShellCommandRequest | None = None,
+    request: ShellCommandRequest | ShellCompositionRequest | None = None,
 ) -> ToolDisplayProjection | None:
     assert isinstance(call, ToolCall)
     if outcome is not None:
+        composition_result = _composition_result_from_outcome(outcome)
+        if composition_result is not None:
+            return project_shell_composition_result(composition_result)
         result = _execution_result_from_outcome(outcome)
         if result is None:
             return None
         return project_shell_execution_result(result)
     if request is None:
         return None
+    if isinstance(request, ShellCompositionRequest):
+        return project_shell_composition_request(request)
     return project_shell_command_request(request)
 
 
@@ -119,6 +129,30 @@ def project_shell_command_request(
         summary=_REQUEST_SUMMARIES.get(request.command, "Run a command."),
         details=details,
         metrics=metrics,
+        redacted=target_redacted or scope_redacted,
+    )
+
+
+def project_shell_composition_request(
+    request: ShellCompositionRequest,
+) -> ToolDisplayProjection:
+    assert isinstance(request, ShellCompositionRequest)
+    target, target_redacted = _composition_request_stage_chain(request.steps)
+    scope, scope_redacted = _composition_request_scope(request.steps)
+    details = (
+        _detail("mode", request.mode),
+        _detail("stage chain", target, redacted=target_redacted),
+        *(_composition_scope_details(scope, scope_redacted)),
+        *(_composition_request_limit_details(request)),
+    )
+    return ToolDisplayProjection(
+        action="pipeline",
+        label="shell.pipeline",
+        target=target,
+        scope=scope,
+        summary="Run a structured shell pipeline.",
+        details=details,
+        metrics=_composition_request_metrics(request),
         redacted=target_redacted or scope_redacted,
     )
 
@@ -152,6 +186,41 @@ def project_shell_execution_result(
     )
 
 
+def project_shell_composition_result(
+    result: ShellCompositionResult,
+) -> ToolDisplayProjection:
+    assert isinstance(result, ShellCompositionResult)
+    target = _composition_result_stage_chain(result.steps)
+    scope, scope_redacted = _composition_result_scope(result.steps)
+    details = [
+        _detail("status", result.status.value),
+        _detail("mode", result.mode),
+        _detail("stage statuses", _composition_stage_statuses(result.steps)),
+        _detail("duration ms", result.duration_ms),
+        _detail("stdout bytes", result.stdout_bytes),
+        _detail("stdout truncated", result.stdout_truncated),
+        _detail("stderr bytes", result.stderr_bytes),
+        _detail("stderr truncated", result.stderr_truncated),
+    ]
+    if result.error_code is not None:
+        details.append(_detail("error code", result.error_code.value))
+    if result.error_message is not None:
+        details.append(_detail("error message", result.error_message))
+    return ToolDisplayProjection(
+        action="pipeline",
+        label="shell.pipeline",
+        target=target,
+        scope=scope,
+        summary=_composition_result_summary(result),
+        status=result.status.value,
+        outcome=result.status.value,
+        severity=_result_severity(result.status),
+        details=details,
+        metrics=_composition_result_metrics(result),
+        redacted=scope_redacted,
+    )
+
+
 def _execution_result_from_outcome(
     outcome: ToolCallOutcome,
 ) -> ExecutionResult | None:
@@ -163,6 +232,194 @@ def _execution_result_from_outcome(
     execution_result = getattr(result, "execution_result", None)
     if isinstance(execution_result, ExecutionResult):
         return execution_result
+    return None
+
+
+def _composition_result_from_outcome(
+    outcome: ToolCallOutcome,
+) -> ShellCompositionResult | None:
+    if not isinstance(outcome, ToolCallResult):
+        return None
+    result = outcome.result
+    if isinstance(result, ShellFormattedCompositionResult):
+        return result.composition_result
+    composition_result = getattr(result, "composition_result", None)
+    if isinstance(composition_result, ShellCompositionResult):
+        return composition_result
+    return None
+
+
+def _composition_request_stage_chain(
+    steps: tuple[ShellCommandStepRequest, ...],
+) -> tuple[str, bool]:
+    redacted = False
+    commands: list[str] = []
+    for step in steps:
+        if step.command in SHELL_COMMAND_DEFINITIONS:
+            commands.append(step.command)
+            continue
+        commands.append(REDACTED_DISPLAY_VALUE)
+        redacted = True
+    return " | ".join(commands), redacted
+
+
+def _composition_result_stage_chain(
+    steps: tuple[ShellExecutionStepResult, ...],
+) -> str:
+    return " | ".join(step.command for step in steps)
+
+
+def _composition_request_scope(
+    steps: tuple[ShellCommandStepRequest, ...],
+) -> tuple[str, bool]:
+    cwd_values = tuple(step.cwd or "." for step in steps)
+    return _composition_common_scope(cwd_values)
+
+
+def _composition_result_scope(
+    steps: tuple[ShellExecutionStepResult, ...],
+) -> tuple[str, bool]:
+    cwd_values: list[str] = []
+    for step in steps:
+        cwd = step.metadata.get("display_cwd")
+        if isinstance(cwd, str) and cwd:
+            cwd_values.append(cwd)
+    return _composition_common_scope(tuple(cwd_values) or (".",))
+
+
+def _composition_common_scope(values: tuple[str, ...]) -> tuple[str, bool]:
+    redacted = False
+    display_values: list[str] = []
+    for value in values:
+        display_value, value_redacted = _safe_path(value)
+        display_values.append(display_value or REDACTED_DISPLAY_VALUE)
+        redacted = redacted or value_redacted
+    unique_values = tuple(dict.fromkeys(display_values))
+    if len(unique_values) == 1:
+        return unique_values[0], redacted
+    return "mixed cwd", redacted
+
+
+def _composition_scope_details(
+    scope: str,
+    scope_redacted: bool,
+) -> tuple[ToolDisplayDetail, ...]:
+    return (_detail("cwd", scope, redacted=scope_redacted),)
+
+
+def _composition_request_limit_details(
+    request: ShellCompositionRequest,
+) -> tuple[ToolDisplayDetail, ...]:
+    caps = _composition_caps(
+        timeout_seconds=request.timeout_seconds,
+        max_stdout_bytes=request.max_stdout_bytes,
+        max_stderr_bytes=request.max_stderr_bytes,
+        max_intermediate_bytes=request.max_intermediate_bytes,
+    )
+    return (_detail("caps", caps),) if caps is not None else ()
+
+
+def _composition_caps(
+    *,
+    timeout_seconds: float | None,
+    max_stdout_bytes: int | None,
+    max_stderr_bytes: int | None,
+    max_intermediate_bytes: int | None,
+) -> str | None:
+    parts = [
+        _composition_cap("timeout", timeout_seconds),
+        _composition_cap("stdout", max_stdout_bytes),
+        _composition_cap("stderr", max_stderr_bytes),
+        _composition_cap("intermediate", max_intermediate_bytes),
+    ]
+    caps = ", ".join(part for part in parts if part is not None)
+    return caps or None
+
+
+def _composition_cap(name: str, value: int | float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{name}={value}"
+
+
+def _composition_request_metrics(
+    request: ShellCompositionRequest,
+) -> dict[str, int | float]:
+    metrics: dict[str, int | float] = {"stage_count": len(request.steps)}
+    if request.timeout_seconds is not None:
+        metrics["timeout_seconds"] = request.timeout_seconds
+    if request.max_stdout_bytes is not None:
+        metrics["max_stdout_bytes"] = request.max_stdout_bytes
+    if request.max_stderr_bytes is not None:
+        metrics["max_stderr_bytes"] = request.max_stderr_bytes
+    if request.max_intermediate_bytes is not None:
+        metrics["max_intermediate_bytes"] = request.max_intermediate_bytes
+    return metrics
+
+
+def _composition_result_metrics(
+    result: ShellCompositionResult,
+) -> dict[str, int]:
+    return {
+        "stage_count": len(result.steps),
+        "duration_ms": result.duration_ms,
+        "stdout_bytes": result.stdout_bytes,
+        "stderr_bytes": result.stderr_bytes,
+        "failed_stage_count": sum(
+            1
+            for step in result.steps
+            if step.status
+            not in {
+                ShellExecutionStatus.COMPLETED,
+                ShellExecutionStatus.NO_MATCHES,
+            }
+        ),
+    }
+
+
+def _composition_stage_statuses(
+    steps: tuple[ShellExecutionStepResult, ...],
+) -> str:
+    return ", ".join(f"{step.id}:{step.status.value}" for step in steps)
+
+
+def _composition_result_summary(result: ShellCompositionResult) -> str:
+    if result.status is ShellExecutionStatus.COMPLETED:
+        return (
+            f"Pipeline completed: {_composition_stage_statuses(result.steps)}."
+        )
+    failed_step = _first_non_success_stage(result.steps)
+    if failed_step is not None:
+        message = failed_step.error_message or result.error_message
+        statuses = _composition_stage_statuses(result.steps)
+        if message:
+            return (
+                "Pipeline failed at "
+                f"{failed_step.id}: {failed_step.status.value} ({message}). "
+                f"Stages: {statuses}."
+            )
+        return (
+            "Pipeline failed at "
+            f"{failed_step.id}: {failed_step.status.value}. "
+            f"Stages: {statuses}."
+        )
+    if result.error_message is not None:
+        return (
+            f"Pipeline ended with {result.status.value}: "
+            f"{result.error_message}."
+        )
+    return f"Pipeline ended with {result.status.value}."
+
+
+def _first_non_success_stage(
+    steps: tuple[ShellExecutionStepResult, ...],
+) -> ShellExecutionStepResult | None:
+    for step in steps:
+        if step.status not in {
+            ShellExecutionStatus.COMPLETED,
+            ShellExecutionStatus.NO_MATCHES,
+        }:
+            return step
     return None
 
 

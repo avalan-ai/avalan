@@ -22,7 +22,9 @@ from avalan.tool.shell import (
     SHELL_COMMAND_IDS,
     SHELL_COMMANDS,
     SHELL_STATUS_ERROR_CODES,
+    BackendBoundaryCompositionExecutor,
     CommandExecutor,
+    CompositionExecutor,
     ExecutableLookup,
     ExecutableResolver,
     ExecutionPolicy,
@@ -31,16 +33,27 @@ from avalan.tool.shell import (
     GeneratedFile,
     GeneratedOutputPlan,
     LocalCommandExecutor,
+    LocalCompositionExecutor,
     PathOperand,
     ShellCommandDefinition,
     ShellCommandRequest,
+    ShellCommandStepRequest,
+    ShellCompositionMode,
+    ShellCompositionRequest,
+    ShellCompositionResult,
+    ShellCompositionSpec,
     ShellDependencyGroup,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
+    ShellExecutionStepSpec,
+    ShellFormattedCompositionResult,
+    ShellFormattedResult,
     ShellOutputKind,
     ShellPathMetadata,
     ShellPolicyDenied,
     ShellSandboxCommandExecutor,
+    ShellStreamRef,
     ShellToolError,
     ShellToolSet,
     ShellToolSettings,
@@ -77,6 +90,20 @@ class ShellPublicApiTest(TestCase):
         self.assertIs(
             LocalCommandExecutor,
             import_module("avalan.tool.shell").LocalCommandExecutor,
+        )
+        self.assertIs(
+            CompositionExecutor,
+            import_module("avalan.tool.shell").CompositionExecutor,
+        )
+        self.assertIs(
+            LocalCompositionExecutor,
+            import_module("avalan.tool.shell").LocalCompositionExecutor,
+        )
+        self.assertIs(
+            BackendBoundaryCompositionExecutor,
+            import_module(
+                "avalan.tool.shell"
+            ).BackendBoundaryCompositionExecutor,
         )
         self.assertIs(
             ShellSandboxCommandExecutor,
@@ -146,6 +173,26 @@ class ShellPublicApiTest(TestCase):
             import_module("avalan.tool.shell").ShellCommandRequest,
         )
         self.assertIs(
+            ShellCommandStepRequest,
+            import_module("avalan.tool.shell").ShellCommandStepRequest,
+        )
+        self.assertIs(
+            ShellCompositionMode,
+            import_module("avalan.tool.shell").ShellCompositionMode,
+        )
+        self.assertIs(
+            ShellCompositionRequest,
+            import_module("avalan.tool.shell").ShellCompositionRequest,
+        )
+        self.assertIs(
+            ShellCompositionResult,
+            import_module("avalan.tool.shell").ShellCompositionResult,
+        )
+        self.assertIs(
+            ShellCompositionSpec,
+            import_module("avalan.tool.shell").ShellCompositionSpec,
+        )
+        self.assertIs(
             ExecutionSpec, import_module("avalan.tool.shell").ExecutionSpec
         )
         self.assertIs(
@@ -176,7 +223,27 @@ class ShellPublicApiTest(TestCase):
             import_module("avalan.tool.shell").ShellExecutionErrorCode,
         )
         self.assertIs(
+            ShellExecutionStepResult,
+            import_module("avalan.tool.shell").ShellExecutionStepResult,
+        )
+        self.assertIs(
+            ShellExecutionStepSpec,
+            import_module("avalan.tool.shell").ShellExecutionStepSpec,
+        )
+        self.assertIs(
             ShellOutputKind, import_module("avalan.tool.shell").ShellOutputKind
+        )
+        self.assertIs(
+            ShellStreamRef,
+            import_module("avalan.tool.shell").ShellStreamRef,
+        )
+        self.assertIs(
+            ShellFormattedResult,
+            import_module("avalan.tool.shell").ShellFormattedResult,
+        )
+        self.assertIs(
+            ShellFormattedCompositionResult,
+            import_module("avalan.tool.shell").ShellFormattedCompositionResult,
         )
         self.assertIs(
             ShellCommandDefinition,
@@ -240,6 +307,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.commands.tail",
             "avalan.tool.shell.commands.tesseract",
             "avalan.tool.shell.commands.wc",
+            "avalan.tool.shell.composition_executor",
             "avalan.tool.shell.entities",
             "avalan.tool.shell.executor",
             "avalan.tool.shell.filesystem",
@@ -281,6 +349,20 @@ class ShellPublicApiTest(TestCase):
             [schema["function"]["name"] for schema in toolset.json_schemas()],
             [f"shell.{command_id}" for command_id in SHELL_COMMAND_IDS],
         )
+
+    def test_shell_pipeline_is_not_registered_by_default(self) -> None:
+        toolset = ShellToolSet()
+        tool_names = tuple(
+            getattr(tool, "__name__", "") for tool in toolset.tools
+        )
+        schema_names = tuple(
+            schema["function"]["name"] for schema in toolset.json_schemas()
+        )
+
+        self.assertNotIn("pipeline", SHELL_COMMAND_IDS)
+        self.assertNotIn("pipeline", SHELL_COMMAND_DEFINITIONS)
+        self.assertNotIn("pipeline", tool_names)
+        self.assertNotIn("shell.pipeline", schema_names)
 
     def test_shell_toolset_accepts_explicit_settings(self) -> None:
         settings = ShellToolSettings()
@@ -325,6 +407,15 @@ class ShellAsyncContractTest(IsolatedAsyncioTestCase):
 
         with self.assertRaises(NotImplementedError):
             await executor.execute(object())
+
+    async def test_composition_executor_protocol_stub_is_inert(self) -> None:
+        class InertCompositionExecutor(CompositionExecutor):
+            pass
+
+        executor = InertCompositionExecutor()
+
+        with self.assertRaises(NotImplementedError):
+            await executor.execute_composition(object())
 
     async def test_executable_resolver_protocol_stub_is_inert(self) -> None:
         class InertExecutableResolver(ExecutableResolver):

@@ -1,6 +1,6 @@
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
-from avalan.entities import ToolCallContext
+from avalan.entities import ToolCallContext, ToolExecutionStreamEvent
 from avalan.tool import ToolSet
 from avalan.tool.shell.entities import (
     ExecutionResult,
@@ -111,6 +111,33 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self.assertEqual(request.timeout_seconds, 1.5)
         self.assertEqual(request.max_stdout_bytes, 100)
         self.assertEqual(request.max_stderr_bytes, 50)
+
+    async def test_shell_tool_forwards_stream_callback_to_executor(
+        self,
+    ) -> None:
+        spec = _spec("rg")
+        result = _result("rg", stdout="match\n")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(result)
+        tool = RgTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=_RecordingFormatter(),
+        )
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def record(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        output = await tool(
+            "needle",
+            context=ToolCallContext(stream_event=record),
+        )
+
+        self.assertEqual(output, "formatted:shell.rg:completed")
+        self.assertEqual(executor.specs, [spec])
+        self.assertEqual(executor.streams, [record])
 
     async def test_head_and_tail_build_line_reader_requests(self) -> None:
         for tool_class, command in (
@@ -2365,10 +2392,17 @@ class _DenyingPolicy:
 class _FakeExecutor:
     def __init__(self, result: ExecutionResult) -> None:
         self.specs: list[ExecutionSpec] = []
+        self.streams: list[object | None] = []
         self._result = result
 
-    async def execute(self, spec: ExecutionSpec) -> ExecutionResult:
+    async def execute(
+        self,
+        spec: ExecutionSpec,
+        *,
+        stream: object | None = None,
+    ) -> ExecutionResult:
         self.specs.append(spec)
+        self.streams.append(stream)
         return self._result
 
 

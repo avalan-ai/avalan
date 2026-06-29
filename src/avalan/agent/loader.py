@@ -76,6 +76,7 @@ from ..tool.shell import (
     should_append_shell_toolset,
 )
 from ..tool.shell.input_files import shell_input_file_filter
+from ..tool.shell.opt_in import enables_shell_pipeline
 
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, fields, replace
@@ -1579,7 +1580,13 @@ class OrchestratorLoader:
                 )
             shell_toolset = ShellToolSet(**shell_toolset_kwargs)
             available_toolsets.append(shell_toolset)
-            if _toolset_exposes_enabled_tool(shell_toolset, enabled_tools):
+            if _toolset_exposes_enabled_tool(
+                shell_toolset,
+                enabled_tools,
+            ) or enables_shell_pipeline(
+                enabled_tools,
+                candidate_shell_settings,
+            ):
                 active_shell_settings = candidate_shell_settings
 
         tool = ToolManager.create_instance(

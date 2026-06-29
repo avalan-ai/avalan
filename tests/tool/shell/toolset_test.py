@@ -1,6 +1,8 @@
+from asyncio import Event, create_task, gather, run, sleep, wait_for
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import patch
 
 from avalan.container import (
     ContainerBackend,
@@ -32,17 +34,43 @@ from avalan.tool.shell import (
     ExecutionSpec,
     LocalCommandExecutor,
     ShellCommandDefinition,
+    ShellCompositionResult,
+    ShellCompositionSpec,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
     ShellOutputKind,
     ShellToolSet,
     ShellToolSettings,
     TrustedExecutableResolver,
     unavailable_executable_lookup,
 )
-from avalan.tool.shell.entities import ShellFormattedResult
+from avalan.tool.shell.entities import (
+    ShellFormattedCompositionResult,
+    ShellFormattedResult,
+)
+from avalan.tool.shell.process import ShellProcessRuntime
 
-_EXPECTED_SCHEMA_NAMES = tuple(
-    f"shell.{command_id}" for command_id in SHELL_COMMAND_IDS
+_EXPECTED_SCHEMA_NAMES = (
+    "shell.rg",
+    "shell.head",
+    "shell.tail",
+    "shell.ls",
+    "shell.cat",
+    "shell.nl",
+    "shell.file",
+    "shell.find",
+    "shell.wc",
+    "shell.awk",
+    "shell.sed",
+    "shell.jq",
+    "shell.pdfinfo",
+    "shell.pdftotext",
+    "shell.pdftoppm",
+    "shell.tesseract",
+)
+_EXPECTED_SCHEMA_NAMES_WITH_PIPELINE = (
+    *_EXPECTED_SCHEMA_NAMES,
+    "shell.pipeline",
 )
 _DIGEST = "7" * 64
 _IMAGE = f"ghcr.io/example/sdk-shell@sha256:{_DIGEST}"
@@ -69,6 +97,78 @@ class ShellToolSetAssemblyTest(TestCase):
         self.assertEqual(_schema_names(all_enabled), _EXPECTED_SCHEMA_NAMES)
         self.assertEqual(_schema_names(concrete_enabled), ("shell.rg",))
         self.assertEqual(_schema_names(disabled), ())
+
+    def test_pipeline_selection_is_empty_without_pipeline_opt_in(self) -> None:
+        pipeline_enabled = ShellToolSet().with_enabled_tools(
+            ["shell.pipeline"]
+        )
+
+        self.assertEqual(_schema_names(pipeline_enabled), ())
+
+    def test_pipeline_setting_alone_does_not_expose_pipeline(self) -> None:
+        toolset = ShellToolSet(
+            settings=ShellToolSettings(allow_pipelines=True)
+        )
+
+        self.assertEqual(_schema_names(toolset), _EXPECTED_SCHEMA_NAMES)
+
+    def test_pipeline_visibility_requires_setting_and_matching_selection(
+        self,
+    ) -> None:
+        settings = ShellToolSettings(allow_pipelines=True)
+        cases = (
+            (["shell"], _EXPECTED_SCHEMA_NAMES_WITH_PIPELINE),
+            (["shell.*"], _EXPECTED_SCHEMA_NAMES_WITH_PIPELINE),
+            (["shell.pipeline"], ("shell.pipeline",)),
+            (["shell.rg"], ("shell.rg",)),
+            (["shell.cat"], ("shell.cat",)),
+            (["shellx.*"], ()),
+        )
+
+        for enable_tools, expected in cases:
+            with self.subTest(enable_tools=enable_tools):
+                toolset = ShellToolSet(settings=settings).with_enabled_tools(
+                    enable_tools
+                )
+
+                self.assertEqual(_schema_names(toolset), expected)
+
+    def test_pipeline_tool_executes_through_composition_executor(self) -> None:
+        settings = ShellToolSettings(allow_pipelines=True)
+        composition_executor = _RecordingCompositionExecutor()
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            composition_executor=composition_executor,
+        ).with_enabled_tools(["shell.pipeline"])
+        pipeline = toolset.tools[0]
+
+        assert callable(pipeline)
+        output = run(
+            pipeline(
+                steps=(
+                    {"id": "list", "command": "ls"},
+                    {
+                        "id": "count",
+                        "command": "wc",
+                        "stdin_from": {
+                            "step_id": "list",
+                            "stream": "stdout",
+                        },
+                    },
+                ),
+                context=ToolCallContext(),
+            )
+        )
+
+        self.assertIsInstance(output, ShellFormattedCompositionResult)
+        self.assertIn("tool: shell.pipeline", output)
+        self.assertIn("status: completed", output)
+        self.assertEqual(composition_executor.modes, ["pipeline"])
+        self.assertEqual(
+            [step.id for step in composition_executor.specs[0].steps],
+            ["list", "count"],
+        )
 
     def test_toolset_rejects_namespaces_that_change_schema_names(
         self,
@@ -174,6 +274,68 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [(event.kind, event.content) for event in events],
             [(ToolExecutionStreamKind.STDOUT, "live")],
+        )
+
+    async def test_toolset_process_runtime_is_shared_for_future_executors(
+        self,
+    ) -> None:
+        settings = ShellToolSettings(max_concurrent_processes=1)
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+        )
+        tool_executor = getattr(_tool_by_name(toolset, "cat"), "_executor")
+        future_executor = LocalCommandExecutor(
+            settings=settings,
+            process_runtime=toolset.process_runtime,
+        )
+        release = Event()
+        tracker = _ProcessTracker(target_active=1)
+        spawn_count = 0
+
+        async def fake_create_subprocess_exec(
+            *args: object,
+            **kwargs: object,
+        ) -> _BlockingProcess:
+            nonlocal spawn_count
+            spawn_count += 1
+            return _BlockingProcess(release=release, tracker=tracker)
+
+        self.assertIsInstance(toolset.process_runtime, ShellProcessRuntime)
+        self.assertIsInstance(tool_executor, LocalCommandExecutor)
+        self.assertIs(
+            getattr(tool_executor, "_process_runtime"),
+            toolset.process_runtime,
+        )
+        spec = _direct_execution_spec()
+
+        with patch(
+            "avalan.tool.shell.process.create_subprocess_exec",
+            new=fake_create_subprocess_exec,
+        ):
+            tool_task = create_task(tool_executor.execute(spec))
+            future_task = create_task(future_executor.execute(spec))
+            try:
+                await wait_for(tracker.target_reached.wait(), timeout=1)
+                await sleep(0)
+
+                self.assertEqual(spawn_count, 1)
+                self.assertEqual(tracker.maximum_active, 1)
+            finally:
+                release.set()
+
+            results = await wait_for(
+                gather(tool_task, future_task),
+                timeout=1,
+            )
+
+        self.assertEqual(spawn_count, 2)
+        self.assertEqual(tracker.maximum_active, 1)
+        self.assertTrue(
+            all(
+                result.status is ShellExecutionStatus.COMPLETED
+                for result in results
+            )
         )
 
     async def test_new_shell_commands_execute_through_toolset(self) -> None:
@@ -780,6 +942,137 @@ class _StreamingExecutor(CommandExecutor):
             stdout_bytes=4,
             stderr_bytes=0,
         )
+
+
+class _RecordingCompositionExecutor:
+    def __init__(self) -> None:
+        self.modes: list[str] = []
+        self.specs: list[ShellCompositionSpec] = []
+
+    async def execute_composition(
+        self,
+        spec: ShellCompositionSpec,
+        *,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ShellCompositionResult:
+        self.modes.append(spec.mode)
+        self.specs.append(spec)
+        if stream is not None:
+            await stream(
+                ToolExecutionStreamEvent(
+                    kind=ToolExecutionStreamKind.STDOUT,
+                    content="2\n",
+                    metadata={"stage_id": "count", "stage_index": 1},
+                )
+            )
+        return ShellCompositionResult(
+            mode=spec.mode,
+            status=ShellExecutionStatus.COMPLETED,
+            stdout="2\n",
+            stderr="",
+            steps=tuple(
+                ShellExecutionStepResult(
+                    id=step.id,
+                    command=step.spec.command,
+                    status=ShellExecutionStatus.COMPLETED,
+                    exit_code=0,
+                    stdout="2\n" if index == len(spec.steps) - 1 else "",
+                    stderr="",
+                    stdout_bytes=2 if index == len(spec.steps) - 1 else 0,
+                    stderr_bytes=0,
+                    stdout_truncated=False,
+                    stderr_truncated=False,
+                    duration_ms=1,
+                )
+                for index, step in enumerate(spec.steps)
+            ),
+            stdout_bytes=2,
+            stderr_bytes=0,
+            duration_ms=2,
+        )
+
+
+class _ProcessTracker:
+    def __init__(self, *, target_active: int) -> None:
+        self.active = 0
+        self.maximum_active = 0
+        self.target_reached = Event()
+        self._target_active = target_active
+
+    def enter(self) -> None:
+        self.active += 1
+        self.maximum_active = max(self.maximum_active, self.active)
+        if self.active >= self._target_active:
+            self.target_reached.set()
+
+    def exit(self) -> None:
+        self.active -= 1
+
+
+class _BlockingProcess:
+    returncode = 0
+    stdin = None
+
+    def __init__(
+        self,
+        *,
+        release: Event,
+        tracker: _ProcessTracker,
+    ) -> None:
+        self._release = release
+        self._tracker = tracker
+        self.stdout = _FakeStream(b"ok")
+        self.stderr = _FakeStream(b"")
+
+    async def wait(self) -> None:
+        self._tracker.enter()
+        try:
+            await self._release.wait()
+        finally:
+            self._tracker.exit()
+
+    def terminate(self) -> None:
+        self.returncode = -15
+        self._release.set()
+
+    def kill(self) -> None:
+        self.returncode = -9
+        self._release.set()
+
+
+class _FakeStream:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._offset = 0
+
+    async def read(self, size: int) -> bytes:
+        chunk = self._data[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
+
+
+def _direct_execution_spec() -> ExecutionSpec:
+    return ExecutionPolicy().create_execution_spec(
+        backend="local",
+        tool_name="shell.cat",
+        command="cat",
+        executable="/trusted/bin/cat",
+        argv=("cat",),
+        display_argv=("cat",),
+        cwd=str(Path.cwd().resolve()),
+        display_cwd=".",
+        env={"LC_ALL": "C"},
+        stdin=None,
+        stdout_media_type="text/plain",
+        output_kind=ShellOutputKind.TEXT,
+        resource_class="standard",
+        output_plan=None,
+        timeout_seconds=1.0,
+        max_stdout_bytes=10,
+        max_stderr_bytes=10,
+    )
 
 
 if __name__ == "__main__":

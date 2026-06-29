@@ -11,12 +11,21 @@ from ...isolation import (
     SandboxEffectiveSettings,
 )
 from ...sandbox import SandboxAsyncBackend
-from .. import ToolSet
+from .. import Tool, ToolSet
+from .composition_executor import (
+    BackendBoundaryCompositionExecutor,
+    CompositionExecutor,
+    LocalCompositionExecutor,
+)
 from .container import ShellContainerCommandExecutor
 from .executor import CommandExecutor, LocalCommandExecutor
-from .formatting import format_shell_result
-from .opt_in import SHELL_TOOL_NAMESPACE
+from .formatting import (
+    format_shell_composition_result,
+    format_shell_result,
+)
+from .opt_in import SHELL_TOOL_NAMESPACE, enables_shell_pipeline
 from .policy import ExecutionPolicy
+from .process import ShellProcessRuntime
 from .sandbox import ShellSandboxCommandExecutor
 from .settings import ShellToolSettings
 from .tools import (
@@ -31,27 +40,33 @@ from .tools import (
     PdfInfoTool,
     PdfToPpmTool,
     PdfToTextTool,
+    PipelineTool,
     RgTool,
     SedTool,
+    ShellCompositionResultFormatter,
     ShellResultFormatter,
     TailTool,
     TesseractTool,
     WcTool,
 )
 
-from collections.abc import Sequence
-from typing import cast
+from collections.abc import Callable, Sequence
+from typing import Literal, cast
 
 
 class ShellToolSet(ToolSet):
+    _pipeline_tool: PipelineTool
     _settings: ShellToolSettings
+    _process_runtime: ShellProcessRuntime
 
     def __init__(
         self,
         settings: ShellToolSettings | None = None,
         *,
         executor: CommandExecutor | None = None,
+        composition_executor: CompositionExecutor | None = None,
         formatter: ShellResultFormatter | None = None,
+        composition_formatter: ShellCompositionResultFormatter | None = None,
         namespace: str | None = "shell",
         policy: ExecutionPolicy | None = None,
         container_runtime: ContainerToolRuntimeSettings | None = None,
@@ -66,6 +81,7 @@ class ShellToolSet(ToolSet):
         assert namespace == SHELL_TOOL_NAMESPACE, "namespace must be shell"
         assert isinstance(container_rootful_authorized, bool)
         self._settings = settings or ShellToolSettings()
+        self._process_runtime = ShellProcessRuntime(self._settings)
         execution_mode = self._settings.execution_mode
         if container_runtime is not None:
             assert isinstance(container_runtime, ContainerToolRuntimeSettings)
@@ -92,6 +108,12 @@ class ShellToolSet(ToolSet):
         assert not (
             execution_mode != "local" and executor is not None
         ), "custom shell executors require shell execution mode local"
+        assert not (
+            execution_mode != "local" and composition_executor is not None
+        ), (
+            "custom shell composition executors require shell execution mode "
+            "local"
+        )
         if isolation_runtime is not None:
             assert isinstance(isolation_runtime, IsolationToolRuntimeSettings)
             assert not _isolation_runtime_hooks_configured(
@@ -143,7 +165,10 @@ class ShellToolSet(ToolSet):
         ), "container shell execution cannot carry sandbox policy"
         policy = policy or ExecutionPolicy(settings=self._settings)
         if executor is None:
-            local_executor = LocalCommandExecutor(settings=self._settings)
+            local_executor = LocalCommandExecutor(
+                settings=self._settings,
+                process_runtime=self._process_runtime,
+            )
             if execution_mode == "sandbox":
                 executor = ShellSandboxCommandExecutor(
                     sandbox_settings=sandbox_settings,
@@ -165,7 +190,35 @@ class ShellToolSet(ToolSet):
                 settings=self._settings,
             )
         )
-        tools = [
+        composition_executor = composition_executor or (
+            LocalCompositionExecutor(
+                settings=self._settings,
+                command_executor=executor,
+                process_runtime=self._process_runtime,
+            )
+            if execution_mode == "local"
+            else BackendBoundaryCompositionExecutor(
+                backend=cast(
+                    Literal["sandbox", "container"],
+                    execution_mode,
+                ),
+                command_executor=executor,
+                settings=self._settings,
+            )
+        )
+        composition_formatter = composition_formatter or (
+            lambda result: format_shell_composition_result(
+                result,
+                settings=self._settings,
+            )
+        )
+        self._pipeline_tool = PipelineTool(
+            settings=self._settings,
+            policy=policy,
+            executor=composition_executor,
+            formatter=composition_formatter,
+        )
+        tools: list[Callable[..., object] | Tool | ToolSet] = [
             RgTool(
                 settings=self._settings,
                 policy=policy,
@@ -265,6 +318,24 @@ class ShellToolSet(ToolSet):
         ]
         super().__init__(namespace=namespace, tools=tools)
 
+    @property
+    def process_runtime(self) -> ShellProcessRuntime:
+        return self._process_runtime
+
+    @property
+    def available_tools(self) -> list[Callable[..., object] | Tool | ToolSet]:
+        tools: list[Callable[..., object] | Tool | ToolSet] = list(self.tools)
+        if not _has_pipeline_tool(tools):
+            tools.append(self._pipeline_tool)
+        return tools
+
+    def with_enabled_tools(self, enable_tools: list[str]) -> "ShellToolSet":
+        if enables_shell_pipeline(
+            enable_tools, self._settings
+        ) and not _has_pipeline_tool(self.tools):
+            self.tools.append(self._pipeline_tool)
+        return cast(ShellToolSet, super().with_enabled_tools(enable_tools))
+
 
 def _container_runtime_configured(
     runtime: ContainerToolRuntimeSettings,
@@ -290,6 +361,12 @@ def _container_runtime_hooks_configured(
         or runtime.secret_resolver is not None
         or bool(runtime.audit_listeners)
     )
+
+
+def _has_pipeline_tool(
+    tools: Sequence[Callable[..., object] | Tool | ToolSet],
+) -> bool:
+    return any(getattr(tool, "__name__", "") == "pipeline" for tool in tools)
 
 
 def _isolation_runtime_hooks_configured(

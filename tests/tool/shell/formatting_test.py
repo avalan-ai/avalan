@@ -6,11 +6,16 @@ from unittest.mock import patch
 from avalan.tool.shell.entities import (
     ExecutionResult,
     GeneratedFile,
+    ShellCompositionResult,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
     ShellOutputKind,
 )
-from avalan.tool.shell.formatting import format_shell_result
+from avalan.tool.shell.formatting import (
+    format_shell_composition_result,
+    format_shell_result,
+)
 from avalan.tool.shell.settings import ShellToolSettings
 
 
@@ -49,6 +54,61 @@ class ShellFormattingTest(TestCase):
                 )
             ),
         )
+
+    def test_composition_result_formats_aggregate_without_stage_stdout(
+        self,
+    ) -> None:
+        formatted = format_shell_composition_result(
+            ShellCompositionResult(
+                mode="pipeline",
+                status=ShellExecutionStatus.COMPLETED,
+                stdout="final stdout\n",
+                stderr="[read:cat]\nwarning\n",
+                steps=(
+                    ShellExecutionStepResult(
+                        id="read",
+                        command="cat",
+                        status=ShellExecutionStatus.COMPLETED,
+                        exit_code=0,
+                        stdout="INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK",
+                        stderr="warning\n",
+                        stdout_bytes=35,
+                        stderr_bytes=8,
+                        stdout_truncated=False,
+                        stderr_truncated=False,
+                        duration_ms=3,
+                        metadata={"private": "PRIVATE_METADATA"},
+                    ),
+                    ShellExecutionStepResult(
+                        id="count",
+                        command="wc",
+                        status=ShellExecutionStatus.COMPLETED,
+                        exit_code=0,
+                        stdout="final stdout\n",
+                        stderr="",
+                        stdout_bytes=13,
+                        stderr_bytes=0,
+                        stdout_truncated=False,
+                        stderr_truncated=False,
+                        duration_ms=4,
+                    ),
+                ),
+                stdout_bytes=13,
+                stderr_bytes=19,
+                duration_ms=9,
+                metadata={"private": "PRIVATE_RESULT_METADATA"},
+            )
+        )
+
+        self.assertIn("tool: shell.pipeline", formatted)
+        self.assertIn("status: completed", formatted)
+        self.assertIn("stage_chain: cat | wc", formatted)
+        self.assertIn("  status: completed", formatted)
+        self.assertIn("\nstdout:\nfinal stdout\n", formatted)
+        self.assertIn("\nstderr:\n[read:cat]\nwarning\n", formatted)
+        self.assertNotIn("INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK", formatted)
+        self.assertNotIn("PRIVATE_METADATA", formatted)
+        self.assertNotIn("PRIVATE_RESULT_METADATA", formatted)
 
     def test_no_output_keeps_stdout_block(self) -> None:
         self.assertEqual(

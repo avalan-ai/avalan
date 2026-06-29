@@ -722,6 +722,32 @@ class TaskDefinitionLoaderTest(TestCase):
 
         self.assertEqual(result.issues[0].code, "task.invalid_enum")
 
+    def test_docs_shell_pipeline_task_examples_load(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        examples = (
+            (
+                "pipeline_agent.task.toml",
+                TaskTargetType.AGENT,
+                "agents/pipeline_reader.toml",
+            ),
+            (
+                "pipeline_flow.task.toml",
+                TaskTargetType.FLOW,
+                "pipeline_flow.flow.toml",
+            ),
+        )
+
+        for name, target_type, ref in examples:
+            with self.subTest(name=name):
+                definition = TaskDefinitionLoader().load(
+                    root / "docs" / "examples" / "tasks" / name
+                )
+
+                self.assertIsInstance(definition, TaskDefinition)
+                self.assertEqual(definition.execution.type, target_type)
+                self.assertEqual(definition.execution.ref, ref)
+                self.assertEqual(definition.run.mode, RunMode.DIRECT)
+
 
 if __name__ == "__main__":
     main()

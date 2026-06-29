@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest import TestCase, main
 
 from async_helpers import run_async
@@ -54,6 +55,7 @@ from avalan.flow import validator as flow_validator
 from avalan.flow.node import Node
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
+from avalan.tool.shell import ShellToolSet, ShellToolSettings
 
 
 async def validator_flow_adder(a: int, b: int) -> int:
@@ -1190,12 +1192,93 @@ class FlowValidatorTestCase(TestCase):
                                 ref=ref,
                                 config=config,
                             ),
-                        )
+                        ),
                     ),
                     registry,
                 )
 
                 self.assertTrue(result.ok, result.public_diagnostics)
+
+    def test_validate_flow_definition_accepts_nested_tool_literals(
+        self,
+    ) -> None:
+        descriptor = ToolDescriptor(
+            name="shell.pipeline",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "steps": {"type": "array"},
+                    "max_stdout_bytes": {"type": "integer"},
+                },
+                "required": ["steps"],
+            },
+        )
+        registry = tool_flow_node_registry(StaticToolResolver([descriptor]))
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(
+                        name="start",
+                        type=FLOW_TOOL_NODE_TYPE,
+                        ref="shell.pipeline",
+                        config={
+                            "arguments": {
+                                "steps": [
+                                    {
+                                        "id": "read",
+                                        "command": "cat",
+                                        "paths": ["visible.txt"],
+                                    },
+                                    {
+                                        "id": "count",
+                                        "command": "wc",
+                                        "stdin_from": {
+                                            "step_id": "read",
+                                            "stream": "stdout",
+                                        },
+                                    },
+                                ],
+                                "max_stdout_bytes": 1024,
+                            }
+                        },
+                    ),
+                )
+            ),
+            registry,
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+
+    def test_docs_shell_pipeline_flow_examples_validate_with_runtime(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.pipeline"],
+            available_toolsets=[
+                ShellToolSet(settings=ShellToolSettings(allow_pipelines=True))
+            ],
+            settings=ToolManagerSettings(),
+        )
+        loader = flow_loader.FlowDefinitionLoader(
+            tool_flow_node_registry(manager)
+        )
+        root = Path(__file__).resolve().parents[2]
+        examples = (
+            root / "docs" / "examples" / "flows" / "shell_pipeline.flow.toml",
+            root / "docs" / "examples" / "tasks" / "pipeline_flow.flow.toml",
+        )
+
+        for example_path in examples:
+            with self.subTest(example=example_path.name):
+                result = run_async(loader.load_validation_result(example_path))
+
+                self.assertTrue(result.ok, result.public_diagnostics)
+                assert result.definition is not None
+                self.assertEqual(
+                    result.definition.nodes[0].ref,
+                    "shell.pipeline",
+                )
 
     def test_validate_flow_definition_rejects_strict_tool_refs(
         self,
@@ -1247,6 +1330,84 @@ class FlowValidatorTestCase(TestCase):
                 if ref is not None:
                     self.assertNotIn(ref, str(result.public_diagnostics))
 
+    def test_validate_flow_definition_rejects_pipeline_without_allow(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.pipeline"],
+            available_toolsets=[
+                ShellToolSet(settings=ShellToolSettings(allow_pipelines=False))
+            ],
+            settings=ToolManagerSettings(),
+        )
+        registry = tool_flow_node_registry(manager)
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(
+                        name="start",
+                        type=FLOW_TOOL_NODE_TYPE,
+                        ref="shell.pipeline",
+                        config={
+                            "arguments": {
+                                "steps": [
+                                    {
+                                        "id": "read",
+                                        "command": "cat",
+                                    }
+                                ],
+                            }
+                        },
+                    ),
+                )
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.tool_disabled")
+        self.assertEqual(result.diagnostics[0].path, "nodes.start.ref")
+        self.assertIn("allow_pipelines", result.diagnostics[0].hint)
+
+    def test_validate_flow_definition_rejects_unavailable_pipeline(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(StaticToolResolver([]))
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(
+                        name="start",
+                        type=FLOW_TOOL_NODE_TYPE,
+                        ref="shell.pipeline",
+                        config={
+                            "arguments": {
+                                "steps": [
+                                    {
+                                        "id": "read",
+                                        "command": "cat",
+                                    }
+                                ],
+                            }
+                        },
+                    ),
+                )
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.tool_unknown")
+        self.assertEqual(result.diagnostics[0].path, "nodes.start.ref")
+        self.assertEqual(
+            result.diagnostics[0].message,
+            "shell.pipeline is not available in this flow runtime.",
+        )
+        self.assertIn("shell tool resolver", result.diagnostics[0].hint)
+        self.assertIn("allow_pipelines=true", result.diagnostics[0].hint)
+
     def test_validate_flow_definition_rejects_strict_tool_bindings(
         self,
     ) -> None:
@@ -1284,6 +1445,12 @@ class FlowValidatorTestCase(TestCase):
             ),
             (
                 "validator_flow_adder",
+                {"arguments": {"a": object(), "b": "right"}},
+                "flow.invalid_argument_literal",
+                "nodes.start.config.arguments.a",
+            ),
+            (
+                "validator_flow_adder",
                 {
                     "arguments": {"a": "left", "b": "right"},
                     "output_mode": "wrapped",
@@ -1310,7 +1477,7 @@ class FlowValidatorTestCase(TestCase):
                                 ref=ref,
                                 config=config,
                             ),
-                        )
+                        ),
                     ),
                     registry,
                 )

@@ -588,6 +588,94 @@ class PrivacyTest(TestCase):
         )
         self.assertNotIn("private token", str(event))
 
+    def test_pipeline_event_redaction_keeps_stage_status_only(self) -> None:
+        sanitizer = PrivacySanitizer()
+
+        event = sanitizer.sanitize_event(
+            "tool_execution_completed",
+            {
+                "name": "shell.pipeline",
+                "status": "completed",
+                "stage_count": 2,
+                "stage_statuses": [
+                    {
+                        "stage_id": "search",
+                        "stage_index": 0,
+                        "status": "completed",
+                        "stdout": "private intermediate stdout",
+                        "command": "rg",
+                        "cwd": "/Users/person/private-project",
+                    },
+                    {
+                        "stage_id": "count",
+                        "stage_index": 1,
+                        "status": "completed",
+                        "stdout": "private final stdout",
+                        "stdin_from": {"step_id": "search"},
+                    },
+                ],
+                "stdout": "private final stdout",
+                "stderr": "private diagnostics",
+                "intermediate_stdout": "private intermediate stdout",
+                "tool_arguments": {"steps": [{"command": "rg"}]},
+                "usage": {"metadata": "private shell metadata"},
+                "artifacts": [{"path": "/Users/person/private-project/out"}],
+                "canonical_stream": {
+                    "stream_session_id": "stream-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "sequence": 7,
+                    "kind": "tool.result",
+                    "channel": "tool",
+                    "visibility": "public",
+                    "summary": {
+                        "stdout": "private intermediate stdout",
+                        "tool_arguments": {"steps": [{"command": "rg"}]},
+                    },
+                    "private_metadata": {
+                        "cwd": "/Users/person/private-project"
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(
+            event,
+            {
+                "event_type": "tool_execution_completed",
+                "name": "shell.pipeline",
+                "status": "completed",
+                "stage_count": 2,
+                "stage_statuses": [
+                    {
+                        "stage_id": "search",
+                        "stage_index": 0,
+                        "status": "completed",
+                    },
+                    {
+                        "stage_id": "count",
+                        "stage_index": 1,
+                        "status": "completed",
+                    },
+                ],
+                "canonical_stream": {
+                    "stream_session_id": "stream-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "sequence": 7,
+                    "kind": "tool.result",
+                    "channel": "tool",
+                    "visibility": "public",
+                },
+            },
+        )
+        rendered = str(event)
+        self.assertNotIn("private intermediate stdout", rendered)
+        self.assertNotIn("private final stdout", rendered)
+        self.assertNotIn("private shell metadata", rendered)
+        self.assertNotIn("/Users/person/private-project", rendered)
+        self.assertNotIn("rg", rendered)
+
     def test_event_redaction_drops_error_text_and_paths(self) -> None:
         sanitizer = PrivacySanitizer()
 

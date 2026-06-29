@@ -182,6 +182,14 @@ network denial, timeout, cancellation, output validation failure, cleanup
 uncertainty, stale durable metadata, or unsupported surface produces a
 structured failure.
 
+Container shell execution supports individual commands and shell-local
+`serial` or `parallel` compositions that do not route bytes between stages
+when the selected profile can enforce each command. Full `shell.pipeline`
+byte-stream mode, and any composition with `stdin_from`, is unsupported for
+container execution. It fails closed with a policy-denied composition result.
+Avalan does not translate container pipelines into shell strings or run them on
+the host as a fallback.
+
 Optional local fallback is allowed only when container execution is disabled
 and not required. If `[tool.shell] backend = "container"` or
 `--tool-shell-container-required` selects required container execution, a
@@ -248,6 +256,9 @@ where the selected execution path reaches those phases.
 - Runtime envelopes and model backend containers require trusted
   loader/runner implementations. The default server and agent paths report
   unavailable-envelope diagnostics rather than pretending to run enveloped.
+- Container byte pipelines are unsupported. `shell.pipeline` requests with
+  `mode = "pipeline"` or `stdin_from` fail closed, even when individual shell
+  commands can run in a container.
 - Task TOML container syntax is explicitly unsupported. Use SDK/operator
   configuration for task container settings until task-file syntax is promoted.
 - Generic profile-backed container tools, pooling, service reuse, broad build

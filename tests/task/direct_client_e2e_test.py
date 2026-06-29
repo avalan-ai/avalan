@@ -22,9 +22,27 @@ from avalan.entities import (
     MessageContentFile,
     MessageContentImage,
     MessageContentText,
+    ToolCall,
+    ToolCallContext,
+    ToolCallDiagnostic,
+    ToolCallResult,
+    ToolDescriptor,
+    ToolNameResolution,
+    ToolNameResolutionStatus,
 )
 from avalan.event import Event, EventType
-from avalan.flow import Flow, FlowDefinitionLoader
+from avalan.flow import (
+    Flow,
+    FlowDefinition,
+    FlowDefinitionLoader,
+    FlowEntryBehavior,
+    FlowInputDefinition,
+    FlowInputType,
+    FlowNodeDefinition,
+    FlowOutputBehavior,
+    FlowOutputDefinition,
+    FlowOutputType,
+)
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -450,6 +468,50 @@ def _fixture_agent_instructions(fixture: Path) -> str:
     return instructions
 
 
+def _pipeline_flow_definition() -> FlowDefinition:
+    return FlowDefinition(
+        name="pipeline-flow",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.JSON),
+        ),
+        entry_behavior=FlowEntryBehavior(node="pipeline"),
+        output_behavior=FlowOutputBehavior(
+            outputs={"answer": "pipeline.result"}
+        ),
+        nodes=(
+            FlowNodeDefinition(
+                name="pipeline",
+                type="tool",
+                ref="shell.pipeline",
+                config={
+                    "arguments": {
+                        "steps": [
+                            {
+                                "id": "read",
+                                "command": "cat",
+                                "paths": ["README.md"],
+                            },
+                            {
+                                "id": "count",
+                                "command": "wc",
+                                "options": {"lines": True},
+                                "stdin_from": {
+                                    "step_id": "read",
+                                    "stream": "stdout",
+                                },
+                            },
+                        ]
+                    }
+                },
+            ),
+        ),
+    )
+
+
 class StaticHmacProvider:
     def hmac_key(
         self,
@@ -461,6 +523,68 @@ class StaticHmacProvider:
             key_id=key_id or purpose.value,
             algorithm="hmac-sha256",
             secret=b"direct-client-e2e-secret",
+        )
+
+
+class PipelineToolResolver:
+    def __init__(self) -> None:
+        self.calls: list[ToolCall] = []
+        self.contexts: list[ToolCallContext] = []
+
+    def list_tools(self) -> list[ToolDescriptor]:
+        return [
+            ToolDescriptor(
+                name="shell.pipeline",
+                parameter_schema={
+                    "type": "object",
+                    "properties": {
+                        "steps": {"type": "array"},
+                    },
+                },
+                return_schema={
+                    "type": "string",
+                    "description": "Formatted shell composition result.",
+                },
+            )
+        ]
+
+    def resolve_tool_name(
+        self,
+        name: str,
+        *,
+        provider_originated: bool = False,
+    ) -> ToolNameResolution:
+        _ = provider_originated
+        if name == "shell.pipeline":
+            return ToolNameResolution(
+                requested_name=name,
+                status=ToolNameResolutionStatus.EXACT,
+                canonical_name=name,
+                candidates=[name],
+            )
+        return ToolNameResolution(
+            requested_name=name,
+            status=ToolNameResolutionStatus.UNKNOWN,
+            candidates=[],
+        )
+
+    def validate_tool_call(self, call: ToolCall) -> ToolCallDiagnostic | None:
+        _ = call
+        return None
+
+    async def execute_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+    ) -> ToolCallResult:
+        self.calls.append(call)
+        self.contexts.append(context)
+        return ToolCallResult(
+            id=call.id,
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="tool: shell.pipeline\nstatus: completed\nstdout:\n2\n",
         )
 
 
@@ -1376,6 +1500,115 @@ def _prometheus_samples(
 
 
 class DirectClientE2ETest(IsolatedAsyncioTestCase):
+    async def test_direct_agent_task_runs_pipeline_enabled_agent(self) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            agent_path = root / "agents" / "pipeline.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Pipeline"
+task = "Inspect files."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+
+[tool]
+enable = ["shell.pipeline"]
+
+[tool.shell]
+allow_pipelines = true
+""",
+                encoding="utf-8",
+            )
+            loader = ProviderFakeLoader()
+            definition = TaskDefinition(
+                task=TaskMetadata(name="pipeline_agent", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.text(),
+                execution=TaskExecutionTarget.agent("agents/pipeline.toml"),
+                run=TaskRunPolicy.direct(timeout_seconds=60),
+                observability=TaskObservabilityPolicy.noop(),
+            )
+            client = TaskClient(
+                InMemoryTaskStore(
+                    clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+                ),
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: f"direct-{task.task.name}",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            validation = await client.validate(
+                definition,
+                input_value="private prompt",
+            )
+            result = await client.run(
+                definition,
+                input_value="private prompt",
+            )
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertTrue(validation.valid)
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "provider accepted")
+        self.assertEqual(loader.paths, [str(agent_path)])
+        self.assertEqual(loader.inputs, ["private prompt"])
+        self.assertNotIn("private prompt", str(inspection.as_dict()))
+
+    async def test_direct_flow_task_runs_shell_pipeline_with_tool_settings(
+        self,
+    ) -> None:
+        resolver = PipelineToolResolver()
+        definition = TaskDefinition(
+            task=TaskMetadata(name="pipeline_flow", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.flow("flows/pipeline.toml"),
+            run=TaskRunPolicy.direct(timeout_seconds=60),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+        client = TaskClient(
+            InMemoryTaskStore(clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)),
+            target=FlowTaskTargetRunner(
+                strict_resolver=lambda _: _pipeline_flow_definition(),
+                tool_resolver=resolver,
+            ),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: f"direct-{task.task.name}",
+            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        validation = await client.validate(
+            definition,
+            input_value="count README lines",
+        )
+        result = await client.run(
+            definition,
+            input_value="count README lines",
+        )
+        inspection = await client.inspect(result.run.run_id)
+
+        self.assertTrue(validation.valid)
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            result.output,
+            "tool: shell.pipeline\nstatus: completed\nstdout:\n2\n",
+        )
+        self.assertEqual(len(resolver.calls), 1)
+        self.assertTrue(resolver.contexts[0].flow_tool_node)
+        self.assertEqual(resolver.calls[0].name, "shell.pipeline")
+        self.assertEqual(
+            cast(Mapping[str, object], resolver.calls[0].arguments)["steps"][
+                0
+            ]["id"],
+            "read",
+        )
+        self.assertNotIn("count README lines", str(inspection.as_dict()))
+
     async def test_poc_extraction_fixture_sends_prompt_pdf_and_schema(
         self,
     ) -> None:

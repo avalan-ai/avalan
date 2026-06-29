@@ -184,6 +184,10 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_search_messages_from_file_forwards_shell_settings(self):
         self.args.tool_shell_max_head_lines = 13
+        self.args.tool_shell_allow_pipelines = True
+        self.args.tool_shell_max_pipeline_stages = 3
+        self.args.tool_shell_max_pipeline_bytes = 1024
+        self.args.tool_shell_max_intermediate_bytes = 512
         orch = MagicMock()
         orch.engine_agent = True
         orch.engine = MagicMock(model_id="m")
@@ -218,6 +222,10 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
         tool_settings = lf.call_args.kwargs["tool_settings"]
         self.assertIsInstance(tool_settings.shell, ShellToolSettings)
         self.assertEqual(tool_settings.shell.max_head_lines, 13)
+        self.assertTrue(tool_settings.shell.allow_pipelines)
+        self.assertEqual(tool_settings.shell.max_pipeline_stages, 3)
+        self.assertEqual(tool_settings.shell.max_pipeline_bytes, 1024)
+        self.assertEqual(tool_settings.shell.max_intermediate_bytes, 512)
 
     async def test_search_messages_from_settings(self):
         self.args.specifications_file = None
@@ -560,6 +568,10 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_agent_serve_from_file_forwards_shell_settings(self):
         args = _serve_from_settings_args(
             tool_shell_max_head_lines=9,
+            tool_shell_allow_pipelines=True,
+            tool_shell_max_pipeline_stages=3,
+            tool_shell_max_pipeline_bytes=1024,
+            tool_shell_max_intermediate_bytes=512,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -580,6 +592,10 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         tool_settings = asrv.call_args.kwargs["tool_settings"]
         self.assertIsInstance(tool_settings.shell, ShellToolSettings)
         self.assertEqual(tool_settings.shell.max_head_lines, 9)
+        self.assertTrue(tool_settings.shell.allow_pipelines)
+        self.assertEqual(tool_settings.shell.max_pipeline_stages, 3)
+        self.assertEqual(tool_settings.shell.max_pipeline_bytes, 1024)
+        self.assertEqual(tool_settings.shell.max_intermediate_bytes, 512)
         server.serve.assert_awaited_once()
 
     async def test_agent_serve_shell_settings_preserve_default_tools(self):
@@ -752,6 +768,10 @@ class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
             memory_permanent_message=None,
             tool=["shell.cat"],
             tool_shell_max_stdout_bytes=2048,
+            tool_shell_allow_pipelines=True,
+            tool_shell_max_pipeline_stages=3,
+            tool_shell_max_pipeline_bytes=1024,
+            tool_shell_max_intermediate_bytes=512,
         )
         hub = MagicMock()
         logger = MagicMock()
@@ -775,6 +795,10 @@ class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
         tool_settings = asrv.call_args.kwargs["tool_settings"]
         self.assertIsInstance(tool_settings.shell, ShellToolSettings)
         self.assertEqual(tool_settings.shell.max_stdout_bytes, 2048)
+        self.assertTrue(tool_settings.shell.allow_pipelines)
+        self.assertEqual(tool_settings.shell.max_pipeline_stages, 3)
+        self.assertEqual(tool_settings.shell.max_pipeline_bytes, 1024)
+        self.assertEqual(tool_settings.shell.max_intermediate_bytes, 512)
         server.serve.assert_awaited_once()
 
     async def test_agent_proxy_requires_engine(self):
@@ -1368,6 +1392,10 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             tool_shell_input_file_manifest_path_message="Pass them to tools.",
             tool_shell_max_stdout_bytes=4096,
             tool_shell_allow_media_tools=True,
+            tool_shell_allow_pipelines=True,
+            tool_shell_max_pipeline_stages=3,
+            tool_shell_max_pipeline_bytes=1024,
+            tool_shell_max_intermediate_bytes=512,
             tool_shell_allowed_commands=("rg", "cat"),
             tool_shell_executable_search_paths=["/usr/bin", "/bin"],
             tool_shell_executable_paths=[("rg", "/usr/bin/rg")],
@@ -1407,6 +1435,10 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("max_stdout_bytes = 4096", output)
         self.assertIn("allow_media_tools = true", output)
+        self.assertIn("allow_pipelines = true", output)
+        self.assertIn("max_pipeline_stages = 3", output)
+        self.assertIn("max_pipeline_bytes = 1024", output)
+        self.assertIn("max_intermediate_bytes = 512", output)
         self.assertIn("allowed_commands = [", output)
         self.assertIn("executable_search_paths = [", output)
         self.assertIn('executable_paths = { rg = "/usr/bin/rg" }', output)
@@ -1425,6 +1457,10 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
                 "input_file_manifest_path_message": "Pass them to tools.",
                 "max_stdout_bytes": 4096,
                 "allow_media_tools": True,
+                "allow_pipelines": True,
+                "max_pipeline_stages": 3,
+                "max_pipeline_bytes": 1024,
+                "max_intermediate_bytes": 512,
                 "allowed_commands": ["rg", "cat"],
                 "executable_search_paths": ["/usr/bin", "/bin"],
                 "executable_paths": {"rg": "/usr/bin/rg"},
@@ -2572,6 +2608,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_from_file_forwards_shell_settings(self):
         self.args.tool_shell_max_stdout_bytes = 2048
+        self.args.tool_shell_allow_pipelines = True
+        self.args.tool_shell_max_pipeline_stages = 3
+        self.args.tool_shell_max_pipeline_bytes = 1024
+        self.args.tool_shell_max_intermediate_bytes = 512
 
         with (
             patch.object(agent_cmds, "get_input", return_value=None),
@@ -2599,6 +2639,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         tool_settings = lf.call_args.kwargs["tool_settings"]
         self.assertIsInstance(tool_settings.shell, ShellToolSettings)
         self.assertEqual(tool_settings.shell.max_stdout_bytes, 2048)
+        self.assertTrue(tool_settings.shell.allow_pipelines)
+        self.assertEqual(tool_settings.shell.max_pipeline_stages, 3)
+        self.assertEqual(tool_settings.shell.max_pipeline_bytes, 1024)
+        self.assertEqual(tool_settings.shell.max_intermediate_bytes, 512)
 
     async def test_no_session_option_skips_session(self):
         self.args.no_session = True
@@ -3147,6 +3191,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.args.engine_uri = "engine"
         self.args.role = "assistant"
         self.args.tool_shell_max_stdout_bytes = 2048
+        self.args.tool_shell_allow_pipelines = True
+        self.args.tool_shell_max_pipeline_stages = 3
+        self.args.tool_shell_max_pipeline_bytes = 1024
+        self.args.tool_shell_max_intermediate_bytes = 512
 
         with (
             patch.object(agent_cmds, "get_input", return_value=None),
@@ -3181,6 +3229,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         tool_settings = fs_patch.call_args.kwargs["tool_settings"]
         self.assertIsInstance(tool_settings.shell, ShellToolSettings)
         self.assertEqual(tool_settings.shell.max_stdout_bytes, 2048)
+        self.assertTrue(tool_settings.shell.allow_pipelines)
+        self.assertEqual(tool_settings.shell.max_pipeline_stages, 3)
+        self.assertEqual(tool_settings.shell.max_pipeline_bytes, 1024)
+        self.assertEqual(tool_settings.shell.max_intermediate_bytes, 512)
         self.assertIsNone(tool_settings.browser)
         self.assertIsNone(tool_settings.database)
         self.assertIsNone(tool_settings.graph)

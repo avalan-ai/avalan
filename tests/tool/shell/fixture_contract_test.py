@@ -62,6 +62,7 @@ REQUIRED_FIXTURE_FILES = (
 PERFORMANCE_PASS_CRITERIA = {
     "retained_stream_bytes": "cap + chunk_size",
     "max_active_subprocesses": "configured_limit",
+    "shared_process_limiter": "configured_limit",
     "redaction_growth": "captured_bytes",
     "post_filter_growth": "captured_bytes",
     "path_normalization_calls": "input_paths",
@@ -134,6 +135,7 @@ class ShellFixtureContractTest(TestCase):
             {
                 "retained_stream_bytes": "cap + chunk_size",
                 "max_active_subprocesses": "configured_limit",
+                "shared_process_limiter": "configured_limit",
                 "redaction_growth": "captured_bytes",
                 "post_filter_growth": "captured_bytes",
                 "path_normalization_calls": "input_paths",

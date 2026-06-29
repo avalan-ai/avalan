@@ -200,6 +200,29 @@ class ToolDisplayProjectionE2ETestCase(IsolatedAsyncioTestCase):
                 self.assertNotIn(_DENIED_SHELL_PATH, output)
                 self.assertNotIn("/private/fixture", output)
 
+    async def test_shell_pipeline_projection_renders_stage_chain_cleanly(
+        self,
+    ) -> None:
+        snapshot = await _snapshot_from_items(
+            _config(),
+            *_projected_pipeline_items(),
+        )
+
+        for theme_name in ("basic", "fancy"):
+            with self.subTest(theme=theme_name):
+                output = await _render_theme(theme_name, snapshot, _config())
+                compact_output = " ".join(output.split())
+
+                self.assertIn("pipeline cat | wc", output)
+                self.assertIn("nonzero_exit", output)
+                self.assertIn(
+                    "read:completed, count:nonzero_exit",
+                    compact_output,
+                )
+                self.assertNotIn("INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK", output)
+                self.assertNotIn("RAW_FINAL_STDOUT_SHOULD_NOT_LEAK", output)
+                self.assertNotIn("RAW_STAGE_STDERR_SHOULD_NOT_LEAK", output)
+
     async def test_missing_projection_fallback_still_renders_result(
         self,
     ) -> None:
@@ -394,6 +417,74 @@ def _projected_denied_shell_path_items() -> tuple[CanonicalStreamItem, ...]:
         start_metadata=projection.to_metadata(),
         terminal_metadata=terminal_projection.to_metadata(),
         terminal_data={"name": "shell.cat", "result": "done"},
+    )
+
+
+def _projected_pipeline_items() -> tuple[CanonicalStreamItem, ...]:
+    start_projection = ToolDisplayProjection(
+        action="pipeline",
+        label="shell.pipeline",
+        target="cat | wc",
+        scope="workspace",
+        summary="Run a structured shell pipeline.",
+        details=(
+            ToolDisplayDetail(label="mode", value="pipeline"),
+            ToolDisplayDetail(label="stage chain", value="cat | wc"),
+            ToolDisplayDetail(label="cwd", value="workspace"),
+        ),
+        metrics={"stage_count": 2},
+    )
+    terminal_projection = ToolDisplayProjection(
+        action="pipeline",
+        label="shell.pipeline",
+        target="cat | wc",
+        scope="workspace",
+        status="nonzero_exit",
+        outcome="nonzero_exit",
+        severity="error",
+        summary=(
+            "Pipeline failed at count: nonzero_exit "
+            "(command exited with status 2). Stages: "
+            "read:completed, count:nonzero_exit."
+        ),
+        details=(
+            ToolDisplayDetail(label="status", value="nonzero_exit"),
+            ToolDisplayDetail(label="mode", value="pipeline"),
+            ToolDisplayDetail(
+                label="stage statuses",
+                value="read:completed, count:nonzero_exit",
+            ),
+        ),
+        metrics={
+            "stage_count": 2,
+            "duration_ms": 12,
+            "stdout_bytes": 3,
+            "stderr_bytes": 4,
+        },
+    )
+    return _tool_trace_items(
+        tool_call_id="pipeline-call",
+        tool_name="shell.pipeline",
+        argument_delta=(
+            '{"steps":[{"id":"read","command":"cat","secret":"'
+            + _RAW_ARGUMENT_SECRET
+            + '"}]}'
+        ),
+        start_metadata=start_projection.to_metadata(),
+        terminal_metadata=terminal_projection.to_metadata(),
+        terminal_data={
+            "name": "shell.pipeline",
+            "result": {
+                "stdout": "RAW_FINAL_STDOUT_SHOULD_NOT_LEAK",
+                "steps": [
+                    {
+                        "stdout": "INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK",
+                        "stderr": "RAW_STAGE_STDERR_SHOULD_NOT_LEAK",
+                    }
+                ],
+            },
+        },
+        terminal_visibility=StreamVisibility.PRIVATE,
     )
 
 

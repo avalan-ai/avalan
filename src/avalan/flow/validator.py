@@ -1856,7 +1856,7 @@ def _validate_output_behavior(
             )
             continue
         output_definition = declared_outputs.get(name)
-        source_type = _node_output_type(registry, node.type, parsed.output)
+        source_type = _node_output_type(registry, node, parsed.output)
         if (
             output_definition is None
             or source_type is None
@@ -2864,7 +2864,7 @@ def _validate_mapping_selector(
             )
         )
         return None
-    return _node_output_type(registry, node.type, parsed.output)
+    return _node_output_type(registry, node, parsed.output)
 
 
 def _flow_input_type(
@@ -2879,9 +2879,10 @@ def _flow_input_type(
 
 def _node_output_type(
     registry: FlowNodeRegistry,
-    node_type: str,
+    node: FlowNodeDefinition | str,
     output_name: str,
 ) -> FlowOutputType | str | None:
+    node_type = node.type if isinstance(node, FlowNodeDefinition) else node
     metadata = registry.metadata(node_type)
     if metadata is None:
         return None

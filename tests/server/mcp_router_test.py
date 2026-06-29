@@ -6381,6 +6381,14 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
                 "isolation": {"mode": "sandbox", "profile": "debug"}
             },
             "approval": {"approval": {"review_mode": "manual"}},
+            "allow pipelines": {"allow_pipelines": True},
+            "allow shell": {"allowShell": True},
+            "shell settings": {
+                "tool": {"shell": {"workspace_root": "/private"}}
+            },
+            "shell pipeline dotted": {
+                "shell.pipeline": {"allow_pipelines": True}
+            },
             "nested container": {
                 "metadata": {"container": {"image": "alpine:latest"}}
             },

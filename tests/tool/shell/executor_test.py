@@ -32,18 +32,23 @@ from avalan.tool.shell.executor import (
     LocalCommandExecutor,
     _cleanup_output_directory,
     _collect_generated_files,
-    _collect_stream,
     _generated_output_path_replacements,
-    _GeneratedOutputError,
     _matches_generated_output_prefix,
+)
+from avalan.tool.shell.filesystem import resolve_policy_path
+from avalan.tool.shell.policy import ExecutionPolicy
+from avalan.tool.shell.process import (
+    ShellProcessLimiter,
+    ShellProcessRuntime,
+    _collect_stream,
+    _GeneratedOutputError,
     _reader_results,
     _reader_task_failed,
     _signal_process_group,
     _spawn_argv,
+    _spawn_process,
     _wait_for_process_exit,
 )
-from avalan.tool.shell.filesystem import resolve_policy_path
-from avalan.tool.shell.policy import ExecutionPolicy
 from avalan.tool.shell.settings import ShellToolSettings
 
 
@@ -138,7 +143,12 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                 self.assertIn("isolated", result.error_message or "")
 
     def test_executor_source_uses_only_exec_subprocess_api(self) -> None:
-        source = Path("src/avalan/tool/shell/executor.py").read_text()
+        source = "\n".join(
+            (
+                Path("src/avalan/tool/shell/executor.py").read_text(),
+                Path("src/avalan/tool/shell/process.py").read_text(),
+            )
+        )
 
         self.assertNotIn("create_subprocess_shell", source)
         self.assertNotIn("shell=True", source)
@@ -197,7 +207,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             events.append(event)
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(
@@ -262,7 +272,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             raise RuntimeError("stream failed")
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             with self.assertRaisesRegex(RuntimeError, "stream failed"):
@@ -282,7 +292,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                 raise RuntimeError("stream failed")
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await wait_for(
@@ -307,7 +317,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             with self.assertRaisesRegex(OSError, "wait failed"):
@@ -374,7 +384,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             return process
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -432,7 +442,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             return process
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -443,6 +453,70 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         self.assertEqual(process.stdin.data, b"input")
         self.assertTrue(process.stdin.closed)
         self.assertEqual(result.stdout, "input")
+
+    async def test_spawn_process_can_request_pipe_stdin_without_payload(
+        self,
+    ) -> None:
+        spec = _direct_spec(
+            executable="/trusted/bin/cat",
+            argv=("cat",),
+            stdin=None,
+        )
+        process = _FakeProcess(stdout=b"", stderr=b"")
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        async def fake_create_subprocess_exec(
+            *args: object,
+            **kwargs: object,
+        ) -> _FakeProcess:
+            calls.append((args, kwargs))
+            return process
+
+        with patch(
+            "avalan.tool.shell.process.create_subprocess_exec",
+            new=fake_create_subprocess_exec,
+        ):
+            spawned = await _spawn_process(spec, stdin_mode="pipe")
+
+        self.assertIs(spawned, process)
+        self.assertEqual(calls[0][0], ("/trusted/bin/cat",))
+        self.assertEqual(calls[0][1]["stdin"], PIPE)
+
+    async def test_spawn_process_can_force_devnull_stdin(
+        self,
+    ) -> None:
+        spec = _direct_spec(
+            executable="/trusted/bin/cat",
+            argv=("cat",),
+            stdin=b"input",
+        )
+        process = _FakeProcess(stdout=b"", stderr=b"")
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        async def fake_create_subprocess_exec(
+            *args: object,
+            **kwargs: object,
+        ) -> _FakeProcess:
+            calls.append((args, kwargs))
+            return process
+
+        with patch(
+            "avalan.tool.shell.process.create_subprocess_exec",
+            new=fake_create_subprocess_exec,
+        ):
+            spawned = await _spawn_process(spec, stdin_mode="devnull")
+
+        self.assertIs(spawned, process)
+        self.assertEqual(calls[0][1]["stdin"], DEVNULL)
+
+    async def test_spawn_process_rejects_unknown_stdin_mode(self) -> None:
+        spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
+
+        with self.assertRaises(AssertionError):
+            await _spawn_process(
+                spec,
+                stdin_mode="unknown",  # type: ignore[arg-type]
+            )
 
     async def test_trusted_stdin_starts_readers_before_drain_completes(
         self,
@@ -458,7 +532,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             running = create_task(LocalCommandExecutor().execute(spec))
@@ -487,7 +561,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         process.stdin = None
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -504,7 +578,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         process.stdin = object()
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -522,7 +596,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         process.stdin = _BrokenPipeStdin()
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -542,7 +616,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         process.stdin = _CloseResetStdin()
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -562,7 +636,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         process.stdin = _WaitClosedBrokenPipeStdin()
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -582,7 +656,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         process.stdin = _NoWaitClosedStdin()
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -602,7 +676,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         process.stdin = _NoCloseStdin()
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -625,7 +699,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             return process
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -641,7 +715,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         process = _FakeProcess(returncode=1, stdout=b"", stderr=b"")
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -663,7 +737,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -700,7 +774,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             return process
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             task = create_task(LocalCommandExecutor().execute(spec))
@@ -722,7 +796,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor(settings).execute(spec)
@@ -743,7 +817,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor(settings).execute(spec)
@@ -766,7 +840,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -785,7 +859,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor(settings).execute(spec)
@@ -811,7 +885,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -840,7 +914,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -872,7 +946,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                     raise error
 
                 with patch(
-                    "avalan.tool.shell.executor.create_subprocess_exec",
+                    "avalan.tool.shell.process.create_subprocess_exec",
                     new=fake_create_subprocess_exec,
                 ):
                     result = await LocalCommandExecutor().execute(spec)
@@ -912,7 +986,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             tasks = [create_task(executor.execute(spec)) for _ in range(4)]
@@ -961,7 +1035,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             tasks = [create_task(executor.execute(spec)) for _ in range(3)]
@@ -978,6 +1052,185 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             results = await wait_for(gather(*tasks), timeout=1)
 
         self.assertEqual(spawn_count, 3)
+        self.assertEqual(tracker.maximum_active, 1)
+        self.assertTrue(
+            all(
+                result.status is ShellExecutionStatus.COMPLETED
+                for result in results
+            )
+        )
+
+    async def test_shared_limiter_limits_standard_across_executors(
+        self,
+    ) -> None:
+        settings = ShellToolSettings(max_concurrent_processes=1)
+        limiter = ShellProcessLimiter(settings)
+        first_executor = LocalCommandExecutor(
+            settings=settings,
+            process_limiter=limiter,
+        )
+        second_executor = LocalCommandExecutor(
+            settings=settings,
+            process_limiter=limiter,
+        )
+        release = Event()
+        tracker = _ProcessTracker(target_active=1)
+        spawn_count = 0
+
+        async def fake_create_subprocess_exec(
+            *args: object,
+            **kwargs: object,
+        ) -> _BlockingProcess:
+            nonlocal spawn_count
+            spawn_count += 1
+            return _BlockingProcess(release=release, tracker=tracker)
+
+        spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
+
+        with patch(
+            "avalan.tool.shell.process.create_subprocess_exec",
+            new=fake_create_subprocess_exec,
+        ):
+            first = create_task(first_executor.execute(spec))
+            second = create_task(second_executor.execute(spec))
+            try:
+                await wait_for(tracker.target_reached.wait(), timeout=1)
+                await sleep(0)
+
+                self.assertEqual(spawn_count, 1)
+                self.assertEqual(tracker.maximum_active, 1)
+            finally:
+                release.set()
+
+            results = await wait_for(gather(first, second), timeout=1)
+
+        self.assertEqual(spawn_count, 2)
+        self.assertEqual(tracker.maximum_active, 1)
+        self.assertTrue(
+            all(
+                result.status is ShellExecutionStatus.COMPLETED
+                for result in results
+            )
+        )
+
+    async def test_shared_runtime_limits_standard_across_executors(
+        self,
+    ) -> None:
+        settings = ShellToolSettings(max_concurrent_processes=1)
+        runtime = ShellProcessRuntime(settings)
+        self.assertIsInstance(runtime.process_limiter, ShellProcessLimiter)
+        first_executor = LocalCommandExecutor(
+            settings=settings,
+            process_runtime=runtime,
+        )
+        second_executor = LocalCommandExecutor(
+            settings=settings,
+            process_runtime=runtime,
+        )
+        release = Event()
+        tracker = _ProcessTracker(target_active=1)
+        spawn_count = 0
+
+        async def fake_create_subprocess_exec(
+            *args: object,
+            **kwargs: object,
+        ) -> _BlockingProcess:
+            nonlocal spawn_count
+            spawn_count += 1
+            return _BlockingProcess(release=release, tracker=tracker)
+
+        spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
+
+        with patch(
+            "avalan.tool.shell.process.create_subprocess_exec",
+            new=fake_create_subprocess_exec,
+        ):
+            first = create_task(first_executor.execute(spec))
+            second = create_task(second_executor.execute(spec))
+            try:
+                await wait_for(tracker.target_reached.wait(), timeout=1)
+                await sleep(0)
+
+                self.assertEqual(spawn_count, 1)
+                self.assertEqual(tracker.maximum_active, 1)
+            finally:
+                release.set()
+
+            results = await wait_for(gather(first, second), timeout=1)
+
+        self.assertEqual(spawn_count, 2)
+        self.assertEqual(tracker.maximum_active, 1)
+        self.assertTrue(
+            all(
+                result.status is ShellExecutionStatus.COMPLETED
+                for result in results
+            )
+        )
+
+    def test_executor_rejects_conflicting_process_runtime_inputs(self) -> None:
+        settings = ShellToolSettings()
+        runtime = ShellProcessRuntime(settings)
+        limiter = ShellProcessLimiter(settings)
+
+        with self.assertRaisesRegex(AssertionError, "cannot both be set"):
+            LocalCommandExecutor(
+                settings=settings,
+                process_limiter=limiter,
+                process_runtime=runtime,
+            )
+
+    async def test_shared_limiter_limits_heavy_across_executors(
+        self,
+    ) -> None:
+        settings = ShellToolSettings(
+            max_concurrent_processes=4,
+            max_concurrent_heavy_processes=1,
+        )
+        limiter = ShellProcessLimiter(settings)
+        first_executor = LocalCommandExecutor(
+            settings=settings,
+            process_limiter=limiter,
+        )
+        second_executor = LocalCommandExecutor(
+            settings=settings,
+            process_limiter=limiter,
+        )
+        release = Event()
+        tracker = _ProcessTracker(target_active=1)
+        spawn_count = 0
+
+        async def fake_create_subprocess_exec(
+            *args: object,
+            **kwargs: object,
+        ) -> _BlockingProcess:
+            nonlocal spawn_count
+            spawn_count += 1
+            return _BlockingProcess(release=release, tracker=tracker)
+
+        spec = _direct_spec(
+            executable="/trusted/bin/pdftotext",
+            argv=("pdftotext", "document.pdf", "-"),
+            resource_class="heavy",
+        )
+
+        with patch(
+            "avalan.tool.shell.process.create_subprocess_exec",
+            new=fake_create_subprocess_exec,
+        ):
+            first = create_task(first_executor.execute(spec))
+            second = create_task(second_executor.execute(spec))
+            try:
+                await wait_for(tracker.target_reached.wait(), timeout=1)
+                await sleep(0)
+
+                self.assertEqual(spawn_count, 1)
+                self.assertEqual(tracker.maximum_active, 1)
+            finally:
+                release.set()
+
+            results = await wait_for(gather(first, second), timeout=1)
+
+        self.assertEqual(spawn_count, 2)
         self.assertEqual(tracker.maximum_active, 1)
         self.assertTrue(
             all(
@@ -1026,7 +1279,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             first_heavy = create_task(executor.execute(heavy_spec))
@@ -1067,7 +1320,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             failed = await executor.execute(spec)
@@ -1093,7 +1346,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             first = await executor.execute(spec)
@@ -1121,7 +1374,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             failed = await executor.execute(spec)
@@ -1151,7 +1404,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             running = create_task(executor.execute(spec))
@@ -1185,7 +1438,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=fake_create_subprocess_exec,
         ):
             running = create_task(executor.execute(spec))
@@ -1253,7 +1506,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)
@@ -1284,7 +1537,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             events.append(event)
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(
@@ -1332,7 +1585,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor(settings).execute(spec)
@@ -1362,11 +1615,11 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor._PROCESS_CLEANUP_GRACE_SECONDS",
+            "avalan.tool.shell.process._PROCESS_CLEANUP_GRACE_SECONDS",
             0.001,
         ):
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -1396,11 +1649,11 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor._PROCESS_CLEANUP_GRACE_SECONDS",
+            "avalan.tool.shell.process._PROCESS_CLEANUP_GRACE_SECONDS",
             0.001,
         ):
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 running = create_task(LocalCommandExecutor().execute(spec))
@@ -1434,11 +1687,11 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor._PROCESS_CLEANUP_GRACE_SECONDS",
+            "avalan.tool.shell.process._PROCESS_CLEANUP_GRACE_SECONDS",
             0.001,
         ):
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -1459,11 +1712,11 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor._PROCESS_CLEANUP_GRACE_SECONDS",
+            "avalan.tool.shell.process._PROCESS_CLEANUP_GRACE_SECONDS",
             0.001,
         ):
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -1486,7 +1739,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await wait_for(
@@ -1514,11 +1767,11 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.tool.shell.executor._PROCESS_CLEANUP_GRACE_SECONDS",
+            "avalan.tool.shell.process._PROCESS_CLEANUP_GRACE_SECONDS",
             0.001,
         ):
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await wait_for(
@@ -1539,7 +1792,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             running = create_task(LocalCommandExecutor().execute(spec))
@@ -1570,7 +1823,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                 )
 
                 with patch(
-                    "avalan.tool.shell.executor.create_subprocess_exec",
+                    "avalan.tool.shell.process.create_subprocess_exec",
                     new=_fake_process_factory(process),
                 ):
                     result = await LocalCommandExecutor().execute(spec)
@@ -1614,7 +1867,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             )
 
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -1698,7 +1951,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             )
 
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process, after_spawn=after_spawn),
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -1777,7 +2030,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
 
             with (
                 patch(
-                    "avalan.tool.shell.executor.create_subprocess_exec",
+                    "avalan.tool.shell.process.create_subprocess_exec",
                     new=_fake_process_factory(
                         process, after_spawn=after_spawn
                     ),
@@ -1874,7 +2127,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             )
 
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process, after_spawn=after_spawn),
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -1917,7 +2170,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             )
 
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -2199,7 +2452,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             )
 
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -2288,7 +2541,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
 
             process = _GeneratedOutputProcess(write_outputs)
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await LocalCommandExecutor().execute(
@@ -2320,7 +2573,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
 
             process = _GeneratedOutputProcess(write_outputs)
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await LocalCommandExecutor().execute(
@@ -2358,7 +2611,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                 raise OSError("failed")
 
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=fake_create_subprocess_exec,
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -2384,7 +2637,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                 new=fake_private_temp_directory,
             ),
             patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_spawn_should_not_run,
             ),
         ):
@@ -2451,7 +2704,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                     new=fake_private_temp_directory,
                 ),
                 patch(
-                    "avalan.tool.shell.executor.create_subprocess_exec",
+                    "avalan.tool.shell.process.create_subprocess_exec",
                     new=_spawn_should_not_run,
                 ),
             ):
@@ -2473,7 +2726,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             spec = _generated_spec(plan, timeout_seconds=0.001)
 
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 result = await LocalCommandExecutor().execute(spec)
@@ -2490,7 +2743,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             spec = _generated_spec(plan)
 
             with patch(
-                "avalan.tool.shell.executor.create_subprocess_exec",
+                "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
                 running = create_task(LocalCommandExecutor().execute(spec))
@@ -2526,7 +2779,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                     new=fake_private_temp_directory,
                 ),
                 patch(
-                    "avalan.tool.shell.executor.create_subprocess_exec",
+                    "avalan.tool.shell.process.create_subprocess_exec",
                     new=_spawn_should_not_run,
                 ),
             ):
@@ -2620,7 +2873,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         def fake_kill(pid: int, signal_number: int) -> None:
             signals.append((pid, signal_number))
 
-        with patch("avalan.tool.shell.executor.os_kill", new=fake_kill):
+        with patch("avalan.tool.shell.process.os_kill", new=fake_kill):
             _signal_process_group(process, 15, "terminate")
 
         self.assertEqual(signals, [(-123, 15)])
@@ -2632,7 +2885,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         def fake_kill(pid: int, signal_number: int) -> None:
             raise PermissionError("denied")
 
-        with patch("avalan.tool.shell.executor.os_kill", new=fake_kill):
+        with patch("avalan.tool.shell.process.os_kill", new=fake_kill):
             _signal_process_group(process, 15, "terminate")
 
         self.assertEqual(process.terminate_count, 1)
@@ -2653,7 +2906,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         stderr_reader = create_task(sleep(10))
 
         with patch(
-            "avalan.tool.shell.executor._PROCESS_CLEANUP_GRACE_SECONDS",
+            "avalan.tool.shell.process._PROCESS_CLEANUP_GRACE_SECONDS",
             0.001,
         ):
             stdout, stderr = await _reader_results(
@@ -2682,7 +2935,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         stderr_reader = create_task(sleep(10))
 
         with patch(
-            "avalan.tool.shell.executor._PROCESS_CLEANUP_GRACE_SECONDS",
+            "avalan.tool.shell.process._PROCESS_CLEANUP_GRACE_SECONDS",
             0.001,
         ):
             stdout, stderr = await _reader_results(
@@ -3215,7 +3468,7 @@ async def _run_generated_output_case(
         process = _GeneratedOutputProcess(write_plan_outputs)
 
         with patch(
-            "avalan.tool.shell.executor.create_subprocess_exec",
+            "avalan.tool.shell.process.create_subprocess_exec",
             new=_fake_process_factory(process),
         ):
             result = await LocalCommandExecutor().execute(spec)

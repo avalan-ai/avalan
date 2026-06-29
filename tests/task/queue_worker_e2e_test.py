@@ -106,8 +106,14 @@ from avalan.task import (
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.stores import InMemoryTaskStore
-from avalan.task.targets import FLOW_TASK_INPUT_KEY, FlowTaskTargetRunner
+from avalan.task.targets import (
+    FLOW_TASK_INPUT_KEY,
+    AgentTaskTargetRunner,
+    FlowTaskTargetRunner,
+)
 from avalan.task.targets import flow as flow_target_module
+from avalan.tool.context import ToolSettingsContext
+from avalan.tool.shell import ShellToolSettings
 
 
 class StaticHmacProvider:
@@ -154,6 +160,43 @@ class StaticEncryptionProvider:
         prefix = b"encrypted:"
         assert value.startswith(prefix)
         return value[len(prefix) :]
+
+
+class QueueAgentOrchestrator:
+    def __init__(self, loader: "QueueAgentLoader") -> None:
+        self._loader = loader
+
+    async def __aenter__(self) -> "QueueAgentOrchestrator":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        return None
+
+    async def __call__(self, input: object) -> str:
+        self._loader.inputs.append(input)
+        return "should not execute"
+
+
+class QueueAgentLoader:
+    def __init__(self) -> None:
+        self.inputs: list[object] = []
+
+    async def from_file(
+        self,
+        path: str,
+        *,
+        agent_id: object | None,
+        disable_memory: bool = False,
+        uri: str | None = None,
+        tool_settings: object | None = None,
+    ) -> QueueAgentOrchestrator:
+        _ = path, agent_id, disable_memory, uri, tool_settings
+        return QueueAgentOrchestrator(self)
 
 
 class ReadingTarget(TaskTargetRunner):
@@ -999,6 +1042,83 @@ class Clock:
 
 
 class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
+    async def test_pipeline_agent_worker_fails_closed_without_opt_in(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            agent_path = root / "agents" / "pipeline.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Pipeline"
+task = "Inspect files."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+
+[tool]
+enable = ["shell.pipeline"]
+
+[tool.shell]
+allow_pipelines = true
+""",
+                encoding="utf-8",
+            )
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            loader = QueueAgentLoader()
+            enqueue_target = AgentTaskTargetRunner(
+                loader,
+                ref_base=root,
+                tool_settings=ToolSettingsContext(
+                    shell=ShellToolSettings(allow_pipelines=True),
+                ),
+                require_shell_pipeline_opt_in=True,
+            )
+            worker_target = AgentTaskTargetRunner(
+                loader,
+                ref_base=root,
+                require_shell_pipeline_opt_in=True,
+            )
+            client = _client(
+                store,
+                queue,
+                target=enqueue_target,
+                execution_roots=(root,),
+                clock=clock,
+            )
+            worker = _worker(
+                store,
+                queue,
+                target=worker_target,
+                clock=clock,
+            )
+            definition = _definition(
+                execution=TaskExecutionTarget.agent("agents/pipeline.toml"),
+                observability=TaskObservabilityPolicy.noop(),
+                retry=TaskRetryPolicy(max_attempts=1),
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value="private prompt",
+            )
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+            inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNone(processed.completion)
+        self.assertIsNone(processed.retry)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(loader.inputs, [])
+        rendered = str(inspection.as_dict())
+        self.assertIn("runnable.failed", rendered)
+        self.assertNotIn("private prompt", rendered)
+
     async def test_file_task_runs_through_client_worker_and_inspection(
         self,
     ) -> None:

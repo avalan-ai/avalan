@@ -5,7 +5,9 @@ from .commands.helpers import (
 from .entities import (
     ExecutionResult,
     GeneratedFile,
+    ShellCompositionResult,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
     ShellOutputKind,
 )
 from .registry import SHELL_COMMAND_DEFINITIONS
@@ -129,6 +131,98 @@ def format_shell_result(
         lines.extend(("", "generated_files:"))
         lines.extend(_generated_file_lines(result.generated_files, redactor))
     return "\n".join(lines)
+
+
+def format_shell_composition_result(
+    result: object,
+    *,
+    settings: ShellToolSettings | None = None,
+    redaction_values: Sequence[str] = (),
+) -> str:
+    assert isinstance(
+        result,
+        ShellCompositionResult,
+    ), "result must be a shell composition result"
+    if settings is not None:
+        assert isinstance(
+            settings,
+            ShellToolSettings,
+        ), "settings must be shell tool settings"
+    _assert_string_sequence(redaction_values, "redaction_values")
+
+    redactor = _Redactor(
+        (
+            *(settings.environment.values() if settings is not None else ()),
+            *redaction_values,
+        )
+    )
+    error_code = result.error_code.value if result.error_code else None
+    stdout = _format_output("pipeline", result.stdout, redactor)
+    stderr = _format_output("pipeline", result.stderr, redactor)
+    lines = [
+        "tool: shell.pipeline",
+        f"status: {result.status.value}",
+        f"mode: {result.mode}",
+        f"stage_count: {len(result.steps)}",
+        f"stage_chain: {_composition_stage_chain(result.steps, redactor)}",
+        f"error_code: {_scalar(error_code, redactor)}",
+        f"error_message: {_scalar(result.error_message, redactor)}",
+        f"timed_out: {_bool(result.timed_out)}",
+        f"duration_ms: {result.duration_ms}",
+        f"stdout_bytes: {result.stdout_bytes}",
+        f"stderr_bytes: {result.stderr_bytes}",
+        f"stdout_truncated: {_bool(result.stdout_truncated)}",
+        f"stderr_truncated: {_bool(result.stderr_truncated)}",
+        "",
+        "stages:",
+    ]
+    lines.extend(_composition_stage_lines(result.steps, redactor))
+    lines.extend(("", "stdout:", stdout))
+    if _include_composition_stderr(result):
+        lines.extend(("", "stderr:", stderr))
+    return "\n".join(lines)
+
+
+def _composition_stage_chain(
+    steps: tuple[ShellExecutionStepResult, ...],
+    redactor: "_Redactor",
+) -> str:
+    return redactor(" | ".join(step.command for step in steps))
+
+
+def _composition_stage_lines(
+    steps: tuple[ShellExecutionStepResult, ...],
+    redactor: "_Redactor",
+) -> list[str]:
+    lines: list[str] = []
+    for index, step in enumerate(steps):
+        lines.extend(
+            [
+                f"- index: {index}",
+                f"  id: {redactor(step.id)}",
+                f"  command: {redactor(step.command)}",
+                f"  status: {step.status.value}",
+                f"  exit_code: {_scalar(step.exit_code, redactor)}",
+                f"  error_code: {_scalar(_step_error_code(step), redactor)}",
+                f"  error_message: {_scalar(step.error_message, redactor)}",
+                f"  duration_ms: {step.duration_ms}",
+                f"  stdout_bytes: {step.stdout_bytes}",
+                f"  stderr_bytes: {step.stderr_bytes}",
+                f"  stdout_truncated: {_bool(step.stdout_truncated)}",
+                f"  stderr_truncated: {_bool(step.stderr_truncated)}",
+            ]
+        )
+    return lines
+
+
+def _step_error_code(step: ShellExecutionStepResult) -> str | None:
+    return step.error_code.value if step.error_code else None
+
+
+def _include_composition_stderr(result: ShellCompositionResult) -> bool:
+    return bool(result.stderr) or result.status not in {
+        ShellExecutionStatus.COMPLETED,
+    }
 
 
 def _include_stderr(result: ExecutionResult) -> bool:

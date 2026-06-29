@@ -38,9 +38,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from re import compile as compile_pattern
 from types import MappingProxyType
-from typing import ClassVar, cast, final
+from typing import ClassVar, Literal, cast, final
 
 _TESSERACT_LANGUAGE_PATTERN = compile_pattern(r"^[A-Za-z0-9_]+$")
+ShellPipelineTransport = Literal["buffered", "native"]
+_PIPELINE_TRANSPORTS: tuple[ShellPipelineTransport, ...] = (
+    "buffered",
+    "native",
+)
 
 
 @final
@@ -60,6 +65,10 @@ class ShellToolSettings:
         "max_stdout_bytes",
         "max_stderr_bytes",
         "max_stdin_bytes",
+        "max_pipeline_stages",
+        "max_pipeline_bytes",
+        "max_intermediate_bytes",
+        "pipeline_transport",
         "max_arguments",
         "max_argument_bytes",
         "max_command_bytes",
@@ -103,6 +112,7 @@ class ShellToolSettings:
         "default_ocr_timeout_seconds",
         "max_ocr_timeout_seconds",
         "tesseract_thread_limit",
+        "allow_pipelines",
         "allow_media_tools",
         "allow_absolute_paths",
         "allow_symlinks",
@@ -124,6 +134,10 @@ class ShellToolSettings:
     max_stdout_bytes: int = 65536
     max_stderr_bytes: int = 32768
     max_stdin_bytes: int = 0
+    max_pipeline_stages: int = 8
+    max_pipeline_bytes: int = 1048576
+    max_intermediate_bytes: int = 1048576
+    pipeline_transport: ShellPipelineTransport = "buffered"
     max_arguments: int = 128
     max_argument_bytes: int = 8192
     max_command_bytes: int = 32768
@@ -167,6 +181,7 @@ class ShellToolSettings:
     default_ocr_timeout_seconds: float = 60.0
     max_ocr_timeout_seconds: float = 300.0
     tesseract_thread_limit: int = 1
+    allow_pipelines: bool = False
     allow_media_tools: bool = False
     allow_write: bool = False
     allow_shell: bool = False
@@ -237,6 +252,7 @@ class ShellToolSettings:
         assert self.max_stdin_bytes == 0, "max_stdin_bytes must be zero"
         for field_name in _BOOLEAN_FIELDS:
             _assert_bool(getattr(self, field_name), field_name)
+        _assert_pipeline_transport(self.pipeline_transport)
         assert not self.allow_write, "allow_write is reserved"
         assert not self.allow_shell, "allow_shell is reserved"
         _assert_known_commands(self.allowed_commands)
@@ -338,6 +354,9 @@ class ShellToolSettings:
 _POSITIVE_INT_FIELDS = (
     "max_stdout_bytes",
     "max_stderr_bytes",
+    "max_pipeline_stages",
+    "max_pipeline_bytes",
+    "max_intermediate_bytes",
     "max_arguments",
     "max_argument_bytes",
     "max_command_bytes",
@@ -381,6 +400,7 @@ _POSITIVE_INT_FIELDS = (
 
 _BOOLEAN_FIELDS = (
     "input_file_manifest_enabled",
+    "allow_pipelines",
     "allow_media_tools",
     "allow_write",
     "allow_shell",
@@ -460,6 +480,13 @@ def _assert_non_empty_known_values(
     known_values: tuple[str, ...],
 ) -> None:
     _assert_known_string_sequence(value, field_name, known_values)
+
+
+def _assert_pipeline_transport(value: object) -> None:
+    _assert_non_empty_string(value, "pipeline_transport")
+    assert (
+        value in _PIPELINE_TRANSPORTS
+    ), "pipeline_transport must be buffered or native"
 
 
 def _assert_tesseract_languages(value: object) -> None:

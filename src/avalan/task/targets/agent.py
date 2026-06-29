@@ -20,6 +20,7 @@ from ...model.file_delivery import (
     LocalFileDeliveryProfile,
     resolve_file_delivery_profile,
 )
+from ...tool.context import ToolSettingsContext
 from ..artifact import ArtifactStoreError
 from ..context import TaskInputFile, TaskTargetContext
 from ..definition import (
@@ -125,6 +126,8 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         ),
         ref_base: str | Path | None = None,
         token_counter: TokenCounter | None = None,
+        tool_settings: ToolSettingsContext | None = None,
+        require_shell_pipeline_opt_in: bool = False,
         uri: str | None = None,
     ) -> None:
         self._loader = loader
@@ -136,6 +139,11 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         if token_counter is not None:
             assert callable(token_counter)
         self._token_counter = token_counter or _estimated_token_count
+        if tool_settings is not None:
+            assert isinstance(tool_settings, ToolSettingsContext)
+        self._tool_settings = tool_settings
+        assert isinstance(require_shell_pipeline_opt_in, bool)
+        self._require_shell_pipeline_opt_in = require_shell_pipeline_opt_in
         self._uri = uri
 
     async def validate_definition(
@@ -163,6 +171,13 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         ):
             return (_agent_target_issue(path="execution.ref"),)
         issues: list[TaskValidationIssue] = []
+        shell_issue = _validate_agent_shell_pipeline_opt_in(
+            config,
+            tool_settings=self._tool_settings,
+            required=self._require_shell_pipeline_opt_in,
+        )
+        if shell_issue is not None:
+            issues.append(shell_issue)
         if definition.input.type in {
             TaskInputType.FILE,
             TaskInputType.FILE_ARRAY,
@@ -194,6 +209,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             agent_id=self._agent_id,
             disable_memory=self._disable_memory,
             uri=self._uri,
+            tool_settings=self._tool_settings,
         )
         async with orchestrator:
             async with _agent_event_listener(orchestrator, context):
@@ -429,6 +445,59 @@ def _validate_agent_output_schema(
             category=TaskValidationCategory.VALUE,
         ),
     )
+
+
+def _validate_agent_shell_pipeline_opt_in(
+    config: Mapping[str, object],
+    *,
+    tool_settings: ToolSettingsContext | None,
+    required: bool,
+) -> TaskValidationIssue | None:
+    assert isinstance(config, Mapping)
+    assert isinstance(required, bool)
+    if not required or not _agent_config_enables_shell_pipeline(config):
+        return None
+    shell_settings = tool_settings.shell if tool_settings else None
+    if shell_settings is not None and shell_settings.allow_pipelines:
+        return None
+    return TaskValidationIssue(
+        code="execution.shell_pipeline_disabled",
+        path="execution.ref",
+        message="Agent shell.pipeline is disabled for this task runtime.",
+        hint=(
+            "Configure trusted task runtime shell settings with "
+            "allow_pipelines=true before running this task."
+        ),
+        category=TaskValidationCategory.UNSUPPORTED,
+    )
+
+
+def _agent_config_enables_shell_pipeline(
+    config: Mapping[str, object],
+) -> bool:
+    tool_config = config.get("tool")
+    if not isinstance(tool_config, Mapping):
+        return False
+    enabled_tools = _agent_enabled_tools(tool_config.get("enable"))
+    if not enabled_tools:
+        return False
+    shell_config = tool_config.get("shell")
+    if not isinstance(shell_config, Mapping):
+        return False
+    if shell_config.get("allow_pipelines") is not True:
+        return False
+    return any(
+        tool_name in {"shell", "shell.*", "shell.pipeline"}
+        for tool_name in enabled_tools
+    )
+
+
+def _agent_enabled_tools(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
 
 
 def _agent_response_format_schema(

@@ -98,6 +98,28 @@ registry-backed or programmatic runners. Treat those as extension points unless
 your application registers a runner for them; the built-in examples and CLI
 validation use agent and flow targets today.
 
+## Shell Pipeline Tasks
+
+Tasks can wrap an agent or flow that uses `shell.pipeline`, but pipeline
+authority remains runtime configuration. The task input, queue payload, MCP
+request, or A2A request cannot enable pipelines by itself.
+
+- Agent-backed tasks may reference an agent TOML that explicitly enables
+  `shell.pipeline` and sets `[tool.shell] allow_pipelines = true`.
+- Flow-backed tasks with a strict `tool` node require an SDK, host
+  application, or worker runtime with a configured tool resolver that exposes
+  `shell.pipeline` and trusted shell settings with `allow_pipelines = true`.
+  The standalone `avalan task run` path uses the default flow validator for
+  this fixture and must not be treated as the supported runtime for
+  `pipeline_flow.task.toml`.
+- Queued workers force implicit pipeline settings closed unless the operator
+  starts the worker with explicit pipeline flags.
+
+Validated examples live at
+[pipeline_agent.task.toml](examples/tasks/pipeline_agent.task.toml) and
+[pipeline_flow.task.toml](examples/tasks/pipeline_flow.task.toml). The flow
+example uses structured step objects and local-only byte routing.
+
 ## File Delivery
 
 Tasks are the safest place to describe file behavior:

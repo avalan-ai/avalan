@@ -470,6 +470,15 @@ class CliShellToolOptionTestCase(TestCase):
                         "--tool-shell-allow-media-tools",
                         "--tool-shell-max-stdout-bytes",
                         "4096",
+                        "--tool-shell-allow-pipelines",
+                        "--tool-shell-max-pipeline-stages",
+                        "3",
+                        "--tool-shell-max-pipeline-bytes",
+                        "1024",
+                        "--tool-shell-max-intermediate-bytes",
+                        "512",
+                        "--tool-shell-pipeline-transport",
+                        "native",
                         "--no-tool-shell-input-file-manifest-enabled",
                         "--tool-shell-input-file-manifest-message",
                         "Use attached paths:",
@@ -484,6 +493,14 @@ class CliShellToolOptionTestCase(TestCase):
 
                 self.assertTrue(args.tool_shell_allow_media_tools)
                 self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
+                self.assertTrue(args.tool_shell_allow_pipelines)
+                self.assertEqual(args.tool_shell_max_pipeline_stages, 3)
+                self.assertEqual(args.tool_shell_max_pipeline_bytes, 1024)
+                self.assertEqual(
+                    args.tool_shell_max_intermediate_bytes,
+                    512,
+                )
+                self.assertEqual(args.tool_shell_pipeline_transport, "native")
                 self.assertFalse(args.tool_shell_input_file_manifest_enabled)
                 self.assertEqual(
                     args.tool_shell_input_file_manifest_message,
@@ -585,19 +602,23 @@ class CliShellToolOptionTestCase(TestCase):
         self,
     ) -> None:
         cli = self._cli()
+        cases = (
+            ["--tool-shell-max-stdout-bytes", "many"],
+            ["--tool-shell-pipeline-transport", "shell"],
+        )
 
-        with self.assertRaises(SystemExit):
-            cli._parser.parse_args(
-                [
-                    "flow",
-                    "run",
-                    "flow.toml",
-                    "--tool",
-                    "shell.rg",
-                    "--tool-shell-max-stdout-bytes",
-                    "many",
-                ]
-            )
+        for case in cases:
+            with self.subTest(case=case), self.assertRaises(SystemExit):
+                cli._parser.parse_args(
+                    [
+                        "flow",
+                        "run",
+                        "flow.toml",
+                        "--tool",
+                        "shell.rg",
+                        *case,
+                    ]
+                )
 
     def test_shell_tool_settings_invalid_executable_path_is_rejected(
         self,
@@ -3277,6 +3298,15 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 "--tool-shell-allow-media-tools",
                 "--tool-shell-max-stdout-bytes",
                 "4096",
+                "--tool-shell-allow-pipelines",
+                "--tool-shell-max-pipeline-stages",
+                "3",
+                "--tool-shell-max-pipeline-bytes",
+                "1024",
+                "--tool-shell-max-intermediate-bytes",
+                "512",
+                "--tool-shell-pipeline-transport",
+                "native",
                 "--no-tool-shell-input-file-manifest-enabled",
                 "--tool-shell-input-file-manifest-message",
                 "Use attached paths:",
@@ -3287,6 +3317,11 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(args.tool_shell_allow_media_tools)
         self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
+        self.assertTrue(args.tool_shell_allow_pipelines)
+        self.assertEqual(args.tool_shell_max_pipeline_stages, 3)
+        self.assertEqual(args.tool_shell_max_pipeline_bytes, 1024)
+        self.assertEqual(args.tool_shell_max_intermediate_bytes, 512)
+        self.assertEqual(args.tool_shell_pipeline_transport, "native")
         self.assertFalse(args.tool_shell_input_file_manifest_enabled)
         self.assertEqual(
             args.tool_shell_input_file_manifest_message,

@@ -868,6 +868,34 @@ async def test_a2a_json_validator_rejects_runtime_authority() -> None:
 
 
 @pytest.mark.anyio
+async def test_a2a_json_validator_rejects_shell_pipeline_authority() -> None:
+    request = _BodyRequest(b"""{
+            "params": {
+                "message": {
+                    "parts": [
+                        {
+                            "text": "hello",
+                            "metadata": {
+                                "tool": {
+                                    "shell": {
+                                        "allow_pipelines": true
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }""")
+
+    with pytest.raises(a2a_router.HTTPException) as exc_info:
+        await a2a_router._validate_a2a_json_file_parts(request)
+
+    assert exc_info.value.status_code == 400
+    assert "runtime authority" in str(exc_info.value.detail)
+
+
+@pytest.mark.anyio
 async def test_a2a_json_validator_rejects_nested_content_authority() -> None:
     request = _BodyRequest(b"""{
             "params": {
@@ -920,8 +948,11 @@ def test_a2a_part_authority_allows_exposed_profile_selector() -> None:
 
 def test_a2a_part_authority_rejects_direct_runtime_key() -> None:
     for payload in (
+        {"allow_pipelines": True},
+        {"allowShell": True},
         {"runtime": "container"},
         {"sandboxProfile": "workspace-readonly"},
+        {"shell": {"workspace_root": "/private"}},
         {"isolation": {"mode": "sandbox"}},
     ):
         with pytest.raises(ValueError, match="runtime authority"):
@@ -1146,6 +1177,213 @@ async def test_translator_projects_reasoning_tool_and_terminal_states(
     assert updater.artifacts[-1]["last_chunk"] is True
     assert updater.statuses[0]["metadata"]["tool_name"] == "shell.run"
     assert updater.completed == 1
+
+
+@pytest.mark.anyio
+async def test_translator_projects_shell_pipeline_stage_streams_safely(
+    fake_a2a_imports,
+) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+
+    await translator.process(
+        _tool_item(
+            0,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            data={
+                "category": "progress",
+                "content": "stage read started",
+                "progress": 0.25,
+                "metadata": {
+                    "private_runtime": "SECRET_RUNTIME",
+                    "intermediate_stdout": (
+                        "INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK"
+                    ),
+                },
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _tool_item(
+            1,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            text_delta="stage warning\n",
+            data={
+                "category": "stderr",
+                "content": "stage warning\n",
+                "metadata": {"private_path": "/secret/root"},
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _tool_item(
+            2,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            text_delta="2\n",
+            data={"category": "stdout", "content": "2\n"},
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _tool_item(
+            3,
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            data={
+                "name": "shell.pipeline",
+                "result": (
+                    "tool: shell.pipeline\nstatus: completed\nstdout:\n2\n"
+                ),
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _item(
+            4,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+    )
+    await translator.finish()
+
+    artifact_text = "".join(
+        part.text
+        for artifact in updater.artifacts
+        for part in artifact["parts"]
+        if hasattr(part, "text")
+    )
+    projected = str(updater.artifacts) + str(updater.statuses)
+
+    assert "stage read started" in artifact_text
+    assert "stage warning\n" in artifact_text
+    assert "2\n" in artifact_text
+    assert "SECRET_RUNTIME" not in projected
+    assert "/secret/root" not in projected
+    assert "INTERMEDIATE_STDOUT_SHOULD_NOT_LEAK" not in projected
+    assert updater.artifacts[0]["metadata"]["category"] == "progress"
+    assert updater.artifacts[1]["metadata"]["category"] == "stderr"
+    assert updater.artifacts[2]["metadata"]["category"] == "stdout"
+
+
+@pytest.mark.anyio
+async def test_translator_projects_shell_pipeline_diagnostic_safely(
+    fake_a2a_imports,
+) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+
+    await translator.process(
+        _tool_item(
+            0,
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            data={"name": "shell.pipeline"},
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _tool_item(
+            1,
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            data={
+                "name": "shell.pipeline",
+                "diagnostic": {
+                    "code": "tool.disabled",
+                    "message": "shell.pipeline requires allow_pipelines=true.",
+                    "details": {"workspace_root": "/secret/root"},
+                },
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _item(
+            2,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+    )
+    await translator.finish()
+
+    artifact_text = "".join(
+        part.text
+        for artifact in updater.artifacts
+        for part in artifact["parts"]
+        if hasattr(part, "text")
+    )
+
+    assert "tool.disabled" in artifact_text
+    assert "allow_pipelines" in artifact_text
+    assert "/secret/root" not in artifact_text
+
+
+@pytest.mark.anyio
+async def test_translator_projects_tool_item_fallback_text_branches(
+    fake_a2a_imports,
+) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+
+    await translator.process(
+        _tool_item(
+            0,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            text_delta="",
+            data={"name": "shell.pipeline", "content": "stdout from data"},
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _tool_item(
+            1,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            data={"name": "shell.pipeline", "progress": 0.75},
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _tool_item(
+            2,
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            data={
+                "name": "shell.pipeline",
+                "result": {"ok": True, "count": 2},
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _tool_item(
+            3,
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            data={
+                "name": "shell.pipeline",
+                "diagnostic": {"details": {"private": "hidden"}},
+            },
+            metadata={"tool_name": "shell.pipeline"},
+        )
+    )
+    await translator.process(
+        _item(
+            4,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+    )
+    await translator.finish()
+
+    artifact_text = "".join(
+        part.text
+        for artifact in updater.artifacts
+        for part in artifact["parts"]
+        if hasattr(part, "text")
+    )
+
+    assert "stdout from data" in artifact_text
+    assert '{"progress":0.75}' in artifact_text
+    assert '{"ok":true,"count":2}' in artifact_text
+    assert "hidden" not in artifact_text
 
 
 @pytest.mark.anyio

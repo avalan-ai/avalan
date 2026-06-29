@@ -1,0 +1,50 @@
+[task]
+name = "pipeline_flow"
+version = "1"
+description = "Run a flow tool node backed by shell.pipeline."
+labels = ["example", "flow", "shell-pipeline"]
+
+[input]
+type = "string"
+description = "Prompt text used to trigger the flow."
+
+[output]
+type = "text"
+description = "Formatted shell.pipeline result text."
+
+[execution]
+type = "flow"
+ref = "pipeline_flow.flow.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 120
+
+[privacy]
+input = "drop"
+files = "drop"
+
+[limits]
+input_bytes = 4096
+output_bytes = 8192
+total_tokens = 1000
+
+# Flow-backed shell.pipeline tasks require explicit runtime tool settings.
+# The standalone task CLI uses the default flow validator for this target and
+# does not register strict tool nodes for this fixture. CI validates the
+# example with a configured ToolManager:
+#
+# poetry run pytest \
+#   tests/flow/validator_test.py::FlowValidatorTestCase::test_docs_shell_pipeline_flow_examples_validate_with_runtime \
+#   tests/task/task_loader_test.py::TaskDefinitionLoaderTest::test_docs_shell_pipeline_task_examples_load \
+#   -q
+#
+# Queued workers fail closed unless the operator starts them with equivalent
+# worker settings:
+#
+# poetry run avalan task worker \
+#   --store-dsn "$AVALAN_TASK_STORE_DSN" \
+#   --queue default \
+#   --tool shell.pipeline \
+#   --tool-shell-allow-pipelines \
+#   --tool-shell-max-pipeline-stages 3

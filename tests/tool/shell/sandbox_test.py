@@ -30,6 +30,7 @@ from avalan.tool.shell import (
     ExecutionSpec,
     GeneratedOutputPlan,
     LocalCommandExecutor,
+    LocalCompositionExecutor,
     PathOperand,
     ShellCommandDefinition,
     ShellCommandRequest,
@@ -46,6 +47,7 @@ from avalan.tool.shell import (
 )
 from avalan.tool.shell.entities import (
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
+    ShellFormattedCompositionResult,
     ShellFormattedResult,
 )
 from avalan.tool.shell.sandbox import (
@@ -782,6 +784,29 @@ class ShellSandboxToolSetTest(IsolatedAsyncioTestCase):
                 sandbox_settings=_sandbox_settings(fixture_root),
             )
 
+    async def test_sandbox_mode_rejects_custom_composition_executor(
+        self,
+    ) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            execution_mode="sandbox",
+            workspace_root=str(fixture_root),
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "custom shell composition executors require",
+        ):
+            ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                sandbox_settings=_sandbox_settings(fixture_root),
+                composition_executor=LocalCompositionExecutor(),
+            )
+
     async def test_toolset_uses_sandbox_executor_without_schema_exposure(
         self,
     ) -> None:
@@ -884,6 +909,92 @@ class ShellSandboxToolSetTest(IsolatedAsyncioTestCase):
 
         formatted_output = cast(ShellFormattedResult, output)
         self.assertEqual(formatted_output.execution_result.backend, "sandbox")
+
+    async def test_toolset_pipeline_fails_closed_for_sandbox(self) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            execution_mode="sandbox",
+            workspace_root=str(fixture_root),
+            allow_pipelines=True,
+        )
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            sandbox_settings=_sandbox_settings(fixture_root),
+            sandbox_backend=None,
+        ).with_enabled_tools(["shell.pipeline"])
+        call = cast(
+            Callable[..., Awaitable[str]],
+            _tool_by_name(toolset, "pipeline"),
+        )
+
+        output = await call(
+            steps=(
+                {
+                    "id": "read",
+                    "command": "cat",
+                    "paths": ("filesystem/visible.txt",),
+                },
+                {
+                    "id": "count",
+                    "command": "wc",
+                    "stdin_from": {
+                        "step_id": "read",
+                        "stream": "stdout",
+                    },
+                },
+            ),
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(output, ShellFormattedCompositionResult)
+        formatted = cast(ShellFormattedCompositionResult, output)
+        self.assertEqual(
+            formatted.composition_result.status,
+            ShellExecutionStatus.POLICY_DENIED,
+        )
+        self.assertIn("sandbox byte pipelines", output)
+        self.assertIn("cannot be lowered to shell evaluation", output)
+        self.assertIn(
+            "trusted structured runner",
+            formatted.composition_result.error_message or "",
+        )
+
+    async def test_pipeline_path_guard_precedes_sandbox_denial(self) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(
+            execution_mode="sandbox",
+            workspace_root=str(fixture_root),
+            allow_pipelines=True,
+        )
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            sandbox_settings=_sandbox_settings(fixture_root),
+            sandbox_backend=None,
+        ).with_enabled_tools(["shell.pipeline"])
+        call = cast(
+            Callable[..., Awaitable[str]],
+            _tool_by_name(toolset, "pipeline"),
+        )
+
+        output = await call(
+            steps=(
+                {
+                    "id": "read",
+                    "command": "cat",
+                    "paths": ("../outside.txt",),
+                },
+            ),
+            context=ToolCallContext(),
+        )
+
+        formatted = cast(ShellFormattedCompositionResult, output)
+        self.assertEqual(
+            formatted.composition_result.error_code,
+            ShellExecutionErrorCode.TRAVERSAL,
+        )
+        self.assertNotIn("byte pipelines", output)
 
     def test_toolset_rejects_unsupported_isolation_runtime_hooks(self) -> None:
         fixture_root = Path(__file__).parent / "fixtures"
