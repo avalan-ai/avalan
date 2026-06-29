@@ -44,19 +44,19 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python }} + Poetry cache
         id: setup-python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
 
       - name: Load cached Poetry installation
         id: cached-poetry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.local
           key: poetry-v14-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-2.3.3
@@ -83,7 +83,7 @@ jobs:
       - name: Load cached venv
         id: cached-poetry-dependencies
         if: env.IGNORE_VENV_CACHE != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .venv
           key: venv-v14-${{ runner.os }}-${{ matrix.target.name }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
@@ -178,19 +178,19 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python }} + Poetry cache
         id: setup-python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
 
       - name: Load cached Poetry installation
         id: cached-poetry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.local
           key: poetry-v14-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-2.3.3
