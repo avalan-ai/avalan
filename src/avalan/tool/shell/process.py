@@ -21,7 +21,7 @@ from asyncio import (
 from asyncio.streams import StreamReader
 from asyncio.subprocess import DEVNULL, PIPE
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from os import kill as os_kill
 from os import name as os_name
 from pathlib import Path
@@ -216,18 +216,18 @@ def _signal_process_group(
 ) -> None:
     pid = getattr(process, "pid", None)
     if os_name == "posix" and isinstance(pid, int):
-        try:
+        # Process group teardown can race with child exit or permission
+        # checks; fall back to the process method below.
+        with suppress(ProcessLookupError, PermissionError, OSError):
             os_kill(-pid, signal_number)
             return
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
     fallback_method = getattr(process, fallback_method_name, None)
     if fallback_method is None:
         return
-    try:
+    # The fallback signal is best-effort during cleanup; the process may
+    # already be gone by the time it runs.
+    with suppress(ProcessLookupError, OSError):
         fallback_method()
-    except (ProcessLookupError, OSError):
-        pass
 
 
 async def _wait_for_process_exit(process: object) -> bool:
@@ -284,7 +284,7 @@ async def _wait_for_process_or_reader_failure(
         done, tasks = await wait(tasks, return_when=FIRST_COMPLETED)
         for task in done:
             if task is process_waiter:
-                await process_waiter
+                process_waiter.result()
                 return False
             if _reader_task_failed(task):
                 return True
@@ -377,7 +377,8 @@ async def _write_stdin(process: object, stdin: bytes | None) -> None:
         writer.write(stdin)
         await writer.drain()
     except (BrokenPipeError, ConnectionResetError):
-        pass
+        # The child may exit before consuming stdin; cleanup still runs below.
+        return
     finally:
         await _close_stdin_writer(writer)
 
@@ -389,6 +390,7 @@ async def _close_stdin_writer(writer: object) -> None:
     try:
         close()
     except (BrokenPipeError, ConnectionResetError):
+        # Closing stdin is best-effort when the child has already exited.
         return
     wait_closed = getattr(writer, "wait_closed", None)
     if wait_closed is None:
@@ -399,7 +401,9 @@ async def _close_stdin_writer(writer: object) -> None:
             timeout=_PROCESS_CLEANUP_GRACE_SECONDS,
         )
     except (BrokenPipeError, ConnectionResetError, TimeoutError):
-        pass
+        # wait_closed can lose a teardown race or exceed the cleanup grace
+        # period after the close request has already been issued.
+        return
 
 
 async def _collect_stream(

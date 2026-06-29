@@ -2056,6 +2056,7 @@ class _FlowShellPolicy(ExecutionPolicy):
         denial: ShellPolicyDenied | None = None,
         executable: str | None = "/usr/bin/cat",
     ) -> None:
+        super().__init__()
         self._denial = denial
         self._executable = executable
         self.requests: list[ShellCommandRequest] = []
@@ -2127,6 +2128,7 @@ class _FlowShellCompositionPolicy(ExecutionPolicy):
         *,
         denial: ShellPolicyDenied | None = None,
     ) -> None:
+        super().__init__()
         self._denial = denial
         self.requests: list[ShellCompositionRequest] = []
 

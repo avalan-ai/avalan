@@ -39,6 +39,14 @@ from avalan.tool.shell.policy import ExecutionPolicy
 from avalan.tool.shell.settings import ShellToolSettings
 
 
+async def _expect_cancelled(awaitable: Awaitable[object]) -> None:
+    try:
+        await awaitable
+    except CancelledError:
+        return
+    raise AssertionError("Expected awaitable to be cancelled")
+
+
 class LocalCompositionExecutorTest(IsolatedAsyncioTestCase):
     async def test_protocol_stub_is_inert(self) -> None:
         class InertCompositionExecutor(CompositionExecutor):
@@ -742,8 +750,7 @@ class LocalCompositionExecutorTest(IsolatedAsyncioTestCase):
             )
             await wait_for(final.wait_started.wait(), timeout=1)
             running.cancel()
-            with self.assertRaises(CancelledError):
-                await running
+            await _expect_cancelled(running)
 
         self.assertEqual(first.kill_count, 1)
         self.assertEqual(final.kill_count, 1)
@@ -1432,8 +1439,7 @@ class LocalCompositionExecutorTest(IsolatedAsyncioTestCase):
             )
             await wait_for(process.wait_started.wait(), timeout=1)
             running.cancel()
-            with self.assertRaises(CancelledError):
-                await running
+            await _expect_cancelled(running)
 
         self.assertEqual(process.kill_count, 1)
 
@@ -1551,8 +1557,7 @@ class LocalCompositionExecutorTest(IsolatedAsyncioTestCase):
         await wait_for(command_executor.started.wait(), timeout=1)
         running.cancel()
 
-        with self.assertRaises(CancelledError):
-            await running
+        await _expect_cancelled(running)
 
         self.assertTrue(command_executor.cancelled.is_set())
 
@@ -1625,8 +1630,7 @@ class LocalCompositionExecutorTest(IsolatedAsyncioTestCase):
         await wait_for(command_executor.started.wait(), timeout=1)
         running.cancel()
 
-        with self.assertRaises(CancelledError):
-            await running
+        await _expect_cancelled(running)
 
         self.assertTrue(command_executor.cancelled.is_set())
 

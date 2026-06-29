@@ -6547,6 +6547,7 @@ def _working_directory(path: Path) -> Iterator[None]:
 
 class _FlowCliShellPolicy(ExecutionPolicy):
     def __init__(self) -> None:
+        super().__init__()
         self.requests: list[ShellCommandRequest] = []
 
     async def normalize(
@@ -6610,6 +6611,7 @@ class _FlowCliShellExecutor:
 
 class _FlowCliShellCompositionPolicy(ExecutionPolicy):
     def __init__(self) -> None:
+        super().__init__()
         self.requests: list[ShellCompositionRequest] = []
 
     async def normalize_composition(
