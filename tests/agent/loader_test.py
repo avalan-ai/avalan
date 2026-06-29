@@ -1052,8 +1052,13 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
         manager = _shell_only_manager(kwargs)
         self.assertEqual(manager.list_tools(), [])
         self.assertIsNone(manager.provider_json_schemas())
+        self.assertIsNone(manager.describe_tool("shell.pipeline"))
         resolution = manager.resolve_tool_name("shell.pipeline")
-        self.assertIs(resolution.status, ToolNameResolutionStatus.UNKNOWN)
+        self.assertIs(resolution.status, ToolNameResolutionStatus.DISABLED)
+        self.assertIs(
+            resolution.diagnostic_code,
+            ToolCallDiagnosticCode.DISABLED_TOOL,
+        )
 
     async def test_from_file_pipeline_allow_without_enable_is_default_denied(
         self,

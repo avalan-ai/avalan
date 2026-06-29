@@ -322,6 +322,13 @@ class ShellToolSet(ToolSet):
     def process_runtime(self) -> ShellProcessRuntime:
         return self._process_runtime
 
+    @property
+    def available_tools(self) -> list[Callable[..., object] | Tool | ToolSet]:
+        tools: list[Callable[..., object] | Tool | ToolSet] = list(self.tools)
+        if not _has_pipeline_tool(tools):
+            tools.append(self._pipeline_tool)
+        return tools
+
     def with_enabled_tools(self, enable_tools: list[str]) -> "ShellToolSet":
         if enables_shell_pipeline(
             enable_tools, self._settings

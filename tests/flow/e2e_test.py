@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -6,6 +6,7 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
 import avalan.flow.executor as flow_executor_module
+from avalan.entities import ToolExecutionStreamEvent
 from avalan.event import Event, EventObservabilityPayload, EventType
 from avalan.flow import (
     FlowCondition,
@@ -56,15 +57,24 @@ from avalan.model.stream import (
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
+    CompositionExecutor,
     ExecutionPolicy,
     ExecutionResult,
     ExecutionSpec,
     ShellCommandRequest,
+    ShellCommandStepRequest,
+    ShellCompositionRequest,
+    ShellCompositionResult,
+    ShellCompositionSpec,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
+    ShellExecutionStepSpec,
     ShellOutputKind,
     ShellPolicyDenied,
+    ShellStreamRef,
     ShellToolSet,
+    ShellToolSettings,
 )
 
 
@@ -244,6 +254,87 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_shell_pipeline_tool_node_runs_with_explicit_opt_in(
+        self,
+    ) -> None:
+        policy = _FlowShellCompositionPolicy()
+        executor = _FlowShellCompositionExecutor("12\n")
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.pipeline"],
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(allow_pipelines=True),
+                    policy=policy,
+                    composition_executor=executor,
+                    composition_formatter=lambda result: result.stdout,
+                )
+            ],
+        )
+        registry = tool_flow_node_registry(manager)
+
+        loaded = await FlowDefinitionLoader(registry).loads_result(
+            _shell_pipeline_flow_source()
+        )
+        self.assertTrue(loaded.ok, loaded.public_diagnostics)
+        assert loaded.definition is not None
+
+        result = await FlowExecutor(registry=registry).run(
+            loaded.definition,
+            inputs={"payload": {}},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"answer": "12\n"})
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(
+            [step.command for step in policy.requests[0].steps],
+            ["cat", "wc"],
+        )
+        self.assertEqual(
+            [
+                step.stdin_from
+                for step in policy.requests[0].steps
+                if step.stdin_from is not None
+            ],
+            [ShellStreamRef(step_id="read", stream="stdout")],
+        )
+        self.assertEqual(
+            [step.spec.command for step in executor.specs[0].steps],
+            ["cat", "wc"],
+        )
+
+    async def test_shell_pipeline_tool_node_fails_without_allow_pipelines(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.pipeline"],
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(allow_pipelines=False),
+                    policy=_FlowShellCompositionPolicy(),
+                    composition_executor=_FlowShellCompositionExecutor(
+                        "unused",
+                    ),
+                )
+            ],
+        )
+        registry = tool_flow_node_registry(manager)
+
+        result = await FlowDefinitionLoader(registry).loads_result(
+            _shell_pipeline_flow_source()
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.definition)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.tool_disabled"],
+        )
+        self.assertIn(
+            "allow_pipelines",
+            str(result.public_diagnostics[0]["hint"]),
+        )
+
     async def test_shell_tool_node_returns_policy_denied_result(self) -> None:
         policy = _FlowShellPolicy(
             denial=ShellPolicyDenied(
@@ -280,6 +371,61 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
         self.assertIn("error_code: denied_path", result.outputs["answer"])
         self.assertIn(
             "error_message: path is denied", result.outputs["answer"]
+        )
+
+    async def test_shell_pipeline_policy_denied_preserves_stage_metadata(
+        self,
+    ) -> None:
+        policy = _FlowShellCompositionPolicy(
+            denial=ShellPolicyDenied(
+                ShellExecutionErrorCode.POLICY_DENIED,
+                "pipeline denied",
+            )
+        )
+        executor = _FlowShellCompositionExecutor("unused")
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.pipeline"],
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(allow_pipelines=True),
+                    policy=policy,
+                    composition_executor=executor,
+                )
+            ],
+        )
+        registry = tool_flow_node_registry(manager)
+
+        loaded = await FlowDefinitionLoader(registry).loads_result(
+            _shell_pipeline_flow_source(private_cwd=True)
+        )
+        self.assertTrue(loaded.ok, loaded.public_diagnostics)
+        assert loaded.definition is not None
+
+        result = await FlowExecutor(registry=registry).run(
+            loaded.definition,
+            inputs={"payload": {}},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(executor.specs, [])
+        output = result.outputs["answer"]
+        assert isinstance(output, str)
+        self.assertIn("tool: shell.pipeline", output)
+        self.assertIn("status: policy_denied", output)
+        self.assertIn("stage_count: 2", output)
+        self.assertIn("stage_chain: cat | wc", output)
+        self.assertIn("error_code: policy_denied", output)
+        self.assertIn("command: cat", output)
+        self.assertIn("command: wc", output)
+        self.assertNotIn("private-shell-root", output)
+        self.assertNotIn(
+            "private-shell-root",
+            str(result.export_sanitized_trace()),
+        )
+        self.assertNotIn(
+            "private-shell-root",
+            str(result.public_diagnostics),
         )
 
     async def test_shell_tool_node_returns_command_unavailable_result(
@@ -1853,6 +1999,56 @@ def _shell_cat_flow_source() -> str:
         """
 
 
+def _shell_pipeline_flow_source(*, private_cwd: bool = False) -> str:
+    cwd = "/private/private-shell-root" if private_cwd else "."
+    return f"""
+        [flow]
+        name = "shell_pipeline_flow"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "answer"
+        type = "json"
+
+        [entry]
+        type = "node"
+        node = "pipeline"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        answer = "pipeline.result"
+
+        [nodes.pipeline]
+        type = "tool"
+        ref = "shell.pipeline"
+
+        [nodes.pipeline.config.arguments]
+        max_stdout_bytes = 1024
+
+        [[nodes.pipeline.config.arguments.steps]]
+        id = "read"
+        command = "cat"
+        paths = ["visible.txt"]
+        cwd = "{cwd}"
+
+        [[nodes.pipeline.config.arguments.steps]]
+        id = "count"
+        command = "wc"
+        options = {{ bytes = true }}
+        cwd = "{cwd}"
+
+        [nodes.pipeline.config.arguments.steps.stdin_from]
+        step_id = "read"
+        stream = "stdout"
+        """
+
+
 class _FlowShellPolicy(ExecutionPolicy):
     def __init__(
         self,
@@ -1923,6 +2119,111 @@ class _FlowShellExecutor:
             error_code=ShellExecutionErrorCode.COMPLETED,
             metadata=spec.metadata,
         )
+
+
+class _FlowShellCompositionPolicy(ExecutionPolicy):
+    def __init__(
+        self,
+        *,
+        denial: ShellPolicyDenied | None = None,
+    ) -> None:
+        self._denial = denial
+        self.requests: list[ShellCompositionRequest] = []
+
+    async def normalize_composition(
+        self,
+        request: ShellCompositionRequest,
+    ) -> ShellCompositionSpec:
+        self.requests.append(request)
+        if self._denial is not None:
+            raise self._denial
+        steps: list[ShellExecutionStepSpec] = []
+        for step in request.steps:
+            steps.append(
+                ShellExecutionStepSpec(
+                    id=step.id,
+                    spec=_composition_step_spec(step),
+                    stdin_from=step.stdin_from,
+                )
+            )
+        return ShellCompositionSpec(
+            mode=request.mode,
+            steps=tuple(steps),
+            timeout_seconds=1.0,
+            max_stdout_bytes=request.max_stdout_bytes or 1024,
+            max_stderr_bytes=request.max_stderr_bytes or 1024,
+            max_intermediate_bytes=request.max_intermediate_bytes or 1024,
+        )
+
+
+class _FlowShellCompositionExecutor(CompositionExecutor):
+    def __init__(self, stdout: str) -> None:
+        self._stdout = stdout
+        self.specs: list[ShellCompositionSpec] = []
+
+    async def execute_composition(
+        self,
+        spec: ShellCompositionSpec,
+        *,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ShellCompositionResult:
+        _ = stream
+        self.specs.append(spec)
+        return ShellCompositionResult(
+            mode=spec.mode,
+            status=ShellExecutionStatus.COMPLETED,
+            stdout=self._stdout,
+            stderr="",
+            steps=tuple(
+                ShellExecutionStepResult(
+                    id=step.id,
+                    command=step.spec.command,
+                    status=ShellExecutionStatus.COMPLETED,
+                    exit_code=0,
+                    stdout="",
+                    stderr="",
+                    stdout_bytes=0,
+                    stderr_bytes=0,
+                    stdout_truncated=False,
+                    stderr_truncated=False,
+                    duration_ms=1,
+                    error_code=ShellExecutionErrorCode.COMPLETED,
+                )
+                for step in spec.steps
+            ),
+            stdout_bytes=len(self._stdout.encode()),
+            stderr_bytes=0,
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=False,
+            cancelled=False,
+            duration_ms=1,
+            error_code=ShellExecutionErrorCode.COMPLETED,
+        )
+
+
+def _composition_step_spec(step: ShellCommandStepRequest) -> ExecutionSpec:
+    return ExecutionPolicy().create_execution_spec(
+        backend="local",
+        tool_name=f"shell.{step.command}",
+        command=step.command,
+        executable=f"/usr/bin/{step.command}",
+        argv=(step.command,),
+        display_argv=(step.command,),
+        cwd=step.cwd or ".",
+        display_cwd=step.cwd or ".",
+        env={"LC_ALL": "C"},
+        stdin=None,
+        stdout_media_type="text/plain",
+        output_kind=ShellOutputKind.TEXT,
+        resource_class="standard",
+        output_plan=None,
+        timeout_seconds=1.0,
+        max_stdout_bytes=1024,
+        max_stderr_bytes=1024,
+    )
 
 
 def _event_payloads(

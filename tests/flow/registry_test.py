@@ -844,6 +844,54 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(resolver.calls[0].arguments, {"b": 3, "a": 2})
         self.assertTrue(resolver.contexts[0].flow_tool_node)
 
+    async def test_tool_node_binds_nested_literal_arguments(self) -> None:
+        descriptor = ToolDescriptor(
+            name="shell.pipeline",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "steps": {"type": "array"},
+                    "max_stdout_bytes": {"type": "integer"},
+                },
+                "required": ["steps"],
+            },
+        )
+        registry = tool_flow_node_registry(StaticToolResolver([descriptor]))
+        steps = [
+            {
+                "id": "read",
+                "command": "cat",
+                "paths": ["visible.txt"],
+            },
+            {
+                "id": "count",
+                "command": "wc",
+                "options": {"bytes": True},
+                "stdin_from": {"step_id": "read", "stream": "stdout"},
+            },
+        ]
+        node = registry.build(
+            FlowNodeDefinition(
+                name="pipeline",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="shell.pipeline",
+                config={
+                    "arguments": {
+                        "steps": steps,
+                        "max_stdout_bytes": 1024,
+                    },
+                },
+            )
+        )
+
+        self.assertEqual(
+            await node.execute_async({"payload": {"ignored": "input"}}),
+            {
+                "steps": steps,
+                "max_stdout_bytes": 1024,
+            },
+        )
+
     async def test_tool_node_binds_and_rejects_array_argument_selectors(
         self,
     ) -> None:

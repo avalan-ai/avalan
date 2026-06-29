@@ -2025,7 +2025,7 @@ def _composition_policy_denied_result(
         stderr="",
         steps=tuple(
             ShellExecutionStepResult(
-                id=REDACTED_DISPLAY_VALUE,
+                id=_safe_policy_denied_step_id(index),
                 command=_safe_policy_denied_step_command(step.command),
                 status=ShellExecutionStatus.POLICY_DENIED,
                 exit_code=None,
@@ -2062,3 +2062,7 @@ def _safe_policy_denied_step_command(command: str) -> str:
     if command in SHELL_COMMAND_DEFINITIONS:
         return command
     return REDACTED_DISPLAY_VALUE
+
+
+def _safe_policy_denied_step_id(index: int) -> str:
+    return f"{REDACTED_DISPLAY_VALUE}-{index}"

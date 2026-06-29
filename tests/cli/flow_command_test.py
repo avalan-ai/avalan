@@ -1,7 +1,7 @@
 from argparse import Namespace
 from asyncio import run as asyncio_run
 from base64 import b64decode
-from collections.abc import Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from enum import Enum
 from errno import EACCES
@@ -26,6 +26,7 @@ from avalan.entities import (
     MessageContentFile,
     MessageContentImage,
     MessageContentText,
+    ToolExecutionStreamEvent,
     ToolManagerSettings,
 )
 from avalan.event import Event, EventObservabilityPayload, EventType
@@ -104,13 +105,21 @@ from avalan.task.targets import flow as flow_target_module
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
+    CompositionExecutor,
     ExecutionPolicy,
     ExecutionResult,
     ExecutionSpec,
     ShellCommandRequest,
+    ShellCommandStepRequest,
+    ShellCompositionRequest,
+    ShellCompositionResult,
+    ShellCompositionSpec,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
+    ShellExecutionStepResult,
+    ShellExecutionStepSpec,
     ShellOutputKind,
+    ShellStreamRef,
     ShellToolSet,
     ShellToolSettings,
 )
@@ -3396,6 +3405,78 @@ class FlowRunCommandTestCase(TestCase):
             ],
         )
 
+    def test_flow_run_shell_pipeline_uses_explicit_cli_opt_in(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        policy = _FlowCliShellCompositionPolicy()
+        executor = _FlowCliShellCompositionExecutor("12\n")
+        captured_settings: list[ShellToolSettings] = []
+
+        def shell_toolset_factory(
+            *,
+            settings: ShellToolSettings,
+            namespace: str,
+        ) -> ShellToolSet:
+            captured_settings.append(settings)
+            return ShellToolSet(
+                settings=settings,
+                policy=policy,
+                composition_executor=executor,
+                composition_formatter=lambda result: result.stdout,
+                namespace=namespace,
+            )
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_shell_pipeline_tool_flow(root)
+            with (
+                patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+                patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+                patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+                patch.object(
+                    flow_cmds,
+                    "ShellToolSet",
+                    side_effect=shell_toolset_factory,
+                ),
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+            ):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json="{}",
+                        task_run_json=True,
+                        tool=["shell.pipeline"],
+                        tool_shell_allow_pipelines=True,
+                        tool_shell_max_pipeline_stages=3,
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        output = stream.getvalue()
+        self.assertTrue(result)
+        self.assertEqual(output, '"12\\n"\n')
+        self.assertEqual(len(captured_settings), 1)
+        self.assertTrue(captured_settings[0].allow_pipelines)
+        self.assertEqual(captured_settings[0].max_pipeline_stages, 3)
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(
+            [step.command for step in policy.requests[0].steps],
+            ["cat", "wc"],
+        )
+        self.assertEqual(
+            [
+                step.stdin_from
+                for step in policy.requests[0].steps
+                if step.stdin_from is not None
+            ],
+            [ShellStreamRef(step_id="read", stream="stdout")],
+        )
+        self.assertEqual(
+            [step.spec.command for step in executor.specs[0].steps],
+            ["cat", "wc"],
+        )
+
     def test_flow_run_strict_tool_node_requires_enabled_resolver(self) -> None:
         console = Console(record=True, width=160)
 
@@ -6215,6 +6296,58 @@ def _write_shell_cat_tool_flow(root: Path) -> Path:
     return flow_path
 
 
+def _write_shell_pipeline_tool_flow(root: Path) -> Path:
+    flow_path = root / "shell_pipeline.flow.toml"
+    flow_path.write_text(
+        """
+        [flow]
+        name = "shell_pipeline"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "answer"
+        type = "json"
+
+        [entry]
+        type = "node"
+        node = "pipeline"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        answer = "pipeline.result"
+
+        [nodes.pipeline]
+        type = "tool"
+        ref = "shell.pipeline"
+
+        [nodes.pipeline.config.arguments]
+        max_stdout_bytes = 1024
+
+        [[nodes.pipeline.config.arguments.steps]]
+        id = "read"
+        command = "cat"
+        paths = ["visible.txt"]
+
+        [[nodes.pipeline.config.arguments.steps]]
+        id = "count"
+        command = "wc"
+        options = { bytes = true }
+
+        [nodes.pipeline.config.arguments.steps.stdin_from]
+        step_id = "read"
+        stream = "stdout"
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
 def _write_strict_topology_flow(root: Path) -> Path:
     flow_path = root / "topology.flow.toml"
     flow_path.write_text(
@@ -6473,6 +6606,104 @@ class _FlowCliShellExecutor:
             error_code=ShellExecutionErrorCode.COMPLETED,
             metadata=spec.metadata,
         )
+
+
+class _FlowCliShellCompositionPolicy(ExecutionPolicy):
+    def __init__(self) -> None:
+        self.requests: list[ShellCompositionRequest] = []
+
+    async def normalize_composition(
+        self,
+        request: ShellCompositionRequest,
+    ) -> ShellCompositionSpec:
+        self.requests.append(request)
+        return ShellCompositionSpec(
+            mode=request.mode,
+            steps=tuple(
+                ShellExecutionStepSpec(
+                    id=step.id,
+                    spec=_flow_cli_composition_step_spec(step),
+                    stdin_from=step.stdin_from,
+                )
+                for step in request.steps
+            ),
+            timeout_seconds=1.0,
+            max_stdout_bytes=request.max_stdout_bytes or 1024,
+            max_stderr_bytes=request.max_stderr_bytes or 1024,
+            max_intermediate_bytes=request.max_intermediate_bytes or 1024,
+        )
+
+
+class _FlowCliShellCompositionExecutor(CompositionExecutor):
+    def __init__(self, stdout: str) -> None:
+        self._stdout = stdout
+        self.specs: list[ShellCompositionSpec] = []
+
+    async def execute_composition(
+        self,
+        spec: ShellCompositionSpec,
+        *,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ShellCompositionResult:
+        _ = stream
+        self.specs.append(spec)
+        return ShellCompositionResult(
+            mode=spec.mode,
+            status=ShellExecutionStatus.COMPLETED,
+            stdout=self._stdout,
+            stderr="",
+            steps=tuple(
+                ShellExecutionStepResult(
+                    id=step.id,
+                    command=step.spec.command,
+                    status=ShellExecutionStatus.COMPLETED,
+                    exit_code=0,
+                    stdout="",
+                    stderr="",
+                    stdout_bytes=0,
+                    stderr_bytes=0,
+                    stdout_truncated=False,
+                    stderr_truncated=False,
+                    duration_ms=1,
+                    error_code=ShellExecutionErrorCode.COMPLETED,
+                )
+                for step in spec.steps
+            ),
+            stdout_bytes=len(self._stdout.encode()),
+            stderr_bytes=0,
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=False,
+            cancelled=False,
+            duration_ms=1,
+            error_code=ShellExecutionErrorCode.COMPLETED,
+        )
+
+
+def _flow_cli_composition_step_spec(
+    step: ShellCommandStepRequest,
+) -> ExecutionSpec:
+    return ExecutionPolicy().create_execution_spec(
+        backend="local",
+        tool_name=f"shell.{step.command}",
+        command=step.command,
+        executable=f"/usr/bin/{step.command}",
+        argv=(step.command,),
+        display_argv=(step.command,),
+        cwd=step.cwd or ".",
+        display_cwd=step.cwd or ".",
+        env={"LC_ALL": "C"},
+        stdin=None,
+        stdout_media_type="text/plain",
+        output_kind=ShellOutputKind.TEXT,
+        resource_class="standard",
+        output_plan=None,
+        timeout_seconds=1.0,
+        max_stdout_bytes=1024,
+        max_stderr_bytes=1024,
+    )
 
 
 class _FailingFlowClientContext:
