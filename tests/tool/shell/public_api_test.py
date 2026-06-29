@@ -23,6 +23,7 @@ from avalan.tool.shell import (
     SHELL_COMMANDS,
     SHELL_STATUS_ERROR_CODES,
     CommandExecutor,
+    CompositionExecutor,
     ExecutableLookup,
     ExecutableResolver,
     ExecutionPolicy,
@@ -31,6 +32,7 @@ from avalan.tool.shell import (
     GeneratedFile,
     GeneratedOutputPlan,
     LocalCommandExecutor,
+    LocalCompositionExecutor,
     PathOperand,
     ShellCommandDefinition,
     ShellCommandRequest,
@@ -85,6 +87,14 @@ class ShellPublicApiTest(TestCase):
         self.assertIs(
             LocalCommandExecutor,
             import_module("avalan.tool.shell").LocalCommandExecutor,
+        )
+        self.assertIs(
+            CompositionExecutor,
+            import_module("avalan.tool.shell").CompositionExecutor,
+        )
+        self.assertIs(
+            LocalCompositionExecutor,
+            import_module("avalan.tool.shell").LocalCompositionExecutor,
         )
         self.assertIs(
             ShellSandboxCommandExecutor,
@@ -280,6 +290,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.commands.tail",
             "avalan.tool.shell.commands.tesseract",
             "avalan.tool.shell.commands.wc",
+            "avalan.tool.shell.composition_executor",
             "avalan.tool.shell.entities",
             "avalan.tool.shell.executor",
             "avalan.tool.shell.filesystem",
@@ -379,6 +390,15 @@ class ShellAsyncContractTest(IsolatedAsyncioTestCase):
 
         with self.assertRaises(NotImplementedError):
             await executor.execute(object())
+
+    async def test_composition_executor_protocol_stub_is_inert(self) -> None:
+        class InertCompositionExecutor(CompositionExecutor):
+            pass
+
+        executor = InertCompositionExecutor()
+
+        with self.assertRaises(NotImplementedError):
+            await executor.execute_composition(object())
 
     async def test_executable_resolver_protocol_stub_is_inert(self) -> None:
         class InertExecutableResolver(ExecutableResolver):

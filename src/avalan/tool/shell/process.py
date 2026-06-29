@@ -11,6 +11,7 @@ from .settings import ShellToolSettings
 
 from asyncio import (
     FIRST_COMPLETED,
+    Lock,
     Semaphore,
     create_subprocess_exec,
     gather,
@@ -20,7 +21,7 @@ from asyncio import (
 from asyncio.streams import StreamReader
 from asyncio.subprocess import DEVNULL, PIPE
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from os import kill as os_kill
 from os import name as os_name
 from pathlib import Path
@@ -38,12 +39,24 @@ class ShellProcessLimiter:
             settings,
             ShellToolSettings,
         ), "settings must be shell tool settings"
+        self._max_concurrent_processes = settings.max_concurrent_processes
+        self._max_concurrent_heavy_processes = (
+            settings.max_concurrent_heavy_processes
+        )
         self._process_semaphore = Semaphore(
             settings.max_concurrent_processes,
         )
         self._heavy_semaphore = Semaphore(
             settings.max_concurrent_heavy_processes,
         )
+
+    @property
+    def max_concurrent_processes(self) -> int:
+        return self._max_concurrent_processes
+
+    @property
+    def max_concurrent_heavy_processes(self) -> int:
+        return self._max_concurrent_heavy_processes
 
     @asynccontextmanager
     async def limit(
@@ -82,6 +95,7 @@ class ShellProcessRuntime:
             ShellProcessLimiter,
         ), "process_limiter must be a shell process limiter"
         self._process_limiter = process_limiter
+        self._multi_process_limit_lock = Lock()
 
     @property
     def process_limiter(self) -> ShellProcessLimiter:
@@ -94,6 +108,35 @@ class ShellProcessRuntime:
     ) -> AsyncIterator[None]:
         async with self._process_limiter.limit(resource_class):
             yield
+
+    @asynccontextmanager
+    async def limit_many(
+        self,
+        resource_classes: tuple[ShellResourceClass, ...],
+    ) -> AsyncIterator[None]:
+        assert isinstance(
+            resource_classes,
+            tuple,
+        ), "resource_classes must be a tuple"
+        assert resource_classes, "resource_classes must not be empty"
+        assert (
+            len(resource_classes)
+            <= self._process_limiter.max_concurrent_processes
+        ), "resource_classes must not exceed process capacity"
+        assert (
+            sum(1 for value in resource_classes if value == "heavy")
+            <= self._process_limiter.max_concurrent_heavy_processes
+        ), "resource_classes must not exceed heavy process capacity"
+        # Byte pipelines need all children alive before stdout pumping starts.
+        # Acquire the whole batch under one runtime lock so competing pipelines
+        # cannot each hold a partial set of permits and wait forever.
+        async with self._multi_process_limit_lock:
+            async with AsyncExitStack() as stack:
+                for resource_class in resource_classes:
+                    await stack.enter_async_context(
+                        self.limit(resource_class),
+                    )
+                yield
 
     async def spawn(
         self,

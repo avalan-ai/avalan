@@ -1,3 +1,7 @@
+from .composition_executor import CompositionExecutor as CompositionExecutor
+from .composition_executor import (
+    LocalCompositionExecutor as LocalCompositionExecutor,
+)
 from .container import (
     ShellContainerCommandExecutor as ShellContainerCommandExecutor,
 )
