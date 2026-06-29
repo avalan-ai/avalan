@@ -1,8 +1,9 @@
-from asyncio import run
+from asyncio import Event, create_task, gather, run, sleep, wait_for
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import patch
 
 from avalan.container import (
     ContainerBackend,
@@ -42,6 +43,7 @@ from avalan.tool.shell import (
     unavailable_executable_lookup,
 )
 from avalan.tool.shell.entities import ShellFormattedResult
+from avalan.tool.shell.process import ShellProcessRuntime
 
 _EXPECTED_SCHEMA_NAMES = (
     "shell.rg",
@@ -243,6 +245,68 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [(event.kind, event.content) for event in events],
             [(ToolExecutionStreamKind.STDOUT, "live")],
+        )
+
+    async def test_toolset_process_runtime_is_shared_for_future_executors(
+        self,
+    ) -> None:
+        settings = ShellToolSettings(max_concurrent_processes=1)
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+        )
+        tool_executor = getattr(_tool_by_name(toolset, "cat"), "_executor")
+        future_executor = LocalCommandExecutor(
+            settings=settings,
+            process_runtime=toolset.process_runtime,
+        )
+        release = Event()
+        tracker = _ProcessTracker(target_active=1)
+        spawn_count = 0
+
+        async def fake_create_subprocess_exec(
+            *args: object,
+            **kwargs: object,
+        ) -> _BlockingProcess:
+            nonlocal spawn_count
+            spawn_count += 1
+            return _BlockingProcess(release=release, tracker=tracker)
+
+        self.assertIsInstance(toolset.process_runtime, ShellProcessRuntime)
+        self.assertIsInstance(tool_executor, LocalCommandExecutor)
+        self.assertIs(
+            getattr(tool_executor, "_process_runtime"),
+            toolset.process_runtime,
+        )
+        spec = _direct_execution_spec()
+
+        with patch(
+            "avalan.tool.shell.process.create_subprocess_exec",
+            new=fake_create_subprocess_exec,
+        ):
+            tool_task = create_task(tool_executor.execute(spec))
+            future_task = create_task(future_executor.execute(spec))
+            try:
+                await wait_for(tracker.target_reached.wait(), timeout=1)
+                await sleep(0)
+
+                self.assertEqual(spawn_count, 1)
+                self.assertEqual(tracker.maximum_active, 1)
+            finally:
+                release.set()
+
+            results = await wait_for(
+                gather(tool_task, future_task),
+                timeout=1,
+            )
+
+        self.assertEqual(spawn_count, 2)
+        self.assertEqual(tracker.maximum_active, 1)
+        self.assertTrue(
+            all(
+                result.status is ShellExecutionStatus.COMPLETED
+                for result in results
+            )
         )
 
     async def test_new_shell_commands_execute_through_toolset(self) -> None:
@@ -849,6 +913,87 @@ class _StreamingExecutor(CommandExecutor):
             stdout_bytes=4,
             stderr_bytes=0,
         )
+
+
+class _ProcessTracker:
+    def __init__(self, *, target_active: int) -> None:
+        self.active = 0
+        self.maximum_active = 0
+        self.target_reached = Event()
+        self._target_active = target_active
+
+    def enter(self) -> None:
+        self.active += 1
+        self.maximum_active = max(self.maximum_active, self.active)
+        if self.active >= self._target_active:
+            self.target_reached.set()
+
+    def exit(self) -> None:
+        self.active -= 1
+
+
+class _BlockingProcess:
+    returncode = 0
+    stdin = None
+
+    def __init__(
+        self,
+        *,
+        release: Event,
+        tracker: _ProcessTracker,
+    ) -> None:
+        self._release = release
+        self._tracker = tracker
+        self.stdout = _FakeStream(b"ok")
+        self.stderr = _FakeStream(b"")
+
+    async def wait(self) -> None:
+        self._tracker.enter()
+        try:
+            await self._release.wait()
+        finally:
+            self._tracker.exit()
+
+    def terminate(self) -> None:
+        self.returncode = -15
+        self._release.set()
+
+    def kill(self) -> None:
+        self.returncode = -9
+        self._release.set()
+
+
+class _FakeStream:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._offset = 0
+
+    async def read(self, size: int) -> bytes:
+        chunk = self._data[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
+
+
+def _direct_execution_spec() -> ExecutionSpec:
+    return ExecutionPolicy().create_execution_spec(
+        backend="local",
+        tool_name="shell.cat",
+        command="cat",
+        executable="/trusted/bin/cat",
+        argv=("cat",),
+        display_argv=("cat",),
+        cwd=str(Path.cwd().resolve()),
+        display_cwd=".",
+        env={"LC_ALL": "C"},
+        stdin=None,
+        stdout_media_type="text/plain",
+        output_kind=ShellOutputKind.TEXT,
+        resource_class="standard",
+        output_plan=None,
+        timeout_seconds=1.0,
+        max_stdout_bytes=10,
+        max_stderr_bytes=10,
+    )
 
 
 if __name__ == "__main__":

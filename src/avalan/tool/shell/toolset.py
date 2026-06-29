@@ -17,6 +17,7 @@ from .executor import CommandExecutor, LocalCommandExecutor
 from .formatting import format_shell_result
 from .opt_in import SHELL_TOOL_NAMESPACE, enables_shell_pipeline
 from .policy import ExecutionPolicy
+from .process import ShellProcessRuntime
 from .sandbox import ShellSandboxCommandExecutor
 from .settings import ShellToolSettings
 from .tools import (
@@ -61,6 +62,7 @@ _pipeline_tool_unavailable.__name__ = "pipeline"
 
 class ShellToolSet(ToolSet):
     _settings: ShellToolSettings
+    _process_runtime: ShellProcessRuntime
 
     def __init__(
         self,
@@ -82,6 +84,7 @@ class ShellToolSet(ToolSet):
         assert namespace == SHELL_TOOL_NAMESPACE, "namespace must be shell"
         assert isinstance(container_rootful_authorized, bool)
         self._settings = settings or ShellToolSettings()
+        self._process_runtime = ShellProcessRuntime(self._settings)
         execution_mode = self._settings.execution_mode
         if container_runtime is not None:
             assert isinstance(container_runtime, ContainerToolRuntimeSettings)
@@ -159,7 +162,10 @@ class ShellToolSet(ToolSet):
         ), "container shell execution cannot carry sandbox policy"
         policy = policy or ExecutionPolicy(settings=self._settings)
         if executor is None:
-            local_executor = LocalCommandExecutor(settings=self._settings)
+            local_executor = LocalCommandExecutor(
+                settings=self._settings,
+                process_runtime=self._process_runtime,
+            )
             if execution_mode == "sandbox":
                 executor = ShellSandboxCommandExecutor(
                     sandbox_settings=sandbox_settings,
@@ -280,6 +286,10 @@ class ShellToolSet(ToolSet):
             ),
         ]
         super().__init__(namespace=namespace, tools=tools)
+
+    @property
+    def process_runtime(self) -> ShellProcessRuntime:
+        return self._process_runtime
 
     def with_enabled_tools(self, enable_tools: list[str]) -> "ShellToolSet":
         if enables_shell_pipeline(
