@@ -175,6 +175,33 @@ class GetToolSettingsTestCase(unittest.TestCase):
         self.assertEqual(settings.max_pipeline_bytes, 1024)
         self.assertEqual(settings.max_intermediate_bytes, 512)
 
+    def test_shell_pipeline_explicit_fields_are_tracked(self):
+        args = Namespace(
+            tool_shell_allow_pipelines=True,
+            tool_shell_max_pipeline_stages=3,
+            tool_shell_max_pipeline_bytes=None,
+            tool_shell_max_intermediate_bytes=512,
+        )
+
+        explicit_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                args,
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+
+        self.assertEqual(
+            explicit_fields,
+            frozenset(
+                {
+                    "allow_pipelines",
+                    "max_pipeline_stages",
+                    "max_intermediate_bytes",
+                }
+            ),
+        )
+
     def test_shell_pipeline_settings_reject_invalid_values(self):
         cases = (
             Namespace(tool_shell_max_pipeline_stages=True),

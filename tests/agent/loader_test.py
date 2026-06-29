@@ -174,7 +174,11 @@ async def _from_settings_tool_manager_kwargs(
     return dict(tm_patch.call_args.kwargs)
 
 
-async def _from_file_tool_manager_kwargs(config: str) -> dict[str, Any]:
+async def _from_file_tool_manager_kwargs(
+    config: str,
+    *,
+    tool_settings: ToolSettingsContext | None = None,
+) -> dict[str, Any]:
     hub = MagicMock(spec=HuggingfaceHub)
     logger = MagicMock(spec=Logger)
     stack = AsyncExitStack()
@@ -228,7 +232,11 @@ async def _from_file_tool_manager_kwargs(config: str) -> dict[str, Any]:
                 participant_id=uuid4(),
                 stack=stack,
             )
-            result = await loader.from_file(str(path), agent_id=uuid4())
+            result = await loader.from_file(
+                str(path),
+                agent_id=uuid4(),
+                tool_settings=tool_settings,
+            )
 
     await stack.aclose()
     assert result == "orch"
@@ -936,7 +944,132 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             tool_settings = from_settings.call_args.kwargs["tool_settings"]
             self.assertIsInstance(tool_settings.shell, ShellToolSettings)
             self.assertFalse(tool_settings.shell.allow_media_tools)
+            self.assertFalse(tool_settings.shell.allow_pipelines)
             await stack.aclose()
+
+    async def test_shell_pipeline_toml_builds_shell_settings(self):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(
+                _minimal_agent_toml()
+                + '\n[tool]\nenable = ["shell.pipeline"]\n'
+                + "\n[tool.shell]\n"
+                + "allow_pipelines = true\n"
+                + "max_pipeline_stages = 3\n"
+                + "max_pipeline_bytes = 1024\n"
+                + "max_intermediate_bytes = 512\n"
+            )
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(tmp.name, agent_id=uuid4())
+
+            self.assertEqual(result, "orch")
+            settings = from_settings.call_args.args[0]
+            self.assertEqual(settings.tools, ["shell.pipeline"])
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+            self.assertTrue(tool_settings.shell.allow_pipelines)
+            self.assertEqual(tool_settings.shell.max_pipeline_stages, 3)
+            self.assertEqual(tool_settings.shell.max_pipeline_bytes, 1024)
+            self.assertEqual(tool_settings.shell.max_intermediate_bytes, 512)
+            await stack.aclose()
+
+    async def test_from_file_pipeline_opt_in_exposes_schema_and_filter(self):
+        kwargs = await _from_file_tool_manager_kwargs(
+            _minimal_agent_toml()
+            + '\n[tool]\nenable = ["shell.pipeline"]\n'
+            + "\n[tool.shell]\n"
+            + "allow_pipelines = true\n"
+            + "max_pipeline_stages = 3\n"
+            + "max_pipeline_bytes = 1024\n"
+            + "max_intermediate_bytes = 512\n"
+        )
+
+        self.assertEqual(_shell_namespaces(kwargs), ["shell"])
+        self.assertEqual(kwargs["enable_tools"], ["shell.pipeline"])
+        self.assertIsNotNone(kwargs["settings"].filters)
+
+        manager = _shell_only_manager(kwargs)
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["shell.pipeline"],
+        )
+        descriptor = manager.describe_tool("shell.pipeline")
+        assert descriptor is not None
+        assert descriptor.parameter_schema is not None
+        properties = descriptor.parameter_schema["properties"]
+        for forbidden in (
+            "allow_pipelines",
+            "max_pipeline_stages",
+            "max_pipeline_bytes",
+            "backend",
+            "execution_mode",
+            "container",
+            "sandbox",
+        ):
+            self.assertNotIn(forbidden, properties)
+        self.assertIn("max_intermediate_bytes", properties)
+
+    async def test_from_file_pipeline_selection_uses_cli_allow_override(self):
+        kwargs = await _from_file_tool_manager_kwargs(
+            _minimal_agent_toml() + '\n[tool]\nenable = ["shell.pipeline"]\n',
+            tool_settings=ToolSettingsContext(
+                shell=ShellToolSettings(allow_pipelines=True),
+                shell_explicit_fields=frozenset({"allow_pipelines"}),
+            ),
+        )
+
+        self.assertEqual(_shell_namespaces(kwargs), ["shell"])
+        self.assertEqual(kwargs["enable_tools"], ["shell.pipeline"])
+        self.assertIsNotNone(kwargs["settings"].filters)
+
+        manager = _shell_only_manager(kwargs)
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["shell.pipeline"],
+        )
+
+    async def test_from_file_pipeline_selection_is_default_denied(self):
+        kwargs = await _from_file_tool_manager_kwargs(
+            _minimal_agent_toml() + '\n[tool]\nenable = ["shell.pipeline"]\n'
+        )
+
+        self.assertEqual(_shell_namespaces(kwargs), ["shell"])
+        self.assertEqual(kwargs["enable_tools"], ["shell.pipeline"])
+        self.assertIsNone(kwargs["settings"].filters)
+
+        manager = _shell_only_manager(kwargs)
+        self.assertEqual(manager.list_tools(), [])
+        self.assertIsNone(manager.provider_json_schemas())
+        resolution = manager.resolve_tool_name("shell.pipeline")
+        self.assertIs(resolution.status, ToolNameResolutionStatus.UNKNOWN)
+
+    async def test_from_file_pipeline_allow_without_enable_is_default_denied(
+        self,
+    ):
+        kwargs = await _from_file_tool_manager_kwargs(
+            _minimal_agent_toml()
+            + "\n[tool.shell]\n"
+            + "allow_pipelines = true\n"
+        )
+
+        self.assertEqual(_shell_namespaces(kwargs), ["shell"])
+        self.assertIsNone(kwargs["enable_tools"])
+
+        manager = _shell_only_manager(kwargs)
+        tool_names = [descriptor.name for descriptor in manager.list_tools()]
+        self.assertNotIn("shell.pipeline", tool_names)
 
     async def test_from_file_forwards_server_event_manager_mode(self):
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
@@ -1121,6 +1254,65 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 tool_settings.shell.max_head_lines,
                 ShellToolSettings().max_head_lines,
             )
+            await stack.aclose()
+
+    async def test_shell_pipeline_settings_merge_cli_explicit_fields(
+        self,
+    ):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(
+                _minimal_agent_toml()
+                + '\n[tool]\nenable = ["shell.pipeline"]\n'
+                + "\n[tool.shell]\n"
+                + 'workspace_root = "/workspace/project"\n'
+                + "allow_pipelines = true\n"
+                + "max_pipeline_stages = 8\n"
+                + "max_pipeline_bytes = 2048\n"
+                + "max_intermediate_bytes = 1024\n"
+            )
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            override = ShellToolSettings(
+                max_pipeline_stages=3,
+                max_pipeline_bytes=512,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(
+                    tmp.name,
+                    agent_id=uuid4(),
+                    tool_settings=ToolSettingsContext(
+                        shell=override,
+                        shell_explicit_fields=frozenset(
+                            {
+                                "max_pipeline_stages",
+                                "max_pipeline_bytes",
+                            }
+                        ),
+                    ),
+                )
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertIsNot(tool_settings.shell, override)
+            self.assertEqual(
+                tool_settings.shell.workspace_root,
+                "/workspace/project",
+            )
+            self.assertTrue(tool_settings.shell.allow_pipelines)
+            self.assertEqual(tool_settings.shell.max_pipeline_stages, 3)
+            self.assertEqual(tool_settings.shell.max_pipeline_bytes, 512)
+            self.assertEqual(tool_settings.shell.max_intermediate_bytes, 1024)
             await stack.aclose()
 
     async def test_container_toml_sections_load_trusted_settings(self) -> None:

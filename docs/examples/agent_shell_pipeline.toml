@@ -1,0 +1,58 @@
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-4.1-mini"
+
+[tool]
+enable = [
+    "shell.pipeline",
+]
+
+[tool.shell]
+workspace_root = "."
+cwd = "."
+allow_pipelines = true
+max_pipeline_stages = 3
+max_pipeline_bytes = 1048576
+max_intermediate_bytes = 262144
+max_stdout_bytes = 65536
+max_stderr_bytes = 32768
+allowed_commands = [
+    "rg",
+    "head",
+    "wc",
+]
+
+[memory]
+recent = true
+
+[run]
+max_new_tokens = 1024
+
+[agent]
+name = "Structured Pipeline Reader"
+role = """
+Inspect the configured workspace with the enabled structured shell pipeline.
+Use shell.pipeline only with structured step objects; never compose shell text
+or pass pipes inside an argument string.
+
+Example shell.pipeline arguments for counting TODO lines:
+
+{
+  "mode": "pipeline",
+  "steps": [
+    {
+      "id": "search",
+      "command": "rg",
+      "options": {"pattern": "TODO"},
+      "paths": ["src"]
+    },
+    {
+      "id": "count_lines",
+      "command": "wc",
+      "options": {"lines": true},
+      "stdin_from": {"step_id": "search", "stream": "stdout"}
+    }
+  ],
+  "max_stdout_bytes": 8192,
+  "max_intermediate_bytes": 262144
+}
+"""
