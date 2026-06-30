@@ -19,6 +19,8 @@ from avalan.tool.shell.filesystem import (
     make_directory,
     private_temp_directory,
     probe_image_dimensions,
+    probe_pdf_page_boxes,
+    read_bytes,
     read_image_signature,
     read_pdf_signature,
     read_signature,
@@ -27,6 +29,7 @@ from avalan.tool.shell.filesystem import (
     resolve_policy_path,
     signature_is_binary,
     sniff_binary,
+    write_bytes,
 )
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures"
@@ -123,6 +126,23 @@ class ShellFilesystemTest(IsolatedAsyncioTestCase):
         resolved = await resolve_policy_path("~")
 
         self.assertEqual(resolved.name, "~")
+
+    async def test_read_and_write_bytes_round_trip(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "value.bin"
+
+            written = await write_bytes(path, b"value")
+            content = await read_bytes(path)
+
+        self.assertEqual(written, 5)
+        self.assertEqual(content, b"value")
+
+    async def test_probe_pdf_page_boxes_reads_media_box(self) -> None:
+        boxes = await probe_pdf_page_boxes(FIXTURE_ROOT / "media/small.pdf")
+
+        self.assertTrue(boxes)
+        self.assertGreater(boxes[0][0], 0)
+        self.assertGreater(boxes[0][1], 0)
 
     async def test_read_signature_uses_default_and_explicit_caps(self) -> None:
         with TemporaryDirectory() as temporary_directory:

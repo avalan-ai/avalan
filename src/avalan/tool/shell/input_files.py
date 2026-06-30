@@ -9,7 +9,12 @@ from ...entities import (
     ToolValue,
 )
 from ..input_files import message_file_content
-from .entities import ExecutionResult, GeneratedFile
+from .entities import (
+    GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY,
+    ExecutionResult,
+    GeneratedFile,
+)
+from .filesystem import inspect_path as _inspect_path
 from .filesystem import make_directory as _make_directory
 from .filesystem import write_bytes as _write_bytes
 from .settings import ShellToolSettings
@@ -388,30 +393,39 @@ async def _add_generated_file_path_aliases(
     materialized_root: Path,
     effective_cwd: Path,
 ) -> None:
-    for generated_file in _iter_generated_files(calls):
-        if generated_file.truncated or generated_file.content_base64 is None:
+    materialized_root = materialized_root.resolve()
+    for execution_result, generated_file in _iter_generated_file_sources(
+        calls
+    ):
+        if generated_file.truncated:
             continue
         filename = _generated_file_filename(generated_file)
         if filename is None:
             continue
-        raw = _decode_base64_payload(generated_file.content_base64)
-        if raw is None:
-            continue
-        source_path = await _materialize_bytes(
-            raw,
-            workspace_root,
-            materialized_root,
-            filename,
+        source_path = await _generated_file_source_path(
+            generated_file,
+            workspace_root=workspace_root,
+            materialized_root=materialized_root,
+            filename=filename,
         )
+        if source_path is None:
+            continue
         relative_path = _cwd_relative_file_path(effective_cwd, source_path)
         if relative_path is None:
             continue
-        for alias in (
+        prefix_alias = _single_generated_file_prefix_alias(execution_result)
+        alias_values = (
             generated_file.display_path,
             f"./{generated_file.display_path}",
             filename,
             f"./{filename}",
-        ):
+            *(
+                ()
+                if prefix_alias is None
+                else (prefix_alias, f"./{prefix_alias}")
+            ),
+        )
+        for alias in alias_values:
             _add_alias(
                 aliases,
                 conflicts,
@@ -420,16 +434,92 @@ async def _add_generated_file_path_aliases(
             )
 
 
+async def _generated_file_source_path(
+    generated_file: GeneratedFile,
+    *,
+    workspace_root: Path,
+    materialized_root: Path,
+    filename: str,
+) -> Path | None:
+    materialized_path = await _generated_file_materialized_path(
+        generated_file,
+        materialized_root=materialized_root,
+    )
+    if materialized_path is not None:
+        return materialized_path
+    if generated_file.content_base64 is None:
+        return None
+    raw = _decode_base64_payload(generated_file.content_base64)
+    if raw is None:
+        return None
+    return await _materialize_bytes(
+        raw,
+        workspace_root,
+        materialized_root,
+        filename,
+    )
+
+
+async def _generated_file_materialized_path(
+    generated_file: GeneratedFile,
+    *,
+    materialized_root: Path,
+) -> Path | None:
+    value = generated_file.metadata.get(
+        GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY
+    )
+    if not isinstance(value, str) or not value:
+        return None
+    source_path = Path(value).resolve()
+    if not _is_relative_to(source_path, materialized_root):
+        return None
+    try:
+        metadata = await _inspect_path(source_path)
+    except OSError:
+        return None
+    if (
+        metadata.is_symlink
+        or not metadata.is_file
+        or not _is_relative_to(metadata.resolved_path, materialized_root)
+    ):
+        return None
+    return source_path
+
+
 def _iter_generated_files(
     calls: list[ToolCall],
 ) -> Iterator[GeneratedFile]:
+    for _execution_result, generated_file in _iter_generated_file_sources(
+        calls
+    ):
+        yield generated_file
+
+
+def _iter_generated_file_sources(
+    calls: list[ToolCall],
+) -> Iterator[tuple[ExecutionResult, GeneratedFile]]:
     for call in calls:
         if not isinstance(call, ToolCallResult):
             continue
         execution_result = _execution_result(call.result)
         if execution_result is None:
             continue
-        yield from execution_result.generated_files
+        for generated_file in execution_result.generated_files:
+            yield execution_result, generated_file
+
+
+def _single_generated_file_prefix_alias(
+    execution_result: ExecutionResult,
+) -> str | None:
+    if len(execution_result.generated_files) != 1:
+        return None
+    value = execution_result.metadata.get("generated_output_display_prefix")
+    if not isinstance(value, str):
+        return None
+    alias = value.strip()
+    if not alias or Path(alias).name != alias or alias in {".", ".."}:
+        return None
+    return alias
 
 
 def _execution_result(value: object) -> ExecutionResult | None:

@@ -16,6 +16,7 @@ from avalan.entities import (
 )
 from avalan.tool.shell import input_files as shell_input_files
 from avalan.tool.shell.entities import (
+    GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY,
     ExecutionResult,
     GeneratedFile,
     ShellExecutionStatus,
@@ -603,6 +604,144 @@ async def test_shell_input_file_filter_materializes_generated_files(
     assert materialized.read_bytes() == b"image"
 
 
+async def test_shell_input_file_filter_materializes_single_generated_prefix(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "avalan.tool.shell.input_files.uuid4",
+        lambda: SimpleNamespace(hex="generated"),
+    )
+    generated_file = GeneratedFile(
+        display_path="GENERATED_PREFIX-1.png",
+        media_type="image/png",
+        suffix=".png",
+        bytes=5,
+        content_base64=b64encode(b"image").decode("ascii"),
+    )
+    execution_result = ExecutionResult(
+        backend="local",
+        tool_name="shell.pdftoppm",
+        command="pdftoppm",
+        argv=("pdftoppm",),
+        display_argv=("pdftoppm", "GENERATED_PREFIX"),
+        cwd=str(tmp_path),
+        display_cwd=".",
+        status=ShellExecutionStatus.COMPLETED,
+        exit_code=0,
+        stdout="",
+        stderr="",
+        stdout_media_type="application/json",
+        output_kind=ShellOutputKind.GENERATED_FILES,
+        generated_files=(generated_file,),
+        metadata={"generated_output_display_prefix": "GENERATED_PREFIX"},
+    )
+    previous = ToolCallResult(
+        id="result-1",
+        call=ToolCall(
+            id="call-1",
+            name="shell.pdftoppm",
+            arguments={"path": "report.pdf"},
+        ),
+        name="shell.pdftoppm",
+        arguments={"path": "report.pdf"},
+        result=ShellFormattedResult("formatted", execution_result),
+    )
+    call = ToolCall(
+        id="call-2",
+        name="shell.tesseract",
+        arguments={"path": "GENERATED_PREFIX"},
+    )
+
+    result = await _rewrite_shell_input_file_paths(
+        call,
+        ToolCallContext(calls=[previous]),
+        ShellToolSettings(
+            workspace_root=str(tmp_path),
+            materialized_input_files_dir="generated-files",
+        ),
+    )
+
+    assert result is not None
+    filtered_call, _ = result
+    assert filtered_call.arguments == {
+        "path": "generated-files/generated/GENERATED_PREFIX-1.png"
+    }
+    materialized = (
+        tmp_path / "generated-files" / "generated" / "GENERATED_PREFIX-1.png"
+    )
+    assert materialized.read_bytes() == b"image"
+
+
+async def test_shell_input_file_filter_uses_materialized_generated_path(
+    tmp_path: Path,
+) -> None:
+    materialized = tmp_path / "generated-files" / "existing"
+    materialized.mkdir(parents=True)
+    image_path = materialized / "GENERATED_PREFIX-1.png"
+    image_path.write_bytes(b"image")
+    generated_file = GeneratedFile(
+        display_path="GENERATED_PREFIX-1.png",
+        media_type="image/png",
+        suffix=".png",
+        bytes=5,
+        metadata={
+            GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY: str(image_path)
+        },
+    )
+    execution_result = ExecutionResult(
+        backend="local",
+        tool_name="shell.pdftoppm",
+        command="pdftoppm",
+        argv=("pdftoppm",),
+        display_argv=("pdftoppm", "GENERATED_PREFIX"),
+        cwd=str(tmp_path),
+        display_cwd=".",
+        status=ShellExecutionStatus.COMPLETED,
+        exit_code=0,
+        stdout="",
+        stderr="",
+        stdout_media_type="application/json",
+        output_kind=ShellOutputKind.GENERATED_FILES,
+        generated_files=(generated_file,),
+        metadata={"generated_output_display_prefix": "GENERATED_PREFIX"},
+    )
+    previous = ToolCallResult(
+        id="result-1",
+        call=ToolCall(
+            id="call-1",
+            name="shell.pdftoppm",
+            arguments={"path": "report.pdf"},
+        ),
+        name="shell.pdftoppm",
+        arguments={"path": "report.pdf"},
+        result=ShellFormattedResult("formatted", execution_result),
+    )
+
+    for alias in ("GENERATED_PREFIX", "GENERATED_PREFIX-1.png"):
+        call = ToolCall(
+            id=f"call-{alias}",
+            name="shell.tesseract",
+            arguments={"path": alias},
+        )
+
+        result = await _rewrite_shell_input_file_paths(
+            call,
+            ToolCallContext(calls=[previous]),
+            ShellToolSettings(
+                workspace_root=str(tmp_path),
+                materialized_input_files_dir="generated-files",
+            ),
+        )
+
+        assert result is not None
+        filtered_call, _ = result
+        assert filtered_call.arguments == {
+            "path": "generated-files/existing/GENERATED_PREFIX-1.png"
+        }
+    assert image_path.read_bytes() == b"image"
+
+
 async def test_shell_input_file_aliases_skip_unmaterializable_files(
     tmp_path: Path,
 ) -> None:
@@ -699,6 +838,10 @@ async def test_generated_file_aliases_skip_unusable_outputs(
     )
     aliases: dict[str, str] = {}
     conflicts: set[str] = set()
+    outside_materialized = tmp_path / "outside-materialized.png"
+    outside_materialized.write_bytes(b"outside")
+    directory_materialized = tmp_path / "generated" / "directory"
+    directory_materialized.mkdir(parents=True)
 
     await _add_generated_file_path_aliases(
         aliases,
@@ -719,6 +862,45 @@ async def test_generated_file_aliases_skip_unusable_outputs(
                     media_type="image/png",
                     suffix=".png",
                     bytes=1,
+                )
+            ),
+            _generated_result(
+                GeneratedFile(
+                    display_path="outside-materialized.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    metadata={
+                        GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY: str(
+                            outside_materialized
+                        )
+                    },
+                )
+            ),
+            _generated_result(
+                GeneratedFile(
+                    display_path="stale-materialized.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    metadata={
+                        GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY: str(
+                            tmp_path / "generated" / "missing.png"
+                        )
+                    },
+                )
+            ),
+            _generated_result(
+                GeneratedFile(
+                    display_path="directory-materialized.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    metadata={
+                        GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY: str(
+                            directory_materialized
+                        )
+                    },
                 )
             ),
             _generated_result(
@@ -777,6 +959,75 @@ async def test_generated_file_aliases_skip_unusable_outputs(
     assert conflicts == set()
 
 
+async def test_generated_file_prefix_alias_requires_single_safe_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ids = iter(
+        [
+            SimpleNamespace(hex="first"),
+            SimpleNamespace(hex="second"),
+            SimpleNamespace(hex="unsafe"),
+        ]
+    )
+    monkeypatch.setattr(
+        "avalan.tool.shell.input_files.uuid4",
+        lambda: next(ids),
+    )
+    aliases: dict[str, str] = {}
+    conflicts: set[str] = set()
+
+    await _add_generated_file_path_aliases(
+        aliases,
+        conflicts,
+        [
+            _generated_result(
+                GeneratedFile(
+                    display_path="GENERATED_PREFIX-1.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    content_base64=b64encode(b"first").decode("ascii"),
+                ),
+                generated_files=(
+                    GeneratedFile(
+                        display_path="GENERATED_PREFIX-2.png",
+                        media_type="image/png",
+                        suffix=".png",
+                        bytes=1,
+                        content_base64=b64encode(b"second").decode("ascii"),
+                    ),
+                ),
+                metadata={
+                    "generated_output_display_prefix": "GENERATED_PREFIX"
+                },
+            ),
+            _generated_result(
+                GeneratedFile(
+                    display_path="unsafe-1.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=1,
+                    content_base64=b64encode(b"unsafe").decode("ascii"),
+                ),
+                metadata={"generated_output_display_prefix": "../unsafe"},
+            ),
+        ],
+        workspace_root=tmp_path,
+        materialized_root=tmp_path / "generated",
+        effective_cwd=tmp_path,
+    )
+
+    assert aliases == {
+        "GENERATED_PREFIX-1.png": "generated/first/GENERATED_PREFIX-1.png",
+        "GENERATED_PREFIX-2.png": "generated/second/GENERATED_PREFIX-2.png",
+        "unsafe-1.png": "generated/unsafe/unsafe-1.png",
+    }
+    assert "GENERATED_PREFIX" not in aliases
+    assert "unsafe" not in aliases
+    assert conflicts == set()
+
+
 def test_generated_file_helpers_skip_non_execution_results() -> None:
     plain_call = ToolCall(id="call-1", name="shell.cat", arguments={})
     plain_result = ToolCallResult(
@@ -796,6 +1047,16 @@ def test_generated_file_helpers_skip_non_execution_results() -> None:
 
     assert list(_iter_generated_files([plain_call])) == []
     assert list(_iter_generated_files([plain_result])) == []
+    generated_file = GeneratedFile(
+        display_path="page.png",
+        media_type="image/png",
+        suffix=".png",
+        bytes=1,
+        content_base64=b64encode(b"x").decode("ascii"),
+    )
+    assert list(
+        _iter_generated_files([_generated_result(generated_file)])
+    ) == [generated_file]
     assert _execution_result(malformed_result.result) is None
     assert (
         _generated_file_filename(
@@ -919,7 +1180,13 @@ async def _shell_input_file_manifest(
     return manifest
 
 
-def _generated_result(generated_file: GeneratedFile) -> ToolCallResult:
+def _generated_result(
+    generated_file: GeneratedFile,
+    *,
+    generated_files: tuple[GeneratedFile, ...] = (),
+    metadata: dict[str, object] | None = None,
+) -> ToolCallResult:
+    all_generated_files = (generated_file, *generated_files)
     execution_result = ExecutionResult(
         backend="local",
         tool_name="shell.pdftoppm",
@@ -934,7 +1201,8 @@ def _generated_result(generated_file: GeneratedFile) -> ToolCallResult:
         stderr="",
         stdout_media_type="application/json",
         output_kind=ShellOutputKind.GENERATED_FILES,
-        generated_files=(generated_file,),
+        generated_files=all_generated_files,
+        metadata=metadata or {},
     )
     return ToolCallResult(
         id=f"result-{generated_file.display_path}",

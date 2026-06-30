@@ -3,6 +3,10 @@ from ...entities import Model, User
 from ...event import EventStats
 from ...tool.display import ToolDisplayProjection
 from ..display_safety import safe_text as _safe_text
+from ..stream_presenter import (
+    pretty_json_answer_text,
+    structured_answer_started,
+)
 from . import Theme
 from . import tool_status_icon as _theme_tool_status_icon
 from . import tool_status_style as _theme_tool_status_style
@@ -373,7 +377,7 @@ class BasicStreamPresenter:
         """Yield Basic answer chunks before optional diagnostic frames."""
         assert isinstance(request, CliStreamPresenterRequest)
         _ = self._event_stats, self._logger
-        pre_answer_frame = self._pre_answer_completed_model_frame(request)
+        pre_answer_frame = self._pre_answer_tool_frame(request)
         if pre_answer_frame is not None:
             yield pre_answer_frame
         async for chunk in self._answer_presenter.present(
@@ -463,7 +467,7 @@ class BasicStreamPresenter:
             new_lines.append(entry.line)
         return _basic_frame_text(new_lines)
 
-    def _pre_answer_completed_model_frame(
+    def _pre_answer_tool_frame(
         self,
         request: CliStreamPresenterRequest,
     ) -> CliStreamRenderableFrame | None:
@@ -477,15 +481,28 @@ class BasicStreamPresenter:
             request.snapshot.answer_text,
             terminal_completed=_basic_terminal_completed(request),
         )
+        if structured_answer_started(
+            visible_answer_text
+        ) and not _basic_terminal_completed(request):
+            return None
         if (
             not visible_answer_text
             or visible_answer_text == self._last_visible_answer_text
         ):
             return None
+        has_progress = bool(
+            self._active_model_continuations
+            or request.snapshot.active_model_continuations
+            or request.snapshot.active_tools
+        )
         entries = self._completed_model_entries(request)
-        if not entries:
+        if not has_progress and not entries:
             return None
-        renderable = _basic_frame_text(tuple(entry.line for entry in entries))
+        renderable = _basic_tool_frame(
+            request,
+            include_active_tool_progress=False,
+            include_model_progress=False,
+        )
         return self._role_frame("tools", renderable)
 
     def _needs_answer_separator(
@@ -587,6 +604,8 @@ def _basic_tool_frame(
     request: CliStreamPresenterRequest,
     *,
     completed_model_entries: tuple[_BasicToolLineEntry, ...] = (),
+    include_active_tool_progress: bool = True,
+    include_model_progress: bool = True,
 ) -> RenderableType | None:
     if not request.display_config.show_tools:
         return None
@@ -596,23 +615,31 @@ def _basic_tool_frame(
         for entry in _basic_tool_entries(request, include_active=False)
     ]
     history_lines.extend(entry.line for entry in completed_model_entries)
-    active_model_renderables = [
-        _basic_active_model_renderable(
-            started_at=continuation.started_at,
-            updated_at=continuation.updated_at,
-            spinner=request.display_config.diagnostic_channel == "live",
-        )
-        for continuation in request.snapshot.active_model_continuations
-    ]
-    active_tool_renderables = [
-        _basic_active_tool_renderable(
-            tool,
-            started_at=tool.started_at,
-            updated_at=tool.updated_at,
-            spinner=request.display_config.diagnostic_channel == "live",
-        )
-        for tool in request.snapshot.active_tools
-    ]
+    active_model_renderables = (
+        [
+            _basic_active_model_renderable(
+                started_at=continuation.started_at,
+                updated_at=continuation.updated_at,
+                spinner=request.display_config.diagnostic_channel == "live",
+            )
+            for continuation in request.snapshot.active_model_continuations
+        ]
+        if include_model_progress
+        else []
+    )
+    active_tool_renderables = (
+        [
+            _basic_active_tool_renderable(
+                tool,
+                started_at=tool.started_at,
+                updated_at=tool.updated_at,
+                spinner=request.display_config.diagnostic_channel == "live",
+            )
+            for tool in request.snapshot.active_tools
+        ]
+        if include_active_tool_progress
+        else []
+    )
     history_text = _basic_frame_text(history_lines)
     renderables: list[RenderableType] = []
     if history_text:
@@ -1843,6 +1870,20 @@ class _BasicAnswerPresenter:
             answer_text,
             terminal_completed=_basic_terminal_completed(request),
         )
+        if (
+            not self._emitted_visible_answer_text
+            and structured_answer_started(visible_answer_text)
+            and not _basic_terminal_completed(request)
+        ):
+            return
+        if (
+            _basic_terminal_completed(request)
+            and not self._emitted_visible_answer_text
+        ):
+            visible_answer_text = (
+                pretty_json_answer_text(visible_answer_text)
+                or visible_answer_text
+            )
         self._emitted_answer_text = answer_text
         if visible_answer_text == self._emitted_visible_answer_text:
             return

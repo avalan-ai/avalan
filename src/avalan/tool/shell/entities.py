@@ -63,6 +63,7 @@ ShellExecutionModeValue = Literal["local", "sandbox", "container"]
 ShellCompositionMode = Literal["pipeline", "serial", "parallel"]
 DEFAULT_MAX_PIPELINE_STAGES = 8
 GENERATED_OUTPUT_PREFIX_PLACEHOLDER = "__AVALAN_GENERATED_OUTPUT_PREFIX__"
+GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY = "_materialized_path"
 _SHELL_COMPOSITION_MODES: tuple[ShellCompositionMode, ...] = (
     "pipeline",
     "serial",

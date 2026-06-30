@@ -525,6 +525,109 @@ class StreamAnswerPresenterTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(items, [])
 
+    async def test_answer_presenter_pretty_prints_terminal_json(
+        self,
+    ) -> None:
+        config = _config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text('{"items":[{"amount":134}]}')
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = CliStreamAnswerPresenter()
+
+        items = await _collect(
+            presenter,
+            _request(config, builder.snapshot(), mode="answer"),
+        )
+
+        self.assertEqual(
+            [
+                item.text
+                for item in items
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ['{\n  "items": [\n    {\n      "amount": 134\n    }\n  ]\n}'],
+        )
+
+    async def test_answer_presenter_keeps_invalid_and_incremental_json(
+        self,
+    ) -> None:
+        config = _config()
+        invalid_builder = CliStreamSnapshotBuilder(config)
+        invalid_builder.append_answer_text('{"items":')
+        invalid_builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        incremental_builder = CliStreamSnapshotBuilder(config)
+        incremental_builder.append_answer_text("{")
+        scalar_builder = CliStreamSnapshotBuilder(config)
+        scalar_builder.append_answer_text("25")
+        scalar_builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = CliStreamAnswerPresenter()
+
+        invalid = await _collect(
+            presenter,
+            _request(config, invalid_builder.snapshot(), mode="answer"),
+        )
+        presenter.reset()
+        first = await _collect(
+            presenter,
+            _request(config, incremental_builder.snapshot(), mode="answer"),
+        )
+        incremental_builder.append_answer_text('"answer":25}')
+        incremental_builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        second = await _collect(
+            presenter,
+            _request(config, incremental_builder.snapshot(), mode="answer"),
+        )
+        presenter.reset()
+        scalar = await _collect(
+            presenter,
+            _request(config, scalar_builder.snapshot(), mode="answer"),
+        )
+
+        self.assertEqual(
+            [
+                item.text
+                for item in invalid
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ['{"items":'],
+        )
+        self.assertEqual(
+            [
+                item.text
+                for item in first
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            [],
+        )
+        self.assertEqual(
+            [
+                item.text
+                for item in second
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ['{\n  "answer": 25\n}'],
+        )
+        self.assertEqual(
+            [
+                item.text
+                for item in scalar
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ["25"],
+        )
+
 
 class SnapshotStreamPresenterTestCase(IsolatedAsyncioTestCase):
     async def test_theme_default_presenter_emits_answer_chunks(self) -> None:
@@ -797,6 +900,30 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
                 if isinstance(item, CliStreamAnswerTextChunk)
             ],
             ["plain"],
+        )
+
+    async def test_live_adapter_accepts_list_frame_result(self) -> None:
+        config = _config()
+        theme = RecordingTheme()
+        theme.token_frames = (  # type: ignore[method-assign]
+            lambda *_args, **_kwargs: [
+                (_render_token(Token(id=1, token="x", probability=0.7)), "x")
+            ]
+        )
+        presenter = LegacyThemeStreamPresenter(theme, getLogger(__name__))
+
+        items = await _collect(
+            presenter,
+            _request(config, _snapshot(config, answer="hi")),
+        )
+
+        self.assertEqual(
+            [
+                item.renderable
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+            ["x"],
         )
 
     async def test_live_adapter_maps_snapshot_and_config_to_theme_call(

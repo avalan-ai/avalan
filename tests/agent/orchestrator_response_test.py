@@ -9,12 +9,15 @@ from asyncio import (
 from asyncio import (
     Event as AsyncioEvent,
 )
+from base64 import b64encode
 from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
 from hashlib import sha256
 from io import StringIO
 from json import dumps, loads
 from logging import getLogger
+from pathlib import Path
+from queue import Queue
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any, cast
@@ -48,6 +51,7 @@ from avalan.entities import (
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallError,
+    ToolCallOutcome,
     ToolCallResult,
     ToolCallToken,
     ToolCapabilities,
@@ -86,6 +90,15 @@ from avalan.tool.display import (
 )
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
+from avalan.tool.shell.entities import (
+    ExecutionResult,
+    GeneratedFile,
+    ShellExecutionStatus,
+    ShellFormattedResult,
+    ShellOutputKind,
+)
+from avalan.tool.shell.input_files import shell_input_file_filter
+from avalan.tool.shell.settings import ShellToolSettings
 
 
 class _DummyEngine:
@@ -1176,6 +1189,51 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             any(c.args[0].type == EventType.TOKEN_GENERATED for c in calls)
         )
         engine.tokenizer.encode.assert_not_called()
+
+    async def test_next_item_drains_parser_queue_before_response(self) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+        resp.__aiter__()
+        parser_item = _canonical_item(
+            StreamItemKind.STREAM_DIAGNOSTIC,
+            0,
+            data={"code": "parser.queued"},
+        )
+        resp._put_staging_item(resp._parser_queue, parser_item, "parser item")
+
+        await resp._next_item()
+
+        self.assertEqual(
+            resp.canonical_items[-1].kind,
+            StreamItemKind.STREAM_DIAGNOSTIC,
+        )
+        self.assertEqual(
+            resp.canonical_items[-1].data,
+            {"code": "parser.queued"},
+        )
+
+    def test_put_staging_item_raises_when_queue_is_full(self) -> None:
+        queue: Queue[object] = Queue(maxsize=1)
+        queue.put_nowait("existing")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Orchestrator parser item queue is full.",
+        ):
+            OrchestratorResponse._put_staging_item(
+                queue,
+                "overflow",
+                "parser item",
+            )
 
     async def test_harmony_streaming_handles_split_prefix(self) -> None:
         engine = _DummyEngine()
@@ -5437,6 +5495,663 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         validate_canonical_stream_items(response.canonical_items)
         validate_tool_lifecycle_items(response.canonical_items)
 
+    async def test_iteration_serial_same_response_call_sees_prior_result(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        first_call = ToolCall(
+            id="call-1",
+            name="shell.pdftoppm",
+            arguments={"source": "document.pdf"},
+        )
+        second_call = ToolCall(
+            id="call-2",
+            name="shell.tesseract",
+            arguments={"path": "GENERATED_PREFIX-1.png"},
+        )
+        observed_context_calls: list[tuple[str, list[object]]] = []
+
+        async def execute(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> ToolCallResult:
+            history = list(context.calls or [])
+            observed_context_calls.append((str(call.id), history))
+            if call.id == "call-1":
+                result = "GENERATED_PREFIX-1.png"
+            else:
+                previous = next(
+                    (
+                        entry
+                        for entry in history
+                        if isinstance(entry, ToolCallResult)
+                    ),
+                    None,
+                )
+                result = (
+                    f"ocr:{previous.result}"
+                    if previous is not None
+                    else "ocr:missing"
+                )
+            return ToolCallResult(
+                id=f"result-{call.id}",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result=result,
+            )
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.side_effect = execute
+        agent.return_value = _string_response("done", async_gen=True)
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(first_call, second_call),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+
+        items = await _collect_stream_items(response)
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertEqual(tool.await_count, 2)
+        agent.assert_awaited_once()
+        self.assertEqual(observed_context_calls[0], ("call-1", []))
+        self.assertEqual(observed_context_calls[1][0], "call-2")
+        second_history = observed_context_calls[1][1]
+        self.assertEqual(len(second_history), 1)
+        self.assertIsInstance(second_history[0], ToolCallResult)
+        first_result = cast(ToolCallResult, second_history[0])
+        self.assertEqual(first_result.call.id, "call-1")
+        self.assertEqual(first_result.result, "GENERATED_PREFIX-1.png")
+
+        history_entries = cast(list[object], response._call_history)
+        self.assertEqual(len(history_entries), 2)
+        self.assertEqual(
+            [
+                cast(ToolCallResult, entry).call.id
+                for entry in history_entries
+                if isinstance(entry, ToolCallResult)
+            ],
+            ["call-1", "call-2"],
+        )
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        tool_call_messages = [
+            message
+            for message in context.input
+            if isinstance(message, Message) and message.tool_calls
+        ]
+        tool_result_messages = [
+            message
+            for message in context.input
+            if (
+                isinstance(message, Message)
+                and message.role is MessageRole.TOOL
+            )
+        ]
+        self.assertEqual(
+            [message.tool_calls[0].id for message in tool_call_messages],
+            ["call-1", "call-2"],
+        )
+        self.assertEqual(len(tool_result_messages), 2)
+        self.assertEqual(
+            [
+                cast(ToolCallResult, message.tool_call_result).result
+                for message in tool_result_messages
+            ],
+            ["GENERATED_PREFIX-1.png", "ocr:GENERATED_PREFIX-1.png"],
+        )
+        validate_canonical_stream_items(response.canonical_items)
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_iteration_serial_same_response_error_records_call_history(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        first_call = ToolCall(
+            id="call-1",
+            name="calc",
+            arguments={"expression": "bad"},
+        )
+        second_call = ToolCall(
+            id="call-2",
+            name="calc",
+            arguments={"expression": "ok"},
+        )
+        observed_context_calls: list[list[object]] = []
+
+        async def execute(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> ToolCallOutcome:
+            history = list(context.calls or [])
+            observed_context_calls.append(history)
+            if call.id == "call-1":
+                return ToolCallError(
+                    id="error-1",
+                    call=call,
+                    name=call.name,
+                    arguments=call.arguments,
+                    error=RuntimeError("boom"),
+                    message="boom",
+                )
+            return ToolCallResult(
+                id="result-2",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="ok",
+            )
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.side_effect = execute
+        agent.return_value = _string_response("done", async_gen=True)
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(first_call, second_call),
+            agent,
+            operation,
+            {},
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+
+        items = await _collect_stream_items(response)
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertEqual(tool.await_count, 2)
+        self.assertEqual(observed_context_calls[0], [])
+        self.assertEqual(observed_context_calls[1], [first_call])
+        self.assertEqual(len(response._call_history), 2)
+        self.assertEqual(response._call_history[0], first_call)
+        self.assertIsInstance(response._call_history[1], ToolCallResult)
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        error_messages = [
+            message
+            for message in context.input
+            if isinstance(message, Message)
+            and message.tool_call_error is not None
+        ]
+        self.assertEqual(len(error_messages), 1)
+        self.assertEqual(error_messages[0].tool_call_error.message, "boom")
+        validate_canonical_stream_items(response.canonical_items)
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_iteration_serial_same_response_diagnostic_skips_history(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        first_call = ToolCall(
+            id="call-1",
+            name="missing",
+            arguments={"expression": "bad"},
+        )
+        second_call = ToolCall(
+            id="call-2",
+            name="calc",
+            arguments={"expression": "ok"},
+        )
+        diagnostic = ToolCallDiagnostic(
+            id="diagnostic-1",
+            call_id=first_call.id,
+            requested_name=first_call.name,
+            canonical_name=None,
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+        observed_context_calls: list[list[object]] = []
+
+        async def execute(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> ToolCallOutcome:
+            observed_context_calls.append(list(context.calls or []))
+            if call.id == "call-1":
+                return diagnostic
+            return ToolCallResult(
+                id="result-2",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="ok",
+            )
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.side_effect = execute
+        agent.return_value = _string_response("done", async_gen=True)
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(first_call, second_call),
+            agent,
+            operation,
+            {},
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+
+        items = await _collect_stream_items(response)
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertEqual(observed_context_calls, [[], []])
+        self.assertEqual(len(response._call_history), 1)
+        self.assertIsInstance(response._call_history[0], ToolCallResult)
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        diagnostic_messages = [
+            message
+            for message in context.input
+            if isinstance(message, Message)
+            and message.tool_call_diagnostic is not None
+        ]
+        self.assertEqual(diagnostic_messages, [context.input[-3]])
+        self.assertIs(
+            diagnostic_messages[0].tool_call_diagnostic,
+            diagnostic,
+        )
+        validate_canonical_stream_items(response.canonical_items)
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_iteration_parallel_split_batch_history_is_staged(
+        self,
+    ) -> None:
+        class RecordingTool(Tool):
+            async def __call__(
+                self,
+                label: str,
+                delay: float,
+                context: ToolCallContext,
+            ) -> str:
+                observed_history[label] = [
+                    entry.call.id
+                    for entry in context.calls or []
+                    if isinstance(entry, ToolCallResult)
+                ]
+                await sleep(delay)
+                return label
+
+        observed_history: dict[str, list[str | None]] = {}
+        tool = RecordingTool()
+        setattr(tool, "parallel_safe", True)
+        setattr(tool, "side_effecting", False)
+        manager = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[tool])],
+            enable_tools=["RecordingTool"],
+            settings=ToolManagerSettings(
+                parallel_tool_calls=True,
+                maximum_parallel_tool_calls=2,
+            ),
+        )
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        calls = [
+            ToolCall(
+                id="call-1",
+                name="RecordingTool",
+                arguments={"label": "first", "delay": 0.01},
+            ),
+            ToolCall(
+                id="call-2",
+                name="RecordingTool",
+                arguments={"label": "second", "delay": 0.001},
+            ),
+            ToolCall(
+                id="call-3",
+                name="RecordingTool",
+                arguments={"label": "third", "delay": 0.001},
+            ),
+        ]
+        agent.return_value = _string_response("done", async_gen=True)
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(*calls),
+            agent,
+            operation,
+            {},
+            tool=manager,
+            enable_tool_parsing=False,
+        )
+
+        items = await _collect_stream_items(response)
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertEqual(observed_history["first"], [])
+        self.assertEqual(observed_history["second"], [])
+        self.assertEqual(observed_history["third"], ["call-1", "call-2"])
+        self.assertEqual(
+            [
+                cast(ToolCallResult, entry).call.id
+                for entry in response._call_history
+                if isinstance(entry, ToolCallResult)
+            ],
+            ["call-1", "call-2", "call-3"],
+        )
+        validate_canonical_stream_items(response.canonical_items)
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_iteration_shell_filter_materializes_generated_alias(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            observed_paths: list[str] = []
+
+            async def pdftoppm(path: str) -> ShellFormattedResult:
+                generated_file = GeneratedFile(
+                    display_path="GENERATED_PREFIX-1.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=5,
+                    content_base64=b64encode(b"image").decode("ascii"),
+                )
+                execution_result = ExecutionResult(
+                    backend="local",
+                    tool_name="shell.pdftoppm",
+                    command="pdftoppm",
+                    argv=("pdftoppm", path),
+                    display_argv=("pdftoppm", "GENERATED_PREFIX"),
+                    cwd=tmp_dir,
+                    display_cwd=".",
+                    status=ShellExecutionStatus.COMPLETED,
+                    exit_code=0,
+                    stdout="",
+                    stderr="",
+                    stdout_media_type="application/json",
+                    output_kind=ShellOutputKind.GENERATED_FILES,
+                    generated_files=(generated_file,),
+                    metadata={
+                        "generated_output_display_prefix": "GENERATED_PREFIX"
+                    },
+                )
+                return ShellFormattedResult("generated", execution_result)
+
+            async def tesseract(path: str) -> str:
+                observed_paths.append(path)
+                return "OCR text"
+
+            settings = ShellToolSettings(
+                workspace_root=tmp_dir,
+                materialized_input_files_dir="agent-input-files",
+            )
+            manager = ToolManager.create_instance(
+                available_toolsets=[
+                    ToolSet(
+                        namespace="shell",
+                        tools=[pdftoppm, tesseract],
+                    )
+                ],
+                settings=ToolManagerSettings(
+                    filters=[shell_input_file_filter(settings)]
+                ),
+            )
+            engine = _DummyEngine()
+            agent = AsyncMock(spec=EngineAgent)
+            agent.engine = engine
+            operation = _dummy_operation()
+            first_call = ToolCall(
+                id="call-1",
+                name="shell.pdftoppm",
+                arguments={"path": "report.pdf"},
+            )
+            second_call = ToolCall(
+                id="call-2",
+                name="shell.tesseract",
+                arguments={"path": "GENERATED_PREFIX"},
+            )
+            agent.return_value = _string_response("done", async_gen=True)
+            response = _make_response(
+                Message(role=MessageRole.USER, content="hi"),
+                _tool_call_response(first_call, second_call),
+                agent,
+                operation,
+                {},
+                tool=manager,
+                enable_tool_parsing=False,
+            )
+
+            items = await _collect_stream_items(response)
+            self.assertEqual(len(observed_paths), 1)
+            materialized = Path(tmp_dir) / observed_paths[0]
+            self.assertEqual(materialized.read_bytes(), b"image")
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertIn("agent-input-files", observed_paths[0])
+        terminal_items = [
+            item
+            for item in response.canonical_items
+            if item.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED
+            and item.correlation.tool_call_id == "call-2"
+        ]
+        self.assertEqual(len(terminal_items), 1)
+        self.assertEqual(
+            terminal_items[0].data["arguments"],
+            {"path": observed_paths[0]},
+        )
+        self.assertIn(observed_paths[0], str(terminal_items[0].metadata))
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        tool_messages = [
+            message
+            for message in context.input
+            if isinstance(message, Message)
+            and message.role is MessageRole.TOOL
+        ]
+        self.assertEqual(
+            tool_messages[-1].arguments,
+            {"path": observed_paths[0]},
+        )
+        self.assertEqual(
+            [
+                cast(ToolCallResult, entry).arguments
+                for entry in response._call_history
+                if isinstance(entry, ToolCallResult)
+            ],
+            [
+                {"path": "report.pdf"},
+                {"path": observed_paths[0]},
+            ],
+        )
+        validate_canonical_stream_items(response.canonical_items)
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_iteration_shell_filter_error_keeps_executed_path(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            observed_paths: list[str] = []
+
+            async def pdftoppm(path: str) -> ShellFormattedResult:
+                generated_file = GeneratedFile(
+                    display_path="GENERATED_PREFIX-1.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=5,
+                    content_base64=b64encode(b"image").decode("ascii"),
+                )
+                execution_result = ExecutionResult(
+                    backend="local",
+                    tool_name="shell.pdftoppm",
+                    command="pdftoppm",
+                    argv=("pdftoppm", path),
+                    display_argv=("pdftoppm", "GENERATED_PREFIX"),
+                    cwd=tmp_dir,
+                    display_cwd=".",
+                    status=ShellExecutionStatus.COMPLETED,
+                    exit_code=0,
+                    stdout="",
+                    stderr="",
+                    stdout_media_type="application/json",
+                    output_kind=ShellOutputKind.GENERATED_FILES,
+                    generated_files=(generated_file,),
+                )
+                return ShellFormattedResult("generated", execution_result)
+
+            async def tesseract(path: str) -> str:
+                observed_paths.append(path)
+                raise RuntimeError("ocr failed")
+
+            settings = ShellToolSettings(
+                workspace_root=tmp_dir,
+                materialized_input_files_dir="agent-input-files",
+            )
+            manager = ToolManager.create_instance(
+                available_toolsets=[
+                    ToolSet(
+                        namespace="shell",
+                        tools=[pdftoppm, tesseract],
+                    )
+                ],
+                settings=ToolManagerSettings(
+                    filters=[shell_input_file_filter(settings)]
+                ),
+            )
+            engine = _DummyEngine()
+            agent = AsyncMock(spec=EngineAgent)
+            agent.engine = engine
+            operation = _dummy_operation()
+            first_call = ToolCall(
+                id="call-1",
+                name="shell.pdftoppm",
+                arguments={"path": "report.pdf"},
+            )
+            second_call = ToolCall(
+                id="call-2",
+                name="shell.tesseract",
+                arguments={"path": "GENERATED_PREFIX-1.png"},
+            )
+            agent.return_value = _string_response("done", async_gen=True)
+            response = _make_response(
+                Message(role=MessageRole.USER, content="hi"),
+                _tool_call_response(first_call, second_call),
+                agent,
+                operation,
+                {},
+                tool=manager,
+                enable_tool_parsing=False,
+            )
+
+            items = await _collect_stream_items(response)
+            self.assertEqual(len(observed_paths), 1)
+            materialized = Path(tmp_dir) / observed_paths[0]
+            self.assertEqual(materialized.read_bytes(), b"image")
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertIn("agent-input-files", observed_paths[0])
+        terminal_items = [
+            item
+            for item in response.canonical_items
+            if item.kind is StreamItemKind.TOOL_EXECUTION_ERROR
+            and item.correlation.tool_call_id == "call-2"
+        ]
+        self.assertEqual(len(terminal_items), 1)
+        self.assertEqual(
+            terminal_items[0].data["arguments"],
+            {"path": observed_paths[0]},
+        )
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        error_messages = [
+            message
+            for message in context.input
+            if isinstance(message, Message)
+            and message.tool_call_error is not None
+        ]
+        self.assertEqual(
+            error_messages[-1].arguments,
+            {"path": observed_paths[0]},
+        )
+        self.assertEqual(len(response._call_history), 2)
+        self.assertIsInstance(response._call_history[0], ToolCallResult)
+        self.assertIsInstance(response._call_history[1], ToolCall)
+        failed_call = cast(ToolCall, response._call_history[1])
+        self.assertEqual(failed_call.arguments, {"path": observed_paths[0]})
+        validate_canonical_stream_items(response.canonical_items)
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_iteration_filter_history_keeps_executed_arguments(
+        self,
+    ) -> None:
+        def add(a: int, b: int) -> int:
+            return a + b
+
+        def repair_arguments(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"a": 3, "b": 4},
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[add])],
+            enable_tools=["add"],
+            settings=ToolManagerSettings(filters=[repair_arguments]),
+        )
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(
+            id="call-1",
+            name="add",
+            arguments={"a": 1, "b": 2},
+        )
+        agent.return_value = _string_response("done", async_gen=True)
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(call),
+            agent,
+            operation,
+            {},
+            tool=manager,
+            enable_tool_parsing=False,
+        )
+
+        items = await _collect_stream_items(response)
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertEqual(len(response._call_history), 1)
+        result = cast(ToolCallResult, response._call_history[0])
+        self.assertEqual(result.arguments, {"a": 3, "b": 4})
+        self.assertEqual(result.call.arguments, {"a": 3, "b": 4})
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        tool_messages = [
+            message
+            for message in context.input
+            if isinstance(message, Message)
+            and message.role is MessageRole.TOOL
+        ]
+        self.assertEqual(tool_messages[0].arguments, {"a": 3, "b": 4})
+        validate_canonical_stream_items(response.canonical_items)
+        validate_tool_lifecycle_items(response.canonical_items)
+
     async def test_to_str_runs_parallel_safe_tools_with_limit(self) -> None:
         engine = _DummyEngine()
         agent = AsyncMock(spec=EngineAgent)
@@ -8093,6 +8808,119 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             any(event.type is EventType.TOOL_DIAGNOSTIC for event in events)
         )
 
+    async def test_to_str_shell_filter_keeps_materialized_path_in_observation(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            observed_paths: list[str] = []
+
+            async def pdftoppm(path: str) -> ShellFormattedResult:
+                generated_file = GeneratedFile(
+                    display_path="GENERATED_PREFIX-1.png",
+                    media_type="image/png",
+                    suffix=".png",
+                    bytes=5,
+                    content_base64=b64encode(b"image").decode("ascii"),
+                )
+                execution_result = ExecutionResult(
+                    backend="local",
+                    tool_name="shell.pdftoppm",
+                    command="pdftoppm",
+                    argv=("pdftoppm", path),
+                    display_argv=("pdftoppm", "GENERATED_PREFIX"),
+                    cwd=tmp_dir,
+                    display_cwd=".",
+                    status=ShellExecutionStatus.COMPLETED,
+                    exit_code=0,
+                    stdout="",
+                    stderr="",
+                    stdout_media_type="application/json",
+                    output_kind=ShellOutputKind.GENERATED_FILES,
+                    generated_files=(generated_file,),
+                )
+                return ShellFormattedResult("generated", execution_result)
+
+            async def tesseract(path: str) -> str:
+                observed_paths.append(path)
+                return "OCR text"
+
+            settings = ShellToolSettings(
+                workspace_root=tmp_dir,
+                materialized_input_files_dir="agent-input-files",
+            )
+            manager = ToolManager.create_instance(
+                available_toolsets=[
+                    ToolSet(
+                        namespace="shell",
+                        tools=[pdftoppm, tesseract],
+                    )
+                ],
+                settings=ToolManagerSettings(
+                    filters=[shell_input_file_filter(settings)]
+                ),
+            )
+            first_call = ToolCall(
+                id="call-1",
+                name="shell.pdftoppm",
+                arguments={"path": "report.pdf"},
+            )
+            second_call = ToolCall(
+                id="call-2",
+                name="shell.tesseract",
+                arguments={"path": "GENERATED_PREFIX-1.png"},
+            )
+            manager.get_calls = MagicMock(
+                side_effect=lambda text: (
+                    [first_call, second_call] if text == "call" else None
+                )
+            )
+            engine = _DummyEngine()
+            agent = AsyncMock(spec=EngineAgent)
+            agent.engine = engine
+            operation = _dummy_operation()
+            agent.return_value = _string_response("done", async_gen=True)
+            response = _make_response(
+                Message(role=MessageRole.USER, content="hi"),
+                _string_response("call", async_gen=True),
+                agent,
+                operation,
+                {},
+                tool=manager,
+                enable_tool_parsing=False,
+            )
+
+            text = await response.to_str()
+            self.assertEqual(len(observed_paths), 1)
+            materialized = Path(tmp_dir) / observed_paths[0]
+            self.assertEqual(materialized.read_bytes(), b"image")
+
+        self.assertEqual(text, "done")
+        self.assertIn("agent-input-files", observed_paths[0])
+        agent.assert_awaited_once()
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        tool_messages = [
+            message
+            for message in context.input
+            if isinstance(message, Message)
+            and message.role is MessageRole.TOOL
+        ]
+        self.assertEqual(
+            tool_messages[-1].arguments,
+            {"path": observed_paths[0]},
+        )
+        self.assertEqual(
+            [
+                cast(ToolCallResult, entry).arguments
+                for entry in response._call_history
+                if isinstance(entry, ToolCallResult)
+            ],
+            [
+                {"path": "report.pdf"},
+                {"path": observed_paths[0]},
+            ],
+        )
+
     async def test_canonical_tool_items_include_display_projection_metadata(
         self,
     ) -> None:
@@ -10101,6 +10929,80 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         resp._record_tool_outcome(error)
 
         self.assertEqual(resp._call_history, [result, call])
+
+    async def test_consumed_tool_batch_history_is_not_recorded_twice(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        call = ToolCall(id="call1", name="calc", arguments={"value": 1})
+        result = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="ok",
+        )
+        agent.return_value = _string_response("done", async_gen=True)
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_text_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=MagicMock(spec=ToolManager),
+        )
+        resp.__aiter__()
+
+        outcome = _ToolExecutionOutcome(
+            call=call,
+            context=ToolCallContext(input=resp._input),
+            planned_index=0,
+            result=result,
+        )
+
+        async def complete_batch() -> list[_ToolExecutionOutcome]:
+            return [outcome]
+
+        task = create_task(complete_batch())
+        self.assertEqual(await task, [outcome])
+        resp._pending_tool_batch_task = task
+        resp._consume_pending_tool_batch(task)
+
+        self.assertEqual(cast(list[object], resp._call_history), [result])
+
+        items: list[CanonicalStreamItem] = []
+        while True:
+            try:
+                items.append(await wait_for(resp.__anext__(), 1))
+            except StopAsyncIteration:
+                break
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertEqual(cast(list[object], resp._call_history), [result])
+        agent.assert_awaited_once()
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        tool_call_messages = [
+            message
+            for message in context.input
+            if isinstance(message, Message) and message.tool_calls
+        ]
+        tool_result_messages = [
+            message
+            for message in context.input
+            if (
+                isinstance(message, Message)
+                and message.role is MessageRole.TOOL
+            )
+        ]
+        self.assertEqual(len(tool_call_messages), 1)
+        self.assertEqual(len(tool_result_messages), 1)
+        self.assertIs(tool_result_messages[0].tool_call_result, result)
+        validate_canonical_stream_items(resp.canonical_items)
 
     async def test_repeated_tool_attempt_returns_guard_diagnostic(self):
         engine = _DummyEngine()

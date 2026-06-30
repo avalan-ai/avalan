@@ -13,6 +13,7 @@ from .display_snapshot import (
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass
 from inspect import isawaitable
+from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
@@ -189,15 +190,24 @@ class CliStreamAnswerPresenter:
         assert isinstance(request, CliStreamPresenterRequest)
         if request.mode != "answer":
             raise AssertionError("answer presenter requires answer mode")
-        if request.snapshot.answer_text == self._emitted_answer_text:
+        answer_text = request.snapshot.answer_text
+        emitted_answer_text = self._emitted_answer_text
+        if answer_text == emitted_answer_text:
             return
-        if not request.snapshot.answer_text.startswith(
-            self._emitted_answer_text
-        ):
+        if not answer_text.startswith(emitted_answer_text):
             raise AssertionError("answer snapshots must grow monotonically")
 
-        text = request.snapshot.answer_text[len(self._emitted_answer_text) :]
-        self._emitted_answer_text = request.snapshot.answer_text
+        if (
+            not emitted_answer_text
+            and structured_answer_started(answer_text)
+            and not stream_terminal_completed(request)
+        ):
+            return
+
+        text = answer_text[len(emitted_answer_text) :]
+        if not emitted_answer_text and stream_terminal_completed(request):
+            text = pretty_json_answer_text(answer_text) or text
+        self._emitted_answer_text = answer_text
         yield CliStreamAnswerTextChunk(text=text)
 
 
@@ -461,6 +471,32 @@ def _answer_request(
         context=request.context,
         mode="answer",
     )
+
+
+def stream_terminal_completed(request: CliStreamPresenterRequest) -> bool:
+    """Return whether a stream request has a successful terminal answer."""
+    terminal = request.snapshot.terminal
+    return terminal.completed and terminal.outcome in (None, "completed")
+
+
+def pretty_json_answer_text(text: str) -> str | None:
+    """Return a pretty JSON object or array answer, when applicable."""
+    assert isinstance(text, str)
+    stripped = text.strip()
+    if not structured_answer_started(stripped):
+        return None
+    try:
+        value = loads(stripped)
+    except JSONDecodeError:
+        return None
+    return dumps(value, ensure_ascii=False, indent=2)
+
+
+def structured_answer_started(text: str) -> bool:
+    """Return whether answer text appears to start a JSON container."""
+    assert isinstance(text, str)
+    stripped = text.lstrip()
+    return bool(stripped) and stripped[0] in "{["
 
 
 def _theme_token_render_state(

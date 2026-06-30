@@ -69,7 +69,11 @@ from avalan.event import (
 )
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import PermanentMemoryPartition
-from avalan.model.stream import StreamChannel, StreamItemKind
+from avalan.model.stream import (
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.tool.display import ToolDisplayDetail, ToolDisplayProjection
 
 
@@ -1127,6 +1131,93 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
             ],
             ["answer"],
         )
+
+    async def test_answer_mode_pretty_prints_terminal_json(self) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text('{"items":[{"amount":134}]}')
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot(), mode="answer"),
+        )
+
+        self.assertEqual(
+            [
+                item.text
+                for item in items
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ['{\n  "items": [\n    {\n      "amount": 134\n    }\n  ]\n}'],
+        )
+
+    async def test_answer_mode_buffers_partial_json_until_terminal(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text('{"items":[{"amount":')
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        first = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot(), mode="answer"),
+        )
+        builder.append_answer_text("134}]}")
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        second = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot(), mode="answer"),
+        )
+
+        self.assertEqual(first, [])
+        self.assertEqual(
+            [
+                item.text
+                for item in second
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ['{\n  "items": [\n    {\n      "amount": 134\n    }\n  ]\n}'],
+        )
+
+    async def test_stats_panel_pretty_prints_terminal_json(self) -> None:
+        config = _stream_config(
+            display_tools=False,
+            display_events=False,
+            answer_height_expand=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text('{"items":[{"amount":134}]}')
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        output = _frame_text(stream_frame)
+        self.assertIn("{", output)
+        self.assertIn('"items": [', output)
+        self.assertIn('"amount": 134', output)
+        self.assertNotIn('{"items":[{"amount":134}]}', output)
 
     def test_theme_factory_returns_fancy_stream_presenter(self) -> None:
         presenter = self.theme.stream_presenter(getLogger(__name__))
