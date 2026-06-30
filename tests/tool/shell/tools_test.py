@@ -24,8 +24,11 @@ from avalan.tool.shell.tools import (
     LsTool,
     NlTool,
     PdfInfoTool,
+    PdfPlumberTool,
     PdfToPpmTool,
     PdfToTextTool,
+    PyPdfTool,
+    ReportLabTool,
     RgTool,
     SedTool,
     TailTool,
@@ -1014,6 +1017,190 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self.assertEqual(request.max_stdout_bytes, 1000)
         self.assertEqual(request.max_stderr_bytes, 200)
 
+    async def test_reportlab_builds_structured_pdf_request(self) -> None:
+        spec = _spec(
+            "reportlab",
+            output_kind=ShellOutputKind.GENERATED_FILES,
+        )
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("reportlab"))
+        formatter = _RecordingFormatter()
+        tool = ReportLabTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=formatter,
+        )
+
+        output = await tool(
+            "Generated body",
+            title="Generated Title",
+            page_size="a4",
+            cwd="docs",
+            timeout_seconds=7.5,
+            max_stdout_bytes=1050,
+            max_stderr_bytes=205,
+            context=ToolCallContext(),
+        )
+
+        self.assertEqual(output, "formatted:shell.reportlab:completed")
+        self.assertEqual(executor.specs, [spec])
+        self.assertEqual(len(policy.requests), 1)
+        request = policy.requests[0]
+        self.assertEqual(request.tool_name, "shell.reportlab")
+        self.assertEqual(request.command, "reportlab")
+        self.assertEqual(
+            request.options,
+            {
+                "text": "Generated body",
+                "title": "Generated Title",
+                "page_size": "a4",
+            },
+        )
+        self.assertEqual(request.paths, ())
+        self.assertEqual(request.cwd, "docs")
+        self.assertEqual(request.timeout_seconds, 7.5)
+        self.assertEqual(request.max_stdout_bytes, 1050)
+        self.assertEqual(request.max_stderr_bytes, 205)
+
+    async def test_pdfplumber_builds_structured_pdf_request(self) -> None:
+        spec = _spec("pdfplumber")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("pdfplumber", stdout="text\n"))
+        formatter = _RecordingFormatter()
+        tool = PdfPlumberTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=formatter,
+        )
+
+        output = await tool(
+            "docs/report.pdf",
+            mode="tables",
+            first_page=2,
+            last_page=4,
+            layout=True,
+            cwd="docs",
+            timeout_seconds=8.0,
+            max_stdout_bytes=1100,
+            max_stderr_bytes=210,
+            context=ToolCallContext(),
+        )
+
+        self.assertEqual(output, "formatted:shell.pdfplumber:completed")
+        self.assertEqual(executor.specs, [spec])
+        self.assertEqual(len(policy.requests), 1)
+        request = policy.requests[0]
+        self.assertEqual(request.tool_name, "shell.pdfplumber")
+        self.assertEqual(request.command, "pdfplumber")
+        self.assertEqual(
+            request.options,
+            {
+                "mode": "tables",
+                "first_page": 2,
+                "last_page": 4,
+                "layout": True,
+            },
+        )
+        self.assertEqual(
+            request.paths,
+            (
+                PathOperand(
+                    name="path_0",
+                    path="docs/report.pdf",
+                    kind="pdf_file",
+                    access="read",
+                ),
+            ),
+        )
+        self.assertEqual(request.cwd, "docs")
+        self.assertEqual(request.timeout_seconds, 8.0)
+        self.assertEqual(request.max_stdout_bytes, 1100)
+        self.assertEqual(request.max_stderr_bytes, 210)
+
+    async def test_pypdf_builds_structured_pdf_request(self) -> None:
+        spec = _spec("pypdf")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("pypdf", stdout="text\n"))
+        formatter = _RecordingFormatter()
+        tool = PyPdfTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=formatter,
+        )
+
+        output = await tool(
+            "docs/report.pdf",
+            mode="text",
+            first_page=2,
+            last_page=4,
+            cwd="docs",
+            timeout_seconds=8.5,
+            max_stdout_bytes=1150,
+            max_stderr_bytes=215,
+            context=ToolCallContext(),
+        )
+
+        self.assertEqual(output, "formatted:shell.pypdf:completed")
+        self.assertEqual(executor.specs, [spec])
+        self.assertEqual(len(policy.requests), 1)
+        request = policy.requests[0]
+        self.assertEqual(request.tool_name, "shell.pypdf")
+        self.assertEqual(request.command, "pypdf")
+        self.assertEqual(
+            request.options,
+            {
+                "mode": "text",
+                "first_page": 2,
+                "last_page": 4,
+            },
+        )
+        self.assertEqual(
+            request.paths,
+            (
+                PathOperand(
+                    name="path_0",
+                    path="docs/report.pdf",
+                    kind="pdf_file",
+                    access="read",
+                ),
+            ),
+        )
+        self.assertEqual(request.cwd, "docs")
+        self.assertEqual(request.timeout_seconds, 8.5)
+        self.assertEqual(request.max_stdout_bytes, 1150)
+        self.assertEqual(request.max_stderr_bytes, 215)
+
+    async def test_pypdf_metadata_mode_preserves_page_options(
+        self,
+    ) -> None:
+        spec = _spec("pypdf")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("pypdf"))
+        formatter = _RecordingFormatter()
+        tool = PyPdfTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=formatter,
+        )
+
+        await tool(
+            "docs/report.pdf",
+            mode="metadata",
+            first_page=2,
+            context=ToolCallContext(),
+        )
+        await tool("docs/report.pdf", context=ToolCallContext())
+
+        self.assertEqual(
+            policy.requests[0].options,
+            {"mode": "metadata", "first_page": 2, "last_page": None},
+        )
+        self.assertEqual(policy.requests[1].options, {"mode": "metadata"})
+
     async def test_tesseract_builds_structured_ocr_request(self) -> None:
         spec = _spec("tesseract")
         policy = _FakePolicy(spec)
@@ -1107,6 +1294,33 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
                     "grayscale": False,
                     "format": "png",
                 },
+            ),
+            (
+                "reportlab",
+                _reportlab_tool,
+                {"text": "body"},
+                {
+                    "text": "body",
+                    "title": "Document",
+                    "page_size": "letter",
+                },
+            ),
+            (
+                "pdfplumber",
+                _pdfplumber_tool,
+                {"path": "report.pdf"},
+                {
+                    "mode": "text",
+                    "first_page": 1,
+                    "last_page": None,
+                    "layout": False,
+                },
+            ),
+            (
+                "pypdf",
+                _pypdf_tool,
+                {"path": "report.pdf"},
+                {"mode": "metadata"},
             ),
             (
                 "tesseract",
@@ -1275,6 +1489,9 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
             ("pdfinfo", _pdfinfo_tool, {"path": "report.pdf"}),
             ("pdftotext", _pdftotext_tool, {"path": "report.pdf"}),
             ("pdftoppm", _pdftoppm_tool, {"path": "report.pdf"}),
+            ("reportlab", _reportlab_tool, {"text": "body"}),
+            ("pdfplumber", _pdfplumber_tool, {"path": "report.pdf"}),
+            ("pypdf", _pypdf_tool, {"path": "report.pdf"}),
             ("tesseract", _tesseract_tool, {"path": "page.png"}),
         ):
             with self.subTest(command=command):
@@ -1485,6 +1702,16 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
             (
                 "pdftoppm",
                 _pdftoppm_tool,
+                {"path": ""},
+            ),
+            (
+                "pdfplumber",
+                _pdfplumber_tool,
+                {"path": ""},
+            ),
+            (
+                "pypdf",
+                _pypdf_tool,
                 {"path": ""},
             ),
             (
@@ -1844,6 +2071,33 @@ class ShellToolSchemaTest(TestCase):
                     executor=_FakeExecutor(_result("pdftoppm")),
                     formatter=_RecordingFormatter(),
                 ),
+                ReportLabTool(
+                    settings=ShellToolSettings(),
+                    policy=_FakePolicy(  # type: ignore[arg-type]
+                        _spec(
+                            "reportlab",
+                            output_kind=ShellOutputKind.GENERATED_FILES,
+                        )
+                    ),
+                    executor=_FakeExecutor(_result("reportlab")),
+                    formatter=_RecordingFormatter(),
+                ),
+                PdfPlumberTool(
+                    settings=ShellToolSettings(),
+                    policy=_FakePolicy(  # type: ignore[arg-type]
+                        _spec("pdfplumber")
+                    ),
+                    executor=_FakeExecutor(_result("pdfplumber")),
+                    formatter=_RecordingFormatter(),
+                ),
+                PyPdfTool(
+                    settings=ShellToolSettings(),
+                    policy=_FakePolicy(  # type: ignore[arg-type]
+                        _spec("pypdf")
+                    ),
+                    executor=_FakeExecutor(_result("pypdf")),
+                    formatter=_RecordingFormatter(),
+                ),
                 TesseractTool(
                     settings=ShellToolSettings(),
                     policy=_FakePolicy(  # type: ignore[arg-type]
@@ -1880,6 +2134,9 @@ class ShellToolSchemaTest(TestCase):
                 "shell.pdfinfo",
                 "shell.pdftotext",
                 "shell.pdftoppm",
+                "shell.reportlab",
+                "shell.pdfplumber",
+                "shell.pypdf",
                 "shell.tesseract",
             ],
         )
@@ -1904,6 +2161,18 @@ class ShellToolSchemaTest(TestCase):
         self.assertNotIn(
             "context",
             parameters["shell.pdftoppm"]["properties"],
+        )
+        self.assertNotIn(
+            "context",
+            parameters["shell.reportlab"]["properties"],
+        )
+        self.assertNotIn(
+            "context",
+            parameters["shell.pdfplumber"]["properties"],
+        )
+        self.assertNotIn(
+            "context",
+            parameters["shell.pypdf"]["properties"],
         )
         self.assertNotIn(
             "context",
@@ -1973,6 +2242,9 @@ class ShellToolSchemaTest(TestCase):
         self.assertEqual(parameters["shell.pdfinfo"]["required"], ["path"])
         self.assertEqual(parameters["shell.pdftotext"]["required"], ["path"])
         self.assertEqual(parameters["shell.pdftoppm"]["required"], ["path"])
+        self.assertEqual(parameters["shell.reportlab"]["required"], ["text"])
+        self.assertEqual(parameters["shell.pdfplumber"]["required"], ["path"])
+        self.assertEqual(parameters["shell.pypdf"]["required"], ["path"])
         self.assertEqual(parameters["shell.tesseract"]["required"], ["path"])
         self.assertEqual(
             set(parameters["shell.nl"]["properties"]),
@@ -2164,6 +2436,45 @@ class ShellToolSchemaTest(TestCase):
             },
         )
         self.assertEqual(
+            set(parameters["shell.reportlab"]["properties"]),
+            {
+                "text",
+                "title",
+                "page_size",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            },
+        )
+        self.assertEqual(
+            set(parameters["shell.pdfplumber"]["properties"]),
+            {
+                "path",
+                "mode",
+                "first_page",
+                "last_page",
+                "layout",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            },
+        )
+        self.assertEqual(
+            set(parameters["shell.pypdf"]["properties"]),
+            {
+                "path",
+                "mode",
+                "first_page",
+                "last_page",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            },
+        )
+        self.assertEqual(
             set(parameters["shell.tesseract"]["properties"]),
             {
                 "path",
@@ -2183,6 +2494,18 @@ class ShellToolSchemaTest(TestCase):
             ["png"],
         )
         self.assertEqual(
+            parameters["shell.reportlab"]["properties"]["page_size"]["enum"],
+            ["letter", "a4"],
+        )
+        self.assertEqual(
+            parameters["shell.pdfplumber"]["properties"]["mode"]["enum"],
+            ["text", "tables"],
+        )
+        self.assertEqual(
+            parameters["shell.pypdf"]["properties"]["mode"]["enum"],
+            ["metadata", "text"],
+        )
+        self.assertEqual(
             parameters["shell.tesseract"]["properties"]["output_format"][
                 "enum"
             ],
@@ -2192,6 +2515,9 @@ class ShellToolSchemaTest(TestCase):
             "shell.pdfinfo",
             "shell.pdftotext",
             "shell.pdftoppm",
+            "shell.reportlab",
+            "shell.pdfplumber",
+            "shell.pypdf",
             "shell.tesseract",
         ):
             self.assertNotIn("output_path", parameters[name]["properties"])
@@ -2349,6 +2675,45 @@ def _pdftoppm_tool(
     formatter: "_RecordingFormatter",
 ) -> PdfToPpmTool:
     return PdfToPpmTool(
+        settings=ShellToolSettings(),
+        policy=policy,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        formatter=formatter,
+    )
+
+
+def _reportlab_tool(
+    policy: object,
+    executor: object,
+    formatter: "_RecordingFormatter",
+) -> ReportLabTool:
+    return ReportLabTool(
+        settings=ShellToolSettings(),
+        policy=policy,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        formatter=formatter,
+    )
+
+
+def _pdfplumber_tool(
+    policy: object,
+    executor: object,
+    formatter: "_RecordingFormatter",
+) -> PdfPlumberTool:
+    return PdfPlumberTool(
+        settings=ShellToolSettings(),
+        policy=policy,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        formatter=formatter,
+    )
+
+
+def _pypdf_tool(
+    policy: object,
+    executor: object,
+    formatter: "_RecordingFormatter",
+) -> PyPdfTool:
+    return PyPdfTool(
         settings=ShellToolSettings(),
         policy=policy,  # type: ignore[arg-type]
         executor=executor,  # type: ignore[arg-type]

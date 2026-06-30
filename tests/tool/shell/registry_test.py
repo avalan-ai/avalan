@@ -56,6 +56,9 @@ class ShellRegistryTest(TestCase):
                 "pdfinfo",
                 "pdftotext",
                 "pdftoppm",
+                "reportlab",
+                "pdfplumber",
+                "pypdf",
                 "tesseract",
             ),
         )
@@ -119,6 +122,15 @@ class ShellRegistryTest(TestCase):
         self.assertEqual(
             groups_by_id["pdftoppm"], ShellDependencyGroup.POPPLER
         )
+        self.assertEqual(
+            groups_by_id["reportlab"], ShellDependencyGroup.PYTHON_PDF
+        )
+        self.assertEqual(
+            groups_by_id["pdfplumber"], ShellDependencyGroup.PYTHON_PDF
+        )
+        self.assertEqual(
+            groups_by_id["pypdf"], ShellDependencyGroup.PYTHON_PDF
+        )
         self.assertEqual(groups_by_id["tesseract"], ShellDependencyGroup.OCR)
 
     def test_command_definitions_include_complete_backend_metadata(
@@ -127,7 +139,13 @@ class ShellRegistryTest(TestCase):
         for command in SHELL_COMMANDS:
             with self.subTest(command=command.logical_id):
                 self.assertTrue(command.public)
-                self.assertEqual(command.executable_name, command.logical_id)
+                expected_executable = (
+                    "python3"
+                    if command.logical_id
+                    in {"reportlab", "pdfplumber", "pypdf"}
+                    else command.logical_id
+                )
+                self.assertEqual(command.executable_name, expected_executable)
                 self.assertGreaterEqual(
                     len(command.container_package_hints),
                     1,
@@ -135,6 +153,8 @@ class ShellRegistryTest(TestCase):
                 self.assertTrue(
                     all(command.container_package_hints),
                 )
+                if command.logical_id in {"reportlab", "pdfplumber", "pypdf"}:
+                    self.assertIn("avalan", command.container_package_hints)
 
         media_commands = {
             command.logical_id
@@ -166,7 +186,15 @@ class ShellRegistryTest(TestCase):
                 )
         self.assertEqual(
             media_commands,
-            {"pdfinfo", "pdftotext", "pdftoppm", "tesseract"},
+            {
+                "pdfinfo",
+                "pdftotext",
+                "pdftoppm",
+                "reportlab",
+                "pdfplumber",
+                "pypdf",
+                "tesseract",
+            },
         )
         self.assertEqual(
             no_double_dash_commands,
@@ -177,6 +205,9 @@ class ShellRegistryTest(TestCase):
                 "pdfinfo",
                 "pdftotext",
                 "pdftoppm",
+                "reportlab",
+                "pdfplumber",
+                "pypdf",
                 "tesseract",
             },
         )

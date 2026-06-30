@@ -33,6 +33,7 @@ class ShellDependencyGroup(StrEnum):
     TEXT_FILTERS = "text_filters"
     JSON = "json"
     POPPLER = "poppler"
+    PYTHON_PDF = "python_pdf"
     OCR = "ocr"
 
 

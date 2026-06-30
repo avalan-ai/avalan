@@ -12,8 +12,17 @@ from .registry import SHELL_COMMAND_DEFINITIONS, ShellCommandDefinition
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from sys import executable as sys_executable
 from types import MappingProxyType
 from typing import Protocol, final
+
+_PYTHON_RUNNER_COMMAND_IDS = frozenset(
+    {
+        "pdfplumber",
+        "pypdf",
+        "reportlab",
+    }
+)
 
 ExecutableLookup = Callable[
     [ShellCommandDefinition, tuple[str, ...]],
@@ -87,13 +96,24 @@ class TrustedExecutableResolver:
             return self._cache[command.logical_id]
 
         executable = self.executable_paths.get(command.logical_id)
-        if executable is None:
+        if (
+            executable is None
+            and command.logical_id in _PYTHON_RUNNER_COMMAND_IDS
+            and self.lookup is trusted_search_path_executable_lookup
+        ):
             executable = await self.lookup(
                 command,
                 tuple(self.executable_search_paths),
             )
-            if executable is not None:
-                _assert_non_empty_string(executable, "executable")
+            if executable is None:
+                executable = sys_executable
+        elif executable is None:
+            executable = await self.lookup(
+                command,
+                tuple(self.executable_search_paths),
+            )
+        if executable is not None:
+            _assert_non_empty_string(executable, "executable")
 
         self._cache[command.logical_id] = executable
         return executable

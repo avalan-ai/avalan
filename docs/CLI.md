@@ -101,8 +101,9 @@ You'll need your Huggingface access token exported as `HF_TOKEN`.
 
 ## Shell Toolset
 
-Shell tools are opt-in read-only tools for inspecting files under a configured
-workspace. Enable the namespace with TOML:
+Shell tools are opt-in policy-limited tools for inspecting files under a
+configured workspace and creating bounded generated artifacts. Enable the
+namespace with TOML:
 
 ```toml
 [tool]
@@ -217,13 +218,20 @@ Public shell tools:
 | `shell.pdfinfo` | Inspect PDF metadata and page boxes. | Poppler | `poppler-utils` or `poppler` |
 | `shell.pdftotext` | Extract text from a PDF. | Poppler | `poppler-utils` or `poppler` |
 | `shell.pdftoppm` | Rasterize bounded PDF pages. | Poppler | `poppler-utils` or `poppler` |
+| `shell.reportlab` | Create one bounded generated PDF from text. | Python PDF | `python3` with `avalan` and `reportlab` |
+| `shell.pdfplumber` | Extract bounded text or tables from a PDF. | Python PDF | `python3` with `avalan` and `pdfplumber` |
+| `shell.pypdf` | Inspect metadata or extract bounded text from a PDF. | Python PDF | `python3` with `avalan` and `pypdf` |
 | `shell.tesseract` | Recognize text in an image. | OCR | `tesseract-ocr` or `tesseract` |
 
-Media tools (`shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`, and
-`shell.tesseract`) are disabled unless `allow_media_tools = true`. Optional
-binaries are resolved at invocation time: if a configured command is not
-installed, the tool returns a formatted `command_unavailable` result instead
-of failing agent loading.
+Media tools (`shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`,
+`shell.reportlab`, `shell.pdfplumber`, `shell.pypdf`, and `shell.tesseract`)
+are disabled unless `allow_media_tools = true`. Optional binaries are resolved
+at invocation time: if a configured command is not installed, the tool returns
+a formatted `command_unavailable` result instead of failing agent loading. The
+Python PDF tools resolve a trusted Python executable and also report
+`command_unavailable` when the required package cannot be imported. In
+container mode, the selected image must make both `avalan` and the target PDF
+library importable to that Python interpreter.
 
 The shell toolset does not provide generic shell execution. It never evaluates
 model-supplied shell strings, never accepts arbitrary executable paths from

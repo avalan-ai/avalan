@@ -73,7 +73,10 @@ from avalan.tool.shell import (
     normalize_shell_execution_request,
 )
 from avalan.tool.shell.container import (
+    _ContainerGeneratedOutputError,
     _diagnostic_summary,
+    _generated_file,
+    _generated_files,
 )
 from avalan.tool.shell.entities import (
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
@@ -224,6 +227,100 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
             plan.container_plan.run_plan.command.argv[-1],
             "visible.txt",
         )
+
+    async def test_python_pdf_container_plan_uses_cwd_relative_path(
+        self,
+    ) -> None:
+        commands = ("pdfplumber", "pypdf")
+
+        for command in commands:
+            with self.subTest(command=command):
+                with TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    nested = root / "nested"
+                    nested.mkdir()
+                    (nested / "doc.pdf").write_bytes(b"%PDF-1.4\n")
+                    policy = ExecutionPolicy(
+                        settings=ShellToolSettings(
+                            execution_mode="container",
+                            workspace_root=str(root),
+                            allow_media_tools=True,
+                        ),
+                        resolver=_AllResolved(),
+                    )
+                    spec = await policy.normalize(
+                        _pdf_request(command, "doc.pdf", cwd="nested")
+                    )
+                    plan = lower_shell_execution_spec(
+                        spec,
+                        container_settings=_effective_settings(),
+                    )
+
+                self.assertEqual(spec.display_cwd, "nested")
+                self.assertEqual(spec.argv[-1], "doc.pdf")
+                self.assertEqual(spec.display_argv[-1], "doc.pdf")
+                self.assertIsNotNone(plan.container_plan)
+                assert plan.container_plan is not None
+                self.assertEqual(
+                    plan.container_plan.run_plan.command.cwd,
+                    "/workspace/nested",
+                )
+                self.assertEqual(
+                    plan.container_plan.run_plan.command.argv[-1],
+                    "doc.pdf",
+                )
+                self.assertNotIn(
+                    "nested/doc.pdf",
+                    plan.container_plan.run_plan.command.argv,
+                )
+
+    async def test_reportlab_container_plan_rewrites_generated_prefix(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            policy = ExecutionPolicy(
+                settings=ShellToolSettings(
+                    execution_mode="container",
+                    workspace_root=str(root),
+                    allow_media_tools=True,
+                ),
+                resolver=_AllResolved(),
+            )
+            spec = await policy.normalize(
+                ShellCommandRequest(
+                    tool_name="shell.reportlab",
+                    command="reportlab",
+                    options={
+                        "text": "body",
+                        "title": "Container PDF",
+                    },
+                    paths=(),
+                    cwd=None,
+                )
+            )
+            plan = lower_shell_execution_spec(
+                spec,
+                container_settings=_effective_settings(),
+            )
+
+        self.assertIsNotNone(plan.container_plan)
+        assert plan.container_plan is not None
+        container_argv = plan.container_plan.run_plan.command.argv
+        self.assertEqual(
+            container_argv[-2:],
+            ("--output", "/outputs/document"),
+        )
+        self.assertNotIn("GENERATED_PREFIX.pdf", container_argv)
+        self.assertNotIn(str(root), " ".join(container_argv))
+        self.assertEqual(spec.display_argv[-1], "GENERATED_PREFIX.pdf")
+        self.assertIsNotNone(plan.output_contract)
+        assert plan.output_contract is not None
+        self.assertEqual(
+            tuple(plan.output_contract.media_policy.allowed_media_types),
+            ("application/pdf",),
+        )
+        self.assertEqual(plan.output_contract.max_files, 1)
 
     async def test_required_disabled_container_plan_fails_closed(
         self,
@@ -604,7 +701,7 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
                             artifact_type=(
                                 ContainerOutputContractType.GENERATED_FILE
                             ),
-                            path="report.txt",
+                            path="shell-output.txt",
                             size_bytes=5,
                             media_type="text/plain",
                             digest=f"sha256:{'1' * 64}",
@@ -624,12 +721,180 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
         self.assertEqual(result.output_kind, ShellOutputKind.GENERATED_FILES)
         self.assertEqual(len(result.generated_files), 1)
-        self.assertEqual(result.generated_files[0].display_path, "report.txt")
+        self.assertEqual(
+            result.generated_files[0].display_path,
+            "shell-output.txt",
+        )
         self.assertEqual(result.generated_files[0].sha256, "1" * 64)
         self.assertIn(
             ContainerBackendOperation.COPY_OUTPUTS,
             backend.operations,
         )
+
+    async def test_container_generated_output_uses_plan_display_path(
+        self,
+    ) -> None:
+        output_contract = ContainerOutputContract(
+            contract_type=ContainerOutputContractType.GENERATED_FILE,
+            max_bytes=64,
+        )
+        backend = ContainerFakeBackend(
+            ContainerFakeBackendScript(
+                capabilities=_capabilities(),
+                stream_chunks=(
+                    ContainerBackendStreamChunk(
+                        stream=ContainerBackendStream.STDOUT,
+                        content=b'{"output": "/outputs/document.pdf"}\n',
+                        sequence=0,
+                    ),
+                    ContainerBackendStreamChunk(
+                        stream=ContainerBackendStream.STDERR,
+                        content=b"wrote /outputs/document.pdf\n",
+                        sequence=1,
+                    ),
+                    ContainerBackendStreamChunk(
+                        stream=ContainerBackendStream.PROGRESS,
+                        content=b"copied /outputs/document.pdf",
+                        sequence=2,
+                    ),
+                ),
+                output_result=ContainerOutputValidationResult(
+                    decision=ContainerOutputDecisionType.ACCEPT,
+                    contract=output_contract,
+                    artifacts=(
+                        ContainerOutputArtifact(
+                            artifact_type=(
+                                ContainerOutputContractType.GENERATED_FILE
+                            ),
+                            path="document.pdf",
+                            size_bytes=5,
+                            media_type="application/pdf",
+                            digest=f"sha256:{'1' * 64}",
+                        ),
+                    ),
+                    total_bytes=5,
+                    file_count=1,
+                ),
+            )
+        )
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def record(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        result = await ShellContainerCommandExecutor(
+            container_settings=_effective_settings(required=True),
+            container_backend=backend,
+        ).execute(_direct_reportlab_spec(), stream=record)
+
+        self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
+        self.assertEqual(len(result.generated_files), 1)
+        self.assertEqual(
+            result.generated_files[0].display_path,
+            "GENERATED_PREFIX.pdf",
+        )
+        self.assertIn("GENERATED_PREFIX.pdf", result.stdout)
+        self.assertIn("GENERATED_PREFIX.pdf", result.stderr)
+        self.assertNotIn("/outputs/document.pdf", result.stdout)
+        self.assertNotIn("/outputs/document.pdf", result.stderr)
+        self.assertTrue(events)
+        for event in events:
+            self.assertNotIn("/outputs/document.pdf", event.content)
+
+    async def test_container_rejects_generated_outputs_outside_plan(
+        self,
+    ) -> None:
+        cases = (
+            ("wrong-prefix", "anything.pdf", "application/pdf"),
+            ("wrong-suffix", "document.txt", "text/plain"),
+            ("nested-path", "nested/document.pdf", "application/pdf"),
+        )
+
+        for name, path, media_type in cases:
+            with self.subTest(name=name):
+                artifact_type = ContainerOutputContractType.GENERATED_FILE
+                output_contract = ContainerOutputContract(
+                    contract_type=artifact_type,
+                    max_bytes=64,
+                )
+                result = await ShellContainerCommandExecutor(
+                    container_settings=_effective_settings(required=True),
+                    container_backend=ContainerFakeBackend(
+                        ContainerFakeBackendScript(
+                            capabilities=_capabilities(),
+                            output_result=ContainerOutputValidationResult(
+                                decision=ContainerOutputDecisionType.ACCEPT,
+                                contract=output_contract,
+                                artifacts=(
+                                    ContainerOutputArtifact(
+                                        artifact_type=artifact_type,
+                                        path=path,
+                                        size_bytes=5,
+                                        media_type=media_type,
+                                        digest=f"sha256:{'1' * 64}",
+                                    ),
+                                ),
+                                total_bytes=5,
+                                file_count=1,
+                            ),
+                        )
+                    ),
+                ).execute(_direct_reportlab_spec())
+
+                self.assertEqual(
+                    result.status,
+                    ShellExecutionStatus.TOO_LARGE,
+                )
+                self.assertEqual(
+                    result.error_code,
+                    ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED,
+                )
+                self.assertEqual(result.generated_files, ())
+
+    async def test_container_rejected_outputs_do_not_surface_artifacts(
+        self,
+    ) -> None:
+        artifact_type = ContainerOutputContractType.GENERATED_FILE
+        output_contract = ContainerOutputContract(
+            contract_type=artifact_type,
+            max_bytes=64,
+        )
+        result = await ShellContainerCommandExecutor(
+            container_settings=_effective_settings(required=True),
+            container_backend=ContainerFakeBackend(
+                ContainerFakeBackendScript(
+                    capabilities=_capabilities(),
+                    output_result=ContainerOutputValidationResult(
+                        decision=ContainerOutputDecisionType.REJECT,
+                        contract=output_contract,
+                        artifacts=(
+                            _output_artifact(
+                                path="document.pdf",
+                                media_type="application/pdf",
+                            ),
+                        ),
+                        diagnostics=(
+                            ContainerOutputDiagnostic(
+                                code=(
+                                    ContainerOutputDiagnosticCode.UNSAFE_MEDIA
+                                ),
+                                path="blocked.bin",
+                                message="unsafe media",
+                            ),
+                        ),
+                        total_bytes=5,
+                        file_count=1,
+                    ),
+                )
+            ),
+        ).execute(_direct_reportlab_spec())
+
+        self.assertEqual(result.status, ShellExecutionStatus.TOOL_ERROR)
+        self.assertEqual(
+            result.error_code,
+            ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED,
+        )
+        self.assertEqual(result.generated_files, ())
 
     async def test_local_spec_without_container_settings_uses_local_executor(
         self,
@@ -778,6 +1043,36 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
                 ShellExecutionStatus.NONZERO_EXIT,
             ),
             (
+                "mapped missing command",
+                ContainerFakeBackendScript(
+                    capabilities=_capabilities(),
+                    wait_exit_code=127,
+                ),
+                _direct_text_spec(
+                    metadata={
+                        "exit_code_statuses": {
+                            127: "command_unavailable",
+                        }
+                    }
+                ),
+                ShellExecutionStatus.COMMAND_UNAVAILABLE,
+            ),
+            (
+                "mapped timeout status",
+                ContainerFakeBackendScript(
+                    capabilities=_capabilities(),
+                    wait_exit_code=42,
+                ),
+                _direct_text_spec(
+                    metadata={
+                        "exit_code_statuses": {
+                            42: "timeout",
+                        }
+                    }
+                ),
+                ShellExecutionStatus.TIMEOUT,
+            ),
+            (
                 "oversized output",
                 ContainerFakeBackendScript(
                     capabilities=_capabilities(),
@@ -855,6 +1150,24 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
 
                 self.assertEqual(result.status, expected_status)
                 self.assertNotEqual(result.backend, "local")
+                if name == "mapped missing command":
+                    self.assertEqual(
+                        result.error_code,
+                        ShellExecutionErrorCode.COMMAND_UNAVAILABLE,
+                    )
+                    self.assertEqual(
+                        result.error_message,
+                        "command is unavailable",
+                    )
+                if name == "mapped timeout status":
+                    self.assertEqual(
+                        result.error_code,
+                        ShellExecutionErrorCode.TIMEOUT,
+                    )
+                    self.assertEqual(
+                        result.error_message,
+                        "container command exited with timeout",
+                    )
                 if name == "runtime unavailable":
                     self.assertEqual(
                         result.metadata["isolation_diagnostic_codes"],
@@ -1214,6 +1527,109 @@ class ShellContainerValueTest(TestCase):
         assert plan.container_plan is not None
         self.assertEqual(plan.container_plan.request.request_id, "call-1")
 
+    def test_generated_output_helpers_validate_limits_and_names(self) -> None:
+        artifact_type = ContainerOutputContractType.GENERATED_FILE
+        contract = ContainerOutputContract(
+            contract_type=artifact_type,
+            max_bytes=128,
+            max_files=3,
+        )
+        spec = _direct_reportlab_spec(max_files=3)
+        assert spec.output_plan is not None
+        valid = _output_artifact(
+            path="document-2.pdf",
+            media_type="application/pdf",
+            size_bytes=5,
+        )
+        exact_prefix = _output_artifact(
+            path="document.pdf",
+            media_type="application/pdf",
+            size_bytes=5,
+        )
+        output = ContainerOutputValidationResult(
+            decision=ContainerOutputDecisionType.ACCEPT,
+            contract=contract,
+            artifacts=(valid, exact_prefix),
+            total_bytes=10,
+            file_count=2,
+        )
+
+        self.assertEqual(_generated_files(_direct_text_spec(), output), ())
+        generated = _generated_files(spec, output)
+
+        self.assertEqual(generated[0].display_path, "GENERATED_PREFIX-2.pdf")
+        self.assertEqual(generated[0].page, 2)
+        self.assertEqual(generated[1].display_path, "GENERATED_PREFIX.pdf")
+        self.assertIsNone(generated[1].page)
+
+        failures = (
+            ContainerOutputValidationResult(
+                decision=ContainerOutputDecisionType.ACCEPT,
+                contract=contract,
+                artifacts=(
+                    valid,
+                    exact_prefix,
+                    _output_artifact(path="document_3.pdf", size_bytes=5),
+                    _output_artifact(path="document-4.pdf", size_bytes=5),
+                ),
+                total_bytes=20,
+                file_count=4,
+            ),
+            ContainerOutputValidationResult(
+                decision=ContainerOutputDecisionType.ACCEPT,
+                contract=contract,
+                artifacts=(
+                    _output_artifact(path="document.pdf", size_bytes=65),
+                ),
+                total_bytes=65,
+                file_count=1,
+            ),
+            ContainerOutputValidationResult(
+                decision=ContainerOutputDecisionType.ACCEPT,
+                contract=contract,
+                artifacts=(
+                    _output_artifact(path="document.pdf", size_bytes=40),
+                    _output_artifact(path="document-2.pdf", size_bytes=40),
+                ),
+                total_bytes=80,
+                file_count=2,
+            ),
+        )
+
+        for failure in failures:
+            with self.subTest(total_bytes=failure.total_bytes):
+                with self.assertRaises(_ContainerGeneratedOutputError):
+                    _generated_files(spec, failure)
+
+        invalid_artifacts = (
+            _output_artifact(
+                path="document.pdf",
+                media_type="application/octet-stream",
+            ),
+            _output_artifact(path="document"),
+            _output_artifact(path="document-copy.pdf"),
+        )
+
+        for artifact in invalid_artifacts:
+            with self.subTest(path=artifact.path):
+                with self.assertRaises(_ContainerGeneratedOutputError):
+                    _generated_file(artifact, spec.output_plan)
+
+
+def _output_artifact(
+    *,
+    path: str,
+    media_type: str = "application/pdf",
+    size_bytes: int = 5,
+) -> ContainerOutputArtifact:
+    return ContainerOutputArtifact(
+        artifact_type=ContainerOutputContractType.GENERATED_FILE,
+        path=path,
+        size_bytes=size_bytes,
+        media_type=media_type,
+        digest=f"sha256:{'1' * 64}",
+    )
+
 
 def _cat_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
     return ShellCommandRequest(
@@ -1242,6 +1658,28 @@ def _nl_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
                 name="path",
                 path=path,
                 kind="text_file",
+                access="read",
+            ),
+        ),
+        cwd=cwd,
+    )
+
+
+def _pdf_request(
+    command: str,
+    path: str,
+    *,
+    cwd: str | None = None,
+) -> ShellCommandRequest:
+    return ShellCommandRequest(
+        tool_name=f"shell.{command}",
+        command=command,
+        options={},
+        paths=(
+            PathOperand(
+                name="path",
+                path=path,
+                kind="pdf_file",
                 access="read",
             ),
         ),
@@ -1309,6 +1747,58 @@ def _direct_generated_spec(
         env={"LC_ALL": "C"},
         stdin=None,
         stdout_media_type="text/plain",
+        output_kind=ShellOutputKind.GENERATED_FILES,
+        resource_class="heavy",
+        output_plan=plan,
+        timeout_seconds=10,
+        max_stdout_bytes=1024,
+        max_stderr_bytes=1024,
+    )
+
+
+def _direct_reportlab_spec(
+    *,
+    backend: Literal["local", "container"] = "container",
+    max_files: int = 1,
+) -> ExecutionSpec:
+    plan = GeneratedOutputPlan(
+        prefix_name="document",
+        display_prefix="GENERATED_PREFIX",
+        allowed_suffixes=(".pdf",),
+        suffix_media_types={".pdf": "application/pdf"},
+        max_files=max_files,
+        max_file_bytes=64,
+        max_total_bytes=64,
+        max_inline_bytes=64,
+    )
+    return ExecutionPolicy().create_execution_spec(
+        backend=backend,
+        tool_name="shell.reportlab",
+        command="reportlab",
+        executable="/trusted/bin/python3",
+        argv=(
+            "/trusted/bin/python3",
+            "-I",
+            "-m",
+            "avalan.tool.shell.python_pdf",
+            "reportlab",
+            "--output",
+            GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
+        ),
+        display_argv=(
+            "python3",
+            "-I",
+            "-m",
+            "avalan.tool.shell.python_pdf",
+            "reportlab",
+            "--output",
+            "GENERATED_PREFIX.pdf",
+        ),
+        cwd=str(Path.cwd()),
+        display_cwd=".",
+        env={"LC_ALL": "C"},
+        stdin=None,
+        stdout_media_type="application/json",
         output_kind=ShellOutputKind.GENERATED_FILES,
         resource_class="heavy",
         output_plan=plan,

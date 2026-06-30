@@ -30,7 +30,7 @@ from .entities import (
     ShellExecutionStatus,
     ShellOutputKind,
 )
-from .executor import CommandExecutor
+from .executor import CommandExecutor, _status_for_exit_code
 
 from base64 import b64encode
 from collections.abc import Awaitable, Callable, Sequence
@@ -173,6 +173,9 @@ class ShellSandboxCommandExecutor(CommandExecutor):
             spec.max_stderr_bytes,
             backend_truncated=result.stream_truncated,
         )
+        generated_output_replacements = _sandbox_generated_replacements(plan)
+        stdout = _scrub_capture(stdout, generated_output_replacements)
+        stderr = _scrub_capture(stderr, generated_output_replacements)
         await _emit_sandbox_streams(stream, result, stdout, stderr)
         return _sandbox_result_to_shell_result(
             spec,
@@ -233,6 +236,7 @@ def _sandbox_result_to_shell_result(
         except _SandboxGeneratedOutputError as error:
             generated_error = error
     status, error_code, error_message = _shell_status(
+        spec,
         result,
         generated_error,
     )
@@ -265,6 +269,7 @@ def _sandbox_result_to_shell_result(
 
 
 def _shell_status(
+    spec: ExecutionSpec,
     result: SandboxExecutionResult,
     generated_error: "_SandboxGeneratedOutputError | None",
 ) -> tuple[ShellExecutionStatus, ShellExecutionErrorCode | None, str | None]:
@@ -321,6 +326,13 @@ def _shell_status(
             _diagnostic_summary(result.diagnostics),
         )
     if result.exit_code is not None and result.exit_code:
+        status = _status_for_exit_code(result.exit_code, spec)
+        if status is not ShellExecutionStatus.NONZERO_EXIT:
+            return (
+                status,
+                ShellExecutionErrorCode(status.value),
+                _exit_status_message(status),
+            )
         return (
             ShellExecutionStatus.NONZERO_EXIT,
             ShellExecutionErrorCode.NONZERO_EXIT,
@@ -333,6 +345,12 @@ def _shell_status(
             _diagnostic_summary(result.diagnostics),
         )
     return ShellExecutionStatus.COMPLETED, None, None
+
+
+def _exit_status_message(status: ShellExecutionStatus) -> str:
+    if status is ShellExecutionStatus.COMMAND_UNAVAILABLE:
+        return "command is unavailable"
+    return f"sandbox command exited with {status.value}"
 
 
 def _sandbox_stream_capture(
@@ -349,6 +367,96 @@ def _sandbox_stream_capture(
         content.decode("utf-8", errors="replace"),
         len(content),
         truncated,
+    )
+
+
+def _scrub_capture(
+    capture: tuple[str, int, bool],
+    replacements: tuple[tuple[str, str], ...],
+) -> tuple[str, int, bool]:
+    content, byte_count, truncated = capture
+    if not replacements:
+        return capture
+    scrubbed = _scrub_generated_output_paths(
+        content,
+        replacements,
+        scrub_truncated=truncated,
+    )
+    scrubbed_bytes = scrubbed.encode("utf-8")
+    if len(scrubbed_bytes) > byte_count:
+        scrubbed = scrubbed_bytes[:byte_count].decode(
+            "utf-8",
+            errors="replace",
+        )
+    return (
+        scrubbed,
+        byte_count,
+        truncated,
+    )
+
+
+def _sandbox_generated_replacements(
+    plan: ShellExecutionPlan,
+) -> tuple[tuple[str, str], ...]:
+    spec = plan.local_spec
+    if spec.output_kind is not ShellOutputKind.GENERATED_FILES:
+        return ()
+    assert plan.sandbox_plan is not None, "generated outputs require sandbox"
+    assert (
+        plan.sandbox_plan.output_dir is not None
+    ), "generated outputs require output_dir"
+    assert spec.output_plan is not None, "generated outputs require a plan"
+    runtime_prefix = PurePosixPath(
+        plan.sandbox_plan.output_dir,
+        spec.output_plan.prefix_name,
+    ).as_posix()
+    output_dir = PurePosixPath(plan.sandbox_plan.output_dir).as_posix()
+    replacements = (
+        (runtime_prefix, spec.output_plan.display_prefix),
+        (output_dir, "[generated_output_directory]"),
+    )
+    return tuple(
+        sorted(replacements, key=lambda item: len(item[0]), reverse=True)
+    )
+
+
+def _scrub_generated_output_paths(
+    value: str,
+    replacements: tuple[tuple[str, str], ...],
+    *,
+    scrub_truncated: bool,
+) -> str:
+    for source, replacement in replacements:
+        if source:
+            value = value.replace(source, replacement)
+    if not scrub_truncated:
+        return value
+    for source, replacement in replacements:
+        value = _scrub_truncated_generated_output_path(
+            value,
+            source,
+            replacement,
+        )
+    return value
+
+
+def _scrub_truncated_generated_output_path(
+    value: str,
+    source: str,
+    replacement: str,
+) -> str:
+    for length in range(len(source) - 1, 0, -1):
+        prefix = source[:length]
+        if value.endswith(prefix) and _is_meaningful_truncated_prefix(prefix):
+            return value[: -len(prefix)] + replacement
+    return value
+
+
+def _is_meaningful_truncated_prefix(prefix: str) -> bool:
+    return len(prefix) >= 12 or (
+        prefix.startswith("/")
+        and prefix.endswith("/")
+        and bool(prefix.strip("/"))
     )
 
 

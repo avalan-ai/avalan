@@ -16,6 +16,7 @@ from ...container import (
     ContainerOutputContractType,
     ContainerOutputDecisionType,
     ContainerOutputDiagnosticCode,
+    ContainerOutputMediaPolicy,
     ContainerOutputValidationResult,
     ContainerPlanRequest,
     ContainerPlanRequestKind,
@@ -49,19 +50,24 @@ from .entities import (
     ExecutionResult,
     ExecutionSpec,
     GeneratedFile,
+    GeneratedOutputPlan,
     ShellCommandRequest,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
     ShellOutputKind,
     ShellPolicyDenied,
 )
-from .executor import CommandExecutor, LocalCommandExecutor
+from .executor import (
+    CommandExecutor,
+    LocalCommandExecutor,
+    _status_for_exit_code,
+)
 from .policy import ExecutionPolicy
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from time import perf_counter
 from typing import cast, final
 
@@ -69,6 +75,10 @@ _CONTAINER_OUTPUT_ROOT = "/outputs"
 _DEFAULT_CLEANUP_SECONDS = 5.0
 _MAX_PROGRESS_STREAM_BYTES = 4096
 _MAX_PROGRESS_STREAM_CHUNKS = 16
+
+
+class _ContainerGeneratedOutputError(Exception):
+    pass
 
 
 class ShellExecutionMode(StrEnum):
@@ -509,7 +519,16 @@ class ShellContainerCommandExecutor(CommandExecutor):
             ContainerBackendStream.STDERR,
             spec.max_stderr_bytes,
         )
-        await _emit_container_streams(stream, result, stdout, stderr)
+        generated_output_replacements = _container_generated_replacements(spec)
+        stdout = _scrub_capture(stdout, generated_output_replacements)
+        stderr = _scrub_capture(stderr, generated_output_replacements)
+        await _emit_container_streams(
+            stream,
+            result,
+            stdout,
+            stderr,
+            generated_output_replacements=generated_output_replacements,
+        )
         return _container_result_to_shell_result(
             spec,
             plan,
@@ -572,6 +591,23 @@ def _container_request_from_spec(spec: ExecutionSpec) -> ContainerPlanRequest:
 
 
 def _container_argv(spec: ExecutionSpec) -> tuple[str, ...]:
+    if spec.output_kind is ShellOutputKind.GENERATED_FILES:
+        assert spec.output_plan is not None, "generated outputs require a plan"
+        assert len(spec.argv) == len(
+            spec.display_argv
+        ), "generated output display argv must mirror argv"
+        replacement = PurePosixPath(
+            _CONTAINER_OUTPUT_ROOT,
+            spec.output_plan.prefix_name,
+        ).as_posix()
+        return tuple(
+            (
+                replacement
+                if argv_item == GENERATED_OUTPUT_PREFIX_PLACEHOLDER
+                else display_item
+            )
+            for argv_item, display_item in zip(spec.argv, spec.display_argv)
+        )
     replacement = f"{_CONTAINER_OUTPUT_ROOT}/{spec.command}"
     return tuple(
         replacement if item == GENERATED_OUTPUT_PREFIX_PLACEHOLDER else item
@@ -598,6 +634,11 @@ def _output_contract_from_spec(
         max_bytes=spec.output_plan.max_total_bytes,
         max_files=spec.output_plan.max_files,
         per_file_bytes=spec.output_plan.max_file_bytes,
+        media_policy=ContainerOutputMediaPolicy(
+            allowed_media_types=tuple(
+                sorted(set(spec.output_plan.suffix_media_types.values()))
+            ),
+        ),
     )
 
 
@@ -629,6 +670,8 @@ async def _emit_container_streams(
     result: ContainerManagedLifecycleResult,
     stdout: tuple[str, int, bool],
     stderr: tuple[str, int, bool],
+    *,
+    generated_output_replacements: tuple[tuple[str, str], ...] = (),
 ) -> None:
     if stream is None:
         return
@@ -653,6 +696,10 @@ async def _emit_container_streams(
             metadata = {"backend": "container", "truncated": stderr[2]}
         else:
             content = chunk.content.decode("utf-8", errors="replace")
+            content = _scrub_generated_output_paths(
+                content,
+                generated_output_replacements,
+            )
             metadata = {"backend": "container"}
         await stream(
             ToolExecutionStreamEvent(
@@ -680,7 +727,14 @@ def _container_result_to_shell_result(
     stderr: tuple[str, int, bool],
     start_time: float,
 ) -> ExecutionResult:
-    status, error_code, error_message = _shell_status(result)
+    status, error_code, error_message = _shell_status(spec, result)
+    try:
+        generated_files = _generated_files(spec, result.output)
+    except _ContainerGeneratedOutputError as error:
+        status = ShellExecutionStatus.TOO_LARGE
+        error_code = ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED
+        error_message = str(error) or "container generated output was rejected"
+        generated_files = ()
     return ExecutionResult(
         backend="container",
         tool_name=spec.tool_name,
@@ -695,7 +749,7 @@ def _container_result_to_shell_result(
         stderr=stderr[0],
         stdout_media_type=spec.stdout_media_type,
         output_kind=spec.output_kind,
-        generated_files=_generated_files(result.output),
+        generated_files=generated_files,
         stdout_bytes=stdout[1],
         stderr_bytes=stderr[1],
         stdout_truncated=stdout[2],
@@ -710,6 +764,7 @@ def _container_result_to_shell_result(
 
 
 def _shell_status(
+    spec: ExecutionSpec,
     result: ContainerManagedLifecycleResult,
 ) -> tuple[ShellExecutionStatus, ShellExecutionErrorCode | None, str | None]:
     if result.cancelled_phase is not None:
@@ -739,6 +794,13 @@ def _shell_status(
             "container generated output was rejected",
         )
     if result.execution.exit_code is not None and result.execution.exit_code:
+        status = _status_for_exit_code(result.execution.exit_code, spec)
+        if status is not ShellExecutionStatus.NONZERO_EXIT:
+            return (
+                status,
+                ShellExecutionErrorCode(status.value),
+                _exit_status_message(status),
+            )
         return (
             ShellExecutionStatus.NONZERO_EXIT,
             ShellExecutionErrorCode.NONZERO_EXIT,
@@ -759,6 +821,12 @@ def _shell_status(
     return ShellExecutionStatus.COMPLETED, None, None
 
 
+def _exit_status_message(status: ShellExecutionStatus) -> str:
+    if status is ShellExecutionStatus.COMMAND_UNAVAILABLE:
+        return "command is unavailable"
+    return f"container command exited with {status.value}"
+
+
 def _shell_stream_capture(
     result: ContainerManagedLifecycleResult,
     stream: ContainerBackendStream,
@@ -777,25 +845,153 @@ def _shell_stream_capture(
     )
 
 
+def _scrub_capture(
+    capture: tuple[str, int, bool],
+    replacements: tuple[tuple[str, str], ...],
+) -> tuple[str, int, bool]:
+    content, byte_count, truncated = capture
+    if not replacements:
+        return capture
+    return (
+        _scrub_generated_output_paths(content, replacements),
+        byte_count,
+        truncated,
+    )
+
+
+def _container_generated_replacements(
+    spec: ExecutionSpec,
+) -> tuple[tuple[str, str], ...]:
+    if spec.output_kind is not ShellOutputKind.GENERATED_FILES:
+        return ()
+    assert spec.output_plan is not None, "generated outputs require a plan"
+    runtime_prefix = PurePosixPath(
+        _CONTAINER_OUTPUT_ROOT,
+        spec.output_plan.prefix_name,
+    ).as_posix()
+    replacements = (
+        (runtime_prefix, spec.output_plan.display_prefix),
+        (_CONTAINER_OUTPUT_ROOT, "[generated_output_directory]"),
+    )
+    return tuple(
+        sorted(replacements, key=lambda item: len(item[0]), reverse=True)
+    )
+
+
+def _scrub_generated_output_paths(
+    value: str,
+    replacements: tuple[tuple[str, str], ...],
+) -> str:
+    for source, replacement in replacements:
+        if source:
+            value = value.replace(source, replacement)
+    return value
+
+
 def _generated_files(
+    spec: ExecutionSpec,
     output: ContainerOutputValidationResult | None,
 ) -> tuple[GeneratedFile, ...]:
     if output is None:
         return ()
-    return tuple(_generated_file(artifact) for artifact in output.artifacts)
+    if output.decision is not ContainerOutputDecisionType.ACCEPT:
+        return ()
+    if spec.output_kind is not ShellOutputKind.GENERATED_FILES:
+        return ()
+    assert spec.output_plan is not None, "generated outputs require a plan"
+    total_bytes = 0
+    generated_files: list[GeneratedFile] = []
+    for artifact in output.artifacts:
+        if len(generated_files) >= spec.output_plan.max_files:
+            raise _ContainerGeneratedOutputError(
+                "container generated output file count exceeded limit"
+            )
+        if artifact.size_bytes > spec.output_plan.max_file_bytes:
+            raise _ContainerGeneratedOutputError(
+                "container generated output file exceeded byte limit"
+            )
+        total_bytes += artifact.size_bytes
+        if total_bytes > spec.output_plan.max_total_bytes:
+            raise _ContainerGeneratedOutputError(
+                "container generated output files exceeded total byte limit"
+            )
+        generated_files.append(_generated_file(artifact, spec.output_plan))
+    return tuple(generated_files)
 
 
-def _generated_file(artifact: ContainerOutputArtifact) -> GeneratedFile:
-    suffix = Path(artifact.path).suffix or ".out"
+def _generated_file(
+    artifact: ContainerOutputArtifact,
+    plan: GeneratedOutputPlan,
+) -> GeneratedFile:
+    path = PurePosixPath(artifact.path)
+    if len(path.parts) != 1 or not _matches_generated_output_prefix(
+        path.name,
+        plan.prefix_name,
+    ):
+        raise _ContainerGeneratedOutputError(
+            "container generated output path did not match expected prefix"
+        )
+    suffix = path.suffix
+    if suffix not in plan.allowed_suffixes:
+        raise _ContainerGeneratedOutputError(
+            "container generated output suffix is not allowed"
+        )
+    media_type = plan.suffix_media_types[suffix]
+    if artifact.media_type != media_type:
+        raise _ContainerGeneratedOutputError(
+            "container generated output media type did not match suffix"
+        )
     return GeneratedFile(
-        display_path=artifact.path,
-        media_type=artifact.media_type,
+        display_path=_display_generated_path(path.name, plan),
+        media_type=media_type,
         suffix=suffix,
         bytes=artifact.size_bytes,
         sha256=artifact.digest.removeprefix("sha256:"),
+        page=_generated_page_number(path.name, plan.prefix_name),
         truncated=False,
         metadata={"quarantined": artifact.quarantined},
     )
+
+
+def _display_generated_path(name: str, plan: GeneratedOutputPlan) -> str:
+    return (
+        f"{plan.display_prefix}"
+        f"{_generated_display_suffix(name, plan.prefix_name)}"
+    )
+
+
+def _generated_display_suffix(name: str, prefix: str) -> str:
+    suffix = name[len(prefix) :]
+    path_suffix = PurePosixPath(name).suffix
+    if suffix and suffix == path_suffix:
+        return suffix
+    stem = PurePosixPath(name).stem
+    stem_suffix = stem[len(prefix) :]
+    if (
+        len(stem_suffix) > 1
+        and stem_suffix[0] in ("-", "_")
+        and stem_suffix[1:].isdecimal()
+    ):
+        return suffix
+    raise _ContainerGeneratedOutputError(
+        "container generated output suffix did not match display policy"
+    )
+
+
+def _matches_generated_output_prefix(name: str, prefix: str) -> bool:
+    if name == prefix:
+        return True
+    if not name.startswith(prefix):
+        return False
+    remainder = name[len(prefix) :]
+    return bool(remainder) and remainder[0] in (".", "-", "_")
+
+
+def _generated_page_number(name: str, prefix: str) -> int | None:
+    suffix = PurePosixPath(name).stem[len(prefix) :].lstrip("-_")
+    if not suffix.isdecimal():
+        return None
+    return int(suffix)
 
 
 def _container_metadata(
