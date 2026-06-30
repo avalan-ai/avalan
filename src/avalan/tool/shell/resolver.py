@@ -58,12 +58,18 @@ async def trusted_search_path_executable_lookup(
     return await _which_executable(command.executable_name, search_paths)
 
 
+def _default_executable_lookup() -> ExecutableLookup:
+    return trusted_search_path_executable_lookup
+
+
 @final
 @dataclass(kw_only=True, slots=True)
 class TrustedExecutableResolver:
     executable_paths: Mapping[str, str] = field(default_factory=dict)
     executable_search_paths: Sequence[str] = field(default_factory=tuple)
-    lookup: ExecutableLookup = trusted_search_path_executable_lookup
+    lookup: ExecutableLookup = field(
+        default_factory=_default_executable_lookup,
+    )
     _cache: dict[str, str | None] = field(
         default_factory=dict,
         init=False,

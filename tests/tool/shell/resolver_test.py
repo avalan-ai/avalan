@@ -94,6 +94,16 @@ class TrustedExecutableResolverTest(IsolatedAsyncioTestCase):
             )
         )
 
+    def test_default_resolver_lookup_is_trusted_search_path_lookup(
+        self,
+    ) -> None:
+        resolver = TrustedExecutableResolver()
+
+        self.assertIs(
+            resolver.lookup,
+            trusted_search_path_executable_lookup,
+        )
+
     async def test_default_resolver_uses_trusted_search_paths(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
