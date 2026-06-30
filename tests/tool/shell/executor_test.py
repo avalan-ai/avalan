@@ -17,6 +17,7 @@ from avalan.entities import (
     ToolExecutionStreamKind,
 )
 from avalan.tool.shell.entities import (
+    GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY,
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
     ExecutionResult,
     ExecutionSpec,
@@ -33,7 +34,9 @@ from avalan.tool.shell.executor import (
     _cleanup_output_directory,
     _collect_generated_files,
     _generated_output_path_replacements,
+    _make_directory_tree,
     _matches_generated_output_prefix,
+    _safe_materialized_filename,
 )
 from avalan.tool.shell.filesystem import resolve_policy_path
 from avalan.tool.shell.policy import ExecutionPolicy
@@ -2173,9 +2176,23 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                 "avalan.tool.shell.process.create_subprocess_exec",
                 new=_fake_process_factory(process),
             ):
-                result = await LocalCommandExecutor().execute(spec)
-
-        self.assertIsNone(result.generated_files[0].content_base64)
+                result = await LocalCommandExecutor(
+                    ShellToolSettings(workspace_root=str(root))
+                ).execute(spec)
+                generated = result.generated_files[0]
+                materialized_path = Path(
+                    str(
+                        generated.metadata[
+                            GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY
+                        ]
+                    )
+                )
+                self.assertEqual(materialized_path.read_bytes(), png)
+                self.assertIsNone(generated.content_base64)
+                self.assertTrue(materialized_path.exists())
+                self.assertFalse(
+                    _spawned_output_prefix(process).parent.exists()
+                )
 
     async def test_generated_output_rejects_unsafe_suffix(self) -> None:
         result, output_directory = await _run_generated_output_case(
@@ -2362,7 +2379,12 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         plan = _output_plan(Path("/tmp"))
 
         with self.assertRaises(_GeneratedOutputError):
-            await _collect_generated_files(plan, None, chunk_size=64)
+            await _collect_generated_files(
+                plan,
+                None,
+                chunk_size=64,
+                settings=ShellToolSettings(),
+            )
 
     async def test_generated_output_collection_rejects_prefix_name_mismatch(
         self,
@@ -2374,7 +2396,53 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
                 plan,
                 Path("/tmp/avalan-shell-runtime/other"),
                 chunk_size=64,
+                settings=ShellToolSettings(),
             )
+
+    async def test_generated_output_materialized_directory_tree_edges(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            calls: list[Path] = []
+
+            async def make_directory(path: Path) -> None:
+                calls.append(path)
+                if path == root / "exists":
+                    raise FileExistsError(path)
+                if path == root / "parent" / "child":
+                    raise (
+                        FileNotFoundError(path)
+                        if calls.count(path) == 1
+                        else FileExistsError(path)
+                    )
+
+            with patch(
+                "avalan.tool.shell.executor.make_directory",
+                new=make_directory,
+            ):
+                await _make_directory_tree(root, stop_at=root)
+                await _make_directory_tree(root / "exists", stop_at=root)
+                await _make_directory_tree(
+                    root / "parent" / "child",
+                    stop_at=root,
+                )
+
+            async def fail_directory(path: Path) -> None:
+                raise FileNotFoundError(path)
+
+            with patch(
+                "avalan.tool.shell.executor.make_directory",
+                new=fail_directory,
+            ):
+                with self.assertRaises(FileNotFoundError):
+                    await _make_directory_tree(
+                        root.parent,
+                        stop_at=root,
+                    )
+
+        self.assertEqual(_safe_materialized_filename("..png"), "png")
+        self.assertEqual(_safe_materialized_filename("..."), "generated")
 
     async def test_generated_output_rejects_raster_dimension_cap(self) -> None:
         result, _ = await _run_generated_output_case(

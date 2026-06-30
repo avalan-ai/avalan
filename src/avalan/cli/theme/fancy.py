@@ -18,6 +18,8 @@ from ...cli.theme.stream_presenter import (
     CliStreamPresenterRequest,
     CliStreamRenderableFrame,
     StreamFrameRole,
+    pretty_json_answer_text,
+    stream_terminal_completed,
 )
 from ...cli.theme.tool_projection import (
     projection_details_markup,
@@ -3101,8 +3103,13 @@ class FancyStreamPresenter:
             limit_height=True,
             visible_line_count=fixed_panel_content_lines,
         )
+        answer_text = (
+            pretty_json_answer_text(snapshot.answer_text)
+            if stream_terminal_completed(request)
+            else None
+        ) or snapshot.answer_text
         answer_output = _fancy_wrapped_output(
-            snapshot.answer_text,
+            answer_text,
             max_width=max_width,
             height=display_config.answer_height,
             padding=1,

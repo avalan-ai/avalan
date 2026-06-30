@@ -2,6 +2,7 @@ from ...filesystem import file_digest_and_base64 as _file_digest_and_base64
 from ...filesystem import list_directory as _list_directory
 from ...filesystem import make_directory as _make_directory
 from ...filesystem import make_private_directory as _make_private_directory
+from ...filesystem import read_bytes as _read_bytes
 from ...filesystem import read_bytes_prefix as _read_bytes_prefix
 from ...filesystem import remove_file as _remove_file
 from ...filesystem import remove_tree as _remove_tree
@@ -98,6 +99,11 @@ async def read_signature(
     assert isinstance(path, str | Path), "path must be a string or path"
     _assert_non_negative_int(max_bytes, "max_bytes")
     return await _read_bytes_prefix(path, max_bytes)
+
+
+async def read_bytes(path: str | Path) -> bytes:
+    assert isinstance(path, str | Path), "path must be a string or path"
+    return await _read_bytes(path)
 
 
 def signature_is_binary(signature: bytes) -> bool:

@@ -39,3 +39,12 @@ from .._stream_presenter import (
 from .._stream_presenter import (
     TokenFrameStreamFactory as TokenFrameStreamFactory,
 )
+from .._stream_presenter import (
+    pretty_json_answer_text as pretty_json_answer_text,
+)
+from .._stream_presenter import (
+    stream_terminal_completed as stream_terminal_completed,
+)
+from .._stream_presenter import (
+    structured_answer_started as structured_answer_started,
+)

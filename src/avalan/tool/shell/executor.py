@@ -3,6 +3,7 @@ from ...entities import (
     ToolExecutionStreamKind,
 )
 from .entities import (
+    GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY,
     SHELL_STATUS_ERROR_CODES,
     ExecutionResult,
     ExecutionSpec,
@@ -15,11 +16,18 @@ from .filesystem import (
     file_digest_and_base64,
     inspect_path,
     list_directory,
+    make_directory,
     private_temp_directory,
     probe_image_dimensions,
     remove_file,
     remove_tree,
     resolve_policy_path,
+)
+from .filesystem import (
+    read_bytes as _read_bytes,
+)
+from .filesystem import (
+    write_bytes as _write_bytes,
 )
 from .process import (
     ShellProcessLimiter,
@@ -49,6 +57,7 @@ from pathlib import Path
 from stat import S_IMODE
 from time import perf_counter
 from typing import Protocol
+from uuid import uuid4
 
 
 class CommandExecutor(Protocol):
@@ -389,6 +398,7 @@ class LocalCommandExecutor:
                         spec.output_plan,
                         runtime_output_prefix,
                         self._settings.stream_read_chunk_bytes,
+                        settings=self._settings,
                     )
                 except (OSError, _GeneratedOutputError) as error:
                     status = ShellExecutionStatus.TOO_LARGE
@@ -537,6 +547,8 @@ async def _collect_generated_files(
     plan: GeneratedOutputPlan,
     runtime_output_prefix: Path | None,
     chunk_size: int,
+    *,
+    settings: ShellToolSettings,
 ) -> tuple[GeneratedFile, ...]:
     if runtime_output_prefix is None:
         raise _GeneratedOutputError
@@ -595,9 +607,19 @@ async def _collect_generated_files(
             chunk_size=chunk_size,
             max_inline_bytes=plan.max_inline_bytes,
         )
+        display_path = _display_generated_path(path, prefix_path, plan)
+        generated_metadata: dict[str, object] = {}
+        if content_base64 is None:
+            generated_metadata[
+                GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY
+            ] = await _materialize_generated_output_file(
+                path,
+                display_path,
+                settings,
+            )
         generated_files.append(
             GeneratedFile(
-                display_path=_display_generated_path(path, prefix_path, plan),
+                display_path=display_path,
                 media_type=media_type,
                 suffix=suffix,
                 bytes=metadata.size,
@@ -606,9 +628,49 @@ async def _collect_generated_files(
                 width=width,
                 height=height,
                 content_base64=content_base64,
+                metadata=generated_metadata,
             )
         )
     return tuple(generated_files)
+
+
+async def _materialize_generated_output_file(
+    path: Path,
+    display_path: str,
+    settings: ShellToolSettings,
+) -> str:
+    workspace_root = Path(settings.workspace_root).resolve()
+    materialized_root = workspace_root / settings.materialized_input_files_dir
+    await _make_directory_tree(materialized_root, stop_at=workspace_root)
+    target_dir = materialized_root / uuid4().hex
+    await make_directory(target_dir)
+    target_path = target_dir / _safe_materialized_filename(
+        Path(display_path).name
+    )
+    await _write_bytes(target_path, await _read_bytes(path))
+    return str(target_path.resolve())
+
+
+async def _make_directory_tree(path: Path, *, stop_at: Path) -> None:
+    if path == stop_at:
+        return
+    try:
+        await make_directory(path)
+    except FileNotFoundError:
+        if path.parent == path or not _is_relative_to(path.parent, stop_at):
+            raise
+        await _make_directory_tree(path.parent, stop_at=stop_at)
+        try:
+            await make_directory(path)
+        except FileExistsError:
+            pass
+    except FileExistsError:
+        pass
+
+
+def _safe_materialized_filename(filename: str) -> str:
+    safe = filename.lstrip(".")
+    return safe or "generated"
 
 
 async def _generated_file_dimensions(

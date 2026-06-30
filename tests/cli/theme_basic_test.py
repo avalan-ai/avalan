@@ -417,6 +417,29 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             ["\n", ":robot: ", "Answer."],
         )
 
+    async def test_theme_stream_presenter_does_not_clear_absent_tool_frame(
+        self,
+    ) -> None:
+        theme = BasicTheme(_gettext, _ngettext)
+        config = _stream_config(display_tools=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("Answer.")
+        presenter = theme.stream_presenter(
+            getLogger(__name__),
+            answer_prefix=":robot: ",
+        )
+
+        answer_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_frames(answer_items), [])
+        self.assertEqual(
+            _answer_chunks(answer_items),
+            [":robot: ", "Answer."],
+        )
+
     async def test_requested_tools_and_events_render_compact_frames(
         self,
     ) -> None:
@@ -552,7 +575,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(_frames(items)[0].renderable, "")
 
-    async def test_model_continuation_completion_renders_before_answer(
+    async def test_model_continuation_progress_is_cleared_before_answer(
         self,
     ) -> None:
         config = _stream_config(display_tools=True, display_tools_events=8)
@@ -584,12 +607,154 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIsInstance(items[0], CliStreamRenderableFrame)
-        self.assertIn(
-            "Thought for 1s.",
-            _render_text(cast(CliStreamRenderableFrame, items[0]).renderable),
+        self.assertEqual(
+            cast(CliStreamRenderableFrame, items[0]).renderable,
+            "",
         )
         self.assertEqual(_answer_chunks(items), ["Done.", "\n"])
         self.assertNotIn("Thinking for", _visible_text(items))
+        self.assertNotIn("Thought for", _visible_text(items))
+
+    async def test_json_answer_keeps_tool_history_without_model_progress(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.complete_tool(
+            tool_call_id="call",
+            name="database.query",
+            elapsed_seconds=1.2,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="call",
+            name="database.query",
+            status="result",
+            result={"rows": 8},
+            arguments_count=1,
+            elapsed_seconds=1.2,
+        )
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-1",
+            started_at=1.0,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+
+        builder.finish_model_continuation(
+            model_continuation_id="continuation-1",
+        )
+        builder.append_answer_text('{"items":[{"amount":134}]}')
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        tool_text = _render_text(frames[0].renderable)
+        answer_text = "".join(_answer_chunks(items))
+        self.assertIn("Executed tool database.query", tool_text)
+        self.assertNotIn("Thinking for", tool_text)
+        self.assertNotIn("Thought for", tool_text)
+        self.assertIn('{\n  "items": [', answer_text)
+        self.assertIn('"amount": 134', answer_text)
+
+    async def test_pdf_tooling_lines_do_not_interleave_with_json_answer(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=12)
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        builder.add_tool_result_summary(
+            tool_call_id="pdfinfo",
+            name="pdfinfo",
+            status="result",
+            result="PDF metadata",
+            arguments_count=1,
+            elapsed_seconds=0.06,
+        )
+        first_tools = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        builder.append_answer_text('{"items":[{"matching_signals":["docket')
+        partial_answer = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        builder.add_tool_result_summary(
+            tool_call_id="pdftotext",
+            name="pdftotext",
+            status="result",
+            result="OCR text",
+            arguments_count=1,
+            elapsed_seconds=0.05,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="pdftoppm",
+            name="pdftoppm",
+            status="result",
+            result="GENERATED_PREFIX",
+            arguments_count=1,
+            elapsed_seconds=1.5,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="tesseract",
+            name="tesseract",
+            status="result",
+            result="OCR output",
+            arguments_count=1,
+            elapsed_seconds=0.48,
+        )
+        more_tools = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        builder.append_answer_text('","payor","amount"]}]}')
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        final_answer = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        tool_output = _visible_text(
+            [
+                *first_tools,
+                *partial_answer,
+                *more_tools,
+            ]
+        )
+        answer_output = "".join(_answer_chunks(final_answer))
+        combined_output = tool_output + answer_output
+        self.assertEqual(_answer_chunks(partial_answer), [])
+        self.assertEqual(_answer_chunks(more_tools), [])
+        self.assertIn("Executed tool pdfinfo", tool_output)
+        self.assertIn("Executed tool pdftotext", tool_output)
+        self.assertIn("Executed tool pdftoppm", tool_output)
+        self.assertIn("Executed tool tesseract", tool_output)
+        self.assertNotIn('"docket', tool_output)
+        self.assertNotIn("docket✅", combined_output)
+        self.assertIn('{\n  "items": [', answer_output)
+        self.assertIn('"docket"', answer_output)
+        self.assertIn('"payor"', answer_output)
+        self.assertIn('"amount"', answer_output)
 
     async def test_basic_keeps_event_only_tool_execution_side_events(
         self,
@@ -1798,7 +1963,10 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             ["tools", "events"],
         )
         self.assertEqual(_answer_chunks(answer), ["Answer."])
-        self.assertEqual(_frames(answer), [])
+        self.assertEqual(
+            [(frame.role, frame.renderable) for frame in _frames(answer)],
+            [("tools", "")],
+        )
 
     async def test_display_tools_events_zero_keeps_active_and_clears_stale(
         self,
@@ -2186,7 +2354,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, output)
 
-    async def test_ordinary_json_answer_text_is_visible(self) -> None:
+    async def test_ordinary_json_answer_text_is_pretty_printed(self) -> None:
         config = _stream_config()
         builder = CliStreamSnapshotBuilder(config)
         builder.append_answer_text('{"answer": 25}')
@@ -2201,7 +2369,29 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             _stream_request(config, builder.snapshot()),
         )
 
-        self.assertEqual(_answer_chunks(items), ['{"answer": 25}', "\n"])
+        self.assertEqual(
+            _answer_chunks(items),
+            ['{\n  "answer": 25\n}', "\n"],
+        )
+
+    async def test_invalid_json_answer_text_is_not_pretty_printed(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text('{"answer":')
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(items), ['{"answer":', "\n"])
 
     async def test_incremental_protocol_prefix_is_withheld_and_suppressed(
         self,
@@ -2319,8 +2509,33 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(_answer_chunks(first), ['{"name": "calc"'])
+        self.assertEqual(_answer_chunks(first), [])
         self.assertEqual(_answer_chunks(second), ["Final"])
+
+    async def test_visible_answer_can_replace_previously_emitted_tail(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = _BasicAnswerPresenter()
+
+        builder.append_answer_text('Visible\n{"name": "calc"')
+        first = [
+            item
+            async for item in presenter.present(
+                _stream_request(config, builder.snapshot(), mode="answer")
+            )
+        ]
+        builder.append_answer_text(', "arguments": {}}\nFinal')
+        second = [
+            item
+            async for item in presenter.present(
+                _stream_request(config, builder.snapshot(), mode="answer")
+            )
+        ]
+
+        self.assertEqual(_answer_chunks(first), ['Visible\n{"name": "calc"'])
+        self.assertEqual(_answer_chunks(second), ["Visible\nFinal"])
 
     def test_basic_filter_helper_edge_cases(self) -> None:
         self.assertEqual(

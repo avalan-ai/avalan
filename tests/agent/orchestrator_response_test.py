@@ -5880,6 +5880,9 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                     stdout_media_type="application/json",
                     output_kind=ShellOutputKind.GENERATED_FILES,
                     generated_files=(generated_file,),
+                    metadata={
+                        "generated_output_display_prefix": "GENERATED_PREFIX"
+                    },
                 )
                 return ShellFormattedResult("generated", execution_result)
 
@@ -5914,7 +5917,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             second_call = ToolCall(
                 id="call-2",
                 name="shell.tesseract",
-                arguments={"path": "GENERATED_PREFIX-1.png"},
+                arguments={"path": "GENERATED_PREFIX"},
             )
             agent.return_value = _string_response("done", async_gen=True)
             response = _make_response(
