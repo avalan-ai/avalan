@@ -663,8 +663,10 @@ async def _make_directory_tree(path: Path, *, stop_at: Path) -> None:
         try:
             await make_directory(path)
         except FileExistsError:
+            # Another creator made the directory during the retry.
             pass
     except FileExistsError:
+        # The directory already exists, possibly from a concurrent creator.
         pass
 
 

@@ -18,8 +18,6 @@ from ...cli.theme.stream_presenter import (
     CliStreamPresenterRequest,
     CliStreamRenderableFrame,
     StreamFrameRole,
-    pretty_json_answer_text,
-    stream_terminal_completed,
 )
 from ...cli.theme.tool_projection import (
     projection_details_markup,
@@ -66,6 +64,10 @@ from ..display_snapshot import (
     CliToolExecutionSummarySnapshot,
     CliToolResultSummarySnapshot,
     CliUsageSummarySnapshot,
+)
+from ..stream_presenter import (
+    pretty_json_answer_text,
+    stream_terminal_completed,
 )
 
 from collections.abc import Iterator, Mapping, Sequence

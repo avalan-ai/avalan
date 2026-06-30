@@ -3,6 +3,10 @@ from ...entities import Model, User
 from ...event import EventStats
 from ...tool.display import ToolDisplayProjection
 from ..display_safety import safe_text as _safe_text
+from ..stream_presenter import (
+    pretty_json_answer_text,
+    structured_answer_started,
+)
 from . import Theme
 from . import tool_status_icon as _theme_tool_status_icon
 from . import tool_status_style as _theme_tool_status_style
@@ -13,8 +17,6 @@ from .stream_presenter import (
     CliStreamPresenterRequest,
     CliStreamRenderableFrame,
     StreamFrameRole,
-    pretty_json_answer_text,
-    structured_answer_started,
 )
 from .tool_projection import (
     projection_outcome,
