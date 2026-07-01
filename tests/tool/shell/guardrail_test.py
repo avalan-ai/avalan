@@ -33,6 +33,9 @@ SHELL_COMMANDS = (
     "pdfinfo",
     "pdftotext",
     "pdftoppm",
+    "reportlab",
+    "pdfplumber",
+    "pypdf",
     "tesseract",
 )
 SHELL_EVALUATION_STRINGS = (
@@ -67,6 +70,7 @@ SYNC_FILE_CALLS = {
 }
 DIRECT_IO_ALLOWED_MODULES = {
     SHELL_SOURCE_ROOT / "filesystem.py",
+    SHELL_SOURCE_ROOT / "python_pdf.py",
 }
 DIRECT_SPAWN_ALLOWED_MODULES = {
     SHELL_SOURCE_ROOT / "process.py",
@@ -83,7 +87,8 @@ class ShellGuardrailTest(TestCase):
         command_paths = {
             source_path.stem
             for source_path in COMMAND_SOURCE_ROOT.glob("*.py")
-            if source_path.name not in {"__init__.py", "base.py", "helpers.py"}
+            if source_path.name
+            not in {"__init__.py", "base.py", "helpers.py", "python_pdf.py"}
         }
 
         self.assertEqual(command_paths, set(SHELL_COMMANDS))

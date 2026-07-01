@@ -78,6 +78,9 @@ _CALL_ARGUMENTS: dict[str, dict[str, object]] = {
     "shell.pdfinfo": {"path": "media/small.pdf"},
     "shell.pdftotext": {"path": "media/small.pdf", "last_page": 1},
     "shell.pdftoppm": {"path": "media/small.pdf", "last_page": 1},
+    "shell.reportlab": {"text": "generated", "title": "Generated"},
+    "shell.pdfplumber": {"path": "media/small.pdf", "last_page": 1},
+    "shell.pypdf": {"path": "media/small.pdf"},
     "shell.tesseract": {"path": "ocr/small.pgm", "languages": ["eng"]},
 }
 _EXPECTED_ACTIONS = {
@@ -96,6 +99,9 @@ _EXPECTED_ACTIONS = {
     "shell.pdfinfo": "inspect",
     "shell.pdftotext": "extract",
     "shell.pdftoppm": "rasterize",
+    "shell.reportlab": "create",
+    "shell.pdfplumber": "extract",
+    "shell.pypdf": "inspect",
     "shell.tesseract": "recognize",
 }
 

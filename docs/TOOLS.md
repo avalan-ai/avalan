@@ -78,7 +78,8 @@ Tool-call parsing supports provider-native and text formats:
 
 Built-in tool availability depends on installed extras and configuration.
 Graph, code, and browser tools need their optional dependencies; database
-tools need database settings; MCP and A2A tools are available only when
+tools need database settings; shell media commands need their external
+binaries or Python packages; MCP and A2A tools are available only when
 enabled.
 
 | Toolset | Tools | Use |
@@ -91,7 +92,7 @@ enabled.
 | `memory` | `memory.message.read`, `memory.read`, `memory.list`, `memory.stores` | Retrieve prior messages and permanent memory partitions. |
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `tesseract`, `pipeline` | Read, inspect, search, transform, and compose workspace file operations under policy limits. `shell.pipeline` also requires `allow_pipelines = true`. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline` | Read, inspect, search, transform, and compose workspace file operations under policy limits. `shell.pipeline` also requires `allow_pipelines = true`. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -233,10 +234,14 @@ allow_media_tools = false
 allow_pipelines = false
 ```
 
-Media tools such as `shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`, and
-`shell.tesseract` require `allow_media_tools = true` or the corresponding CLI
-flag. Absolute paths, symlinks, hidden files, and executable search paths are
-also opt-in.
+Media tools such as `shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`,
+`shell.reportlab`, `shell.pdfplumber`, `shell.pypdf`, and `shell.tesseract`
+require `allow_media_tools = true` or the corresponding CLI flag. The Python
+PDF tools resolve a trusted Python executable and report `command_unavailable`
+when the required package cannot be imported. In container mode, the selected
+image must make both `avalan` and the target PDF library importable to that
+Python interpreter. Absolute paths, symlinks, hidden files, and executable
+search paths are also opt-in.
 
 Attached and generated files that need to be exposed to shell tools are
 materialized under `workspace_root / materialized_input_files_dir`. The

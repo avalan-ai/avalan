@@ -13,6 +13,10 @@ from avalan.tool.shell.commands.helpers import (
     _media_path_argument,
     path_matches_sensitive_denylist,
 )
+from avalan.tool.shell.commands.python_pdf import (
+    PYTHON_PDF_RUNNER_MODULE,
+    PYTHON_PDF_UNAVAILABLE_EXIT_CODE,
+)
 from avalan.tool.shell.commands.rg import _rg_policy_deny_globs
 from avalan.tool.shell.commands.wc import build_argv as build_wc_argv
 from avalan.tool.shell.entities import (
@@ -2586,7 +2590,13 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
     async def test_denies_media_command_when_media_tools_disabled(
         self,
     ) -> None:
-        for command in ("pdfinfo", "pdftotext"):
+        for command in (
+            "pdfinfo",
+            "pdftotext",
+            "reportlab",
+            "pdfplumber",
+            "pypdf",
+        ):
             with self.subTest(command=command):
                 await self._assert_denied(
                     _request(tool_name=f"shell.{command}", command=command),
@@ -2693,6 +2703,48 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 paths=(_path("media/small.pdf", kind="pdf_file"),),
             )
         )
+        report = await policy.normalize(
+            _request(
+                tool_name="shell.reportlab",
+                command="reportlab",
+                options={
+                    "text": "Body",
+                    "title": "Policy PDF",
+                    "page_size": "a4",
+                },
+            )
+        )
+        plumber_text = await policy.normalize(
+            _request(
+                tool_name="shell.pdfplumber",
+                command="pdfplumber",
+                options={"first_page": 2, "layout": True},
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
+        plumber_tables = await policy.normalize(
+            _request(
+                tool_name="shell.pdfplumber",
+                command="pdfplumber",
+                options={"mode": "tables", "first_page": 1, "last_page": 1},
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
+        pypdf_metadata = await policy.normalize(
+            _request(
+                tool_name="shell.pypdf",
+                command="pypdf",
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
+        pypdf_text = await policy.normalize(
+            _request(
+                tool_name="shell.pypdf",
+                command="pypdf",
+                options={"mode": "text", "first_page": 2},
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
         ocr = await policy.normalize(
             _request(
                 tool_name="shell.tesseract",
@@ -2789,6 +2841,150 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         self.assertEqual(raster_max.argv[5:7], ("-r", "600"))
         self.assertEqual(raster_max.metadata["dpi"], 600)
         self.assertEqual(
+            report.argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "reportlab",
+                "--page-size",
+                "a4",
+                "--title=Policy PDF",
+                "--text=Body",
+                "--output",
+                GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
+            ),
+        )
+        self.assertEqual(
+            report.display_argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "reportlab",
+                "--page-size",
+                "a4",
+                "--title=Policy PDF",
+                "--text=Body",
+                "--output",
+                "GENERATED_PREFIX.pdf",
+            ),
+        )
+        self.assertEqual(report.executable, "/usr/bin/media")
+        self.assertEqual(report.resource_class, "heavy")
+        self.assertEqual(report.timeout_seconds, 7.0)
+        self.assertEqual(report.stdout_media_type, "application/json")
+        self.assertEqual(report.output_kind, ShellOutputKind.GENERATED_FILES)
+        self.assertIsNotNone(report.output_plan)
+        assert report.output_plan is not None
+        self.assertEqual(report.output_plan.prefix_name, "document")
+        self.assertEqual(report.output_plan.allowed_suffixes, (".pdf",))
+        self.assertEqual(report.metadata["page_size"], "a4")
+        self.assertEqual(
+            report.metadata["generated_output_display_prefix"],
+            "GENERATED_PREFIX",
+        )
+        self.assertEqual(
+            report.metadata["exit_code_statuses"],
+            {PYTHON_PDF_UNAVAILABLE_EXIT_CODE: "command_unavailable"},
+        )
+        self.assertEqual(
+            plumber_text.argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "pdfplumber",
+                "--mode",
+                "text",
+                "--first-page",
+                "2",
+                "--last-page",
+                "2",
+                "--layout",
+                "--",
+                "media/small.pdf",
+            ),
+        )
+        self.assertEqual(plumber_text.display_argv, plumber_text.argv)
+        self.assertEqual(plumber_text.timeout_seconds, 7.0)
+        self.assertEqual(plumber_text.stdout_media_type, "text/plain")
+        self.assertEqual(plumber_text.output_kind, ShellOutputKind.TEXT)
+        self.assertEqual(
+            plumber_text.metadata["page_range"], {"first": 2, "last": 2}
+        )
+        self.assertEqual(
+            plumber_text.metadata["exit_code_statuses"],
+            {PYTHON_PDF_UNAVAILABLE_EXIT_CODE: "command_unavailable"},
+        )
+        self.assertEqual(
+            plumber_tables.argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "pdfplumber",
+                "--mode",
+                "tables",
+                "--first-page",
+                "1",
+                "--last-page",
+                "1",
+                "--",
+                "media/small.pdf",
+            ),
+        )
+        self.assertEqual(plumber_tables.stdout_media_type, "application/json")
+        self.assertEqual(plumber_tables.output_kind, ShellOutputKind.JSON)
+        self.assertEqual(
+            pypdf_metadata.argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "pypdf",
+                "--mode",
+                "metadata",
+                "--",
+                "media/small.pdf",
+            ),
+        )
+        self.assertEqual(pypdf_metadata.stdout_media_type, "application/json")
+        self.assertEqual(pypdf_metadata.output_kind, ShellOutputKind.JSON)
+        self.assertNotIn("page_range", pypdf_metadata.metadata)
+        self.assertEqual(
+            pypdf_text.argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "pypdf",
+                "--mode",
+                "text",
+                "--first-page",
+                "2",
+                "--last-page",
+                "2",
+                "--",
+                "media/small.pdf",
+            ),
+        )
+        self.assertEqual(pypdf_text.stdout_media_type, "text/plain")
+        self.assertEqual(pypdf_text.output_kind, ShellOutputKind.TEXT)
+        self.assertEqual(
+            pypdf_text.metadata["page_range"], {"first": 2, "last": 2}
+        )
+        self.assertEqual(
+            pypdf_text.metadata["exit_code_statuses"],
+            {PYTHON_PDF_UNAVAILABLE_EXIT_CODE: "command_unavailable"},
+        )
+        self.assertEqual(
             ocr.argv,
             (
                 "tesseract",
@@ -2819,7 +3015,65 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 "pdftoppm",
                 "pdftoppm",
                 "pdftoppm",
+                "reportlab",
+                "pdfplumber",
+                "pdfplumber",
+                "pypdf",
+                "pypdf",
                 "tesseract",
+            ),
+        )
+
+    async def test_reportlab_argv_preserves_dash_prefixed_values(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(
+            settings=ShellToolSettings(allow_media_tools=True),
+            resolver=_CountingResolver("/usr/bin/python3"),
+        )
+
+        spec = await policy.normalize(
+            _request(
+                tool_name="shell.reportlab",
+                command="reportlab",
+                options={
+                    "text": "- text starts with a dash",
+                    "title": "--draft title",
+                    "page_size": "letter",
+                },
+            )
+        )
+
+        self.assertEqual(
+            spec.argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "reportlab",
+                "--page-size",
+                "letter",
+                "--title=--draft title",
+                "--text=- text starts with a dash",
+                "--output",
+                GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
+            ),
+        )
+        self.assertEqual(
+            spec.display_argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "reportlab",
+                "--page-size",
+                "letter",
+                "--title=--draft title",
+                "--text=- text starts with a dash",
+                "--output",
+                "GENERATED_PREFIX.pdf",
             ),
         )
 
@@ -4277,6 +4531,26 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 paths=(_path("media/small.pdf", kind="pdf_file"),),
             )
         )
+        pdfplumber_spec = await ExecutionPolicy(
+            settings=settings,
+            resolver=resolver,
+        ).normalize(
+            _request(
+                tool_name="shell.pdfplumber",
+                command="pdfplumber",
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
+        pypdf_spec = await ExecutionPolicy(
+            settings=settings,
+            resolver=resolver,
+        ).normalize(
+            _request(
+                tool_name="shell.pypdf",
+                command="pypdf",
+                paths=(_path("media/small.pdf", kind="pdf_file"),),
+            )
+        )
         image_spec = await ExecutionPolicy(
             settings=settings,
             resolver=resolver,
@@ -4290,11 +4564,31 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(pdf_spec.command, "pdftotext")
         self.assertEqual(pdf_info_spec.command, "pdfinfo")
+        self.assertEqual(pdfplumber_spec.command, "pdfplumber")
+        self.assertEqual(pypdf_spec.command, "pypdf")
         self.assertEqual(image_spec.command, "tesseract")
         await self._assert_denied(
             _request(
                 tool_name="shell.pdftotext",
                 command="pdftotext",
+                paths=(_path("ocr/small.pgm", kind="pdf_file"),),
+            ),
+            ShellExecutionErrorCode.UNSUPPORTED_MEDIA_SIGNATURE,
+            policy=ExecutionPolicy(settings=settings),
+        )
+        await self._assert_denied(
+            _request(
+                tool_name="shell.pdfplumber",
+                command="pdfplumber",
+                paths=(_path("ocr/small.pgm", kind="pdf_file"),),
+            ),
+            ShellExecutionErrorCode.UNSUPPORTED_MEDIA_SIGNATURE,
+            policy=ExecutionPolicy(settings=settings),
+        )
+        await self._assert_denied(
+            _request(
+                tool_name="shell.pypdf",
+                command="pypdf",
                 paths=(_path("ocr/small.pgm", kind="pdf_file"),),
             ),
             ShellExecutionErrorCode.UNSUPPORTED_MEDIA_SIGNATURE,
@@ -4315,6 +4609,23 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             _request(
                 tool_name="shell.pdftotext",
                 command="pdftotext",
+                paths=(
+                    _path("media/oversized-template.pdf", kind="pdf_file"),
+                ),
+            ),
+            ShellExecutionErrorCode.TOO_LARGE,
+            policy=ExecutionPolicy(
+                settings=ShellToolSettings(
+                    workspace_root=str(fixture_root),
+                    allow_media_tools=True,
+                    max_pdf_input_bytes=8,
+                )
+            ),
+        )
+        await self._assert_denied(
+            _request(
+                tool_name="shell.pypdf",
+                command="pypdf",
                 paths=(
                     _path("media/oversized-template.pdf", kind="pdf_file"),
                 ),
@@ -4481,6 +4792,116 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     tool_name="shell.pdftoppm",
                     command="pdftoppm",
                     options={"prefix": "chosen"},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.reportlab",
+                    command="reportlab",
+                    options={"title": "Missing text"},
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.reportlab",
+                    command="reportlab",
+                    options={
+                        "text": "body",
+                        "title": "title",
+                        "page_size": "legal",
+                    },
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.reportlab",
+                    command="reportlab",
+                    options={"text": "body", "title": "title"},
+                    paths=(_path("media/small.pdf", kind="any"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.pdfplumber",
+                    command="pdfplumber",
+                    options={"mode": "images"},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.pdfplumber",
+                    command="pdfplumber",
+                    options={"layout": 1},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.pdfplumber",
+                    command="pdfplumber",
+                    options={"first_page": 1, "last_page": 3},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.PDF_PAGE_CAP_EXCEEDED,
+            ),
+            (
+                _request(
+                    tool_name="shell.pdfplumber",
+                    command="pdfplumber",
+                    options={"output_path": "tables.json"},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.pypdf",
+                    command="pypdf",
+                    options={"mode": "images"},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.pypdf",
+                    command="pypdf",
+                    options={"mode": "metadata", "first_page": 1},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                _request(
+                    tool_name="shell.pypdf",
+                    command="pypdf",
+                    options={"mode": "text", "first_page": 3, "last_page": 2},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.INVALID_PAGE_RANGE,
+            ),
+            (
+                _request(
+                    tool_name="shell.pypdf",
+                    command="pypdf",
+                    options={"mode": "text", "first_page": 1, "last_page": 3},
+                    paths=(_path("media/small.pdf", kind="pdf_file"),),
+                ),
+                ShellExecutionErrorCode.PDF_PAGE_CAP_EXCEEDED,
+            ),
+            (
+                _request(
+                    tool_name="shell.pypdf",
+                    command="pypdf",
+                    options={"password": "secret"},
                     paths=(_path("media/small.pdf", kind="pdf_file"),),
                 ),
                 ShellExecutionErrorCode.INVALID_OPTION,

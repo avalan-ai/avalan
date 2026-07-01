@@ -38,8 +38,11 @@ _REQUEST_ACTIONS = {
     "sed": "select",
     "jq": "transform",
     "pdfinfo": "inspect",
+    "pdfplumber": "extract",
     "pdftotext": "extract",
     "pdftoppm": "rasterize",
+    "pypdf": "inspect",
+    "reportlab": "create",
     "tesseract": "recognize",
 }
 _REQUEST_SUMMARIES = {
@@ -56,8 +59,11 @@ _REQUEST_SUMMARIES = {
     "sed": "Select line ranges or patterns.",
     "jq": "Transform JSON.",
     "pdfinfo": "Inspect PDF metadata.",
+    "pdfplumber": "Extract PDF text or tables.",
     "pdftotext": "Extract PDF text.",
     "pdftoppm": "Rasterize PDF pages.",
+    "pypdf": "Inspect or extract PDF content.",
+    "reportlab": "Create a generated PDF.",
     "tesseract": "Recognize image text.",
 }
 _PATH_TARGET_COMMANDS = frozenset(
@@ -71,8 +77,10 @@ _PATH_TARGET_COMMANDS = frozenset(
         "wc",
         "awk",
         "pdfinfo",
+        "pdfplumber",
         "pdftotext",
         "pdftoppm",
+        "pypdf",
         "tesseract",
     )
 )
@@ -542,6 +550,16 @@ def _request_details(
             _append_option(details, request.options, "dpi")
             _append_option(details, request.options, "grayscale")
             _append_option(details, request.options, "format")
+        case "reportlab":
+            _append_option(details, request.options, "title")
+            _append_option(details, request.options, "page_size")
+        case "pdfplumber":
+            _append_option(details, request.options, "mode")
+            _append_page_range(details, request.options)
+            _append_option(details, request.options, "layout")
+        case "pypdf":
+            _append_option(details, request.options, "mode")
+            _append_page_range(details, request.options)
         case "tesseract":
             _append_option(details, request.options, "languages")
             _append_option(details, request.options, "psm")

@@ -66,6 +66,9 @@ _EXPECTED_SCHEMA_NAMES = (
     "shell.pdfinfo",
     "shell.pdftotext",
     "shell.pdftoppm",
+    "shell.reportlab",
+    "shell.pdfplumber",
+    "shell.pypdf",
     "shell.tesseract",
 )
 _EXPECTED_SCHEMA_NAMES_WITH_PIPELINE = (
@@ -843,6 +846,18 @@ async def _call_pdftoppm(tool: Tool) -> str:
     return await _call_tool(tool, "media/small.pdf", last_page=1, dpi=72)
 
 
+async def _call_reportlab(tool: Tool) -> str:
+    return await _call_tool(tool, "hello", title="Smoke")
+
+
+async def _call_pdfplumber(tool: Tool) -> str:
+    return await _call_tool(tool, "media/small.pdf", last_page=1)
+
+
+async def _call_pypdf(tool: Tool) -> str:
+    return await _call_tool(tool, "media/small.pdf")
+
+
 async def _call_tesseract(tool: Tool) -> str:
     return await _call_tool(tool, "ocr/small.pgm")
 
@@ -867,6 +882,9 @@ _TOOL_CALLS: dict[str, Callable[[Tool], Awaitable[str]]] = {
     "pdfinfo": _call_pdfinfo,
     "pdftotext": _call_pdftotext,
     "pdftoppm": _call_pdftoppm,
+    "reportlab": _call_reportlab,
+    "pdfplumber": _call_pdfplumber,
+    "pypdf": _call_pypdf,
     "tesseract": _call_tesseract,
 }
 

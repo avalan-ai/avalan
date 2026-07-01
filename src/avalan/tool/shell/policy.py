@@ -104,9 +104,12 @@ _COMPOSITION_PATH_KINDS: Mapping[str, ShellPathKind] = {
     "ls": "any",
     "nl": "text_file",
     "pdfinfo": "pdf_file",
+    "pdfplumber": "pdf_file",
     "pdftoppm": "pdf_file",
     "pdftotext": "pdf_file",
+    "pypdf": "pdf_file",
     "rg": "any",
+    "reportlab": "any",
     "sed": "text_file",
     "tail": "text_file",
     "tesseract": "image_file",
@@ -860,7 +863,7 @@ async def _enforce_content_policy(
             )
         case "jq":
             await _enforce_json_inputs(paths, settings=settings)
-        case "pdfinfo" | "pdftotext" | "pdftoppm":
+        case "pdfinfo" | "pdftotext" | "pdftoppm" | "pdfplumber" | "pypdf":
             await _enforce_pdf_inputs(paths, settings=settings)
         case "tesseract":
             await _enforce_image_inputs(paths, settings=settings)
@@ -1150,7 +1153,14 @@ def _timeout_limits(
     command: str,
     settings: ShellToolSettings,
 ) -> tuple[float, float]:
-    if command in ("pdfinfo", "pdftotext", "pdftoppm"):
+    if command in (
+        "pdfinfo",
+        "pdftotext",
+        "pdftoppm",
+        "reportlab",
+        "pdfplumber",
+        "pypdf",
+    ):
         return (
             settings.default_pdf_timeout_seconds,
             settings.max_pdf_timeout_seconds,

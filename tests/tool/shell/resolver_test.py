@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from sys import executable as sys_executable
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main
 
@@ -93,6 +94,16 @@ class TrustedExecutableResolverTest(IsolatedAsyncioTestCase):
             )
         )
 
+    def test_default_resolver_lookup_is_trusted_search_path_lookup(
+        self,
+    ) -> None:
+        resolver = TrustedExecutableResolver()
+
+        self.assertIs(
+            resolver.lookup,
+            trusted_search_path_executable_lookup,
+        )
+
     async def test_default_resolver_uses_trusted_search_paths(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -111,6 +122,89 @@ class TrustedExecutableResolverTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(resolved, str(executable))
         self.assertIsNone(missing)
+
+    async def test_python_pdf_commands_default_to_current_interpreter(
+        self,
+    ) -> None:
+        resolver = TrustedExecutableResolver(
+            executable_search_paths=("/tools",),
+        )
+
+        self.assertEqual(
+            await resolver.resolve_command("pypdf"),
+            sys_executable,
+        )
+        self.assertEqual(
+            await resolver.resolve_command("pdfplumber"),
+            sys_executable,
+        )
+        self.assertEqual(
+            await resolver.resolve_command("reportlab"),
+            sys_executable,
+        )
+
+    async def test_python_pdf_commands_prefer_trusted_python_search_path(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            executable = root / "python3"
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            executable.chmod(0o755)
+            resolver = TrustedExecutableResolver(
+                executable_search_paths=(str(root),),
+            )
+
+            for command_id in ("pypdf", "pdfplumber", "reportlab"):
+                with self.subTest(command_id=command_id):
+                    self.assertEqual(
+                        await resolver.resolve_command(command_id),
+                        str(executable),
+                    )
+
+    async def test_python_pdf_commands_respect_custom_lookup(self) -> None:
+        calls: list[str] = []
+
+        async def lookup(
+            command: ShellCommandDefinition,
+            search_paths: tuple[str, ...],
+        ) -> str | None:
+            calls.append(command.logical_id)
+            return f"/tools/{command.executable_name}"
+
+        resolver = TrustedExecutableResolver(
+            executable_search_paths=("/tools",),
+            lookup=lookup,
+        )
+
+        self.assertEqual(
+            await resolver.resolve_command("pypdf"),
+            "/tools/python3",
+        )
+        self.assertEqual(calls, ["pypdf"])
+
+    async def test_python_pdf_commands_respect_unavailable_lookup(
+        self,
+    ) -> None:
+        resolver = TrustedExecutableResolver(
+            lookup=unavailable_executable_lookup,
+        )
+
+        for command_id in ("pypdf", "pdfplumber", "reportlab"):
+            with self.subTest(command_id=command_id):
+                self.assertIsNone(await resolver.resolve_command(command_id))
+
+    async def test_explicit_python_pdf_path_overrides_current_interpreter(
+        self,
+    ) -> None:
+        resolver = TrustedExecutableResolver(
+            executable_paths={"pypdf": "/usr/local/bin/python3"},
+        )
+
+        self.assertEqual(
+            await resolver.resolve_command("pypdf"),
+            "/usr/local/bin/python3",
+        )
 
     async def test_default_lookup_without_search_paths_reports_unavailable(
         self,
@@ -182,7 +276,11 @@ class TrustedExecutableResolverTest(IsolatedAsyncioTestCase):
 
         self.assertIsNone(await missing_one.resolve_command("rg"))
         for command_id in SHELL_COMMAND_DEFINITIONS:
-            self.assertIsNone(await missing_all.resolve_command(command_id))
+            resolved_path = await missing_all.resolve_command(command_id)
+            if command_id in {"pdfplumber", "pypdf", "reportlab"}:
+                self.assertEqual(resolved_path, sys_executable)
+            else:
+                self.assertIsNone(resolved_path)
         self.assertEqual(await resolved.resolve_command("rg"), "/usr/bin/rg")
 
         self.assertEqual(ShellToolSet().json_schemas(), before)

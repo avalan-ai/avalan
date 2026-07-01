@@ -48,6 +48,8 @@ _EXTENSION_MEDIA_TYPES = {
     ".log": "text/plain",
     ".md": "text/plain",
     ".ndjson": "application/json",
+    ".pdf": "application/pdf",
+    ".png": "image/png",
     ".txt": "text/plain",
 }
 

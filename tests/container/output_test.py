@@ -126,6 +126,32 @@ class ContainerOutputTest(TestCase):
             )
             self.assertEqual(generated.to_dict()["decision"], "accept")
 
+    def test_accepts_pdf_and_png_generated_file_media(self) -> None:
+        with _workspace() as root:
+            _write(root, "document.pdf", b"%PDF-1.4\n")
+            _write(root, "page.png", b"\x89PNG\r\n\x1a\n")
+
+            result = validate_copied_outputs(
+                str(root),
+                ContainerOutputContract(
+                    contract_type=ContainerOutputContractType.GENERATED_FILE,
+                    max_bytes=128,
+                    max_files=2,
+                    media_policy=ContainerOutputMediaPolicy(
+                        allowed_media_types=(
+                            "application/pdf",
+                            "image/png",
+                        ),
+                    ),
+                ),
+            )
+
+        self.assertEqual(result.decision, ContainerOutputDecisionType.ACCEPT)
+        self.assertEqual(
+            [artifact.media_type for artifact in result.artifacts],
+            ["application/pdf", "image/png"],
+        )
+
     def test_archive_accepts_safe_runtime_envelope_artifact(self) -> None:
         contract = _artifact_contract(
             ContainerOutputContractType.RUNTIME_ENVELOPE_ARTIFACT,
@@ -835,6 +861,15 @@ class ContainerOutputTest(TestCase):
                 media_type="text/plain",
                 digest=_digest("escape"),
             )
+        artifact = ContainerOutputArtifact(
+            artifact_type="generated_file",
+            path="artifact.txt",
+            size_bytes=2,
+            media_type="text/plain",
+            digest=f"sha256:{'0' * 64}",
+            content=b"ok",
+        )
+        self.assertEqual(artifact.content, b"ok")
         diagnostic = ContainerOutputDiagnostic(
             code="container.output.too_large",
             path="artifact.txt",

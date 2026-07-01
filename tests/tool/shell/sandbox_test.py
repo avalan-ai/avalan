@@ -56,6 +56,9 @@ from avalan.tool.shell.sandbox import (
 from avalan.tool.shell.sandbox import (
     _generated_files as _sandbox_generated_files,
 )
+from avalan.tool.shell.sandbox import (
+    _scrub_capture as _sandbox_scrub_capture,
+)
 
 
 class ShellSandboxPlanningTest(IsolatedAsyncioTestCase):
@@ -211,31 +214,119 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
     async def test_sandbox_collects_generated_outputs(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
+            runtime_path = (
+                root.resolve() / "outputs" / "shell-output.txt"
+            ).as_posix()
             backend = sandbox_backend_module.SandboxFakeBackend(
                 sandbox_backend_module.SandboxFakeBackendScript(
                     capabilities=_capabilities(),
-                    stream_chunks=(),
+                    stream_chunks=(
+                        sandbox_backend_module.SandboxStreamChunk(
+                            stream=(
+                                sandbox_backend_module.SandboxBackendStream.STDOUT
+                            ),
+                            content=(
+                                f'{{"output": "{runtime_path}"}}\n'.encode()
+                            ),
+                            sequence=0,
+                        ),
+                        sandbox_backend_module.SandboxStreamChunk(
+                            stream=(
+                                sandbox_backend_module.SandboxBackendStream.STDERR
+                            ),
+                            content=f"wrote {runtime_path}\n".encode(),
+                            sequence=1,
+                        ),
+                    ),
                     output_files={"shell-output.txt": b"value"},
                 )
             )
+            events: list[ToolExecutionStreamEvent] = []
+
+            async def record(event: ToolExecutionStreamEvent) -> None:
+                events.append(event)
 
             result = await ShellSandboxCommandExecutor(
                 sandbox_settings=_sandbox_settings(root, output=True),
                 sandbox_backend=backend,
-            ).execute(_direct_generated_spec(root))
+            ).execute(
+                _direct_generated_spec(
+                    root,
+                    display_prefix="GENERATED_PREFIX",
+                ),
+                stream=record,
+            )
 
         self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
         self.assertEqual(result.output_kind, ShellOutputKind.GENERATED_FILES)
         self.assertEqual(len(result.generated_files), 1)
         generated = result.generated_files[0]
-        self.assertEqual(generated.display_path, "shell-output.txt")
+        self.assertEqual(generated.display_path, "GENERATED_PREFIX.txt")
         self.assertEqual(generated.media_type, "text/plain")
         self.assertEqual(generated.bytes, 5)
         self.assertEqual(generated.content_base64, "dmFsdWU=")
+        self.assertIn("GENERATED_PREFIX.txt", result.stdout)
+        self.assertIn("GENERATED_PREFIX.txt", result.stderr)
+        self.assertNotIn(runtime_path, result.stdout)
+        self.assertNotIn(runtime_path, result.stderr)
+        self.assertTrue(events)
+        for event in events:
+            self.assertNotIn(runtime_path, event.content)
         self.assertIn(
             sandbox_backend_module.SandboxBackendOperation.COLLECT_OUTPUTS,
             backend.operations,
         )
+
+    async def test_sandbox_scrubs_truncated_generated_output_path(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime_path = (
+                root.resolve() / "outputs" / "shell-output.txt"
+            ).as_posix()
+            stream_content = f'{{"output": "{runtime_path}"}}\n'.encode()
+            cap = len('{"output": "') + len("GENERATED_PREFIX")
+            backend = sandbox_backend_module.SandboxFakeBackend(
+                sandbox_backend_module.SandboxFakeBackendScript(
+                    capabilities=_capabilities(),
+                    stream_chunks=(
+                        sandbox_backend_module.SandboxStreamChunk(
+                            stream=(
+                                sandbox_backend_module.SandboxBackendStream.STDOUT
+                            ),
+                            content=stream_content,
+                            sequence=0,
+                        ),
+                    ),
+                    output_files={"shell-output.txt": b"value"},
+                )
+            )
+            events: list[ToolExecutionStreamEvent] = []
+
+            async def record(event: ToolExecutionStreamEvent) -> None:
+                events.append(event)
+
+            result = await ShellSandboxCommandExecutor(
+                sandbox_settings=_sandbox_settings(root, output=True),
+                sandbox_backend=backend,
+            ).execute(
+                _direct_generated_spec(
+                    root,
+                    display_prefix="GENERATED_PREFIX",
+                    max_stdout_bytes=cap,
+                ),
+                stream=record,
+            )
+
+        self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
+        self.assertTrue(result.stdout_truncated)
+        self.assertIn("GENERATED_PREFIX", result.stdout)
+        self.assertNotIn(str(root.resolve()), result.stdout)
+        self.assertLessEqual(len(result.stdout.encode()), result.stdout_bytes)
+        self.assertTrue(events)
+        self.assertIn("GENERATED_PREFIX", events[0].content)
+        self.assertNotIn(str(root.resolve()), events[0].content)
 
     async def test_sandbox_stream_caps_are_shell_visible(self) -> None:
         with TemporaryDirectory() as temporary_directory:
@@ -315,6 +406,38 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
                     ShellExecutionStatus.NONZERO_EXIT,
                 ),
                 (
+                    "mapped missing command",
+                    sandbox_backend_module.SandboxFakeBackendScript(
+                        capabilities=_capabilities(),
+                        wait_exit_code=127,
+                    ),
+                    _direct_text_spec(
+                        root,
+                        metadata={
+                            "exit_code_statuses": {
+                                127: "command_unavailable",
+                            }
+                        },
+                    ),
+                    ShellExecutionStatus.COMMAND_UNAVAILABLE,
+                ),
+                (
+                    "mapped timeout status",
+                    sandbox_backend_module.SandboxFakeBackendScript(
+                        capabilities=_capabilities(),
+                        wait_exit_code=42,
+                    ),
+                    _direct_text_spec(
+                        root,
+                        metadata={
+                            "exit_code_statuses": {
+                                42: "timeout",
+                            }
+                        },
+                    ),
+                    ShellExecutionStatus.TIMEOUT,
+                ),
+                (
                     "oversized output",
                     sandbox_backend_module.SandboxFakeBackendScript(
                         capabilities=_capabilities(),
@@ -356,6 +479,24 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
 
                     self.assertEqual(result.backend, "sandbox")
                     self.assertEqual(result.status, expected_status)
+                    if name == "mapped missing command":
+                        self.assertEqual(
+                            result.error_code,
+                            ShellExecutionErrorCode.COMMAND_UNAVAILABLE,
+                        )
+                        self.assertEqual(
+                            result.error_message,
+                            "command is unavailable",
+                        )
+                    if name == "mapped timeout status":
+                        self.assertEqual(
+                            result.error_code,
+                            ShellExecutionErrorCode.TIMEOUT,
+                        )
+                        self.assertEqual(
+                            result.error_message,
+                            "sandbox command exited with timeout",
+                        )
                     if name == "unavailable backend":
                         self.assertEqual(
                             result.metadata["isolation_diagnostic_codes"],
@@ -1092,6 +1233,26 @@ class ShellSandboxValueTest(TestCase):
                 with self.assertRaises(Exception):
                     _sandbox_generated_files(artifacts, output_plan)
 
+    def test_sandbox_scrub_capture_preserves_byte_cap(self) -> None:
+        scrubbed = _sandbox_scrub_capture(
+            ("prefix /private/", len("prefix /private/"), True),
+            (("/private/tmp/generated", "GENERATED_PREFIX"),),
+        )
+
+        self.assertEqual(scrubbed[1], len("prefix /private/"))
+        self.assertTrue(scrubbed[2])
+        self.assertLessEqual(len(scrubbed[0].encode()), scrubbed[1])
+        self.assertNotIn("/private", scrubbed[0])
+
+    def test_sandbox_scrub_capture_leaves_untruncated_prefixes(self) -> None:
+        content = "done /private"
+        scrubbed = _sandbox_scrub_capture(
+            (content, len(content), False),
+            (("/private/tmp/generated", "GENERATED_PREFIX"),),
+        )
+
+        self.assertEqual(scrubbed, (content, len(content), False))
+
     def test_empty_sandbox_diagnostic_summary(self) -> None:
         self.assertEqual(
             _sandbox_diagnostic_summary(()),
@@ -1124,6 +1285,7 @@ def _direct_text_spec(
     timeout_seconds: float = 10,
     max_stdout_bytes: int = 1024,
     max_stderr_bytes: int = 1024,
+    metadata: dict[str, object] | None = None,
 ) -> ExecutionSpec:
     return ExecutionPolicy().create_execution_spec(
         backend="sandbox",
@@ -1143,6 +1305,7 @@ def _direct_text_spec(
         timeout_seconds=timeout_seconds,
         max_stdout_bytes=max_stdout_bytes,
         max_stderr_bytes=max_stderr_bytes,
+        metadata=metadata,
     )
 
 
@@ -1150,6 +1313,9 @@ def _direct_generated_spec(
     root: Path,
     *,
     output_plan: bool = True,
+    display_prefix: str = "shell-output",
+    max_stdout_bytes: int = 1024,
+    max_stderr_bytes: int = 1024,
     allowed_suffixes: tuple[str, ...] = (".txt",),
     suffix_media_types: dict[str, str] | None = None,
     max_files: int = 1,
@@ -1159,6 +1325,7 @@ def _direct_generated_spec(
 ) -> ExecutionSpec:
     plan = (
         _generated_output_plan(
+            display_prefix=display_prefix,
             allowed_suffixes=allowed_suffixes,
             suffix_media_types=suffix_media_types,
             max_files=max_files,
@@ -1185,13 +1352,14 @@ def _direct_generated_spec(
         resource_class="heavy",
         output_plan=plan,
         timeout_seconds=10,
-        max_stdout_bytes=1024,
-        max_stderr_bytes=1024,
+        max_stdout_bytes=max_stdout_bytes,
+        max_stderr_bytes=max_stderr_bytes,
     )
 
 
 def _generated_output_plan(
     *,
+    display_prefix: str = "shell-output",
     allowed_suffixes: tuple[str, ...] = (".txt",),
     suffix_media_types: dict[str, str] | None = None,
     max_files: int = 1,
@@ -1201,7 +1369,7 @@ def _generated_output_plan(
 ) -> GeneratedOutputPlan:
     return GeneratedOutputPlan(
         prefix_name="shell-output",
-        display_prefix="shell-output",
+        display_prefix=display_prefix,
         allowed_suffixes=allowed_suffixes,
         suffix_media_types=suffix_media_types or {".txt": "text/plain"},
         max_files=max_files,

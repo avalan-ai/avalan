@@ -1,6 +1,7 @@
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase, main
 
+from avalan.tool.shell.commands.python_pdf import PYTHON_PDF_RUNNER_MODULE
 from avalan.tool.shell.entities import (
     ExecutionSpec,
     ShellCommandStepRequest,
@@ -159,6 +160,78 @@ class ExecutionCompositionPolicyTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(spec.steps[0].spec.output_kind, ShellOutputKind.JSON)
         self.assertEqual(spec.steps[1].spec.argv, ("jq", "--", "."))
+
+    async def test_serial_normalizes_python_pdf_readers(self) -> None:
+        resolver = _CountingResolver("/usr/bin/python3")
+        policy = ExecutionPolicy(
+            settings=_settings(allow_media_tools=True),
+            resolver=resolver,
+        )
+
+        spec = await policy.normalize_composition(
+            ShellCompositionRequest(
+                mode="serial",
+                steps=(
+                    _step(
+                        "tables",
+                        "pdfplumber",
+                        options={
+                            "mode": "tables",
+                            "first_page": 1,
+                            "last_page": 1,
+                        },
+                        paths=("media/small.pdf",),
+                    ),
+                    _step(
+                        "metadata",
+                        "pypdf",
+                        options={"mode": "metadata"},
+                        paths=("media/small.pdf",),
+                    ),
+                ),
+            )
+        )
+
+        self.assertEqual(spec.mode, "serial")
+        self.assertEqual(resolver.calls, ("pdfplumber", "pypdf"))
+        self.assertEqual(
+            spec.steps[0].spec.argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "pdfplumber",
+                "--mode",
+                "tables",
+                "--first-page",
+                "1",
+                "--last-page",
+                "1",
+                "--",
+                "media/small.pdf",
+            ),
+        )
+        self.assertEqual(
+            spec.steps[1].spec.argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "pypdf",
+                "--mode",
+                "metadata",
+                "--",
+                "media/small.pdf",
+            ),
+        )
+        self.assertEqual(
+            spec.steps[0].spec.stdout_media_type,
+            "application/json",
+        )
+        self.assertEqual(spec.steps[0].spec.output_kind, ShellOutputKind.JSON)
+        self.assertEqual(spec.steps[1].spec.output_kind, ShellOutputKind.JSON)
 
     async def test_parallel_normalizes_independent_steps(self) -> None:
         resolver = _CountingResolver("/usr/bin/tool")
@@ -579,7 +652,20 @@ class ExecutionCompositionPolicyTest(IsolatedAsyncioTestCase):
             ShellExecutionErrorCode.DENIED_COMMAND,
             policy=policy,
         )
-        self.assertEqual(resolver.calls, ("pdftoppm",))
+        await self._assert_denied(
+            ShellCompositionRequest(
+                steps=(
+                    _step(
+                        "create",
+                        "reportlab",
+                        options={"text": "body", "title": "Report"},
+                    ),
+                )
+            ),
+            ShellExecutionErrorCode.DENIED_COMMAND,
+            policy=policy,
+        )
+        self.assertEqual(resolver.calls, ("pdftoppm", "reportlab"))
 
     async def _assert_denied(
         self,
