@@ -1,0 +1,294 @@
+from json import dumps
+from unittest import TestCase, main
+
+from avalan.skill import (
+    PluginProvidedSkillSourceAuthority,
+    SkillCursorLimits,
+    SkillIndexLimits,
+    SkillObservabilitySettings,
+    SkillPrivacySettings,
+    SkillReadLimits,
+    SkillSettingsSurface,
+    SkillSourceAuthorityKind,
+    SkillSourceConfig,
+    SkillSourceLimits,
+    SkillStatus,
+    TrustedSkillSettings,
+    UntrustedSkillSettings,
+    WorkspaceSkillSourceAuthority,
+    merge_skill_settings,
+)
+
+
+class SkillSettingsTest(TestCase):
+    def test_untrusted_settings_narrow_trusted_bounds(self) -> None:
+        workspace_source = SkillSourceConfig(
+            label="workspace-main",
+            authority=WorkspaceSkillSourceAuthority(),
+        )
+        plugin_source = SkillSourceConfig(
+            label="plugin-pdf",
+            authority=PluginProvidedSkillSourceAuthority(
+                plugin_id="pdf-plugin",
+            ),
+        )
+        trusted = TrustedSkillSettings(
+            enabled=True,
+            authority_kinds=(
+                SkillSourceAuthorityKind.WORKSPACE,
+                SkillSourceAuthorityKind.PLUGIN_PROVIDED,
+            ),
+            sources=(workspace_source, plugin_source),
+            allowed_skill_ids=("pdf", "docx"),
+            read_limits=SkillReadLimits(max_bytes_per_read=4096),
+            index_limits=SkillIndexLimits(max_skills=64),
+            source_limits=SkillSourceLimits(max_sources=4),
+            cursor_limits=SkillCursorLimits(max_active_cursors=8),
+            privacy=SkillPrivacySettings(include_authority=True),
+            observability=SkillObservabilitySettings(emit_events=True),
+        )
+        override = UntrustedSkillSettings(
+            surface=SkillSettingsSurface.TASK,
+            authority_kinds=(SkillSourceAuthorityKind.WORKSPACE,),
+            source_labels=("workspace-main",),
+            skill_ids=("pdf",),
+            read_limits=SkillReadLimits(max_bytes_per_read=1024),
+            index_limits=SkillIndexLimits(max_skills=10),
+            source_limits=SkillSourceLimits(max_sources=1),
+            cursor_limits=SkillCursorLimits(max_active_cursors=2),
+            privacy=SkillPrivacySettings(include_authority=False),
+            observability=SkillObservabilitySettings(emit_events=False),
+        )
+
+        result = merge_skill_settings(trusted, override)
+        settings = result.settings
+
+        self.assertEqual(result.status, SkillStatus.OK)
+        self.assertEqual(settings.sources, (workspace_source,))
+        self.assertEqual(
+            settings.authority_kinds,
+            (SkillSourceAuthorityKind.WORKSPACE,),
+        )
+        self.assertEqual(settings.allowed_skill_ids, ("pdf",))
+        self.assertEqual(settings.read_limits.max_bytes_per_read, 1024)
+        self.assertEqual(settings.index_limits.max_skills, 10)
+        self.assertEqual(settings.source_limits.max_sources, 1)
+        self.assertEqual(settings.cursor_limits.max_active_cursors, 2)
+        self.assertFalse(settings.privacy.include_authority)
+        self.assertFalse(settings.observability.emit_events)
+
+        encoded = dumps(settings.as_model_dict(), sort_keys=True)
+        self.assertNotIn("/Users/", encoded)
+        self.assertIn("workspace", encoded)
+
+    def test_merge_without_override_and_untrusted_disable(self) -> None:
+        trusted = TrustedSkillSettings(
+            sources=(
+                SkillSourceConfig(
+                    label="workspace-main",
+                    authority=WorkspaceSkillSourceAuthority(),
+                ),
+            )
+        )
+        unchanged = merge_skill_settings(trusted)
+        disabled = merge_skill_settings(
+            trusted,
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.FLOW,
+                enabled=False,
+            ),
+        )
+
+        self.assertIs(unchanged.settings, trusted)
+        self.assertEqual(unchanged.as_model_dict()["status"], "ok")
+        self.assertFalse(disabled.settings.enabled)
+        self.assertEqual(disabled.status, SkillStatus.OK)
+
+    def test_unrestricted_trusted_skill_ids_can_be_narrowed(self) -> None:
+        trusted = TrustedSkillSettings()
+        result = merge_skill_settings(
+            trusted,
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.AGENT,
+                skill_ids=("pdf",),
+            ),
+        )
+
+        self.assertEqual(result.status, SkillStatus.OK)
+        self.assertEqual(result.settings.allowed_skill_ids, ("pdf",))
+
+    def test_untrusted_widening_returns_policy_diagnostics(self) -> None:
+        workspace_source = SkillSourceConfig(
+            label="workspace-main",
+            authority=WorkspaceSkillSourceAuthority(),
+        )
+        trusted = TrustedSkillSettings(
+            enabled=False,
+            authority_kinds=(SkillSourceAuthorityKind.WORKSPACE,),
+            sources=(workspace_source,),
+            allowed_skill_ids=("pdf",),
+            read_limits=SkillReadLimits(max_bytes_per_read=1024),
+            source_limits=SkillSourceLimits(max_sources=1),
+            privacy=SkillPrivacySettings(include_authority=False),
+            observability=SkillObservabilitySettings(
+                include_byte_counts=False,
+            ),
+        )
+        cases = (
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                enabled=True,
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                authority_kinds=(SkillSourceAuthorityKind.USER_LOCAL,),
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                sources=(
+                    SkillSourceConfig(
+                        label="user-local",
+                        authority=WorkspaceSkillSourceAuthority(),
+                    ),
+                ),
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                read_limits=SkillReadLimits(max_bytes_per_read=2048),
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                skill_ids=("docx",),
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                index_limits=SkillIndexLimits(max_skills=512),
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                source_limits=SkillSourceLimits(max_sources=2),
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                cursor_limits=SkillCursorLimits(max_active_cursors=128),
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                privacy=SkillPrivacySettings(include_authority=True),
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                observability=SkillObservabilitySettings(
+                    include_byte_counts=True,
+                ),
+            ),
+        )
+
+        for override in cases:
+            with self.subTest(override=override):
+                result = merge_skill_settings(trusted, override)
+
+                self.assertEqual(result.status, SkillStatus.POLICY_DENIED)
+                self.assertEqual(
+                    result.diagnostics[0].code.value,
+                    "skills.policy_denied",
+                )
+
+    def test_missing_source_label_is_structured_not_found(self) -> None:
+        trusted = TrustedSkillSettings(
+            sources=(
+                SkillSourceConfig(
+                    label="workspace-main",
+                    authority=WorkspaceSkillSourceAuthority(),
+                ),
+            )
+        )
+        result = merge_skill_settings(
+            trusted,
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.AGENT,
+                source_labels=("missing",),
+            ),
+        )
+
+        self.assertEqual(result.status, SkillStatus.NOT_FOUND)
+        self.assertEqual(result.diagnostics[0].candidates, ("missing",))
+
+    def test_settings_reject_non_ascii_and_invalid_logical_ids(self) -> None:
+        invalid_builders = (
+            lambda: TrustedSkillSettings(allowed_skill_ids=("café",)),
+            lambda: TrustedSkillSettings(allowed_skill_ids=("Bad",)),
+            lambda: TrustedSkillSettings(allowed_skill_ids=("bad label",)),
+            lambda: UntrustedSkillSettings(
+                surface=SkillSettingsSurface.AGENT,
+                source_labels=("café",),
+            ),
+            lambda: UntrustedSkillSettings(
+                surface=SkillSettingsSurface.AGENT,
+                source_labels=("bad label",),
+            ),
+            lambda: UntrustedSkillSettings(
+                surface=SkillSettingsSurface.AGENT,
+                skill_ids=("café",),
+            ),
+            lambda: UntrustedSkillSettings(
+                surface=SkillSettingsSurface.AGENT,
+                skill_ids=("Bad",),
+            ),
+        )
+
+        for invalid_builder in invalid_builders:
+            with self.subTest(invalid_builder=invalid_builder):
+                with self.assertRaises(AssertionError):
+                    invalid_builder()
+
+    def test_settings_reject_invalid_values_and_mutable_collections(
+        self,
+    ) -> None:
+        source = SkillSourceConfig(
+            label="workspace-main",
+            authority=WorkspaceSkillSourceAuthority(),
+        )
+        invalid_builders = (
+            lambda: SkillReadLimits(max_bytes_per_read=0),
+            lambda: SkillIndexLimits(max_skills=0),
+            lambda: SkillSourceLimits(max_sources=0),
+            lambda: SkillCursorLimits(max_active_cursors=0),
+            lambda: SkillPrivacySettings(
+                redact_host_paths="yes"  # type: ignore[arg-type]
+            ),
+            lambda: SkillObservabilitySettings(
+                emit_events="yes"  # type: ignore[arg-type]
+            ),
+            lambda: TrustedSkillSettings(
+                authority_kinds=(SkillSourceAuthorityKind.USER_LOCAL,),
+                sources=(source,),
+            ),
+            lambda: TrustedSkillSettings(
+                sources=[source],  # type: ignore[arg-type]
+            ),
+            lambda: TrustedSkillSettings(
+                authority_kinds=[  # type: ignore[arg-type]
+                    SkillSourceAuthorityKind.WORKSPACE
+                ],
+            ),
+            lambda: UntrustedSkillSettings(
+                surface=SkillSettingsSurface.OPERATOR,
+            ),
+            lambda: UntrustedSkillSettings(
+                surface="task",  # type: ignore[arg-type]
+            ),
+            lambda: UntrustedSkillSettings(
+                surface=SkillSettingsSurface.TASK,
+                source_labels=["workspace-main"],  # type: ignore[arg-type]
+            ),
+        )
+
+        for invalid_builder in invalid_builders:
+            with self.subTest(invalid_builder=invalid_builder):
+                with self.assertRaises(AssertionError):
+                    invalid_builder()
+
+
+if __name__ == "__main__":
+    main()
