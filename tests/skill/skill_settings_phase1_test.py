@@ -1,4 +1,6 @@
 from json import dumps
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 
 from avalan.skill import (
@@ -17,6 +19,7 @@ from avalan.skill import (
     UntrustedSkillSettings,
     WorkspaceSkillSourceAuthority,
     merge_skill_settings,
+    trusted_skill_settings_identity_dict,
 )
 
 
@@ -221,6 +224,37 @@ class SkillSettingsTest(TestCase):
 
         self.assertEqual(result.status, SkillStatus.NOT_FOUND)
         self.assertEqual(result.diagnostics[0].candidates, ("missing",))
+
+    def test_internal_identity_distinguishes_same_label_root_paths(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root_a = Path(directory) / "a"
+            root_b = Path(directory) / "b"
+            source_a = SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path=root_a,
+            )
+            source_b = SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path=root_b,
+            )
+            settings_a = TrustedSkillSettings(sources=(source_a,))
+            settings_b = TrustedSkillSettings(sources=(source_b,))
+
+            identity_a = trusted_skill_settings_identity_dict(settings_a)
+            identity_b = trusted_skill_settings_identity_dict(settings_b)
+
+        self.assertEqual(
+            settings_a.as_model_dict()["sources"],
+            settings_b.as_model_dict()["sources"],
+        )
+        self.assertNotEqual(identity_a, identity_b)
+        encoded = dumps(identity_a, sort_keys=True)
+        self.assertNotIn(str(root_a), encoded)
+        self.assertNotIn(str(root_b), encoded)
 
     def test_settings_reject_non_ascii_and_invalid_logical_ids(self) -> None:
         invalid_builders = (

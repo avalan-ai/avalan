@@ -17,6 +17,15 @@ from ..filesystem import (
     read_text,
 )
 from ..isolation import IsolationDiagnosticCode
+from ..skill import (
+    CANONICAL_SKILLS_TOOL_NAMES,
+    SkillDiagnosticInfo,
+    SkillSettingsSurface,
+    TrustedSkillSettings,
+    UntrustedSkillSettings,
+    merge_skill_settings,
+    parse_untrusted_skill_settings_config,
+)
 from .condition import (
     FlowCondition,
     FlowConditionEvaluationContext,
@@ -38,6 +47,8 @@ from .definition import (
     FlowLoopPolicy,
     FlowMappingKind,
     FlowNodeDefinition,
+    FlowNodeKind,
+    FlowNodeMetadata,
     FlowOutputBehavior,
     FlowOutputBehaviorType,
     FlowOutputDefinition,
@@ -69,6 +80,7 @@ from .graph import (
     flow_graph_diagnostic_load_category,
 )
 from .registry import (
+    FLOW_TOOL_NODE_TYPE,
     FlowNodeConfigurationError,
     FlowNodeRegistry,
     default_flow_node_registry,
@@ -105,6 +117,7 @@ _ALLOWED_TOP_LEVEL_SECTIONS = frozenset(
         "privacy",
         "runtime",
         "runtime_limits",
+        "skills",
         "variables",
     }
 )
@@ -146,6 +159,7 @@ _ALLOWED_NODE_FIELDS = frozenset(
         "ref",
         "retry_policy",
         "runtime",
+        "skills",
         "timeout_policy",
         "type",
         "value",
@@ -362,18 +376,27 @@ class FlowDefinitionLoader:
         registry: FlowNodeRegistry | None = None,
         *,
         encoding: str = DEFAULT_TEXT_ENCODING,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> None:
         assert_text_encoding(encoding)
+        if skills_settings is not None:
+            assert isinstance(skills_settings, TrustedSkillSettings)
         self._registry = registry or default_flow_node_registry()
         self._encoding = encoding
+        self._skills_settings = skills_settings
 
     async def load(
         self,
         path: str | Path,
         *,
         encoding: str | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> FlowDefinition:
-        result = await self.load_result(path, encoding=encoding)
+        result = await self.load_result(
+            path,
+            encoding=encoding,
+            skills_settings=skills_settings,
+        )
         if result.definition is None:
             raise FlowLoadError(result.issues)
         return result.definition
@@ -383,6 +406,7 @@ class FlowDefinitionLoader:
         path: str | Path,
         *,
         encoding: str | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> FlowLoadResult:
         source_path = Path(path)
         text_encoding = self._text_encoding(encoding)
@@ -391,6 +415,7 @@ class FlowDefinitionLoader:
             source,
             source_path=source_path,
             encoding=text_encoding,
+            skills_settings=skills_settings,
         )
 
     async def load_validation_result(
@@ -398,6 +423,7 @@ class FlowDefinitionLoader:
         path: str | Path,
         *,
         encoding: str | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> FlowLoadResult:
         source_path = Path(path)
         text_encoding = self._text_encoding(encoding)
@@ -406,6 +432,7 @@ class FlowDefinitionLoader:
             source,
             source_path=source_path,
             encoding=text_encoding,
+            skills_settings=skills_settings,
         )
 
     async def loads(
@@ -414,11 +441,13 @@ class FlowDefinitionLoader:
         *,
         source_path: str | Path | None = None,
         encoding: str | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> FlowDefinition:
         result = await self.loads_result(
             source,
             source_path=source_path,
             encoding=encoding,
+            skills_settings=skills_settings,
         )
         if result.definition is None:
             raise FlowLoadError(result.issues)
@@ -430,6 +459,7 @@ class FlowDefinitionLoader:
         *,
         source_path: str | Path | None = None,
         encoding: str | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> FlowLoadResult:
         assert isinstance(source, str), "source must be a string"
         text_encoding = self._text_encoding(encoding)
@@ -454,6 +484,7 @@ class FlowDefinitionLoader:
             source_path=source_path,
             build_runtime=True,
             encoding=text_encoding,
+            trusted_skills=skills_settings or self._skills_settings,
         )
 
     async def loads_validation_result(
@@ -462,6 +493,7 @@ class FlowDefinitionLoader:
         *,
         source_path: str | Path | None = None,
         encoding: str | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> FlowLoadResult:
         assert isinstance(source, str), "source must be a string"
         text_encoding = self._text_encoding(encoding)
@@ -486,6 +518,7 @@ class FlowDefinitionLoader:
             source_path=source_path,
             build_runtime=False,
             encoding=text_encoding,
+            trusted_skills=skills_settings or self._skills_settings,
         )
 
     def _text_encoding(self, encoding: str | None) -> str:
@@ -499,16 +532,24 @@ async def load_flow_definition(
     path: str | Path,
     *,
     encoding: str = DEFAULT_TEXT_ENCODING,
+    skills_settings: TrustedSkillSettings | None = None,
 ) -> FlowDefinition:
-    return await FlowDefinitionLoader(encoding=encoding).load(path)
+    return await FlowDefinitionLoader(
+        encoding=encoding,
+        skills_settings=skills_settings,
+    ).load(path)
 
 
 async def load_flow_definition_result(
     path: str | Path,
     *,
     encoding: str = DEFAULT_TEXT_ENCODING,
+    skills_settings: TrustedSkillSettings | None = None,
 ) -> FlowLoadResult:
-    return await FlowDefinitionLoader(encoding=encoding).load_result(path)
+    return await FlowDefinitionLoader(
+        encoding=encoding,
+        skills_settings=skills_settings,
+    ).load_result(path)
 
 
 async def loads_flow_definition(
@@ -516,8 +557,12 @@ async def loads_flow_definition(
     *,
     source_path: str | Path | None = None,
     encoding: str = DEFAULT_TEXT_ENCODING,
+    skills_settings: TrustedSkillSettings | None = None,
 ) -> FlowDefinition:
-    return await FlowDefinitionLoader(encoding=encoding).loads(
+    return await FlowDefinitionLoader(
+        encoding=encoding,
+        skills_settings=skills_settings,
+    ).loads(
         source,
         source_path=source_path,
     )
@@ -528,8 +573,12 @@ async def loads_flow_definition_result(
     *,
     source_path: str | Path | None = None,
     encoding: str = DEFAULT_TEXT_ENCODING,
+    skills_settings: TrustedSkillSettings | None = None,
 ) -> FlowLoadResult:
-    return await FlowDefinitionLoader(encoding=encoding).loads_result(
+    return await FlowDefinitionLoader(
+        encoding=encoding,
+        skills_settings=skills_settings,
+    ).loads_result(
         source,
         source_path=source_path,
     )
@@ -622,6 +671,7 @@ async def _build_result(
     source_path: str | Path | None,
     build_runtime: bool,
     encoding: str,
+    trusted_skills: TrustedSkillSettings | None = None,
 ) -> FlowLoadResult:
     issues: list[FlowLoadIssue] = []
     issues.extend(_container_issues(raw))
@@ -671,6 +721,7 @@ async def _build_result(
         issues,
         required=False,
     )
+    skills_raw = _section(raw, "skills", issues, required=False)
     runtime_raw = _section(raw, "runtime", issues, required=False)
     container_settings, runtime_envelope = _runtime_container(
         runtime_raw,
@@ -727,7 +778,14 @@ async def _build_result(
         if variables_raw is not None
         else {}
     )
-    nodes = _node_definitions(nodes_raw, issues)
+    trusted_skills = _trusted_skills_settings(trusted_skills, registry)
+    skills, skills_config = _flow_skills_settings(
+        skills_raw,
+        trusted_skills,
+        issues,
+    )
+    nodes = _node_definitions(nodes_raw, issues, trusted_skills=skills)
+    _validate_node_skills_support(nodes, registry, issues)
     graph_inspection: FlowGraphInspection | None = None
     definition_base = (
         Path(source_path).parent if source_path is not None else None
@@ -798,6 +856,8 @@ async def _build_result(
         runtime_limits=runtime_limits or {},
         container=container_settings,
         runtime_envelope=runtime_envelope,
+        skills=skills,
+        skills_config=skills_config,
         privacy_policy=privacy_policy or {},
         observability_policy=observability_policy or {},
         tags=tags,
@@ -917,6 +977,7 @@ def _uses_strict_definition(
         "privacy",
         "runtime",
         "runtime_limits",
+        "skills",
     }
     return bool(
         strict_sections.intersection(raw)
@@ -937,10 +998,192 @@ def _nodes_use_strict_definition(value: object) -> bool:
             "mapping",
             "retry_policy",
             "runtime",
+            "skills",
             "timeout_policy",
         }.intersection(raw)
         for raw in value.values()
     )
+
+
+def _flow_skills_settings(
+    raw: RawSection | None,
+    trusted: TrustedSkillSettings | None,
+    issues: list[FlowLoadIssue],
+) -> tuple[TrustedSkillSettings | None, UntrustedSkillSettings | None]:
+    if trusted is not None:
+        assert isinstance(trusted, TrustedSkillSettings)
+    if raw is None:
+        return trusted, None
+    if trusted is None:
+        issues.append(_missing_trusted_skills_issue("skills"))
+        return None, None
+    override = _untrusted_skills_settings(
+        raw,
+        trusted=trusted,
+        surface=SkillSettingsSurface.FLOW,
+        path="skills",
+        issues=issues,
+    )
+    if override is None:
+        return None, None
+    result = merge_skill_settings(trusted, override)
+    issues.extend(
+        _skill_issue(diagnostic, path="skills")
+        for diagnostic in result.diagnostics
+    )
+    if result.diagnostics:
+        return None, override
+    return result.settings, override
+
+
+def _trusted_skills_settings(
+    trusted: TrustedSkillSettings | None,
+    registry: FlowNodeRegistry,
+) -> TrustedSkillSettings | None:
+    if trusted is not None:
+        assert isinstance(trusted, TrustedSkillSettings)
+        return trusted
+    skill_registry = registry.tool_skill_registry(FLOW_TOOL_NODE_TYPE)
+    if skill_registry is None:
+        return None
+    settings = skill_registry.settings
+    if settings is not None:
+        assert isinstance(settings, TrustedSkillSettings)
+    return settings
+
+
+def _node_skills_settings(
+    raw: object,
+    *,
+    trusted: TrustedSkillSettings | None,
+    path: str,
+    issues: list[FlowLoadIssue],
+) -> UntrustedSkillSettings | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        issues.append(_invalid_section_type(path))
+        return None
+    if trusted is None:
+        issues.append(_missing_trusted_skills_issue(path))
+        return None
+    return _untrusted_skills_settings(
+        raw,
+        trusted=trusted,
+        surface=SkillSettingsSurface.FLOW,
+        path=path,
+        issues=issues,
+    )
+
+
+def _untrusted_skills_settings(
+    raw: RawSection,
+    *,
+    trusted: TrustedSkillSettings,
+    surface: SkillSettingsSurface,
+    path: str,
+    issues: list[FlowLoadIssue],
+) -> UntrustedSkillSettings | None:
+    try:
+        return parse_untrusted_skill_settings_config(
+            raw,
+            trusted=trusted,
+            surface=surface,
+            section=path,
+        )
+    except (AssertionError, ValueError) as error:
+        issues.append(
+            _issue(
+                code="flow.invalid_skills_settings",
+                path=path,
+                message="Flow skills settings are invalid.",
+                hint=_assertion_hint(error),
+                category=FlowLoadIssueCategory.VALUE,
+            )
+        )
+        return None
+
+
+def _validate_node_skills_support(
+    nodes: tuple[FlowNodeDefinition, ...],
+    registry: FlowNodeRegistry,
+    issues: list[FlowLoadIssue],
+) -> None:
+    for node in nodes:
+        if node.skills is None:
+            continue
+        metadata = registry.metadata(node.type)
+        if not _node_supports_skills(node, metadata, registry):
+            issues.append(
+                _issue(
+                    code="flow.skills_unsupported_node",
+                    path=f"nodes.{node.name}.skills",
+                    message="Flow node skills settings are not supported.",
+                    hint=(
+                        "Use skills settings only on agent nodes or skills "
+                        "tool nodes."
+                    ),
+                    category=FlowLoadIssueCategory.VALUE,
+                )
+            )
+
+
+def _node_supports_skills(
+    node: FlowNodeDefinition,
+    metadata: object,
+    registry: FlowNodeRegistry,
+) -> bool:
+    if not isinstance(metadata, FlowNodeMetadata):
+        return False
+    if metadata.kind is FlowNodeKind.AGENT:
+        return True
+    if metadata.kind is not FlowNodeKind.TOOL:
+        return False
+    if not registry.supports_tool_resolution(node.type):
+        return False
+    try:
+        descriptor = registry.tool_descriptor(node)
+    except FlowNodeConfigurationError:
+        return False
+    return descriptor.name in CANONICAL_SKILLS_TOOL_NAMES
+
+
+def _missing_trusted_skills_issue(path: str) -> FlowLoadIssue:
+    return _issue(
+        code="flow.skills_trusted_settings_required",
+        path=path,
+        message="Flow skills settings require trusted operator settings.",
+        hint=(
+            "Provide trusted skills defaults from SDK, CLI, or deployment "
+            "configuration before loading the flow."
+        ),
+        category=FlowLoadIssueCategory.VALUE,
+    )
+
+
+def _skill_issue(
+    diagnostic: SkillDiagnosticInfo,
+    *,
+    path: str,
+) -> FlowLoadIssue:
+    assert isinstance(diagnostic, SkillDiagnosticInfo)
+    return _issue(
+        code=diagnostic.code.value,
+        path=_skill_issue_path(diagnostic.path, path=path),
+        message=diagnostic.message,
+        hint=diagnostic.hint,
+        category=FlowLoadIssueCategory.VALUE,
+    )
+
+
+def _skill_issue_path(skill_path: str, *, path: str) -> str:
+    assert isinstance(skill_path, str) and skill_path.strip()
+    suffix = (
+        skill_path[len("settings.") :]
+        if skill_path.startswith("settings.")
+        else skill_path
+    )
+    return f"{path}.{suffix}"
 
 
 def _runtime_container(
@@ -1542,6 +1785,8 @@ def _output_behavior(
 def _node_definitions(
     raw: RawSection,
     issues: list[FlowLoadIssue],
+    *,
+    trusted_skills: TrustedSkillSettings | None,
 ) -> tuple[FlowNodeDefinition, ...]:
     nodes: list[FlowNodeDefinition] = []
     for name, value in raw.items():
@@ -1606,6 +1851,12 @@ def _node_definitions(
             issues,
             path=f"nodes.{name}.runtime",
         )
+        skills = _node_skills_settings(
+            value.get("skills"),
+            trusted=trusted_skills,
+            path=f"nodes.{name}.skills",
+            issues=issues,
+        )
         if node_type is None:
             continue
         config = _node_config(value, issues, path=f"nodes.{name}")
@@ -1621,6 +1872,7 @@ def _node_definitions(
                 timeout_policy=timeout_policy,
                 loop_policy=loop_policy,
                 container=container,
+                skills=skills,
                 mappings=mappings,
                 config=config,
             )
@@ -2619,7 +2871,7 @@ def _issue(
     )
 
 
-def _assertion_hint(error: AssertionError) -> str:
+def _assertion_hint(error: BaseException) -> str:
     text = str(error).strip()
     if text:
         return text

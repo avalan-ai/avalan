@@ -3,6 +3,7 @@ from ..container import (
     ContainerSettings,
     ContainerSettingsOverride,
 )
+from ..skill.settings import TrustedSkillSettings, UntrustedSkillSettings
 from .condition import FlowCondition
 
 from collections.abc import Mapping
@@ -464,6 +465,7 @@ class FlowNodeDefinition:
     timeout_policy: FlowTimeoutPolicy | None = None
     loop_policy: FlowLoopPolicy | None = None
     container: ContainerSettingsOverride | None = None
+    skills: UntrustedSkillSettings | None = None
     mappings: tuple[FlowInputMapping, ...] = ()
     config: FlowMetadata = field(default_factory=_empty_mapping)
 
@@ -486,6 +488,8 @@ class FlowNodeDefinition:
             assert isinstance(self.loop_policy, FlowLoopPolicy)
         if self.container is not None:
             assert isinstance(self.container, ContainerSettingsOverride)
+        if self.skills is not None:
+            assert isinstance(self.skills, UntrustedSkillSettings)
         _assert_mapping_tuple(self.mappings, "mappings")
         object.__setattr__(self, "config", _freeze_mapping(self.config))
 
@@ -535,6 +539,8 @@ class FlowDefinition:
     runtime_limits: FlowMetadata = field(default_factory=_empty_mapping)
     container: ContainerSettings | None = None
     runtime_envelope: FlowRuntimeEnvelopeDefinition | None = None
+    skills: TrustedSkillSettings | None = None
+    skills_config: UntrustedSkillSettings | None = None
     privacy_policy: FlowMetadata = field(default_factory=_empty_mapping)
     observability_policy: FlowMetadata = field(default_factory=_empty_mapping)
     tags: tuple[str, ...] = ()
@@ -579,6 +585,10 @@ class FlowDefinition:
                 self.runtime_envelope,
                 FlowRuntimeEnvelopeDefinition,
             )
+        if self.skills is not None:
+            assert isinstance(self.skills, TrustedSkillSettings)
+        if self.skills_config is not None:
+            assert isinstance(self.skills_config, UntrustedSkillSettings)
         object.__setattr__(
             self, "privacy_policy", _freeze_mapping(self.privacy_policy)
         )
@@ -614,9 +624,13 @@ class FlowDefinition:
             or self.runtime_limits
             or self.container is not None
             or self.runtime_envelope is not None
+            or self.skills_config is not None
             or self.privacy_policy
             or self.observability_policy
             or self.tags
             or self.ownership
-            or any(node.container is not None for node in self.nodes)
+            or any(
+                node.container is not None or node.skills is not None
+                for node in self.nodes
+            )
         )

@@ -491,6 +491,61 @@ class SkillResolverPhase2Test(IsolatedAsyncioTestCase):
                 "source.authority",
             )
 
+    async def test_explicit_empty_trusted_sources_deny_all_configs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.mkdir(exist_ok=True)
+
+            result = await resolve_skill_sources(
+                (_config("workspace-main", root),),
+                settings=TrustedSkillSettings(
+                    sources=(),
+                    sources_explicit=True,
+                ),
+                file_system=FailOnAccessFileSystem(),
+            )
+
+        self.assertEqual(result.status, SkillStatus.POLICY_DENIED)
+        self.assertEqual(result.diagnostics[0].path, "source.label")
+        self.assertIn("untrusted_label", _reasons(result))
+
+    async def test_resolved_source_root_must_match_trusted_identity(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            trusted_root = base / "trusted"
+            configured_root = base / "configured"
+            trusted_root.mkdir()
+            configured_root.mkdir()
+
+            result = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        root_path=configured_root,
+                    ),
+                ),
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="workspace-main",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            root_path=trusted_root,
+                        ),
+                    ),
+                ),
+            )
+
+        self.assertEqual(result.status, SkillStatus.POLICY_DENIED)
+        self.assertEqual(result.diagnostics[0].path, "source.identity")
+        self.assertIn("untrusted_source_identity", _reasons(result))
+        self.assertNotIn(str(trusted_root), str(result.as_model_dict()))
+        self.assertNotIn(str(configured_root), str(result.as_model_dict()))
+
     async def test_trusted_source_authority_identity_must_match(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

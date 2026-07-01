@@ -2,14 +2,24 @@ from .contract import SkillDiagnosticCode, SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
     SkillModelValue,
+    SkillSourceAuthority,
     SkillSourceAuthorityKind,
     SkillSourceConfig,
     model_dict,
 )
 
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
+from hashlib import sha256
+from json import dumps
+from pathlib import Path, PurePosixPath
 from re import fullmatch
+from types import MappingProxyType
+from typing import cast
+
+SKILL_SETTINGS_POLICY_VERSION = "skills.settings.phase9"
+_ROOT_EXPLICIT_FIELDS = "__root__"
 
 
 class SkillSettingsSurface(StrEnum):
@@ -242,6 +252,7 @@ class TrustedSkillSettings:
         SkillSourceAuthorityKind.PREINSTALLED_REMOTE,
     )
     sources: tuple[SkillSourceConfig, ...] = ()
+    sources_explicit: bool = False
     allowed_skill_ids: tuple[str, ...] = ()
     read_limits: SkillReadLimits = field(default_factory=SkillReadLimits)
     index_limits: SkillIndexLimits = field(default_factory=SkillIndexLimits)
@@ -257,6 +268,12 @@ class TrustedSkillSettings:
         _assert_bool(self.bootstrap_enabled, "bootstrap_enabled")
         _assert_authority_kind_tuple(self.authority_kinds)
         _assert_source_tuple(self.sources)
+        _assert_bool(self.sources_explicit, "sources_explicit")
+        object.__setattr__(
+            self,
+            "sources_explicit",
+            bool(self.sources_explicit or self.sources),
+        )
         _assert_unique_source_labels(self.sources)
         for source in self.sources:
             assert (
@@ -308,6 +325,9 @@ class UntrustedSkillSettings:
     privacy: SkillPrivacySettings | None = None
     observability: SkillObservabilitySettings | None = None
     sources: tuple[SkillSourceConfig, ...] = ()
+    explicit_fields: Mapping[str, tuple[str, ...]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def __post_init__(self) -> None:
         assert isinstance(self.surface, SkillSettingsSurface)
@@ -329,6 +349,12 @@ class UntrustedSkillSettings:
             assert isinstance(self.observability, SkillObservabilitySettings)
         _assert_source_tuple(self.sources)
         _assert_unique_source_labels(self.sources)
+        _assert_explicit_fields(self.explicit_fields)
+        object.__setattr__(
+            self,
+            "explicit_fields",
+            MappingProxyType(dict(self.explicit_fields)),
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -460,6 +486,502 @@ def merge_skill_settings(
     )
 
 
+def parse_untrusted_skill_settings_config(
+    skills_config: Mapping[str, object],
+    *,
+    trusted: TrustedSkillSettings,
+    surface: SkillSettingsSurface,
+    section: str,
+) -> UntrustedSkillSettings:
+    assert isinstance(
+        skills_config, Mapping
+    ), f"{section} section must be a mapping"
+    assert isinstance(trusted, TrustedSkillSettings)
+    assert isinstance(surface, SkillSettingsSurface)
+    assert surface is not SkillSettingsSurface.OPERATOR
+    assert isinstance(section, str) and section.strip()
+    supported_keys = {
+        "enabled",
+        "bootstrap",
+        "authority_kinds",
+        "source_labels",
+        "skill_ids",
+        "read_limits",
+        "index_limits",
+        "source_limits",
+        "cursor_limits",
+        "privacy",
+        "observability",
+    }
+    assert "source" not in skills_config, (
+        f"{section} cannot define sources; configure trusted sources through "
+        "operator settings"
+    )
+    assert "sources" not in skills_config, (
+        f"{section} cannot define sources; configure trusted sources through "
+        "operator settings"
+    )
+    unknown_keys = sorted(set(skills_config) - supported_keys)
+    assert not unknown_keys, f"{section} has unknown keys"
+
+    enabled_value = skills_config.get("enabled")
+    assert enabled_value is None or isinstance(
+        enabled_value, bool
+    ), f"{section}.enabled must be a boolean"
+    bootstrap_enabled = _settings_bootstrap_enabled(
+        skills_config.get("bootstrap"),
+        section=section,
+    )
+    explicit_fields = _settings_explicit_fields(skills_config)
+
+    return UntrustedSkillSettings(
+        surface=surface,
+        enabled=enabled_value,
+        bootstrap_enabled=bootstrap_enabled,
+        authority_kinds=_settings_authority_kinds(
+            skills_config.get("authority_kinds"),
+            section=section,
+        ),
+        source_labels=_settings_string_tuple(
+            skills_config.get("source_labels"),
+            f"{section}.source_labels",
+        ),
+        skill_ids=_settings_string_tuple(
+            skills_config.get("skill_ids"),
+            f"{section}.skill_ids",
+        ),
+        read_limits=cast(
+            SkillReadLimits | None,
+            _settings_limit(
+                skills_config.get("read_limits"),
+                settings_cls=SkillReadLimits,
+                supported_keys={
+                    "max_bytes_per_read",
+                    "max_lines_per_read",
+                },
+                section=f"{section}.read_limits",
+                base=trusted.read_limits,
+            ),
+        ),
+        index_limits=cast(
+            SkillIndexLimits | None,
+            _settings_limit(
+                skills_config.get("index_limits"),
+                settings_cls=SkillIndexLimits,
+                supported_keys={
+                    "max_skills",
+                    "max_resources_per_skill",
+                    "max_indexed_bytes",
+                },
+                section=f"{section}.index_limits",
+                base=trusted.index_limits,
+            ),
+        ),
+        source_limits=cast(
+            SkillSourceLimits | None,
+            _settings_limit(
+                skills_config.get("source_limits"),
+                settings_cls=SkillSourceLimits,
+                supported_keys={
+                    "max_sources",
+                    "max_resources_per_source",
+                    "max_source_depth",
+                    "max_files_per_source",
+                    "max_directory_entries_per_source",
+                },
+                section=f"{section}.source_limits",
+                base=trusted.source_limits,
+            ),
+        ),
+        cursor_limits=cast(
+            SkillCursorLimits | None,
+            _settings_limit(
+                skills_config.get("cursor_limits"),
+                settings_cls=SkillCursorLimits,
+                supported_keys={
+                    "max_active_cursors",
+                    "max_cursor_age_seconds",
+                },
+                section=f"{section}.cursor_limits",
+                base=trusted.cursor_limits,
+            ),
+        ),
+        privacy=cast(
+            SkillPrivacySettings | None,
+            _settings_limit(
+                skills_config.get("privacy"),
+                settings_cls=SkillPrivacySettings,
+                supported_keys={
+                    "include_source_labels",
+                    "include_authority",
+                    "include_diagnostic_paths",
+                    "redact_host_paths",
+                },
+                section=f"{section}.privacy",
+                base=trusted.privacy,
+            ),
+        ),
+        observability=cast(
+            SkillObservabilitySettings | None,
+            _settings_limit(
+                skills_config.get("observability"),
+                settings_cls=SkillObservabilitySettings,
+                supported_keys={
+                    "enabled",
+                    "emit_events",
+                    "include_diagnostics",
+                    "include_byte_counts",
+                },
+                section=f"{section}.observability",
+                base=trusted.observability,
+            ),
+        ),
+        explicit_fields=explicit_fields,
+    )
+
+
+def untrusted_skill_settings_config_dict(
+    settings: UntrustedSkillSettings,
+) -> dict[str, SkillModelValue]:
+    assert isinstance(settings, UntrustedSkillSettings)
+    value: dict[str, object] = {}
+    root_fields = settings.explicit_fields.get(_ROOT_EXPLICIT_FIELDS)
+    if settings.enabled is not None and (
+        settings.enabled is False or _field_explicit(root_fields, "enabled")
+    ):
+        value["enabled"] = settings.enabled
+    if settings.bootstrap_enabled is not None and (
+        settings.bootstrap_enabled is False
+        or _field_explicit(root_fields, "bootstrap")
+    ):
+        value["bootstrap"] = "auto" if settings.bootstrap_enabled else "off"
+    if settings.authority_kinds or _field_explicit(
+        root_fields, "authority_kinds"
+    ):
+        value["authority_kinds"] = tuple(
+            authority.value for authority in settings.authority_kinds
+        )
+    if settings.source_labels or _field_explicit(root_fields, "source_labels"):
+        value["source_labels"] = settings.source_labels
+    if settings.skill_ids or _field_explicit(root_fields, "skill_ids"):
+        value["skill_ids"] = settings.skill_ids
+    if settings.read_limits is not None:
+        value["read_limits"] = _explicit_model_dict(
+            settings.read_limits.as_model_dict(),
+            settings.explicit_fields.get("read_limits"),
+        )
+    if settings.index_limits is not None:
+        value["index_limits"] = _explicit_model_dict(
+            settings.index_limits.as_model_dict(),
+            settings.explicit_fields.get("index_limits"),
+        )
+    if settings.source_limits is not None:
+        value["source_limits"] = _explicit_model_dict(
+            settings.source_limits.as_model_dict(),
+            settings.explicit_fields.get("source_limits"),
+        )
+    if settings.cursor_limits is not None:
+        value["cursor_limits"] = _explicit_model_dict(
+            settings.cursor_limits.as_model_dict(),
+            settings.explicit_fields.get("cursor_limits"),
+        )
+    if settings.privacy is not None:
+        value["privacy"] = _explicit_model_dict(
+            settings.privacy.as_model_dict(),
+            settings.explicit_fields.get("privacy"),
+        )
+    if settings.observability is not None:
+        value["observability"] = _explicit_model_dict(
+            settings.observability.as_model_dict(),
+            settings.explicit_fields.get("observability"),
+        )
+    return model_dict(value)
+
+
+def trusted_skill_settings_identity_dict(
+    settings: TrustedSkillSettings,
+) -> dict[str, SkillModelValue]:
+    assert isinstance(settings, TrustedSkillSettings)
+    return model_dict(
+        {
+            "enabled": settings.enabled,
+            "bootstrap_enabled": settings.bootstrap_enabled,
+            "authority_kinds": tuple(
+                authority.value for authority in settings.authority_kinds
+            ),
+            "source_labels": tuple(
+                source.label for source in settings.sources
+            ),
+            "sources": tuple(
+                trusted_skill_source_identity_dict(source)
+                for source in settings.sources
+            ),
+            "sources_explicit": settings.sources_explicit,
+            "allowed_skill_ids": settings.allowed_skill_ids,
+            "read_limits": settings.read_limits.as_model_dict(),
+            "index_limits": settings.index_limits.as_model_dict(),
+            "source_limits": settings.source_limits.as_model_dict(),
+            "cursor_limits": settings.cursor_limits.as_model_dict(),
+            "privacy": settings.privacy.as_model_dict(),
+            "observability": settings.observability.as_model_dict(),
+        }
+    )
+
+
+def trusted_skill_settings_fingerprint(
+    settings: TrustedSkillSettings,
+) -> str:
+    assert isinstance(settings, TrustedSkillSettings)
+    return _settings_fingerprint(
+        trusted_skill_settings_identity_dict(settings)
+    )
+
+
+def trusted_skill_source_fingerprint(
+    settings: TrustedSkillSettings,
+) -> str:
+    assert isinstance(settings, TrustedSkillSettings)
+    return _settings_fingerprint(
+        model_dict(
+            {
+                "authority_kinds": tuple(
+                    authority.value for authority in settings.authority_kinds
+                ),
+                "sources": tuple(
+                    trusted_skill_source_identity_dict(source)
+                    for source in settings.sources
+                ),
+                "sources_explicit": settings.sources_explicit,
+                "allowed_skill_ids": settings.allowed_skill_ids,
+                "source_limits": settings.source_limits.as_model_dict(),
+            }
+        )
+    )
+
+
+def trusted_skill_source_identity_dict(
+    source: SkillSourceConfig,
+) -> dict[str, SkillModelValue]:
+    assert isinstance(source, SkillSourceConfig)
+    return skill_source_identity_dict(
+        label=source.label,
+        authority=source.authority,
+        root_path=source.root_path,
+        package_path=source.package_path,
+        enabled=source.enabled,
+        allow_hidden_paths=source.allow_hidden_paths,
+        status=source.status,
+    )
+
+
+def skill_source_identity_dict(
+    *,
+    label: str,
+    authority: SkillSourceAuthority,
+    root_path: str | Path | None = None,
+    package_path: str | None = None,
+    enabled: bool = True,
+    allow_hidden_paths: bool = False,
+    status: SkillStatus = SkillStatus.OK,
+) -> dict[str, SkillModelValue]:
+    assert isinstance(label, str) and label.strip()
+    assert isinstance(authority, SkillSourceAuthority)
+    assert isinstance(enabled, bool)
+    assert isinstance(allow_hidden_paths, bool)
+    assert isinstance(status, SkillStatus)
+    value: dict[str, object] = {
+        "label": label,
+        "authority": authority.as_model_dict(),
+        "enabled": enabled,
+        "allow_hidden_paths": allow_hidden_paths,
+        "status": status.value,
+    }
+    if root_path is not None:
+        value["effective_root_sha256"] = _identity_digest(
+            _normalized_effective_root_path(root_path, package_path)
+        )
+    elif package_path is not None:
+        value["package_path_sha256"] = _identity_digest(
+            _normalized_package_path(package_path)
+        )
+    return model_dict(value)
+
+
+def _settings_bootstrap_enabled(
+    value: object,
+    *,
+    section: str,
+) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    assert isinstance(value, str), f"{section}.bootstrap must be a string"
+    assert value in {
+        "auto",
+        "off",
+    }, f"{section}.bootstrap must be auto or off"
+    return value == "auto"
+
+
+def _settings_authority_kinds(
+    value: object,
+    *,
+    section: str,
+) -> tuple[SkillSourceAuthorityKind, ...]:
+    if value is None:
+        return ()
+    assert isinstance(
+        value,
+        list,
+    ), f"{section}.authority_kinds must be a list"
+    kinds: list[SkillSourceAuthorityKind] = []
+    for item in value:
+        assert isinstance(
+            item,
+            str,
+        ), f"{section}.authority_kinds entries must be strings"
+        assert item in {
+            authority.value for authority in SkillSourceAuthorityKind
+        }, f"{section}.authority_kinds entries must be valid authorities"
+        kinds.append(SkillSourceAuthorityKind(item))
+    return tuple(kinds)
+
+
+def _settings_string_tuple(
+    value: object,
+    section: str,
+) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    assert isinstance(value, list), f"{section} must be a list"
+    values: list[str] = []
+    for item in value:
+        assert isinstance(item, str), f"{section} entries must be strings"
+        values.append(item)
+    return tuple(values)
+
+
+def _settings_limit(
+    value: object,
+    *,
+    settings_cls: (
+        type[SkillReadLimits]
+        | type[SkillIndexLimits]
+        | type[SkillSourceLimits]
+        | type[SkillCursorLimits]
+        | type[SkillPrivacySettings]
+        | type[SkillObservabilitySettings]
+    ),
+    supported_keys: set[str],
+    section: str,
+    base: (
+        SkillReadLimits
+        | SkillIndexLimits
+        | SkillSourceLimits
+        | SkillCursorLimits
+        | SkillPrivacySettings
+        | SkillObservabilitySettings
+        | None
+    ) = None,
+) -> (
+    SkillReadLimits
+    | SkillIndexLimits
+    | SkillSourceLimits
+    | SkillCursorLimits
+    | SkillPrivacySettings
+    | SkillObservabilitySettings
+    | None
+):
+    if value is None:
+        return None
+    assert isinstance(value, Mapping), f"{section} must be a mapping"
+    unknown_keys = sorted(set(value) - supported_keys)
+    assert not unknown_keys, f"{section} has unknown keys"
+    values = dict(value)
+    if base is not None:
+        assert isinstance(base, settings_cls)
+        inherited = {
+            field.name: getattr(base, field.name) for field in fields(base)
+        }
+        inherited.update(values)
+        values = inherited
+    return settings_cls(**values)
+
+
+def _settings_explicit_fields(
+    skills_config: Mapping[str, object],
+) -> Mapping[str, tuple[str, ...]]:
+    nested_sections = (
+        "read_limits",
+        "index_limits",
+        "source_limits",
+        "cursor_limits",
+        "privacy",
+        "observability",
+    )
+    fields_by_section: dict[str, tuple[str, ...]] = {
+        _ROOT_EXPLICIT_FIELDS: tuple(
+            str(key) for key in skills_config if key not in nested_sections
+        )
+    }
+    for section in nested_sections:
+        value = skills_config.get(section)
+        if isinstance(value, Mapping):
+            fields_by_section[section] = tuple(str(key) for key in value)
+    return MappingProxyType(fields_by_section)
+
+
+def _explicit_model_dict(
+    value: dict[str, SkillModelValue],
+    fields: tuple[str, ...] | None,
+) -> dict[str, SkillModelValue]:
+    if fields is None:
+        return value
+    return model_dict(
+        {field: value[field] for field in fields if field in value}
+    )
+
+
+def _field_explicit(fields: tuple[str, ...] | None, field_name: str) -> bool:
+    return fields is not None and field_name in fields
+
+
+def _settings_fingerprint(value: Mapping[str, object]) -> str:
+    canonical = dumps(
+        model_dict(value),
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _identity_digest(value: str) -> str:
+    assert isinstance(value, str)
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _normalized_root_path(value: str | Path) -> str:
+    assert isinstance(value, str | Path)
+    return str(Path(value).expanduser().resolve(strict=False))
+
+
+def _normalized_effective_root_path(
+    root_path: str | Path,
+    package_path: str | None,
+) -> str:
+    root = Path(root_path).expanduser()
+    if package_path is not None and package_path != ".":
+        root = root.joinpath(*PurePosixPath(package_path).parts)
+    return str(root.resolve(strict=False))
+
+
+def _normalized_package_path(value: str) -> str:
+    assert isinstance(value, str) and value.strip()
+    return value.strip().replace("\\", "/")
+
+
 def _filter_sources(
     sources: tuple[SkillSourceConfig, ...],
     labels: tuple[str, ...],
@@ -588,6 +1110,17 @@ def _assert_logical_id(value: str, field_name: str) -> None:
 def _assert_optional_limit(value: object, expected_type: type[object]) -> None:
     if value is not None:
         assert isinstance(value, expected_type)
+
+
+def _assert_explicit_fields(
+    value: Mapping[str, tuple[str, ...]],
+) -> None:
+    assert isinstance(value, Mapping)
+    for section, section_fields in value.items():
+        assert isinstance(section, str) and section.strip()
+        assert isinstance(section_fields, tuple)
+        for field_name in section_fields:
+            assert isinstance(field_name, str) and field_name.strip()
 
 
 def _assert_diagnostic_tuple(values: tuple[SkillDiagnosticInfo, ...]) -> None:

@@ -1,4 +1,8 @@
 from ..container import ContainerSettings, ContainerSettingsOverride
+from ..skill import (
+    UntrustedSkillSettings,
+    untrusted_skill_settings_config_dict,
+)
 from .condition import FlowCondition
 from .definition import (
     FlowDefinition,
@@ -112,6 +116,8 @@ def _write_flow_definition(
             definition.container,
             definition.runtime_envelope,
         )
+    if definition.skills_config is not None:
+        _write_skills_config(writer, ("skills",), definition.skills_config)
     for node in definition.nodes:
         _write_node_definition(writer, node)
     for edge in definition.edges:
@@ -216,6 +222,10 @@ def _write_node_definition(
         _write_loop_policy(writer, node.name, node.loop_policy)
     if node.container is not None:
         _write_node_container(writer, node.name, node.container)
+    if node.skills is not None:
+        _write_skills_config(
+            writer, ("nodes", node.name, "skills"), node.skills
+        )
     for mapping in node.mappings:
         _write_node_mapping(writer, node.name, mapping)
     if node.config:
@@ -251,6 +261,35 @@ def _write_node_container(
     fields.pop("layer", None)
     writer.table("nodes", node_name, "runtime", "container")
     _write_sorted_mapping(writer, fields)
+
+
+def _write_skills_config(
+    writer: _TomlWriter,
+    path: tuple[str, ...],
+    settings: UntrustedSkillSettings,
+) -> None:
+    fields = untrusted_skill_settings_config_dict(settings)
+    if not fields:
+        return
+    nested = {
+        "read_limits",
+        "index_limits",
+        "source_limits",
+        "cursor_limits",
+        "privacy",
+        "observability",
+    }
+    scalar_fields = {
+        key: value for key, value in fields.items() if key not in nested
+    }
+    if scalar_fields:
+        writer.table(*path)
+        _write_sorted_mapping(writer, scalar_fields)
+    for key in sorted(nested):
+        value = fields.get(key)
+        if isinstance(value, Mapping) and value:
+            writer.table(*path, key)
+            _write_sorted_mapping(writer, value)
 
 
 def _write_join_policy(
