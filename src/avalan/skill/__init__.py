@@ -202,6 +202,24 @@ from .manifest import (
 from .manifest import (
     parse_skill_manifests as parse_skill_manifests,
 )
+from .matcher import (
+    SkillMatchFilters as SkillMatchFilters,
+)
+from .matcher import (
+    SkillMatchIndex as SkillMatchIndex,
+)
+from .matcher import (
+    SkillMatchIndexEntry as SkillMatchIndexEntry,
+)
+from .matcher import (
+    SkillMatchLimits as SkillMatchLimits,
+)
+from .matcher import (
+    build_skill_match_index as build_skill_match_index,
+)
+from .matcher import (
+    match_skill_registry as match_skill_registry,
+)
 from .normalizer import (
     normalize_skill_description as normalize_skill_description,
 )
