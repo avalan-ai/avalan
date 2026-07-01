@@ -255,7 +255,9 @@ async def _task_validate(
     _ = theme
     definition_path = Path(args.definition)
     try:
-        load_result = await TaskDefinitionLoader().load_result(definition_path)
+        load_result = await TaskDefinitionLoader(
+            skills_settings=_agent_tool_settings(args).skills,
+        ).load_result(definition_path)
     except OSError as exc:
         message = strerror(exc.errno) if exc.errno else "Unable to read file."
         console.print("Task definition could not be read.", markup=False)
@@ -422,9 +424,15 @@ async def _validate_task_flow_reference(
         )
     )
     try:
-        result = await loader.load_validation_result(path)
+        result = await loader.load_validation_result(
+            path,
+            skills_settings=definition.skills,
+        )
         if result.definition is not None and not result.authoring_graph:
-            result = await loader.load_result(path)
+            result = await loader.load_result(
+                path,
+                skills_settings=definition.skills,
+            )
     except OSError:
         return (
             TaskValidationIssue(
@@ -1105,6 +1113,8 @@ async def _task_worker(
                 worker_id=getattr(args, "worker_id", None),
                 queue_name=getattr(args, "queue", None) or "default",
                 lease_seconds=lease_seconds,
+                skills_settings=tool_settings.skills,
+                definition_base=Path.cwd(),
                 artifact_store=_task_artifact_store(),
                 shutdown=shutdown,
                 heartbeat_seconds=heartbeat_seconds,
@@ -1166,7 +1176,9 @@ async def _load_definition_for_execution(
 ) -> tuple[Path, TaskDefinition, TaskCliInput] | None:
     definition_path = Path(args.definition)
     try:
-        load_result = await TaskDefinitionLoader().load_result(definition_path)
+        load_result = await TaskDefinitionLoader(
+            skills_settings=_agent_tool_settings(args).skills,
+        ).load_result(definition_path)
     except OSError as exc:
         message = strerror(exc.errno) if exc.errno else "Unable to read file."
         console.print("Task definition could not be read.", markup=False)
@@ -1227,6 +1239,7 @@ def _task_tool_settings_configured(settings: ToolSettingsContext) -> bool:
             settings.browser,
             settings.database,
             settings.graph,
+            settings.skills,
             settings.shell,
             settings.container,
             settings.isolation,
@@ -1533,7 +1546,7 @@ def _task_flow_resolver(
                 execution_roots=(ref_base,),
                 tool_resolver=tool_resolver,
             )
-        ).load_result(path)
+        ).load_result(path, skills_settings=context.definition.skills)
         if result.flow is None:
             raise TaskValidationError(
                 tuple(
@@ -1570,7 +1583,10 @@ def _task_strict_flow_resolver(
                 execution_roots=(ref_base,),
                 tool_resolver=tool_resolver,
             )
-        ).load_validation_result(path)
+        ).load_validation_result(
+            path,
+            skills_settings=context.definition.skills,
+        )
         if result.definition is None:
             raise TaskValidationError(
                 tuple(
@@ -2207,7 +2223,9 @@ async def _validate_task_cli_input_for_command(
         return True
     definition_path = Path(definition_path_value)
     try:
-        load_result = await TaskDefinitionLoader().load_result(definition_path)
+        load_result = await TaskDefinitionLoader(
+            skills_settings=_agent_tool_settings(args).skills,
+        ).load_result(definition_path)
     except OSError as exc:
         message = strerror(exc.errno) if exc.errno else "Unable to read file."
         console.print("Task definition could not be read.", markup=False)

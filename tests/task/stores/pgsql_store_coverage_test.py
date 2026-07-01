@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from sys import path as sys_path
@@ -23,6 +24,11 @@ from avalan.pgsql import (
     PgsqlFailureCategory,
     PgsqlOperationError,
     PgsqlUnitOfWork,
+)
+from avalan.skill import (
+    SkillReadLimits,
+    SkillSettingsSurface,
+    UntrustedSkillSettings,
 )
 from avalan.task import (
     IdempotencyMode,
@@ -564,6 +570,35 @@ class PgsqlStoreHelperCoverageTest(IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(pgsql_store_module._utc_now().tzinfo)
         self.assertTrue(pgsql_store_module._uuid_id())
+
+    def test_definition_payload_round_trips_skills_metadata(self) -> None:
+        task = replace(
+            definition(),
+            skills_config=UntrustedSkillSettings(
+                surface=SkillSettingsSurface.TASK,
+                read_limits=SkillReadLimits(max_lines_per_read=40),
+            ),
+            skills_identity={
+                "version": "task.skills.v1",
+                "enabled_tools": ("skills.read",),
+            },
+        )
+
+        payload = pgsql_store_module._definition_to_payload(task)
+        restored = pgsql_store_module._definition_from_payload(payload)
+
+        self.assertIn("skills_config", payload)
+        self.assertIn("skills_identity", payload)
+        assert restored.skills_config is not None
+        self.assertEqual(
+            restored.skills_config.read_limits.max_lines_per_read,
+            40,
+        )
+        assert restored.skills_identity is not None
+        self.assertEqual(
+            restored.skills_identity["enabled_tools"],
+            ("skills.read",),
+        )
 
     async def test_not_found_helpers(self) -> None:
         database = FakePgsqlTaskDatabase()

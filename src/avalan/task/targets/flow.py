@@ -61,6 +61,7 @@ from ...flow.store import (
 )
 from ...flow.validator import validate_flow_definition
 from ...model.stream import CanonicalStreamItem, stream_observability_payload
+from ...skill import merge_skill_settings
 from ..artifact import TaskArtifactRef, TaskArtifactRetention
 from ..context import TaskInputFile, TaskTargetContext
 from ..converters import (
@@ -89,6 +90,7 @@ from ..privacy import (
     STORED_ENVELOPE_MARKER,
     STORED_MARKER,
 )
+from ..skills import task_skill_settings_allow
 from ..store import TaskExecutionContext, TaskStoreNotFoundError
 from ..target import TaskTargetRunner, TaskValidationContext
 from ..usage import tag_usage_response
@@ -230,6 +232,14 @@ class FlowTaskTargetRunner(TaskTargetRunner):
             issues.extend(error.issues)
         else:
             if isinstance(resolved, FlowDefinition):
+                try:
+                    resolved = _flow_definition_with_task_skills(
+                        resolved,
+                        target_context,
+                    )
+                except TaskValidationError as error:
+                    issues.extend(error.issues)
+                    return tuple(issues)
                 result = validate_flow_definition(
                     resolved,
                     task_flow_node_registry(
@@ -243,6 +253,11 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     issues.extend(
                         _flow_diagnostics_to_issues(result.diagnostics)
                     )
+            elif isinstance(resolved, FlowExecutionPlan):
+                try:
+                    _flow_plan_with_task_skills(resolved, target_context)
+                except TaskValidationError as error:
+                    issues.extend(error.issues)
         return tuple(issues)
 
     def _validation_target_context(
@@ -502,7 +517,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         if isawaitable(resolved):
             resolved = await resolved
         if isinstance(resolved, FlowExecutionPlan):
-            return resolved
+            return _flow_plan_with_task_skills(resolved, context)
         if not isinstance(resolved, FlowDefinition):
             raise TaskValidationError(
                 (
@@ -519,6 +534,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     ),
                 )
             )
+        resolved = _flow_definition_with_task_skills(resolved, context)
         registry = task_flow_node_registry(
             context,
             agent_runner=self._agent_runner,
@@ -647,6 +663,52 @@ def validate_flow_task_compatibility(
     return FlowCompatibility(issues=tuple(issues))
 
 
+def _flow_definition_with_task_skills(
+    definition: FlowDefinition,
+    context: TaskTargetContext,
+) -> FlowDefinition:
+    assert isinstance(definition, FlowDefinition)
+    assert isinstance(context, TaskTargetContext)
+    task_skills = context.definition.skills
+    if task_skills is None:
+        return definition
+    if definition.skills is not None:
+        if not task_skill_settings_allow(task_skills, definition.skills):
+            raise TaskValidationError((_flow_task_skills_widened_issue(),))
+        return definition
+    if definition.skills_config is None:
+        return replace(definition, skills=task_skills)
+    result = merge_skill_settings(task_skills, definition.skills_config)
+    if result.diagnostics:
+        raise TaskValidationError((_flow_task_skills_widened_issue(),))
+    return replace(definition, skills=result.settings)
+
+
+def _flow_plan_with_task_skills(
+    plan: FlowExecutionPlan,
+    context: TaskTargetContext,
+) -> FlowExecutionPlan:
+    assert isinstance(plan, FlowExecutionPlan)
+    assert isinstance(context, TaskTargetContext)
+    task_skills = context.definition.skills
+    if task_skills is None:
+        return plan
+    if plan.skills is not None and not task_skill_settings_allow(
+        task_skills,
+        plan.skills,
+    ):
+        raise TaskValidationError((_flow_task_skills_widened_issue(),))
+    for node in plan.nodes:
+        if node.skills is not None and not task_skill_settings_allow(
+            task_skills,
+            node.skills,
+        ):
+            raise TaskValidationError((_flow_task_skills_widened_issue(),))
+    if plan.skills is None:
+        return replace(plan, skills=task_skills)
+    return plan
+
+
 def task_flow_node_registry(
     context: TaskTargetContext,
     *,
@@ -746,6 +808,16 @@ def task_flow_node_registry(
             base_registry=registry,
         )
     return registry
+
+
+def _flow_task_skills_widened_issue() -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="task.flow_skills_registry_widened",
+        path="execution.ref.skills",
+        message="Task-backed flow skills settings are wider than the task.",
+        hint="Use flow skills settings that only narrow the task registry.",
+        category=TaskValidationCategory.UNSUPPORTED,
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
