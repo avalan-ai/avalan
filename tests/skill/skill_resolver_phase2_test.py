@@ -2,6 +2,7 @@ from json import dumps
 from os import stat_result
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.skill import (
@@ -18,6 +19,7 @@ from avalan.skill import (
     SkillResourceAuthorizationResult,
     SkillSourceAuthorityKind,
     SkillSourceConfig,
+    SkillSourceFileSystem,
     SkillSourceLimits,
     SkillSourceResolutionResult,
     SkillSourceRootConfig,
@@ -31,6 +33,26 @@ from avalan.skill import (
 
 
 class SkillResolverPhase2Test(IsolatedAsyncioTestCase):
+    async def test_protocol_default_methods_return_none(self) -> None:
+        file_system = _protocol_default_file_system()
+        path = Path("SKILL.md")
+
+        self.assertIsNone(
+            await SkillSourceFileSystem.resolve_path(file_system, path)
+        )
+        self.assertIsNone(
+            await SkillSourceFileSystem.stat_path(file_system, path)
+        )
+        self.assertIsNone(
+            await SkillSourceFileSystem.lstat_path(file_system, path)
+        )
+        self.assertIsNone(
+            await SkillSourceFileSystem.list_directory(file_system, path, 1)
+        )
+        self.assertIsNone(
+            await SkillSourceFileSystem.read_bytes(file_system, path, 1)
+        )
+
     async def test_resolves_workspace_bundled_and_user_local_sources(
         self,
     ) -> None:
@@ -978,6 +1000,10 @@ class HiddenTargetFileSystem(SkillAsyncFileSystem):
 def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def _protocol_default_file_system() -> SkillSourceFileSystem:
+    return cast(SkillSourceFileSystem, object())
 
 
 def _config(label: str, root: Path) -> SkillConfiguredSource:
