@@ -301,6 +301,10 @@ class EngineAgent(ABC):
             assert self._memory.recent_messages is not None
             input_value = [rm.message for rm in self._memory.recent_messages]
 
+        developer_prompt = self._developer_prompt_with_tool_bootstrap(
+            developer_prompt
+        )
+
         # Have model generate output from input
         self._last_prompt = (
             input_value,
@@ -370,6 +374,26 @@ class EngineAgent(ABC):
             self._last_output = output
 
         return output
+
+    def _developer_prompt_with_tool_bootstrap(
+        self,
+        developer_prompt: str | None,
+    ) -> str | None:
+        bootstrap_prompt = self._tool_bootstrap_prompt()
+        if not bootstrap_prompt:
+            return developer_prompt
+        if developer_prompt:
+            return f"{developer_prompt}\n\n{bootstrap_prompt}"
+        return bootstrap_prompt
+
+    def _tool_bootstrap_prompt(self) -> str | None:
+        bootstrap_prompt = getattr(self._tool, "bootstrap_prompt", None)
+        if not callable(bootstrap_prompt):
+            return None
+        prompt = bootstrap_prompt()
+        if isinstance(prompt, str) and prompt:
+            return prompt
+        return None
 
     @staticmethod
     def _normalize_generation_settings(
