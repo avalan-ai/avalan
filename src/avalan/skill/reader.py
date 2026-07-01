@@ -523,6 +523,9 @@ def _target_for_cursor(
     registry: SkillRegistry,
     cursor: SkillReadCursor,
 ) -> tuple[_ReadTarget | None, tuple[SkillDiagnosticInfo, ...]]:
+    settings_diagnostic = _settings_enabled_diagnostic(registry)
+    if settings_diagnostic is not None:
+        return None, (settings_diagnostic,)
     matching_skills = tuple(
         skill
         for skill in registry.skills
@@ -532,6 +535,9 @@ def _target_for_cursor(
     if len(matching_skills) != 1:
         return None, (_stale_cursor_diagnostic(reason="skill_removed"),)
     skill = matching_skills[0]
+    policy_diagnostic = _skill_policy_diagnostic(registry, skill)
+    if policy_diagnostic is not None:
+        return None, (policy_diagnostic,)
     diagnostics = _skill_usability_diagnostics(registry, skill)
     if diagnostics:
         return None, diagnostics
@@ -554,17 +560,9 @@ def _skill_for_reference(
     *,
     source_label: str | None,
 ) -> tuple[SkillRegistrySkill | None, tuple[SkillDiagnosticInfo, ...]]:
-    if registry.settings is not None and not registry.settings.enabled:
-        return None, (
-            SkillDiagnosticInfo(
-                code=SkillDiagnosticCode.DISABLED,
-                status=SkillStatus.DISABLED,
-                message="Trusted skills settings are disabled.",
-                path="settings.enabled",
-                hint="Do not read skills when trusted skills are off.",
-                details={"reason": "settings_disabled"},
-            ),
-        )
+    settings_diagnostic = _settings_enabled_diagnostic(registry)
+    if settings_diagnostic is not None:
+        return None, (settings_diagnostic,)
     source_diagnostic = _source_label_diagnostic(source_label)
     if source_diagnostic is not None:
         return None, (source_diagnostic,)
@@ -601,23 +599,79 @@ def _skill_for_reference(
         )
     skill = candidates[0]
     assert skill.skill_id is not None
-    if (
-        registry.settings is not None
-        and registry.settings.allowed_skill_ids
-        and skill.skill_id not in registry.settings.allowed_skill_ids
-    ):
-        return None, (
-            SkillDiagnosticInfo(
-                code=SkillDiagnosticCode.POLICY_DENIED,
-                status=SkillStatus.POLICY_DENIED,
-                message="The requested skill is not allowed by policy.",
-                path="settings.skill_ids",
-                hint="Read only skills allowed by trusted settings.",
-                candidates=(skill.skill_id,),
-                details={"reason": "skill_not_allowed"},
-            ),
-        )
+    policy_diagnostic = _skill_policy_diagnostic(registry, skill)
+    if policy_diagnostic is not None:
+        return None, (policy_diagnostic,)
     return skill, ()
+
+
+def _settings_enabled_diagnostic(
+    registry: SkillRegistry,
+) -> SkillDiagnosticInfo | None:
+    if registry.settings is None or registry.settings.enabled:
+        return None
+    return SkillDiagnosticInfo(
+        code=SkillDiagnosticCode.DISABLED,
+        status=SkillStatus.DISABLED,
+        message="Trusted skills settings are disabled.",
+        path="settings.enabled",
+        hint="Do not read skills when trusted skills are off.",
+        details={"reason": "settings_disabled"},
+    )
+
+
+def _skill_policy_diagnostic(
+    registry: SkillRegistry,
+    skill: SkillRegistrySkill,
+) -> SkillDiagnosticInfo | None:
+    settings = registry.settings
+    if settings is None or skill.skill_id is None:
+        return None
+    if (
+        settings.allowed_skill_ids
+        and skill.skill_id not in settings.allowed_skill_ids
+    ):
+        return SkillDiagnosticInfo(
+            code=SkillDiagnosticCode.POLICY_DENIED,
+            status=SkillStatus.POLICY_DENIED,
+            message="The requested skill is not allowed by policy.",
+            path="settings.skill_ids",
+            hint="Read only skills allowed by trusted settings.",
+            candidates=(skill.skill_id,),
+            details={"reason": "skill_not_allowed"},
+        )
+    source_labels = {source.label for source in settings.sources}
+    if source_labels and skill.source_label not in source_labels:
+        return SkillDiagnosticInfo(
+            code=SkillDiagnosticCode.POLICY_DENIED,
+            status=SkillStatus.POLICY_DENIED,
+            message="The requested skill source is not allowed by policy.",
+            path="settings.source_labels",
+            hint="Read only skills from trusted sources.",
+            candidates=(skill.source_label,),
+            details={"reason": "source_not_allowed"},
+        )
+    source = next(
+        (
+            source
+            for source in registry.sources
+            if source.label == skill.source_label
+        ),
+        None,
+    )
+    if source is not None and source.authority.kind not in (
+        settings.authority_kinds
+    ):
+        return SkillDiagnosticInfo(
+            code=SkillDiagnosticCode.POLICY_DENIED,
+            status=SkillStatus.POLICY_DENIED,
+            message="The requested skill authority is not allowed by policy.",
+            path="settings.authority_kinds",
+            hint="Read only skills from trusted authorities.",
+            candidates=(source.authority.kind.value,),
+            details={"reason": "authority_not_allowed"},
+        )
+    return None
 
 
 def _skill_usability_diagnostics(

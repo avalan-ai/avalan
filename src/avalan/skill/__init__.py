@@ -350,6 +350,9 @@ from .resolver import (
     resolve_skill_sources as resolve_skill_sources,
 )
 from .settings import (
+    SKILL_SETTINGS_POLICY_VERSION as SKILL_SETTINGS_POLICY_VERSION,
+)
+from .settings import (
     SkillCursorLimits as SkillCursorLimits,
 )
 from .settings import (
@@ -381,4 +384,22 @@ from .settings import (
 )
 from .settings import (
     merge_skill_settings as merge_skill_settings,
+)
+from .settings import (
+    parse_untrusted_skill_settings_config as parse_untrusted_skill_settings_config,  # noqa: E501
+)
+from .settings import (
+    trusted_skill_settings_fingerprint as trusted_skill_settings_fingerprint,
+)
+from .settings import (
+    trusted_skill_settings_identity_dict as trusted_skill_settings_identity_dict,  # noqa: E501
+)
+from .settings import (
+    trusted_skill_source_fingerprint as trusted_skill_source_fingerprint,
+)
+from .settings import (
+    trusted_skill_source_identity_dict as trusted_skill_source_identity_dict,
+)
+from .settings import (
+    untrusted_skill_settings_config_dict as untrusted_skill_settings_config_dict,  # noqa: E501
 )

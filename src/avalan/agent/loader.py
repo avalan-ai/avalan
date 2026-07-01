@@ -50,19 +50,13 @@ from ..model.manager import ModelManager
 from ..skill import (
     CANONICAL_SKILLS_TOOL_NAMES,
     SkillConfiguredSource,
-    SkillCursorLimits,
-    SkillIndexLimits,
-    SkillObservabilitySettings,
-    SkillPrivacySettings,
-    SkillReadLimits,
     SkillSettingsSurface,
-    SkillSourceAuthorityKind,
     SkillSourceConfig,
-    SkillSourceLimits,
     TrustedSkillSettings,
     UntrustedSkillSettings,
     build_skill_registry,
     merge_skill_settings,
+    parse_untrusted_skill_settings_config,
     resolve_skill_sources,
 )
 from ..task.schema import TaskSchemaResolutionError, resolve_schema_ref
@@ -1478,234 +1472,12 @@ class OrchestratorLoader:
         *,
         trusted: TrustedSkillSettings,
     ) -> UntrustedSkillSettings:
-        assert isinstance(trusted, TrustedSkillSettings)
-        supported_keys = {
-            "enabled",
-            "bootstrap",
-            "authority_kinds",
-            "source_labels",
-            "skill_ids",
-            "read_limits",
-            "index_limits",
-            "source_limits",
-            "cursor_limits",
-            "privacy",
-            "observability",
-        }
-        assert "source" not in skills_config, (
-            "tool.skills cannot define sources; configure trusted sources "
-            "through SDK or CLI settings"
-        )
-        assert "sources" not in skills_config, (
-            "tool.skills cannot define sources; configure trusted sources "
-            "through SDK or CLI settings"
-        )
-        unknown_keys = sorted(set(skills_config) - supported_keys)
-        assert not unknown_keys, "tool.skills has unknown keys"
-
-        enabled_value = skills_config.get("enabled")
-        assert enabled_value is None or isinstance(
-            enabled_value, bool
-        ), "tool.skills.enabled must be a boolean"
-        bootstrap_enabled = cls._skills_bootstrap_enabled(
-            skills_config.get("bootstrap")
-        )
-
-        return UntrustedSkillSettings(
+        return parse_untrusted_skill_settings_config(
+            skills_config,
+            trusted=trusted,
             surface=SkillSettingsSurface.AGENT,
-            enabled=enabled_value,
-            bootstrap_enabled=bootstrap_enabled,
-            authority_kinds=cls._skills_authority_kinds(
-                skills_config.get("authority_kinds")
-            ),
-            source_labels=cls._skills_string_tuple(
-                skills_config.get("source_labels"),
-                "tool.skills.source_labels",
-            ),
-            skill_ids=cls._skills_string_tuple(
-                skills_config.get("skill_ids"),
-                "tool.skills.skill_ids",
-            ),
-            read_limits=cast(
-                SkillReadLimits | None,
-                cls._skills_limit_settings(
-                    skills_config.get("read_limits"),
-                    settings_cls=SkillReadLimits,
-                    supported_keys={
-                        "max_bytes_per_read",
-                        "max_lines_per_read",
-                    },
-                    section="tool.skills.read_limits",
-                    base=trusted.read_limits,
-                ),
-            ),
-            index_limits=cast(
-                SkillIndexLimits | None,
-                cls._skills_limit_settings(
-                    skills_config.get("index_limits"),
-                    settings_cls=SkillIndexLimits,
-                    supported_keys={
-                        "max_skills",
-                        "max_resources_per_skill",
-                        "max_indexed_bytes",
-                    },
-                    section="tool.skills.index_limits",
-                    base=trusted.index_limits,
-                ),
-            ),
-            source_limits=cast(
-                SkillSourceLimits | None,
-                cls._skills_limit_settings(
-                    skills_config.get("source_limits"),
-                    settings_cls=SkillSourceLimits,
-                    supported_keys={
-                        "max_sources",
-                        "max_resources_per_source",
-                        "max_source_depth",
-                        "max_files_per_source",
-                        "max_directory_entries_per_source",
-                    },
-                    section="tool.skills.source_limits",
-                    base=trusted.source_limits,
-                ),
-            ),
-            cursor_limits=cast(
-                SkillCursorLimits | None,
-                cls._skills_limit_settings(
-                    skills_config.get("cursor_limits"),
-                    settings_cls=SkillCursorLimits,
-                    supported_keys={
-                        "max_active_cursors",
-                        "max_cursor_age_seconds",
-                    },
-                    section="tool.skills.cursor_limits",
-                    base=trusted.cursor_limits,
-                ),
-            ),
-            privacy=cast(
-                SkillPrivacySettings | None,
-                cls._skills_limit_settings(
-                    skills_config.get("privacy"),
-                    settings_cls=SkillPrivacySettings,
-                    supported_keys={
-                        "include_source_labels",
-                        "include_authority",
-                        "include_diagnostic_paths",
-                        "redact_host_paths",
-                    },
-                    section="tool.skills.privacy",
-                    base=trusted.privacy,
-                ),
-            ),
-            observability=cast(
-                SkillObservabilitySettings | None,
-                cls._skills_limit_settings(
-                    skills_config.get("observability"),
-                    settings_cls=SkillObservabilitySettings,
-                    supported_keys={
-                        "enabled",
-                        "emit_events",
-                        "include_diagnostics",
-                        "include_byte_counts",
-                    },
-                    section="tool.skills.observability",
-                    base=trusted.observability,
-                ),
-            ),
+            section="tool.skills",
         )
-
-    @staticmethod
-    def _skills_bootstrap_enabled(value: object) -> bool | None:
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            return value
-        assert isinstance(value, str), "tool.skills.bootstrap must be a string"
-        assert value in {
-            "auto",
-            "off",
-        }, "tool.skills.bootstrap must be auto or off"
-        return value == "auto"
-
-    @staticmethod
-    def _skills_authority_kinds(
-        value: object,
-    ) -> tuple[SkillSourceAuthorityKind, ...]:
-        if value is None:
-            return ()
-        assert isinstance(
-            value,
-            list,
-        ), "tool.skills.authority_kinds must be a list"
-        kinds: list[SkillSourceAuthorityKind] = []
-        for item in value:
-            assert isinstance(
-                item,
-                str,
-            ), "tool.skills.authority_kinds entries must be strings"
-            kinds.append(SkillSourceAuthorityKind(item))
-        return tuple(kinds)
-
-    @staticmethod
-    def _skills_string_tuple(
-        value: object,
-        section: str,
-    ) -> tuple[str, ...]:
-        if value is None:
-            return ()
-        assert isinstance(value, list), f"{section} must be a list"
-        values: list[str] = []
-        for item in value:
-            assert isinstance(item, str), f"{section} entries must be strings"
-            values.append(item)
-        return tuple(values)
-
-    @staticmethod
-    def _skills_limit_settings(
-        value: object,
-        *,
-        settings_cls: (
-            type[SkillReadLimits]
-            | type[SkillIndexLimits]
-            | type[SkillSourceLimits]
-            | type[SkillCursorLimits]
-            | type[SkillPrivacySettings]
-            | type[SkillObservabilitySettings]
-        ),
-        supported_keys: set[str],
-        section: str,
-        base: (
-            SkillReadLimits
-            | SkillIndexLimits
-            | SkillSourceLimits
-            | SkillCursorLimits
-            | SkillPrivacySettings
-            | SkillObservabilitySettings
-            | None
-        ) = None,
-    ) -> (
-        SkillReadLimits
-        | SkillIndexLimits
-        | SkillSourceLimits
-        | SkillCursorLimits
-        | SkillPrivacySettings
-        | SkillObservabilitySettings
-        | None
-    ):
-        if value is None:
-            return None
-        assert isinstance(value, dict), f"{section} must be a mapping"
-        unknown_keys = sorted(set(value) - supported_keys)
-        assert not unknown_keys, f"{section} has unknown keys"
-        values = dict(value)
-        if base is not None:
-            assert isinstance(base, settings_cls)
-            inherited = {
-                field.name: getattr(base, field.name) for field in fields(base)
-            }
-            inherited.update(values)
-            values = inherited
-        return settings_cls(**values)
 
     @staticmethod
     def _tool_name_policy_from_tool_section(

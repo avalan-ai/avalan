@@ -21,7 +21,12 @@ from .resolver import (
     SkillSourceFileSystem,
     SkillSourceResolutionResult,
 )
-from .settings import SkillIndexLimits, SkillReadLimits, TrustedSkillSettings
+from .settings import (
+    SkillIndexLimits,
+    SkillReadLimits,
+    TrustedSkillSettings,
+    skill_source_identity_dict,
+)
 
 from collections import Counter
 from collections.abc import Mapping
@@ -37,6 +42,10 @@ _REGISTRY_SCHEMA = "skills.registry.v1"
 _RESOURCE_KEY_SEPARATOR = "\x1f"
 
 _SkillRegistryResourceKey: TypeAlias = tuple[str, str, str]
+
+
+def _empty_source_identity() -> Mapping[str, SkillModelValue]:
+    return MappingProxyType({})
 
 
 def _empty_skill_mapping() -> Mapping[str, "SkillRegistrySkill"]:
@@ -125,6 +134,9 @@ class SkillRegistrySource:
     status: SkillStatus = SkillStatus.OK
     resource_count: int = 0
     diagnostics: tuple[SkillDiagnosticInfo, ...] = ()
+    source_identity: Mapping[str, SkillModelValue] = field(
+        default_factory=_empty_source_identity
+    )
 
     def __post_init__(self) -> None:
         _assert_source_label(self.label)
@@ -132,6 +144,12 @@ class SkillRegistrySource:
         assert isinstance(self.status, SkillStatus)
         _assert_non_negative_int(self.resource_count, "resource_count")
         _assert_diagnostic_tuple(self.diagnostics)
+        assert isinstance(self.source_identity, Mapping)
+        object.__setattr__(
+            self,
+            "source_identity",
+            MappingProxyType(model_dict(self.source_identity)),
+        )
 
     def as_model_dict(self) -> dict[str, SkillModelValue]:
         return model_dict(
@@ -551,6 +569,13 @@ def _registry_source(source: SkillAuthorizedSourceRoot) -> SkillRegistrySource:
         status=_status_for_source(source),
         resource_count=len(source.resources),
         diagnostics=source.diagnostics,
+        source_identity=skill_source_identity_dict(
+            label=source.label,
+            authority=source.authority,
+            root_path=source.root,
+            allow_hidden_paths=source.allow_hidden_paths,
+            status=_status_for_source(source),
+        ),
     )
 
 
@@ -850,6 +875,9 @@ def _registry_version(
         "read_limits": read_limits.as_model_dict(),
         "index_limits": index_limits.as_model_dict(),
         "sources": tuple(source.as_model_dict() for source in sources),
+        "source_identities": tuple(
+            source.source_identity for source in sources
+        ),
         "skills": tuple(_skill_version_dict(skill) for skill in skills),
         "diagnostics": tuple(
             diagnostic.as_model_dict() for diagnostic in diagnostics

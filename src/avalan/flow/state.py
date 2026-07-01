@@ -1,5 +1,5 @@
 from .diagnostics import FlowDiagnostic
-from .plan import FlowExecutionPlan, flow_resume_isolation_metadata
+from .plan import FlowExecutionPlan, flow_resume_metadata
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -182,7 +182,7 @@ class FlowExecutionTrace:
                 )
                 for edge in plan.edges
             ),
-            metadata=flow_resume_isolation_metadata(plan),
+            metadata=flow_resume_metadata(plan),
         )
 
     def with_node_state(
@@ -249,5 +249,28 @@ class FlowExecutionTrace:
             "edges": tuple(edge.as_public_dict() for edge in self.edges),
         }
         if self.metadata:
-            value["metadata"] = self.metadata
+            value["metadata"] = _public_metadata(self.metadata)
         return value
+
+
+def _public_metadata(value: Mapping[str, object]) -> Mapping[str, object]:
+    return MappingProxyType(
+        {key: _public_metadata_value(item) for key, item in value.items()}
+    )
+
+
+def _public_metadata_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        public = {
+            key: _public_metadata_value(item) for key, item in value.items()
+        }
+        privacy = value.get("privacy")
+        if isinstance(privacy, Mapping):
+            if privacy.get("include_source_labels") is False:
+                public.pop("source_labels", None)
+            if privacy.get("include_authority") is False:
+                public.pop("authority_kinds", None)
+        return MappingProxyType(public)
+    if isinstance(value, list | tuple):
+        return tuple(_public_metadata_value(item) for item in value)
+    return value

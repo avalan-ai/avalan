@@ -1465,6 +1465,11 @@ class ToolManager:
             and current.cancellation_checker is not None
         ):
             changes["cancellation_checker"] = current.cancellation_checker
+        if (
+            next_context.skills_registry is None
+            and current.skills_registry is not None
+        ):
+            changes["skills_registry"] = current.skills_registry
         if not changes:
             return next_context
         return replace(next_context, **changes)

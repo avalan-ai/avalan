@@ -17,6 +17,8 @@ from .settings import (
     SkillReadLimits,
     SkillSourceLimits,
     TrustedSkillSettings,
+    skill_source_identity_dict,
+    trusted_skill_source_identity_dict,
 )
 
 from asyncio import Semaphore, to_thread
@@ -421,6 +423,14 @@ class SkillSourceResolver:
                 diagnostics.append(diagnostic)
                 continue
             assert root is not None
+            trust_diagnostic = _trusted_resolved_source_diagnostic(
+                config,
+                settings,
+                root,
+            )
+            if trust_diagnostic is not None:
+                diagnostics.append(trust_diagnostic)
+                continue
             resources, source_diagnostics = await self._scan_source(
                 source_label=source_label,
                 root=root,
@@ -917,6 +927,13 @@ def _trusted_settings_diagnostic(
             reason="untrusted_authority",
         )
     if not settings.sources:
+        if settings.sources_explicit:
+            return _policy_diagnostic(
+                path="source.label",
+                message="The configured skill source label is not trusted.",
+                hint="Declare source labels in trusted operator settings.",
+                reason="untrusted_label",
+            )
         return None
     source_by_label = {source.label: source for source in settings.sources}
     trusted_source = source_by_label.get(config.source_label)
@@ -951,6 +968,35 @@ def _trusted_settings_diagnostic(
             return trusted_source.diagnostics[0]
         return _source_unavailable_diagnostic(reason="trusted_source_status")
     return None
+
+
+def _trusted_resolved_source_diagnostic(
+    config: SkillSourceRootConfig,
+    settings: TrustedSkillSettings | None,
+    root: Path,
+) -> SkillDiagnosticInfo | None:
+    if settings is None or not settings.sources_explicit:
+        return None
+    source_by_label = {source.label: source for source in settings.sources}
+    trusted_source = source_by_label.get(config.source_label)
+    if trusted_source is None or trusted_source.root_path is None:
+        return None
+    trusted_identity = trusted_skill_source_identity_dict(trusted_source)
+    resolved_identity = skill_source_identity_dict(
+        label=config.source_label,
+        authority=config.authority,
+        root_path=root,
+        enabled=config.enabled,
+        allow_hidden_paths=config.allow_hidden_paths,
+    )
+    if resolved_identity == trusted_identity:
+        return None
+    return _policy_diagnostic(
+        path="source.identity",
+        message="The resolved skill source identity is not trusted.",
+        hint="Use the trusted source root and package configuration.",
+        reason="untrusted_source_identity",
+    )
 
 
 def _policy_diagnostic(

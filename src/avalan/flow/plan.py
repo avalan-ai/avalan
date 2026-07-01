@@ -15,6 +15,21 @@ from ..isolation import (
     IsolationSettingsSurface,
     trusted_isolation_source,
 )
+from ..skill import (
+    CANONICAL_SKILLS_TOOL_NAMES,
+    SKILL_SETTINGS_POLICY_VERSION,
+    SkillDiagnosticInfo,
+    SkillModelValue,
+    SkillRegistry,
+    SkillSourceAuthority,
+    SkillStatus,
+    TrustedSkillSettings,
+    merge_skill_settings,
+    trusted_skill_settings_fingerprint,
+    trusted_skill_settings_identity_dict,
+    trusted_skill_source_fingerprint,
+    trusted_skill_source_identity_dict,
+)
 from .condition import (
     FlowCondition,
     FlowConditionOperator,
@@ -61,7 +76,9 @@ from types import MappingProxyType
 from typing import cast
 
 FLOW_RESUME_ISOLATION_METADATA_KEY = "isolation"
+FLOW_RESUME_SKILLS_METADATA_KEY = "skills"
 _FLOW_RESUME_ISOLATION_METADATA_VERSION = "phase9"
+_FLOW_RESUME_SKILLS_METADATA_VERSION = "phase9"
 
 
 def _empty_mapping() -> Mapping[str, object]:
@@ -301,6 +318,102 @@ class FlowIsolationMetadata:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class FlowSkillsMetadata:
+    settings_fingerprint: str
+    source_fingerprint: str
+    policy_version: str
+    enabled: bool
+    bootstrap_enabled: bool
+    read_limits: Mapping[str, SkillModelValue]
+    index_limits: Mapping[str, SkillModelValue]
+    source_limits: Mapping[str, SkillModelValue]
+    cursor_limits: Mapping[str, SkillModelValue]
+    privacy: Mapping[str, SkillModelValue]
+    observability: Mapping[str, SkillModelValue]
+    registry_version: str | None = None
+    registry_identity: str | None = None
+    enabled_tools: tuple[str, ...] = ()
+    authority_kinds: tuple[str, ...] = ()
+    source_labels: tuple[str, ...] = ()
+    allowed_skill_ids: tuple[str, ...] = ()
+    node: str | None = None
+    tool: str | None = None
+
+    def __post_init__(self) -> None:
+        _assert_string(self.settings_fingerprint, "settings_fingerprint")
+        _assert_string(self.source_fingerprint, "source_fingerprint")
+        _assert_string(self.policy_version, "policy_version")
+        assert isinstance(self.enabled, bool)
+        assert isinstance(self.bootstrap_enabled, bool)
+        object.__setattr__(
+            self,
+            "read_limits",
+            _freeze_mapping(self.read_limits),
+        )
+        object.__setattr__(
+            self,
+            "index_limits",
+            _freeze_mapping(self.index_limits),
+        )
+        object.__setattr__(
+            self,
+            "source_limits",
+            _freeze_mapping(self.source_limits),
+        )
+        object.__setattr__(
+            self,
+            "cursor_limits",
+            _freeze_mapping(self.cursor_limits),
+        )
+        object.__setattr__(self, "privacy", _freeze_mapping(self.privacy))
+        object.__setattr__(
+            self,
+            "observability",
+            _freeze_mapping(self.observability),
+        )
+        _assert_optional_string(self.registry_version, "registry_version")
+        _assert_optional_string(self.registry_identity, "registry_identity")
+        for tool in self.enabled_tools:
+            _assert_string(tool, "enabled_tools")
+        for authority_kind in self.authority_kinds:
+            _assert_string(authority_kind, "authority_kinds")
+        for source_label in self.source_labels:
+            _assert_string(source_label, "source_labels")
+        for skill_id in self.allowed_skill_ids:
+            _assert_string(skill_id, "allowed_skill_ids")
+        _assert_optional_string(self.node, "node")
+        _assert_optional_string(self.tool, "tool")
+
+    def to_dict(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "settings_fingerprint": self.settings_fingerprint,
+            "source_fingerprint": self.source_fingerprint,
+            "policy_version": self.policy_version,
+            "enabled": self.enabled,
+            "bootstrap_enabled": self.bootstrap_enabled,
+            "read_limits": self.read_limits,
+            "index_limits": self.index_limits,
+            "source_limits": self.source_limits,
+            "cursor_limits": self.cursor_limits,
+            "privacy": self.privacy,
+            "observability": self.observability,
+            "enabled_tools": self.enabled_tools,
+            "authority_kinds": self.authority_kinds,
+            "source_labels": self.source_labels,
+            "allowed_skill_ids": self.allowed_skill_ids,
+        }
+        if self.registry_version is not None:
+            value["registry_version"] = self.registry_version
+        if self.registry_identity is not None:
+            value["registry_identity"] = self.registry_identity
+        if self.node is not None:
+            value["node"] = self.node
+        if self.tool is not None:
+            value["tool"] = self.tool
+        return value
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FlowNodePlan:
     name: str
     type: str
@@ -316,6 +429,8 @@ class FlowNodePlan:
     loop: FlowLoopPlan | None = None
     container: ContainerEffectiveSettings | None = None
     isolation: FlowIsolationMetadata | None = None
+    skills: TrustedSkillSettings | None = None
+    skills_identity: FlowSkillsMetadata | None = None
     config: Mapping[str, object] = field(default_factory=_empty_mapping)
     metadata: Mapping[str, object] = field(default_factory=_empty_mapping)
 
@@ -345,6 +460,10 @@ class FlowNodePlan:
             assert isinstance(self.container, ContainerEffectiveSettings)
         if self.isolation is not None:
             assert isinstance(self.isolation, FlowIsolationMetadata)
+        if self.skills is not None:
+            assert isinstance(self.skills, TrustedSkillSettings)
+        if self.skills_identity is not None:
+            assert isinstance(self.skills_identity, FlowSkillsMetadata)
         object.__setattr__(self, "config", _freeze_mapping(self.config))
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
 
@@ -391,6 +510,9 @@ class FlowExecutionPlan:
     edges: tuple[FlowEdgePlan, ...] = ()
     container: ContainerEffectiveSettings | None = None
     isolation: FlowIsolationMetadata | None = None
+    skills: TrustedSkillSettings | None = None
+    skills_registry: SkillRegistry | None = None
+    skills_identity: FlowSkillsMetadata | None = None
     runtime_envelope: ContainerNormalizedRuntimeEnvelopePlan | None = None
 
     def __post_init__(self) -> None:
@@ -417,12 +539,19 @@ class FlowExecutionPlan:
             assert isinstance(self.container, ContainerEffectiveSettings)
         if self.isolation is not None:
             assert isinstance(self.isolation, FlowIsolationMetadata)
+        if self.skills is not None:
+            assert isinstance(self.skills, TrustedSkillSettings)
+        if self.skills_registry is not None:
+            assert isinstance(self.skills_registry, SkillRegistry)
+        if self.skills_identity is not None:
+            assert isinstance(self.skills_identity, FlowSkillsMetadata)
         if self.runtime_envelope is not None:
             assert isinstance(
                 self.runtime_envelope,
                 ContainerNormalizedRuntimeEnvelopePlan,
             )
         _finalize_flow_isolation_metadata(self)
+        _finalize_flow_skills_metadata(self)
 
     @property
     def node_map(self) -> Mapping[str, FlowNodePlan]:
@@ -480,6 +609,41 @@ def flow_resume_isolation_metadata(
     )
 
 
+def flow_resume_skills_metadata(
+    plan: FlowExecutionPlan,
+) -> Mapping[str, object]:
+    assert isinstance(plan, FlowExecutionPlan)
+    flow_metadata = (
+        plan.skills_identity.to_dict()
+        if plan.skills_identity is not None
+        else None
+    )
+    node_metadata = {
+        node.name: node.skills_identity.to_dict()
+        for node in plan.nodes
+        if node.skills_identity is not None
+    }
+    if flow_metadata is None and not node_metadata:
+        return MappingProxyType({})
+    return _freeze_mapping(
+        {
+            FLOW_RESUME_SKILLS_METADATA_KEY: {
+                "version": _FLOW_RESUME_SKILLS_METADATA_VERSION,
+                "flow": flow_metadata,
+                "nodes": node_metadata,
+            }
+        }
+    )
+
+
+def flow_resume_metadata(plan: FlowExecutionPlan) -> Mapping[str, object]:
+    assert isinstance(plan, FlowExecutionPlan)
+    metadata: dict[str, object] = {}
+    metadata.update(flow_resume_isolation_metadata(plan))
+    metadata.update(flow_resume_skills_metadata(plan))
+    return _freeze_mapping(metadata)
+
+
 def _runtime_envelope_isolation_metadata(
     runtime_envelope: ContainerNormalizedRuntimeEnvelopePlan | None,
 ) -> dict[str, object] | None:
@@ -520,6 +684,166 @@ def _finalize_flow_isolation_metadata(plan: FlowExecutionPlan) -> None:
         finalized_nodes.append(node)
     if changed:
         object.__setattr__(plan, "nodes", tuple(finalized_nodes))
+
+
+def _finalize_flow_skills_metadata(plan: FlowExecutionPlan) -> None:
+    expected_plan_skills = _flow_plan_skills_metadata(plan)
+    if plan.skills_identity is None:
+        object.__setattr__(plan, "skills_identity", expected_plan_skills)
+    elif expected_plan_skills is None:
+        raise AssertionError("flow plan cannot carry stale skills metadata")
+    else:
+        assert (
+            plan.skills_identity.to_dict() == expected_plan_skills.to_dict()
+        ), "flow plan skills metadata changed"
+
+    finalized_nodes: list[FlowNodePlan] = []
+    changed = False
+    for node in plan.nodes:
+        expected_node_skills = _flow_node_skills_metadata(plan, node)
+        if node.skills_identity is None:
+            finalized_nodes.append(
+                replace(node, skills_identity=expected_node_skills)
+                if expected_node_skills is not None
+                else node
+            )
+            changed = changed or expected_node_skills is not None
+            continue
+        if expected_node_skills is None:
+            raise AssertionError(
+                "flow node cannot carry stale skills metadata"
+            )
+        assert (
+            node.skills_identity.to_dict() == expected_node_skills.to_dict()
+        ), "flow node skills metadata changed"
+        finalized_nodes.append(node)
+    if changed:
+        object.__setattr__(plan, "nodes", tuple(finalized_nodes))
+
+
+def _flow_plan_skills_metadata(
+    plan: FlowExecutionPlan,
+) -> FlowSkillsMetadata | None:
+    if plan.skills is None:
+        return None
+    return _skills_metadata(
+        plan.skills,
+        registry=_plan_skill_registry(plan),
+        enabled_tools=_plan_enabled_skills_tools(plan),
+    )
+
+
+def _flow_node_skills_metadata(
+    plan: FlowExecutionPlan,
+    node: FlowNodePlan,
+) -> FlowSkillsMetadata | None:
+    if node.skills is None:
+        return None
+    return _skills_metadata(
+        node.skills,
+        registry=_node_skill_registry(plan, node),
+        enabled_tools=_plan_enabled_skills_tools(plan),
+        node=node.name,
+        tool=_node_tool_name(node),
+    )
+
+
+def _skills_metadata(
+    settings: TrustedSkillSettings,
+    *,
+    registry: SkillRegistry | None,
+    enabled_tools: tuple[str, ...],
+    node: str | None = None,
+    tool: str | None = None,
+) -> FlowSkillsMetadata:
+    assert isinstance(settings, TrustedSkillSettings)
+    if registry is not None:
+        assert isinstance(registry, SkillRegistry)
+    registry_version = (
+        registry.registry_version.as_model_value()
+        if registry is not None
+        else None
+    )
+    settings_identity = trusted_skill_settings_identity_dict(settings)
+    registry_identity = registry_version or _fingerprint(settings_identity)
+    return FlowSkillsMetadata(
+        settings_fingerprint=trusted_skill_settings_fingerprint(settings),
+        source_fingerprint=trusted_skill_source_fingerprint(settings),
+        policy_version=SKILL_SETTINGS_POLICY_VERSION,
+        enabled=settings.enabled,
+        bootstrap_enabled=settings.bootstrap_enabled,
+        read_limits=settings.read_limits.as_model_dict(),
+        index_limits=settings.index_limits.as_model_dict(),
+        source_limits=settings.source_limits.as_model_dict(),
+        cursor_limits=settings.cursor_limits.as_model_dict(),
+        privacy=settings.privacy.as_model_dict(),
+        observability=settings.observability.as_model_dict(),
+        registry_version=registry_version,
+        registry_identity=registry_identity,
+        enabled_tools=enabled_tools,
+        authority_kinds=tuple(
+            authority.value for authority in settings.authority_kinds
+        ),
+        source_labels=tuple(source.label for source in settings.sources),
+        allowed_skill_ids=settings.allowed_skill_ids,
+        node=node,
+        tool=tool,
+    )
+
+
+def _plan_skill_registry(plan: FlowExecutionPlan) -> SkillRegistry | None:
+    if plan.skills_registry is not None:
+        return plan.skills_registry
+    for node in plan.nodes:
+        registry = _node_skill_registry(plan, node)
+        if registry is not None:
+            return registry
+    return None
+
+
+def _node_skill_registry(
+    plan: FlowExecutionPlan,
+    node: FlowNodePlan,
+) -> SkillRegistry | None:
+    registry = node.metadata.get("skills_registry")
+    if isinstance(registry, SkillRegistry):
+        return registry
+    return plan.skills_registry
+
+
+def _plan_enabled_skills_tools(
+    plan: FlowExecutionPlan,
+) -> tuple[str, ...]:
+    tool_names: set[str] = set()
+    for node in plan.nodes:
+        tool_name = _node_tool_name(node)
+        if tool_name in CANONICAL_SKILLS_TOOL_NAMES:
+            tool_names.add(tool_name)
+        for name in _metadata_tool_names(node):
+            if name in CANONICAL_SKILLS_TOOL_NAMES:
+                tool_names.add(name)
+    return tuple(sorted(tool_names))
+
+
+def _node_tool_name(node: FlowNodePlan) -> str | None:
+    tool = node.metadata.get("tool")
+    if not isinstance(tool, Mapping):
+        return None
+    canonical_name = tool.get("canonical_name")
+    if isinstance(canonical_name, str) and canonical_name.strip():
+        return canonical_name
+    return None
+
+
+def _metadata_tool_names(node: FlowNodePlan) -> tuple[str, ...]:
+    tools = node.metadata.get("tools")
+    if not isinstance(tools, Mapping):
+        return ()
+    names: list[str] = []
+    for name in tools:
+        if isinstance(name, str) and name.strip():
+            names.append(name)
+    return tuple(names)
 
 
 def _flow_plan_isolation_metadata(
@@ -595,11 +919,21 @@ class FlowPlanCompileResult:
 async def compile_flow_definition(
     definition: FlowDefinition,
     registry: FlowNodeRegistry | None = None,
+    *,
+    skills_settings: TrustedSkillSettings | None = None,
+    skills_registry: SkillRegistry | None = None,
 ) -> FlowPlanCompileResult:
     assert isinstance(definition, FlowDefinition)
     if registry is not None:
         assert isinstance(registry, FlowNodeRegistry)
+    if skills_settings is not None:
+        assert isinstance(skills_settings, TrustedSkillSettings)
+    if skills_registry is not None:
+        assert isinstance(skills_registry, SkillRegistry)
     node_registry = registry or default_flow_node_registry()
+    flow_skills = definition.skills or skills_settings
+    if flow_skills is not None:
+        assert isinstance(flow_skills, TrustedSkillSettings)
     validation = validate_flow_definition(definition, node_registry)
     if not validation.ok:
         return FlowPlanCompileResult(diagnostics=validation.diagnostics)
@@ -649,6 +983,8 @@ async def compile_flow_definition(
                     node,
                     node_registry,
                     container_defaults=container_defaults,
+                    flow_skills=flow_skills,
+                    skills_registry=skills_registry,
                 )
             )
     except FlowNodeConfigurationError as error:
@@ -684,6 +1020,8 @@ async def compile_flow_definition(
                 for index, edge in enumerate(definition.edges)
             ),
             container=container_defaults,
+            skills=flow_skills,
+            skills_registry=skills_registry,
             runtime_envelope=runtime_envelope,
         )
     )
@@ -695,10 +1033,27 @@ async def _compile_node(
     registry: FlowNodeRegistry,
     *,
     container_defaults: ContainerEffectiveSettings | None,
+    flow_skills: TrustedSkillSettings | None,
+    skills_registry: SkillRegistry | None,
 ) -> FlowNodePlan:
     metadata = registry.metadata(node.type)
     assert metadata is not None
     assert metadata.kind is not None
+    node_metadata = await _compile_node_metadata(
+        definition,
+        node,
+        registry,
+        metadata.metadata,
+        skills_registry=skills_registry,
+    )
+    node_skills = _compile_node_skills(
+        node,
+        metadata.kind,
+        registry,
+        node_metadata,
+        flow_skills=flow_skills,
+        skills_registry=skills_registry,
+    )
     return FlowNodePlan(
         name=node.name,
         type=node.type,
@@ -718,13 +1073,9 @@ async def _compile_node(
             registry,
             container_defaults,
         ),
+        skills=node_skills,
         config=node.config,
-        metadata=await _compile_node_metadata(
-            definition,
-            node,
-            registry,
-            metadata.metadata,
-        ),
+        metadata=node_metadata,
     )
 
 
@@ -782,6 +1133,310 @@ def _compile_runtime_envelope(
             message="Flow runtime envelope selection is invalid.",
             hint=_assertion_hint(error),
         ) from None
+
+
+def _compile_node_skills(
+    node: FlowNodeDefinition,
+    kind: FlowNodeKind,
+    registry: FlowNodeRegistry,
+    metadata: Mapping[str, object],
+    *,
+    flow_skills: TrustedSkillSettings | None,
+    skills_registry: SkillRegistry | None,
+) -> TrustedSkillSettings | None:
+    assert isinstance(node, FlowNodeDefinition)
+    assert isinstance(kind, FlowNodeKind)
+    if skills_registry is not None:
+        assert isinstance(skills_registry, SkillRegistry)
+    node_uses_skills = _node_uses_skills(kind, metadata)
+    if node.skills is not None and not node_uses_skills:
+        raise FlowNodeConfigurationError(
+            code="flow.skills_unsupported_node",
+            path=f"nodes.{node.name}.skills",
+            message="Flow node skills settings are not supported.",
+            hint=(
+                "Use skills settings only on agent nodes or skills tool nodes."
+            ),
+        )
+    if not node_uses_skills:
+        return None
+    inherited = (
+        flow_skills
+        or _registry_node_skills(registry, node)
+        or (skills_registry.settings if skills_registry is not None else None)
+    )
+    if inherited is None:
+        if node.skills is not None:
+            raise FlowNodeConfigurationError(
+                code="flow.skills_trusted_settings_required",
+                path=f"nodes.{node.name}.skills",
+                message=(
+                    "Flow node skills settings require trusted flow defaults."
+                ),
+                hint=(
+                    "Provide trusted skills defaults from SDK, CLI, or "
+                    "deployment configuration."
+                ),
+            )
+        return None
+    _assert_registry_settings_allow(
+        inherited,
+        skills_registry,
+        path=f"nodes.{node.name}.skills",
+    )
+    if node.skills is None:
+        _assert_node_registry_settings_allow(
+            inherited,
+            registry,
+            node,
+            path=f"nodes.{node.name}.skills",
+        )
+        return inherited
+    result = merge_skill_settings(inherited, node.skills)
+    if result.diagnostics:
+        raise _skills_configuration_error(
+            result.diagnostics[0],
+            path=f"nodes.{node.name}.skills",
+        )
+    _assert_registry_settings_allow(
+        result.settings,
+        skills_registry,
+        path=f"nodes.{node.name}.skills",
+    )
+    _assert_node_registry_settings_allow(
+        result.settings,
+        registry,
+        node,
+        path=f"nodes.{node.name}.skills",
+    )
+    return result.settings
+
+
+def _node_uses_skills(
+    kind: FlowNodeKind,
+    metadata: Mapping[str, object],
+) -> bool:
+    if kind is FlowNodeKind.AGENT:
+        return True
+    if kind is not FlowNodeKind.TOOL:
+        return False
+    tool = metadata.get("tool")
+    if not isinstance(tool, Mapping):
+        return False
+    canonical_name = tool.get("canonical_name")
+    return (
+        isinstance(canonical_name, str)
+        and canonical_name in CANONICAL_SKILLS_TOOL_NAMES
+    )
+
+
+def _registry_node_skills(
+    registry: FlowNodeRegistry,
+    node: FlowNodeDefinition,
+) -> TrustedSkillSettings | None:
+    if not registry.supports_tool_resolution(node.type):
+        return None
+    skill_registry = registry.tool_skill_registry(node.type)
+    if skill_registry is None:
+        return None
+    return skill_registry.settings
+
+
+def _assert_node_registry_settings_allow(
+    settings: TrustedSkillSettings,
+    registry: FlowNodeRegistry,
+    node: FlowNodeDefinition,
+    *,
+    path: str,
+) -> None:
+    if not registry.supports_tool_resolution(node.type):
+        return
+    skill_registry = registry.tool_skill_registry(node.type)
+    if skill_registry is None or skill_registry.settings is None:
+        return
+    _assert_registry_settings_allow(
+        settings,
+        skill_registry,
+        path=path,
+    )
+
+
+def _assert_registry_settings_allow(
+    settings: TrustedSkillSettings,
+    registry: SkillRegistry | None,
+    *,
+    path: str,
+) -> None:
+    if registry is None:
+        return
+    if not _registry_actual_sources_allow(registry, settings):
+        raise FlowNodeConfigurationError(
+            code="flow.skills_policy_invalid",
+            path=path,
+            message="Flow skills settings are wider than the skills registry.",
+            hint=(
+                "Use skills flow or node settings that only narrow the "
+                "trusted skills registry."
+            ),
+        )
+    if registry.settings is None:
+        return
+    _assert_settings_not_wider(
+        settings,
+        registry.settings,
+        path=path,
+        message="Flow skills settings are wider than the skills registry.",
+    )
+
+
+def _registry_actual_sources_allow(
+    registry: SkillRegistry,
+    settings: TrustedSkillSettings,
+) -> bool:
+    if not settings.sources_explicit or not settings.sources:
+        return True
+    registry_sources = {
+        source.label: _registry_source_identity(source)
+        for source in registry.sources
+    }
+    for source in settings.sources:
+        if registry_sources.get(source.label) != (
+            trusted_skill_source_identity_dict(source)
+        ):
+            return False
+    return True
+
+
+def _registry_source_identity(source: object) -> Mapping[str, SkillModelValue]:
+    source_identity = getattr(source, "source_identity", None)
+    if isinstance(source_identity, Mapping) and source_identity:
+        return source_identity
+    label = getattr(source, "label", None)
+    authority = getattr(source, "authority", None)
+    status = getattr(source, "status", None)
+    if (
+        isinstance(label, str)
+        and isinstance(authority, SkillSourceAuthority)
+        and isinstance(status, SkillStatus)
+    ):
+        return {
+            "label": label,
+            "authority": authority.as_model_dict(),
+            "enabled": True,
+            "allow_hidden_paths": False,
+            "status": status.value,
+        }
+    return {}
+
+
+def _assert_settings_not_wider(
+    requested: TrustedSkillSettings,
+    trusted: TrustedSkillSettings,
+    *,
+    path: str,
+    message: str,
+) -> None:
+    assert isinstance(requested, TrustedSkillSettings)
+    assert isinstance(trusted, TrustedSkillSettings)
+    if trusted_skill_settings_identity_dict(requested) == (
+        trusted_skill_settings_identity_dict(trusted)
+    ):
+        return
+    if _trusted_settings_allow(trusted, requested):
+        return
+    raise FlowNodeConfigurationError(
+        code="flow.skills_policy_invalid",
+        path=path,
+        message=message,
+        hint=(
+            "Use skills flow or node settings that only narrow the trusted "
+            "skills registry."
+        ),
+    )
+
+
+def _trusted_settings_allow(
+    trusted: TrustedSkillSettings,
+    requested: TrustedSkillSettings,
+) -> bool:
+    if requested.enabled and not trusted.enabled:
+        return False
+    if requested.bootstrap_enabled and not trusted.bootstrap_enabled:
+        return False
+    if not set(requested.authority_kinds).issubset(
+        set(trusted.authority_kinds)
+    ):
+        return False
+    if not _trusted_sources_allow(trusted, requested):
+        return False
+    if not _trusted_skill_ids_allow(
+        trusted.allowed_skill_ids,
+        requested.allowed_skill_ids,
+    ):
+        return False
+    return (
+        trusted.read_limits.allows(requested.read_limits)
+        and trusted.index_limits.allows(requested.index_limits)
+        and trusted.source_limits.allows(requested.source_limits)
+        and trusted.cursor_limits.allows(requested.cursor_limits)
+        and trusted.privacy.allows(requested.privacy)
+        and trusted.observability.allows(requested.observability)
+    )
+
+
+def _trusted_sources_allow(
+    trusted: TrustedSkillSettings,
+    requested: TrustedSkillSettings,
+) -> bool:
+    if not trusted.sources_explicit:
+        return not requested.sources_explicit or not requested.sources
+    if not requested.sources_explicit:
+        return False
+    trusted_sources = {
+        source.label: trusted_skill_source_identity_dict(source)
+        for source in trusted.sources
+    }
+    for source in requested.sources:
+        if trusted_sources.get(source.label) != (
+            trusted_skill_source_identity_dict(source)
+        ):
+            return False
+    return True
+
+
+def _trusted_skill_ids_allow(
+    trusted_skill_ids: tuple[str, ...],
+    requested_skill_ids: tuple[str, ...],
+) -> bool:
+    if not trusted_skill_ids:
+        return True
+    if not requested_skill_ids:
+        return False
+    return set(requested_skill_ids).issubset(set(trusted_skill_ids))
+
+
+def _skills_configuration_error(
+    diagnostic: SkillDiagnosticInfo,
+    *,
+    path: str,
+) -> FlowNodeConfigurationError:
+    assert isinstance(diagnostic, SkillDiagnosticInfo)
+    return FlowNodeConfigurationError(
+        code=diagnostic.code.value,
+        path=_skill_diagnostic_path(diagnostic.path, path=path),
+        message=diagnostic.message,
+        hint=diagnostic.hint,
+    )
+
+
+def _skill_diagnostic_path(skill_path: str, *, path: str) -> str:
+    assert isinstance(skill_path, str) and skill_path.strip()
+    suffix = (
+        skill_path[len("settings.") :]
+        if skill_path.startswith("settings.")
+        else skill_path
+    )
+    return f"{path}.{suffix}"
 
 
 def _compile_node_container(
@@ -1278,6 +1933,8 @@ async def _compile_node_metadata(
     node: FlowNodeDefinition,
     registry: FlowNodeRegistry,
     metadata: Mapping[str, object],
+    *,
+    skills_registry: SkillRegistry | None,
 ) -> Mapping[str, object]:
     compiled = dict(metadata)
     if registry.supports_tool_resolution(node.type):
@@ -1291,6 +1948,14 @@ async def _compile_node_metadata(
         if descriptor.return_schema is not None:
             tool_metadata["return_schema"] = descriptor.return_schema
         compiled["tool"] = tool_metadata
+        node_skills_registry = (
+            registry.tool_skill_registry(node.type) or skills_registry
+        )
+        if (
+            node_skills_registry is not None
+            and descriptor.name in CANONICAL_SKILLS_TOOL_NAMES
+        ):
+            compiled["skills_registry"] = node_skills_registry
     if registry.supports_subflow_resolution(node.type):
         compiled["subflow"] = await registry.subflow_metadata(
             definition,
