@@ -19,6 +19,12 @@ from avalan.server.container_policy import (
     server_runtime_envelope_status_from_runtime_settings,
     validate_remote_container_arguments,
 )
+from avalan.server.entities import server_skills_registry_metadata
+from avalan.skill import (
+    SkillSourceConfig,
+    TrustedSkillSettings,
+    WorkspaceSkillSourceAuthority,
+)
 
 
 class RemoteContainerRequestPolicyTestCase(TestCase):
@@ -136,6 +142,38 @@ class RemoteContainerRequestPolicyTestCase(TestCase):
             status.diagnostics[0]["code"],
             "server.runtime_envelope_unavailable",
         )
+
+    def test_server_runtime_envelope_receives_logical_skills_metadata(
+        self,
+    ) -> None:
+        metadata = server_skills_registry_metadata(
+            TrustedSkillSettings(
+                sources=(
+                    SkillSourceConfig(
+                        label="workspace",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        root_path="/Users/mariano/.codex/skills",
+                    ),
+                )
+            )
+        )
+
+        status = server_runtime_envelope_status_from_runtime_settings(
+            _runtime_settings(
+                "workspace-readonly",
+                scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+            ),
+            metadata={"skills_registry": metadata},
+        )
+
+        assert status.plan is not None
+        request_metadata = status.plan.run_plan.request.to_dict()["metadata"]
+        projected = str(request_metadata)
+        self.assertIn("skills_registry", request_metadata)
+        self.assertIn("effective_root_sha256", projected)
+        self.assertNotIn("root_path", projected)
+        self.assertNotIn("/Users/mariano", projected)
+        self.assertNotIn("mount", projected)
 
     def test_server_runtime_envelope_status_accepts_available_runtime(
         self,

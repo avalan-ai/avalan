@@ -6,7 +6,13 @@ from ...model.stream import (
     StreamTerminalOutcome,
     StreamValidationError,
 )
-from ...server.entities import ResponsesRequest
+from ...server.entities import (
+    ModelVisibleServerProtocolTextRedactor,
+    ResponsesRequest,
+    sanitize_model_visible_server_protocol_text,
+    sanitize_server_protocol_text,
+    sanitize_server_protocol_value,
+)
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
 from ..remote_container import validate_remote_container_profile_selection
@@ -21,7 +27,7 @@ from .streaming import (
 
 from asyncio import CancelledError
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from logging import Logger
 from types import MappingProxyType
 from typing import Any, AsyncIterator
@@ -195,6 +201,12 @@ class _ResponsesSSEItemState:
 @dataclass(slots=True)
 class _ResponsesSSEProjectionAdapter:
     state: _ResponsesSSEItemState | None = None
+    answer_redactor: ModelVisibleServerProtocolTextRedactor = field(
+        default_factory=ModelVisibleServerProtocolTextRedactor
+    )
+    reasoning_redactor: ModelVisibleServerProtocolTextRedactor = field(
+        default_factory=ModelVisibleServerProtocolTextRedactor
+    )
 
     @property
     def active_tool_call_id(self) -> str | None:
@@ -215,6 +227,30 @@ class _ResponsesSSEProjectionAdapter:
         events = _switch_state(self.state, None)
         self.state = None
         return events
+
+    def model_text_redactor(
+        self, token: StreamConsumerProjection
+    ) -> ModelVisibleServerProtocolTextRedactor | None:
+        if token.kind is StreamItemKind.ANSWER_DELTA:
+            return self.answer_redactor
+        if token.kind is StreamItemKind.REASONING_DELTA:
+            return self.reasoning_redactor
+        return None
+
+
+def _adapter_model_text_redactor(
+    adapter: object,
+    token: StreamConsumerProjection,
+) -> ModelVisibleServerProtocolTextRedactor | None:
+    redactor_for_token = getattr(adapter, "model_text_redactor", None)
+    if not callable(redactor_for_token):
+        return None
+    redactor = redactor_for_token(token)
+    return (
+        redactor
+        if isinstance(redactor, ModelVisibleServerProtocolTextRedactor)
+        else None
+    )
 
 
 router = APIRouter(tags=["responses"])
@@ -310,6 +346,7 @@ async def create_response(
                         token,
                         event_sequence,
                         adapter.active_tool_call_id,
+                        _adapter_model_text_redactor(adapter, token),
                     ):
                         for message in enqueue_event(ev):
                             yield message
@@ -351,7 +388,7 @@ async def create_response(
             headers=sse_headers(),
         )
 
-    text = await response.to_str()
+    text = sanitize_model_visible_server_protocol_text(await response.to_str())
     body = {
         "id": str(response_id),
         "created": timestamp,
@@ -402,7 +439,9 @@ def _terminal_response_events(
     if terminal_snapshot.sequence is not None:
         data["sequence_number"] = terminal_snapshot.sequence
         if terminal_snapshot.data is not None:
-            data["error"] = terminal_snapshot.data
+            data["error"] = sanitize_server_protocol_value(
+                terminal_snapshot.data
+            )
     return [
         _ResponsesSSEEvent(
             event="response.failed",
@@ -420,12 +459,18 @@ def _token_to_sse_events(
     token: StreamConsumerProjection,
     seq: int,
     active_tool_call_id: str | None = None,
+    model_text_redactor: ModelVisibleServerProtocolTextRedactor | None = None,
 ) -> list[_ResponsesSSEEvent]:
     assert isinstance(token, StreamConsumerProjection)
     if active_tool_call_id is not None:
         assert isinstance(active_tool_call_id, str)
         assert active_tool_call_id.strip()
-    return _canonical_item_to_sse_events(token, seq, active_tool_call_id)
+    return _canonical_item_to_sse_events(
+        token,
+        seq,
+        active_tool_call_id,
+        model_text_redactor,
+    )
 
 
 def _stream_tool_call_protocol_id(
@@ -434,6 +479,16 @@ def _stream_tool_call_protocol_id(
     if item.kind is not StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
         return None
     return item.tool_call_id
+
+
+def _model_visible_stream_deltas(
+    value: str,
+    redactor: ModelVisibleServerProtocolTextRedactor | None,
+) -> tuple[str, ...]:
+    if redactor is not None:
+        return redactor.push(value)
+    sanitized = sanitize_model_visible_server_protocol_text(value)
+    return (sanitized,) if sanitized else ()
 
 
 def _canonical_item_to_sse(
@@ -448,6 +503,7 @@ def _canonical_item_to_sse_events(
     item: StreamConsumerProjection,
     seq: int,
     active_tool_call_id: str | None = None,
+    model_text_redactor: ModelVisibleServerProtocolTextRedactor | None = None,
 ) -> list[_ResponsesSSEEvent]:
     if active_tool_call_id is not None:
         assert isinstance(active_tool_call_id, str)
@@ -458,15 +514,23 @@ def _canonical_item_to_sse_events(
                 event="response.reasoning_text.delta",
                 data=_response_sse_delta_data(
                     "response.reasoning_text.delta",
-                    item.text_delta or "",
+                    delta,
                     seq,
                 ),
                 canonical_channel=item.channel,
+            )
+            for delta in _model_visible_stream_deltas(
+                item.text_delta or "",
+                model_text_redactor,
             )
         ]
     if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
         function_call = _projection_function_call_delta(item)
         if function_call is not None:
+            function_call = _sanitize_response_sse_payload(
+                function_call,
+                tool_name=_response_tool_name(item),
+            )
             return [
                 _ResponsesSSEEvent(
                     event="response.function_call_arguments.delta",
@@ -485,7 +549,7 @@ def _canonical_item_to_sse_events(
         )
         data = _response_sse_delta_data(
             "response.custom_tool_call_input.delta",
-            item.text_delta or "",
+            sanitize_server_protocol_text(item.text_delta or ""),
             seq,
         )
         if protocol_id is not None:
@@ -504,10 +568,14 @@ def _canonical_item_to_sse_events(
                 event="response.output_text.delta",
                 data=_response_sse_delta_data(
                     "response.output_text.delta",
-                    item.text_delta or "",
+                    delta,
                     seq,
                 ),
                 canonical_channel=item.channel,
+            )
+            for delta in _model_visible_stream_deltas(
+                item.text_delta or "",
+                model_text_redactor,
             )
         ]
     if item.kind in (
@@ -557,8 +625,15 @@ def _canonical_item_to_sse_events(
                 event="response.diagnostic",
                 data={
                     "type": "response.diagnostic",
-                    "delta": item.text_delta,
-                    "data": item.data,
+                    "delta": (
+                        sanitize_server_protocol_text(item.text_delta)
+                        if item.text_delta is not None
+                        else None
+                    ),
+                    "data": _sanitize_response_sse_payload(
+                        item.data,
+                        tool_name=_response_tool_name(item),
+                    ),
                     "sequence_number": seq,
                 },
                 canonical_channel=item.channel,
@@ -592,10 +667,14 @@ def _tool_execution_sse_event(
         "id": item.tool_call_id,
         "sequence_number": seq,
     }
+    tool_name = _response_tool_name(item)
     if item.text_delta is not None:
-        data["delta"] = item.text_delta
+        data["delta"] = sanitize_server_protocol_text(item.text_delta)
     if item.data is not None:
-        data["data"] = item.data
+        data["data"] = _sanitize_response_sse_payload(
+            item.data,
+            tool_name=tool_name,
+        )
     return _ResponsesSSEEvent(
         event=event,
         data=data,
@@ -617,6 +696,24 @@ def _projection_function_call_delta(
         "name": name,
         "arguments": item.data.get("arguments"),
     }
+
+
+def _response_tool_name(item: StreamConsumerProjection) -> str | None:
+    if isinstance(item.data, dict):
+        name = item.data.get("name")
+        if isinstance(name, str) and name:
+            return name
+    metadata_name = item.metadata.get("tool_name")
+    return metadata_name if isinstance(metadata_name, str) else None
+
+
+def _sanitize_response_sse_payload(
+    value: object,
+    *,
+    tool_name: str | None,
+) -> dict[str, Any]:
+    sanitized = sanitize_server_protocol_value(value, tool_name=tool_name)
+    return sanitized if isinstance(sanitized, dict) else {"value": sanitized}
 
 
 def _response_sse_delta_data(

@@ -14,6 +14,9 @@ from ...server.entities import (
     ChatCompletionResponse,
     ChatCompletionUsage,
     ChatMessage,
+    ModelVisibleServerProtocolTextRedactor,
+    sanitize_model_visible_server_protocol_text,
+    sanitize_server_protocol_value,
 )
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
@@ -155,6 +158,7 @@ async def create_chat_completion(
             cancelled = False
             final_usage: object | None = None
             terminal: StreamConsumerProjection | None = None
+            answer_redactor = ModelVisibleServerProtocolTextRedactor()
             try:
                 while True:
                     try:
@@ -166,11 +170,15 @@ async def create_chat_completion(
                         final_usage = token.usage
                     if token.is_stream_terminal:
                         terminal = token
-                    projected_text = _stream_text(token)
-                    if projected_text is None:
+                    projected_texts = _stream_text_fragments(
+                        token,
+                        answer_redactor,
+                    )
+                    if not projected_texts:
                         continue
 
-                    yield chunk_envelope.message(projected_text)
+                    for projected_text in projected_texts:
+                        yield chunk_envelope.message(projected_text)
 
                 if terminal is None:
                     raise StreamValidationError(
@@ -220,7 +228,7 @@ async def create_chat_completion(
         )
 
     # Non streaming
-    text = await response.to_str()
+    text = sanitize_model_visible_server_protocol_text(await response.to_str())
     choices = [
         ChatCompletionChoice(
             index=i,
@@ -281,7 +289,9 @@ def _chat_terminal_event(
             terminal_outcome is StreamTerminalOutcome.ERRORED
             and terminal_snapshot.data is not None
         ):
-            data["error"] = terminal_snapshot.data
+            data["error"] = sanitize_server_protocol_value(
+                terminal_snapshot.data
+            )
     return sse_message(to_json(data), event=event)
 
 
@@ -291,7 +301,18 @@ def _stream_text(
     assert isinstance(token, StreamConsumerProjection)
     if token.kind is not StreamItemKind.ANSWER_DELTA:
         return None
-    return token.text_delta or ""
+    return sanitize_model_visible_server_protocol_text(token.text_delta or "")
+
+
+def _stream_text_fragments(
+    token: StreamConsumerProjection,
+    redactor: ModelVisibleServerProtocolTextRedactor,
+) -> tuple[str, ...]:
+    assert isinstance(token, StreamConsumerProjection)
+    assert isinstance(redactor, ModelVisibleServerProtocolTextRedactor)
+    if token.kind is not StreamItemKind.ANSWER_DELTA:
+        return ()
+    return redactor.push(token.text_delta or "")
 
 
 def _chat_usage(usage: object | None) -> ChatCompletionUsage | None:

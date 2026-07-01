@@ -333,6 +333,59 @@ class ContainerPlanningTest(TestCase):
                 _request(),
             )
 
+    def test_request_metadata_round_trips_as_logical_json(self) -> None:
+        request = ContainerPlanRequest(
+            request_kind=ContainerPlanRequestKind.SERVER,
+            logical_name="api",
+            command="avalan-server",
+            argv=("avalan", "server"),
+            metadata={
+                "skills_registry": {
+                    "source_mappings": (
+                        {
+                            "label": "workspace",
+                            "effective_root_sha256": "a" * 64,
+                        },
+                    )
+                }
+            },
+        )
+
+        serialized = request.to_dict()
+        reloaded = ContainerPlanRequest.from_dict(serialized)
+        plan = normalize_container_run_plan(_effective_settings(), reloaded)
+        without_metadata = normalize_container_run_plan(
+            _effective_settings(),
+            ContainerPlanRequest(
+                request_kind=ContainerPlanRequestKind.SERVER,
+                logical_name="api",
+                command="avalan-server",
+                argv=("avalan", "server"),
+            ),
+        )
+
+        self.assertEqual(
+            serialized["metadata"], reloaded.to_dict()["metadata"]
+        )
+        self.assertNotIn("root_path", str(serialized))
+        self.assertNotIn("/Users", str(serialized))
+        self.assertIn(
+            "request_metadata",
+            plan.canonical_policy_input(),
+        )
+        self.assertNotEqual(
+            plan.plan_fingerprint,
+            without_metadata.plan_fingerprint,
+        )
+        with self.assertRaises(AssertionError):
+            ContainerPlanRequest(
+                request_kind=ContainerPlanRequestKind.SERVER,
+                logical_name="api",
+                command="avalan-server",
+                argv=("avalan", "server"),
+                metadata={"bad": object()},
+            )
+
 
 def _request(
     *,

@@ -50,6 +50,19 @@ def test_install_a2a_routes_mounts_v1_sdk_routes() -> None:
     assert "/.well-known/a2a-agent.json" not in paths
 
 
+def test_build_agent_card_keeps_a2a_skills_metadata_separate() -> None:
+    card = a2a_router._build_agent_card(
+        a2a_pb2=_FakeA2APb2(),
+        constants=_FakeConstants(),
+        interface_url="/a2a",
+        name="run",
+        description="Run the test agent.",
+    )
+
+    assert [skill.id for skill in card.skills] == ["run"]
+    assert all(skill.id != "skills.read" for skill in card.skills)
+
+
 def test_a2a_route_rejects_invalid_raw_base64_before_sdk_parse() -> None:
     pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
     app = FastAPI()
@@ -326,6 +339,30 @@ async def test_chat_request_rejects_a2a_runtime_authority_metadata() -> None:
                             "container": {
                                 "image": "registry.example/untrusted:latest"
                             }
+                        }
+                    },
+                )
+            ]
+        )
+    )
+
+    with pytest.raises(ValueError, match="runtime authority"):
+        await executor._chat_request(context, _ExecutorOrchestrator())
+
+
+@pytest.mark.anyio
+async def test_chat_request_rejects_a2a_skills_authority_metadata() -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = _ExecutorContext(
+        message=_FakeMessage(
+            [
+                _FakePart(
+                    text="hello",
+                    metadata={
+                        "skills": {
+                            "sources": [
+                                {"root_path": "/Users/me/.codex/skills"}
+                            ]
                         }
                     },
                 )
@@ -1180,6 +1217,60 @@ async def test_translator_projects_reasoning_tool_and_terminal_states(
 
 
 @pytest.mark.anyio
+async def test_translator_projects_skills_tool_activity_safely(
+    fake_a2a_imports,
+) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+
+    await translator.process(
+        _tool_item(
+            0,
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            data={"name": "skills.read", "arguments": {"skill": "demo"}},
+            metadata={"tool_name": "skills.read"},
+        )
+    )
+    await translator.process(
+        _tool_item(
+            1,
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            data={
+                "name": "skills.read",
+                "result": {
+                    "content": "private skill instructions",
+                    "path": "/Users/mariano/.codex/skills/demo/SKILL.md",
+                },
+            },
+            metadata={"tool_name": "skills.read"},
+        )
+    )
+    await translator.process(
+        _item(
+            2,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+    )
+    await translator.finish()
+
+    artifact_text = "".join(
+        getattr(part, "text", "")
+        for artifact in updater.artifacts
+        for part in artifact["parts"]
+    )
+    projected = artifact_text + str(updater.artifacts) + str(updater.statuses)
+
+    assert updater.statuses[0]["metadata"]["tool_name"] == "skills.read"
+    assert updater.artifacts[0]["artifact_id"] == "call-1"
+    assert "redacted-skill-content" in projected
+    assert "<host-path>/SKILL.md" in projected
+    assert "private skill instructions" not in projected
+    assert "/Users/mariano" not in projected
+    assert updater.completed == 1
+
+
+@pytest.mark.anyio
 async def test_translator_projects_shell_pipeline_stage_streams_safely(
     fake_a2a_imports,
 ) -> None:
@@ -1405,6 +1496,183 @@ async def test_translator_projects_answer_delta(fake_a2a_imports) -> None:
 
     assert updater.artifacts[0]["artifact_id"] == "answer"
     assert updater.artifacts[0]["parts"][0].text == "answer"
+
+
+def test_a2a_tool_text_projection_edge_cases() -> None:
+    tool_output = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=0,
+        kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="call-1"),
+        text_delta="",
+        data={"content": {"unexpected": "shape"}},
+    )
+    tool_progress = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=1,
+        kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="call-1"),
+        data={},
+    )
+    skills_output = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=2,
+        kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="call-1"),
+        text_delta="",
+        data={"content": "private skill body"},
+    )
+
+    assert a2a_router._a2a_tool_item_text(tool_output, tool_output.data) == ""
+    assert (
+        a2a_router._a2a_tool_item_text(tool_progress, tool_progress.data) == ""
+    )
+    assert loads(
+        a2a_router._a2a_tool_item_text(
+            skills_output,
+            skills_output.data,
+            tool_name="skills.read",
+        )
+    ) == {
+        "content": {
+            "redacted": True,
+            "reason": "<redacted-skill-content>",
+        }
+    }
+    assert (
+        a2a_router._a2a_protocol_payload_text(
+            "Source: /tmp/skills/demo/SKILL.md",
+            tool_name=None,
+        )
+        == "Source: <host-path>/SKILL.md"
+    )
+
+
+@pytest.mark.anyio
+async def test_translator_redacts_answer_and_reasoning_skill_echoes(
+    fake_a2a_imports,
+) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="#",
+        )
+    )
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=" Demo Skill\n\n",
+        )
+    )
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="Use when answering private operator tasks.\n\n",
+        )
+    )
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=(
+                "Secret answer skill body.\nSource: /tmp/skills/demo/SKILL.md"
+            ),
+        )
+    )
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=4,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta="#",
+        )
+    )
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=5,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta=" Reasoning Skill\n\n",
+        )
+    )
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=6,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta="Instructions: keep this skill body hidden.\n\n",
+        )
+    )
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=7,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta=(
+                "Secret reasoning skill body.\n"
+                "Source: C:/Users/me/skills/demo/SCOPE.md"
+            ),
+        )
+    )
+
+    artifact_text = "".join(
+        getattr(part, "text", "")
+        for artifact in updater.artifacts
+        for part in artifact["parts"]
+    )
+
+    assert artifact_text.count("redacted-skill-content") == 2
+    assert "# Demo Skill" not in artifact_text
+    assert "Use when answering private" not in artifact_text
+    assert "# Reasoning Skill" not in artifact_text
+    assert "Instructions: keep this skill body hidden" not in artifact_text
+    assert "Secret answer skill body" not in artifact_text
+    assert "Secret reasoning skill body" not in artifact_text
+    assert "/tmp/skills" not in artifact_text
+    assert "C:/Users" not in artifact_text
 
 
 @pytest.mark.anyio

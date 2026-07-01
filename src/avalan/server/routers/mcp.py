@@ -1,5 +1,14 @@
 from ...agent.orchestrator import Orchestrator
-from ...entities import MessageRole
+from ...entities import (
+    MessageRole,
+    ToolCall,
+    ToolCallContext,
+    ToolCallDiagnostic,
+    ToolCallError,
+    ToolCallResult,
+    ToolDescriptor,
+    ToolValue,
+)
 from ...model.stream import (
     CanonicalStreamItem,
     StreamConsumerProjection,
@@ -16,6 +25,10 @@ from ...server.entities import (
     ContentImage,
     ContentText,
     MCPToolRequest,
+    ModelVisibleServerProtocolTextRedactor,
+    sanitize_model_visible_server_protocol_text,
+    sanitize_server_protocol_text,
+    sanitize_server_protocol_value,
 )
 from ...types import JsonObject, JsonScalar, MutableJsonValue
 from ...utils import to_json
@@ -46,7 +59,7 @@ from .streaming import (
 from asyncio import CancelledError, Lock, create_task
 from asyncio import Event as AsyncEvent
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from typing import (
@@ -324,6 +337,12 @@ class _MCPStreamProjectionState:
     resources: dict[str, MCPResource]
     resource_store: MCPResourceStore
     base_path: str
+    answer_redactor: ModelVisibleServerProtocolTextRedactor = field(
+        default_factory=ModelVisibleServerProtocolTextRedactor
+    )
+    reasoning_redactor: ModelVisibleServerProtocolTextRedactor = field(
+        default_factory=ModelVisibleServerProtocolTextRedactor
+    )
 
 
 def create_router() -> APIRouter:
@@ -363,6 +382,10 @@ def create_router() -> APIRouter:
                 request, logger, orchestrator, message
             )
         if method == "tools/call":
+            if _is_direct_skills_tool_call(orchestrator, message):
+                return await _handle_direct_skills_tool_call_message(
+                    request, logger, orchestrator, message
+                )
             request_id, responses_request, progress_token = (
                 _parse_call_request(request, message, messages)
             )
@@ -761,7 +784,7 @@ def _handle_list_tools_message(
     if params is not None and not isinstance(params, dict):
         raise HTTPException(status_code=400, detail="Missing MCP params")
 
-    tools = _collect_tool_descriptions(request)
+    tools = _collect_tool_descriptions(request, orchestrator)
     response_id = cast(str | int, message.get("id", str(uuid4())))
     result: dict[str, JSONValue] = {"tools": cast(JSONValue, tools)}
     next_cursor = getattr(request.app.state, "mcp_next_cursor", None)
@@ -779,7 +802,10 @@ def _handle_list_tools_message(
     return JSONResponse(payload)
 
 
-def _collect_tool_descriptions(request: Request) -> list[dict[str, JSONValue]]:
+def _collect_tool_descriptions(
+    request: Request,
+    orchestrator: Orchestrator | None = None,
+) -> list[dict[str, JSONValue]]:
     name = cast(str, getattr(request.app.state, "mcp_tool_name", "run"))
     description = cast(
         str,
@@ -789,13 +815,237 @@ def _collect_tool_descriptions(request: Request) -> list[dict[str, JSONValue]]:
             "Execute the Avalan orchestrator run endpoint.",
         ),
     )
-    return [
+    tools: list[dict[str, JSONValue]] = [
         {
             "name": name,
             "description": description,
             "inputSchema": MCPToolRequest.model_json_schema(),
         }
     ]
+    if orchestrator is None:
+        return tools
+    tool_manager = getattr(orchestrator, "tool", None)
+    list_tools = getattr(tool_manager, "list_tools", None)
+    if not callable(list_tools):
+        return tools
+    for descriptor in list_tools():
+        tool_description = _skills_tool_description(descriptor)
+        if tool_description is not None:
+            tools.append(tool_description)
+    return tools
+
+
+def _skills_tool_description(
+    descriptor: ToolDescriptor,
+) -> dict[str, JSONValue] | None:
+    assert isinstance(descriptor, ToolDescriptor)
+    if not descriptor.name.startswith("skills."):
+        return None
+    schema = descriptor.provider_safe_schema or descriptor.schema or {}
+    function = schema.get("function") if isinstance(schema, dict) else None
+    if not isinstance(function, dict):
+        function = {}
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        name = descriptor.name
+    if not name.startswith("skills."):
+        return None
+    description = function.get("description")
+    if not isinstance(description, str):
+        description = ""
+    input_schema = function.get("parameters")
+    if not isinstance(input_schema, dict):
+        input_schema = descriptor.parameter_schema
+    if not isinstance(input_schema, dict):
+        input_schema = {"type": "object", "properties": {}}
+    return {
+        "name": name,
+        "description": description,
+        "inputSchema": cast(JSONValue, input_schema),
+    }
+
+
+def _is_direct_skills_tool_call(
+    orchestrator: Orchestrator,
+    message: JSONObject,
+) -> bool:
+    params = message.get("params")
+    if not isinstance(params, dict):
+        return False
+    name = params.get("name")
+    if not isinstance(name, str) or not name.startswith("skills."):
+        return False
+    resolution = orchestrator.tool.resolve_tool_name(name)
+    return (
+        resolution.canonical_name is not None
+        and resolution.canonical_name.startswith("skills.")
+    )
+
+
+async def _handle_direct_skills_tool_call_message(
+    request: Request,
+    logger: Logger,
+    orchestrator: Orchestrator,
+    message: JSONObject,
+) -> JSONResponse:
+    params = message.get("params")
+    if not isinstance(params, dict):
+        raise HTTPException(status_code=400, detail="Missing MCP params")
+    name = params.get("name")
+    if not isinstance(name, str) or not name.startswith("skills."):
+        raise HTTPException(
+            status_code=400, detail=f'Unsupported tool "{name}"'
+        )
+    resolution = orchestrator.tool.resolve_tool_name(name)
+    canonical_name = resolution.canonical_name
+    if canonical_name is None or not canonical_name.startswith("skills."):
+        raise HTTPException(
+            status_code=400, detail=f'Unsupported tool "{name}"'
+        )
+    raw_arguments = params.get("arguments")
+    if raw_arguments is None:
+        raw_arguments = {}
+    if not isinstance(raw_arguments, dict):
+        raise HTTPException(status_code=400, detail="Invalid tool arguments")
+    try:
+        container_request = validate_remote_container_arguments(
+            raw_arguments,
+            policy=remote_container_policy_from_state(request.app.state),
+        )
+    except RemoteContainerRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    arguments = container_request.arguments
+
+    call = ToolCall(
+        id=str(uuid4()),
+        name=canonical_name,
+        arguments=cast(dict[str, ToolValue], arguments),
+    )
+    context = _direct_tool_call_context(request, orchestrator, call)
+    outcome = await orchestrator.tool.execute_call(call, context)
+    response_id = cast(str | int, message.get("id", str(uuid4())))
+    payload = _direct_tool_call_jsonrpc_result(
+        request_id=response_id,
+        tool_name=canonical_name,
+        outcome=outcome,
+    )
+    logger.debug(
+        "Handled direct MCP skills tool call",
+        extra={
+            "response_id": response_id,
+            "tool_name": canonical_name,
+        },
+    )
+    return JSONResponse(payload)
+
+
+def _direct_tool_call_context(
+    request: Request,
+    orchestrator: Orchestrator,
+    call: ToolCall,
+) -> ToolCallContext:
+    context = getattr(request.app.state, "ctx", None)
+    participant_id = getattr(context, "participant_id", None)
+    agent_id = getattr(orchestrator, "_id", None)
+    return ToolCallContext(
+        agent_id=agent_id if isinstance(agent_id, UUID) else None,
+        participant_id=(
+            participant_id if isinstance(participant_id, UUID) else None
+        ),
+        calls=[call],
+    )
+
+
+def _direct_tool_call_jsonrpc_result(
+    *,
+    request_id: str | int,
+    tool_name: str,
+    outcome: ToolCallResult | ToolCallError | ToolCallDiagnostic,
+) -> JSONRPCResult:
+    structured = _direct_tool_outcome_structured_content(
+        outcome,
+        tool_name=tool_name,
+    )
+    content_text = dumps(structured, separators=(",", ":"), sort_keys=True)
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": {
+            "content": [{"type": "text", "text": content_text}],
+            "structuredContent": structured,
+        },
+    }
+
+
+def _direct_tool_outcome_structured_content(
+    outcome: ToolCallResult | ToolCallError | ToolCallDiagnostic,
+    *,
+    tool_name: str,
+) -> JSONObject:
+    if isinstance(outcome, ToolCallResult):
+        return {
+            "type": "tool.result",
+            "toolCallId": str(outcome.call.id or outcome.id),
+            "name": outcome.name,
+            "result": cast(
+                JSONValue,
+                sanitize_server_protocol_value(
+                    outcome.result,
+                    tool_name=tool_name,
+                ),
+            ),
+        }
+    if isinstance(outcome, ToolCallError):
+        return {
+            "type": "tool.error",
+            "toolCallId": str(outcome.call.id or outcome.id),
+            "name": outcome.name,
+            "message": sanitize_server_protocol_text(outcome.message),
+            "error": cast(
+                JSONValue,
+                sanitize_server_protocol_value(
+                    outcome.error,
+                    tool_name=tool_name,
+                ),
+            ),
+        }
+    return {
+        "type": "tool.diagnostic",
+        "toolCallId": str(outcome.call_id or outcome.id),
+        "name": outcome.canonical_name or tool_name,
+        "diagnostic": cast(
+            JSONValue,
+            sanitize_server_protocol_value(
+                _tool_diagnostic_payload(outcome),
+                tool_name=tool_name,
+            ),
+        ),
+    }
+
+
+def _tool_diagnostic_payload(
+    diagnostic: ToolCallDiagnostic,
+) -> dict[str, JSONValue]:
+    return {
+        "id": str(diagnostic.id),
+        "call_id": (
+            str(diagnostic.call_id) if diagnostic.call_id is not None else None
+        ),
+        "requested_name": diagnostic.requested_name,
+        "canonical_name": diagnostic.canonical_name,
+        "status": diagnostic.status.value,
+        "code": diagnostic.code.value,
+        "stage": diagnostic.stage.value,
+        "message": sanitize_server_protocol_text(diagnostic.message),
+        "retryable": diagnostic.retryable,
+        "details": cast(
+            JSONValue,
+            sanitize_server_protocol_value(
+                diagnostic.details,
+                tool_name=diagnostic.canonical_name,
+            ),
+        ),
+    }
 
 
 def _extract_call_arguments(
@@ -1018,8 +1268,12 @@ async def _stream_mcp_response(
                 await orchestrator.sync_messages()
             return
 
-        answer_text = snapshot.answer_text
-        reasoning_text = snapshot.reasoning_text
+        answer_text = sanitize_model_visible_server_protocol_text(
+            snapshot.answer_text
+        )
+        reasoning_text = sanitize_model_visible_server_protocol_text(
+            snapshot.reasoning_text
+        )
         usage = snapshot.usage
 
         summary: dict[str, JSONValue] = {
@@ -1115,21 +1369,27 @@ async def _mcp_canonical_stream_item_notifications(
         _record_canonical_tool_call_ready(item, state.tool_summaries)
         return notifications
     if item.kind is StreamItemKind.REASONING_DELTA:
-        reasoning_delta = _canonical_reasoning_delta(item)
-        if reasoning_delta:
-            notifications.append(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/message",
-                    "params": {
-                        "level": "debug",
-                        "data": {
-                            "type": "reasoning",
-                            "delta": reasoning_delta,
+        reasoning_deltas = _canonical_reasoning_deltas(
+            item,
+            state.reasoning_redactor,
+        )
+        if reasoning_deltas is None:
+            return notifications
+        for reasoning_delta in reasoning_deltas:
+            if reasoning_delta:
+                notifications.append(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/message",
+                        "params": {
+                            "level": "debug",
+                            "data": {
+                                "type": "reasoning",
+                                "delta": reasoning_delta,
+                            },
                         },
-                    },
-                }
-            )
+                    }
+                )
         return notifications
 
     token_notification = _canonical_tool_notification(item)
@@ -1153,7 +1413,9 @@ async def _mcp_canonical_stream_item_notifications(
     if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
         return notifications
     progress_notification = _canonical_progress_notification(
-        item, progress_token
+        item,
+        progress_token,
+        state.answer_redactor,
     )
     if progress_notification is not None:
         notifications.append(progress_notification)
@@ -1174,6 +1436,7 @@ def _record_canonical_tool_call_ready(
     data = item.data if isinstance(item.data, dict) else {}
     name = data.get("name")
     arguments = data.get("arguments")
+    tool_name = name if isinstance(name, str) else None
     tool_summary = tool_summaries.setdefault(
         tool_call_id,
         {
@@ -1185,20 +1448,27 @@ def _record_canonical_tool_call_ready(
     if isinstance(name, str) and name:
         tool_summary["name"] = name
     if arguments is not None:
-        tool_summary["arguments"] = cast(JSONValue, arguments)
+        tool_summary["arguments"] = cast(
+            JSONValue,
+            sanitize_server_protocol_value(arguments, tool_name=tool_name),
+        )
 
 
 def _canonical_progress_notification(
     item: CanonicalStreamItem,
     progress_token: str | int,
+    redactor: ModelVisibleServerProtocolTextRedactor | None = None,
 ) -> JSONObject | None:
     if item.kind is StreamItemKind.ANSWER_DELTA:
-        delta = item.text_delta or ""
-        if not delta:
+        deltas = _model_visible_stream_deltas(
+            item.text_delta or "",
+            redactor,
+        )
+        if not deltas:
             return None
         message: dict[str, JSONValue] = {
             "type": "answer.delta",
-            "delta": delta,
+            "delta": "".join(deltas),
         }
     elif item.kind is StreamItemKind.STREAM_COMPLETED:
         message = {"type": "answer.completed"}
@@ -1226,13 +1496,19 @@ def _canonical_error_message(snapshot: ProtocolStreamSnapshot) -> str:
     ):
         message = terminal.data.get("message")
         if isinstance(message, str) and message:
-            return message
+            return sanitize_model_visible_server_protocol_text(message)
     return "Stream errored."
 
 
-def _canonical_reasoning_delta(item: CanonicalStreamItem) -> str | None:
+def _canonical_reasoning_deltas(
+    item: CanonicalStreamItem,
+    redactor: ModelVisibleServerProtocolTextRedactor | None = None,
+) -> tuple[str, ...] | None:
     if item.kind is StreamItemKind.REASONING_DELTA:
-        return item.text_delta or ""
+        return _model_visible_stream_deltas(
+            item.text_delta or "",
+            redactor,
+        )
     if item.kind in (
         StreamItemKind.REASONING_DONE,
         StreamItemKind.STREAM_STARTED,
@@ -1243,8 +1519,25 @@ def _canonical_reasoning_delta(item: CanonicalStreamItem) -> str | None:
         StreamItemKind.USAGE_UPDATE,
         StreamItemKind.USAGE_COMPLETED,
     ):
-        return ""
+        return ()
     return None
+
+
+def _canonical_reasoning_delta(item: CanonicalStreamItem) -> str | None:
+    deltas = _canonical_reasoning_deltas(item)
+    if deltas is None:
+        return None
+    return "".join(deltas)
+
+
+def _model_visible_stream_deltas(
+    value: str,
+    redactor: ModelVisibleServerProtocolTextRedactor | None,
+) -> tuple[str, ...]:
+    if redactor is not None:
+        return redactor.push(value)
+    sanitized = sanitize_model_visible_server_protocol_text(value)
+    return (sanitized,) if sanitized else ()
 
 
 def _canonical_tool_notification(
@@ -1252,11 +1545,18 @@ def _canonical_tool_notification(
 ) -> JSONObject | None:
     if item.kind is not StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
         return None
-    delta = item.text_delta or ""
+    delta = sanitize_server_protocol_text(item.text_delta or "")
     tool_call_id = item.correlation.tool_call_id
     data = item.data if isinstance(item.data, dict) else {}
-    name = cast(JSONValue, data.get("name"))
-    arguments = cast(JSONValue, data.get("arguments"))
+    tool_name = _protocol_tool_name(item, data)
+    name = cast(JSONValue, sanitize_server_protocol_value(data.get("name")))
+    arguments = cast(
+        JSONValue,
+        sanitize_server_protocol_value(
+            data.get("arguments"),
+            tool_name=tool_name,
+        ),
+    )
     has_call_metadata = "name" in data or "arguments" in data
     if not delta:
         if has_call_metadata and isinstance(tool_call_id, str):
@@ -1331,19 +1631,29 @@ def _canonical_tool_execution_notification(
     tool_call_id = item.correlation.tool_call_id
     if not isinstance(tool_call_id, str):
         return None
-    name = cast(JSONValue, data.get("name"))
-    arguments = cast(JSONValue, data.get("arguments"))
+    tool_name = _protocol_tool_name(item, data)
+    name = cast(JSONValue, sanitize_server_protocol_value(data.get("name")))
+    arguments = cast(
+        JSONValue,
+        sanitize_server_protocol_value(
+            data.get("arguments"),
+            tool_name=tool_name,
+        ),
+    )
     tool_summary = tool_summaries.setdefault(
         tool_call_id,
         {"id": tool_call_id, "name": name, "arguments": arguments},
     )
-    if isinstance(name, str) and name:
+    if isinstance(tool_name, str) and tool_name:
         tool_summary["name"] = name
     if arguments is not None:
         tool_summary["arguments"] = arguments
 
     if item.kind is StreamItemKind.TOOL_EXECUTION_STARTED:
-        timings = cast(JSONValue, data.get("timings"))
+        timings = cast(
+            JSONValue,
+            sanitize_server_protocol_value(data.get("timings")),
+        )
         if isinstance(timings, dict):
             tool_summary["started"] = timings.get("started")
         return _tool_call_notification(
@@ -1352,14 +1662,23 @@ def _canonical_tool_execution_notification(
             arguments=arguments,
         )
     if item.kind is StreamItemKind.STREAM_DIAGNOSTIC:
-        diagnostic = cast(JSONValue, data.get("diagnostic"))
+        diagnostic = cast(
+            JSONValue,
+            sanitize_server_protocol_value(
+                data.get("diagnostic"),
+                tool_name=tool_name,
+            ),
+        )
         tool_summary["diagnostic"] = diagnostic
         return _tool_diagnostic_notification(
             tool_call_id=tool_call_id,
             name=name,
             arguments=arguments,
             diagnostic=diagnostic,
-            timings=cast(JSONValue, data.get("timings")),
+            timings=cast(
+                JSONValue,
+                sanitize_server_protocol_value(data.get("timings")),
+            ),
         )
 
     payload_key = (
@@ -1367,7 +1686,13 @@ def _canonical_tool_execution_notification(
         if item.kind is StreamItemKind.TOOL_EXECUTION_ERROR
         else "result"
     )
-    payload_value = cast(JSONValue, data.get(payload_key))
+    payload_value = cast(
+        JSONValue,
+        sanitize_server_protocol_value(
+            data.get(payload_key),
+            tool_name=tool_name,
+        ),
+    )
     tool_summary[payload_key] = payload_value
     return _tool_result_notification(
         tool_call_id=tool_call_id,
@@ -1375,7 +1700,10 @@ def _canonical_tool_execution_notification(
         arguments=arguments,
         result=payload_value if payload_key == "result" else None,
         error=payload_value if payload_key == "error" else None,
-        timings=cast(JSONValue, data.get("timings")),
+        timings=cast(
+            JSONValue,
+            sanitize_server_protocol_value(data.get("timings")),
+        ),
     )
 
 
@@ -1476,7 +1804,8 @@ async def _canonical_tool_resource_notifications(
     if not isinstance(data, dict):
         return
     category = data.get("category")
-    content = _canonical_tool_resource_content(item)
+    tool_name = _protocol_tool_name(item, data)
+    content = _canonical_tool_resource_content(item, tool_name=tool_name)
     if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT and category not in {
         "stdout",
         "stderr",
@@ -1511,11 +1840,10 @@ async def _canonical_tool_resource_notifications(
         tool_call_id,
         {
             "id": tool_call_id,
-            "name": _metadata_string(item.metadata, "tool_name"),
+            "name": tool_name,
             "arguments": None,
         },
     )
-    tool_name = _metadata_string(item.metadata, "tool_name")
     if tool_name and not tool_summary.get("name"):
         tool_summary["name"] = tool_name
     existing_resources = tool_summary.setdefault("resources", [])
@@ -1541,19 +1869,51 @@ def _append_tool_summary_resource(
     resources.append({"uri": uri, "name": name})
 
 
-def _canonical_tool_resource_content(item: CanonicalStreamItem) -> str:
+def _canonical_tool_resource_content(
+    item: CanonicalStreamItem,
+    *,
+    tool_name: str | None = None,
+) -> str:
     if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
         data = item.data if isinstance(item.data, dict) else {}
         content = data.get("content", item.text_delta)
-        return content if isinstance(content, str) else ""
+        return (
+            _mcp_protocol_resource_text(content, tool_name=tool_name)
+            if isinstance(content, str)
+            else ""
+        )
     if item.kind is StreamItemKind.TOOL_EXECUTION_PROGRESS:
         data = item.data if isinstance(item.data, dict) else {}
         content = data.get("content")
         if isinstance(content, str):
-            return content
+            return _mcp_protocol_resource_text(content, tool_name=tool_name)
         progress = data.get("progress")
-        return to_json({"progress": progress}) if progress is not None else ""
+        return (
+            to_json(
+                sanitize_server_protocol_value(
+                    {"progress": progress},
+                    tool_name=tool_name,
+                )
+            )
+            if progress is not None
+            else ""
+        )
     return ""
+
+
+def _mcp_protocol_resource_text(
+    value: str,
+    *,
+    tool_name: str | None,
+) -> str:
+    if isinstance(tool_name, str) and tool_name.startswith("skills."):
+        return to_json(
+            sanitize_server_protocol_value(
+                {"content": value},
+                tool_name=tool_name,
+            )
+        )
+    return sanitize_server_protocol_text(value)
 
 
 def _usage_count(
@@ -1579,6 +1939,16 @@ def _metadata_string(
     return value if isinstance(value, str) else None
 
 
+def _protocol_tool_name(
+    item: CanonicalStreamItem,
+    data: Mapping[str, object],
+) -> str | None:
+    name = data.get("name")
+    if isinstance(name, str) and name:
+        return name
+    return _metadata_string(item.metadata, "tool_name")
+
+
 def _merge_canonical_tool_call_arguments(
     tool_summaries: dict[str, dict[str, JSONValue]],
     tool_call_arguments: Mapping[str, str],
@@ -1592,7 +1962,12 @@ def _merge_canonical_tool_call_arguments(
                 "arguments": arguments,
             },
         )
-        tool_summary["arguments"] = arguments
+        raw_tool_name = tool_summary.get("name")
+        tool_name = raw_tool_name if isinstance(raw_tool_name, str) else None
+        tool_summary["arguments"] = cast(
+            JSONValue,
+            sanitize_server_protocol_value(arguments, tool_name=tool_name),
+        )
 
 
 async def _close_response_iterator(response: StreamResponse) -> None:

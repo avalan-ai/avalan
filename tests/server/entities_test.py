@@ -129,6 +129,52 @@ class ChatEntitiesTestCase(TestCase):
                         }
                     )
 
+    def test_chat_request_rejects_remote_skills_authority_metadata(
+        self,
+    ) -> None:
+        base = {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+
+        for key in (
+            "skills",
+            "skill_settings",
+            "source_roots",
+            "source_authority",
+            "read_limits",
+            "registry_mutation",
+        ):
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "runtime authority",
+                ):
+                    ChatCompletionRequest.model_validate(
+                        {
+                            **base,
+                            "metadata": {key: True},
+                        }
+                    )
+
+    def test_responses_request_rejects_remote_skills_authority_metadata(
+        self,
+    ) -> None:
+        for payload in (
+            {"model": "m", "input": "hi", "metadata": {"skills": {}}},
+            {
+                "model": "m",
+                "input": "hi",
+                "metadata": {"source_roots": ["/Users/me/skills"]},
+            },
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "runtime authority",
+                ):
+                    ResponsesRequest.model_validate(payload)
+
     def test_chat_request_ignores_non_runtime_extras(self) -> None:
         req = ChatCompletionRequest.model_validate(
             {
@@ -204,6 +250,70 @@ class ChatEntitiesTestCase(TestCase):
             "patternProperties",
             req.tools[0].function.parameters.model_extra,
         )
+
+    def test_chat_request_rejects_remote_skills_tool_definition(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "Remote requests cannot define skills tools",
+        ):
+            ChatCompletionRequest.model_validate(
+                {
+                    "model": "m",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "skills.read",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+
+    def test_request_skills_tool_definition_validator_ignores_malformed_inputs(
+        self,
+    ) -> None:
+        server_entities._reject_remote_skills_tool_definitions(
+            {"function": {"name": "skills.read"}},
+            path="request.tools",
+        )
+        server_entities._reject_remote_skills_tool_definitions(
+            [object(), {"type": "function"}, {"function": "invalid"}],
+            path="request.tools",
+        )
+
+    def test_chat_request_allows_skills_schema_property_name(self) -> None:
+        req = ChatCompletionRequest.model_validate(
+            {
+                "model": "m",
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "select_skills",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "skills": {
+                                        "title": "Skills",
+                                        "type": "string",
+                                    }
+                                },
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+
+        assert req.tools is not None
+        self.assertIn("skills", req.tools[0].function.parameters.properties)
 
     def test_chat_request_rejects_metadata_schema_smuggling(self) -> None:
         with self.assertRaisesRegex(ValidationError, "runtime authority"):
@@ -414,6 +524,46 @@ class ChatEntitiesTestCase(TestCase):
         )
         with self.assertRaises(ValueError):
             descriptor.validate_sources()
+
+    def test_server_protocol_sanitizer_redacts_binary_values(self) -> None:
+        sanitized = server_entities.sanitize_server_protocol_value(
+            {
+                "data": b"secret",
+                "nested": [bytearray(b"hidden"), memoryview(b"private")],
+            }
+        )
+
+        self.assertEqual(
+            sanitized,
+            {
+                "data": "<redacted-bytes>",
+                "nested": ["<redacted-bytes>", "<redacted-bytes>"],
+            },
+        )
+
+    def test_model_visible_redactor_handles_empty_and_full_skill_body(
+        self,
+    ) -> None:
+        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+
+        self.assertEqual(redactor.push(""), ())
+        self.assertEqual(redactor.push("   \n"), ("   \n",))
+        self.assertEqual(
+            redactor.push("# Demo Skill\n\nUse when private.\n\nSecret body"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+        self.assertEqual(redactor.push("later token"), ())
+
+        embedded = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(
+            embedded.push(
+                "Preamble\n# Demo Skill\n\n"
+                "Use when private.\n\n"
+                "Secret body that is long enough to look like an echo."
+            ),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+        self.assertEqual(embedded.push("later token"), ())
 
     def test_mcp_tool_request_accepts_text_or_files(self) -> None:
         text_request = MCPToolRequest(input_string="hello")
@@ -714,6 +864,31 @@ class ChatEntitiesTestCase(TestCase):
             req.response_format.schema_.model_extra,
         )
 
+    def test_responses_request_rejects_remote_skills_tool_definition(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "Remote requests cannot define skills tools",
+        ):
+            ResponsesRequest.model_validate(
+                {
+                    "input": "hi",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "skills.read",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+
     def test_responses_request_rejects_metadata_schema_smuggling(self) -> None:
         with self.assertRaisesRegex(ValidationError, "runtime authority"):
             ResponsesRequest.model_validate(
@@ -725,3 +900,246 @@ class ChatEntitiesTestCase(TestCase):
                     },
                 }
             )
+
+    def test_server_protocol_text_redacts_representative_host_paths(
+        self,
+    ) -> None:
+        cases = {
+            "see /tmp/skills/demo/SKILL.md": "see <host-path>/SKILL.md",
+            "see /opt/avalan/logs/run.log": "see <host-path>/run.log",
+            "see /Volumes/Data/skills/demo/SKILL.md": (
+                "see <host-path>/SKILL.md"
+            ),
+            r"see C:\Users\mariano\skills\demo\SKILL.md": (
+                "see <host-path>/SKILL.md"
+            ),
+            "see C:/Users/mariano/skills/demo/SKILL.md": (
+                "see <host-path>/SKILL.md"
+            ),
+        }
+
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(
+                    server_entities.sanitize_server_protocol_text(source),
+                    expected,
+                )
+
+    def test_server_protocol_text_handles_repeated_slash_segments(
+        self,
+    ) -> None:
+        posix_path = "/var/" + "!/" * 128 + "SKILL.md"
+        windows_path = "A:/Users/" + "!/" * 128 + "SKILL.md"
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(
+                f"read {posix_path}"
+            ),
+            "read <host-path>/SKILL.md",
+        )
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(
+                f"read {windows_path}"
+            ),
+            "read <host-path>/SKILL.md",
+        )
+
+    def test_server_protocol_text_redacts_consecutive_slash_host_paths(
+        self,
+    ) -> None:
+        text = (
+            "read /tmp//skills/demo/SKILL.md "
+            "and C:/Users//skills/demo/SKILL.md "
+            "and file:///tmp//skills/demo/SKILL.md "
+            "but keep https://files.example/tmp//report.pdf"
+        )
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            "read <host-path>/SKILL.md "
+            "and <host-path>/SKILL.md "
+            "and file://<host-path>/SKILL.md "
+            "but keep https://files.example/tmp//report.pdf",
+        )
+
+    def test_server_protocol_text_redacts_trailing_slash_host_paths(
+        self,
+    ) -> None:
+        text = (
+            "read /tmp/skills/demo/ "
+            "and /tmp//skills/demo/ "
+            "and C:/Users/me/skills/demo/ "
+            "and file:///tmp//skills/demo/ "
+            "but keep https://files.example/tmp//skills/demo/"
+        )
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            "read <host-path>/demo "
+            "and <host-path>/demo "
+            "and <host-path>/demo "
+            "and file://<host-path>/demo "
+            "but keep https://files.example/tmp//skills/demo/",
+        )
+
+    def test_server_protocol_text_avoids_path_prefix_false_positives(
+        self,
+    ) -> None:
+        text = (
+            "read /tmpfile and /optimize and /VolumesData "
+            r"and C:Users\mariano and C:/UsersData/file"
+        )
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            text,
+        )
+
+    def test_server_protocol_text_does_not_redact_remote_url_paths(
+        self,
+    ) -> None:
+        text = (
+            "download https://files.example/tmp/report.pdf "
+            "and https://files.example/opt/logs/run.log "
+            "and https://files.example/Volumes/Data/report.pdf "
+            "but read /tmp/local-report.pdf "
+            "and file:///tmp/skills/demo/SKILL.md"
+        )
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            "download https://files.example/tmp/report.pdf "
+            "and https://files.example/opt/logs/run.log "
+            "and https://files.example/Volumes/Data/report.pdf "
+            "but read <host-path>/local-report.pdf "
+            "and file://<host-path>/SKILL.md",
+        )
+
+    def test_server_protocol_text_preserves_windows_paths_in_remote_urls(
+        self,
+    ) -> None:
+        text = (
+            "keep https://files.example/C:/Users "
+            "and https://files.example/C:/Users/me/file.txt "
+            "but redact C:/Users and C:/Users/me "
+            "and file://C:/Users/me/file.txt "
+            "and file:///C:/Users/me/file.txt"
+        )
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            "keep https://files.example/C:/Users "
+            "and https://files.example/C:/Users/me/file.txt "
+            "but redact <host-path>/Users and <host-path>/me "
+            "and file://<host-path>/file.txt "
+            "and file:///<host-path>/file.txt",
+        )
+
+    def test_server_protocol_text_redacts_wrapped_file_urls(
+        self,
+    ) -> None:
+        text = (
+            "read (file:///tmp/secret.txt) "
+            "and [file:///tmp/secret.txt] "
+            'and "file:///tmp/secret.txt" '
+            "and (file://C:/Users/me/secret.txt)"
+        )
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            "read (file://<host-path>/secret.txt) "
+            "and [file://<host-path>/secret.txt] "
+            'and "file://<host-path>/secret.txt" '
+            "and (file://<host-path>/secret.txt)",
+        )
+
+    def test_server_protocol_text_preserves_wrapped_remote_urls(
+        self,
+    ) -> None:
+        text = (
+            "keep (https://files.example/tmp/report.pdf) "
+            "and [https://files.example/tmp/report.pdf] "
+            'and "https://files.example/tmp/report.pdf"'
+        )
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            text,
+        )
+
+    def test_server_protocol_text_uses_last_scheme_for_attached_labels(
+        self,
+    ) -> None:
+        text = (
+            "Source:file:///tmp/skills/demo/SKILL.md "
+            "url:file:///tmp/secret.txt "
+            "prefix:file://C:/Users/me/secret.txt "
+            "Source:https://files.example/tmp/report.pdf "
+            "url:https://files.example/C:/Users/me/file.txt"
+        )
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            "Source:file://<host-path>/SKILL.md "
+            "url:file://<host-path>/secret.txt "
+            "prefix:file://<host-path>/secret.txt "
+            "Source:https://files.example/tmp/report.pdf "
+            "url:https://files.example/C:/Users/me/file.txt",
+        )
+
+    def test_server_protocol_text_redacts_colon_labeled_local_paths(
+        self,
+    ) -> None:
+        text = (
+            "Source:/tmp/skills/demo/SKILL.md "
+            "url:/opt/secret.txt "
+            "Source:C:/Users/me/secret.txt "
+            "Source:https://files.example/tmp/report.pdf "
+            "url:https://files.example/C:/Users/me/file.txt"
+        )
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            "Source:<host-path>/SKILL.md "
+            "url:<host-path>/secret.txt "
+            "Source:<host-path>/secret.txt "
+            "Source:https://files.example/tmp/report.pdf "
+            "url:https://files.example/C:/Users/me/file.txt",
+        )
+
+    def test_model_visible_protocol_text_redacts_echoed_skill_body(
+        self,
+    ) -> None:
+        text = (
+            "# Demo Skill\n\n"
+            "Use when handling private operator tasks.\n\n"
+            "Secret skill body: never expose this instruction.\n"
+            "Source: C:/Users/mariano/skills/demo/SKILL.md"
+        )
+
+        sanitized = (
+            server_entities.sanitize_model_visible_server_protocol_text(text)
+        )
+
+        self.assertEqual(sanitized, server_entities.SKILL_CONTENT_REDACTION)
+        self.assertNotIn("Secret skill body", sanitized)
+        self.assertNotIn("C:/Users", sanitized)
+
+    def test_model_visible_stream_redactor_holds_split_heading_marker(
+        self,
+    ) -> None:
+        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+
+        self.assertEqual(redactor.push("#"), ())
+        self.assertEqual(
+            redactor.push(" Demo Skill\n\n"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+        self.assertEqual(
+            redactor.push(
+                "Use when handling private operator tasks.\n"
+                "Secret skill body.\n"
+                "Source: /tmp/skills/demo/SKILL.md"
+            ),
+            (),
+        )
