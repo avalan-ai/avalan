@@ -1,0 +1,11 @@
+{
+  "case": "empty",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-empty",
+    "root": "/Users/example/private/skills/empty",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": []
+}

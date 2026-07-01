@@ -1,0 +1,22 @@
+{
+  "case": "duplicate",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-duplicate",
+    "root": "/Users/example/private/skills/duplicate",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/duplicate/a/SKILL.md",
+      "content": "---\nname: \"duplicate\"\ndescription: \"First duplicate skill.\"\n---\n# Duplicate A"
+    },
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/duplicate/b/SKILL.md",
+      "content": "---\nname: \"duplicate\"\ndescription: \"Second duplicate skill.\"\n---\n# Duplicate B"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "case": "binary",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-binary",
+    "root": "/Users/example/private/skills/binary",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/binary/SKILL.md",
+      "resource_state": "binary",
+      "content": "---\nname: \"binary\"\ndescription: \"A binary skill resource.\"\n---\n# Binary Skill"
+    }
+  ]
+}

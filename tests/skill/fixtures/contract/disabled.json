@@ -1,0 +1,17 @@
+{
+  "case": "disabled",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-disabled",
+    "root": "/Users/example/private/skills/disabled",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/disabled/SKILL.md",
+      "content": "---\nname: \"disabled\"\ndescription: \"A skill disabled by manifest metadata.\"\nenabled: false\n---\n# Disabled Skill"
+    }
+  ]
+}

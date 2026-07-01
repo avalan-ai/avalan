@@ -1,0 +1,17 @@
+{
+  "case": "unavailable",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-unavailable",
+    "root": "/Users/example/private/skills/unavailable",
+    "available": false,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/unavailable/SKILL.md",
+      "content": "---\nname: \"unavailable\"\ndescription: \"A skill from an unavailable source.\"\n---\n# Unavailable Skill"
+    }
+  ]
+}
