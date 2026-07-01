@@ -38,6 +38,7 @@ from ..schema import (
     TaskSchemaResolutionError,
     canonical_schema_json,
 )
+from ..skills import task_effective_skills_settings
 from ..target import TaskTargetRunner, TaskValidationContext
 from ..text_strategy import (
     TextStrategyKind,
@@ -53,7 +54,7 @@ from ..validation import (
 from base64 import b64encode
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from json import JSONDecodeError, dumps, loads
 from mimetypes import guess_extension
 from pathlib import Path
@@ -171,9 +172,14 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         ):
             return (_agent_target_issue(path="execution.ref"),)
         issues: list[TaskValidationIssue] = []
+        try:
+            tool_settings = self._tool_settings_for_definition(definition)
+        except TaskValidationError as error:
+            issues.extend(error.issues)
+            tool_settings = self._tool_settings
         shell_issue = _validate_agent_shell_pipeline_opt_in(
             config,
-            tool_settings=self._tool_settings,
+            tool_settings=tool_settings,
             required=self._require_shell_pipeline_opt_in,
         )
         if shell_issue is not None:
@@ -209,7 +215,9 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             agent_id=self._agent_id,
             disable_memory=self._disable_memory,
             uri=self._uri,
-            tool_settings=self._tool_settings,
+            tool_settings=self._tool_settings_for_definition(
+                context.definition
+            ),
         )
         async with orchestrator:
             async with _agent_event_listener(orchestrator, context):
@@ -317,6 +325,22 @@ class AgentTaskTargetRunner(TaskTargetRunner):
                 local_profile=local_profile,
             )
         return self._file_delivery_resolver(uri)
+
+    def _tool_settings_for_definition(
+        self,
+        definition: TaskDefinition,
+    ) -> ToolSettingsContext | None:
+        settings = self._tool_settings
+        base_skills = settings.skills if settings is not None else None
+        effective_skills = task_effective_skills_settings(
+            definition,
+            trusted_settings=base_skills,
+        )
+        if effective_skills is None:
+            return settings
+        if settings is None:
+            return ToolSettingsContext(skills=effective_skills)
+        return replace(settings, skills=effective_skills)
 
 
 def _attach_cancellation_checker(

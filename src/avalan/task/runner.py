@@ -88,7 +88,9 @@ from .privacy import (
 from .schema import (
     TaskSchemaResolutionError,
     resolve_task_definition_schemas,
+    task_definition_schema_base_path,
 )
+from .skills import task_definition_with_skills_identity
 from .state import TaskAttemptState, TaskRunState
 from .store import (
     TaskAttempt,
@@ -794,7 +796,12 @@ class DirectTaskRunner:
             assert isinstance(file, TaskInputFile)
         if definition.run.mode != RunMode.DIRECT:
             raise TaskRunnerError("direct runner requires direct run mode")
+        schema_base_path = task_definition_schema_base_path(definition)
         definition = await self._resolve_definition_schemas(definition)
+        definition = await task_definition_with_skills_identity(
+            definition,
+            schema_base_path=schema_base_path,
+        )
         self._validate(definition, input_value)
         await self._validate_target(definition)
         sanitizer = self._sanitizer(definition)

@@ -6,6 +6,13 @@ from ...pgsql import (
     assert_pgsql_identifier,
     classify_pgsql_error,
 )
+from ...skill import (
+    SkillSettingsSurface,
+    TrustedSkillSettings,
+    UntrustedSkillSettings,
+    parse_untrusted_skill_settings_config,
+    untrusted_skill_settings_config_dict,
+)
 from ...types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
@@ -2030,7 +2037,7 @@ def _idempotency_from_row(
 
 
 def _definition_to_payload(definition: TaskDefinition) -> dict[str, object]:
-    return {
+    payload = {
         "artifact": {
             "encrypt": definition.artifact.encrypt,
             "max_bytes": definition.artifact.max_bytes,
@@ -2111,6 +2118,13 @@ def _definition_to_payload(definition: TaskDefinition) -> dict[str, object]:
             "version": definition.task.version,
         },
     }
+    if definition.skills_config is not None:
+        payload["skills_config"] = untrusted_skill_settings_config_dict(
+            definition.skills_config
+        )
+    if definition.skills_identity is not None:
+        payload["skills_identity"] = _plain(definition.skills_identity)
+    return payload
 
 
 def _definition_from_payload(payload: Mapping[str, object]) -> TaskDefinition:
@@ -2125,6 +2139,16 @@ def _definition_from_payload(payload: Mapping[str, object]) -> TaskDefinition:
     container = _mapping(payload.get("container", {}))
     limits = _mapping(payload["limits"])
     observability = _mapping(payload["observability"])
+    skills_config = (
+        _skills_config_from_payload(_mapping(payload["skills_config"]))
+        if isinstance(payload.get("skills_config"), Mapping)
+        else None
+    )
+    skills_identity = (
+        _mapping(payload["skills_identity"])
+        if isinstance(payload.get("skills_identity"), Mapping)
+        else None
+    )
     return TaskDefinition(
         task=TaskMetadata(
             name=cast(str, task["name"]),
@@ -2237,6 +2261,19 @@ def _definition_from_payload(payload: Mapping[str, object]) -> TaskDefinition:
             if not container
             else TaskContainerExecutionSettings.from_dict(container)
         ),
+        skills_config=skills_config,
+        skills_identity=skills_identity,
+    )
+
+
+def _skills_config_from_payload(
+    payload: Mapping[str, object],
+) -> UntrustedSkillSettings:
+    return parse_untrusted_skill_settings_config(
+        payload,
+        trusted=TrustedSkillSettings(),
+        surface=SkillSettingsSurface.TASK,
+        section="skills",
     )
 
 

@@ -5,6 +5,13 @@ from unittest import TestCase, main
 
 from async_helpers import run_async
 
+from avalan.skill import (
+    SkillReadLimits,
+    SkillSourceAuthorityKind,
+    SkillSourceConfig,
+    TrustedSkillSettings,
+    WorkspaceSkillSourceAuthority,
+)
 from avalan.task import (
     IdempotencyMode,
     ObservabilitySinkType,
@@ -23,6 +30,7 @@ from avalan.task import (
     loads_task_definition,
     loads_task_definition_result,
 )
+from avalan.task import loader as task_loader_module
 
 _AsyncTaskDefinitionLoader = TaskDefinitionLoader
 _async_load_task_definition = load_task_definition
@@ -33,19 +41,31 @@ _async_loads_task_definition_result = loads_task_definition_result
 
 class TaskDefinitionLoader(_AsyncTaskDefinitionLoader):  # type: ignore[no-redef]
     def load(self, *args: object, **kwargs: object) -> object:
-        loader = _AsyncTaskDefinitionLoader(encoding=self._encoding)
+        loader = _AsyncTaskDefinitionLoader(
+            encoding=self._encoding,
+            skills_settings=self._skills_settings,
+        )
         return run_async(loader.load(*args, **kwargs))
 
     def load_result(self, *args: object, **kwargs: object) -> object:
-        loader = _AsyncTaskDefinitionLoader(encoding=self._encoding)
+        loader = _AsyncTaskDefinitionLoader(
+            encoding=self._encoding,
+            skills_settings=self._skills_settings,
+        )
         return run_async(loader.load_result(*args, **kwargs))
 
     def loads(self, *args: object, **kwargs: object) -> object:
-        loader = _AsyncTaskDefinitionLoader(encoding=self._encoding)
+        loader = _AsyncTaskDefinitionLoader(
+            encoding=self._encoding,
+            skills_settings=self._skills_settings,
+        )
         return run_async(loader.loads(*args, **kwargs))
 
     def loads_result(self, *args: object, **kwargs: object) -> object:
-        loader = _AsyncTaskDefinitionLoader(encoding=self._encoding)
+        loader = _AsyncTaskDefinitionLoader(
+            encoding=self._encoding,
+            skills_settings=self._skills_settings,
+        )
         return run_async(loader.loads_result(*args, **kwargs))
 
 
@@ -131,6 +151,221 @@ class TaskDefinitionLoaderTest(TestCase):
             ),
         )
         self.assertFalse(definition.observability.trace)
+
+    def test_loads_accepts_trusted_skills_settings_for_eligible_targets(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = _trusted_skills(Path(temporary_directory))
+            cases = (
+                (TaskTargetType.AGENT, "agents/agent.toml"),
+                (TaskTargetType.FLOW, "flows/flow.toml"),
+                (TaskTargetType.MODEL, "ai://local/model"),
+                (TaskTargetType.TASK, "tasks/child.task.toml"),
+                (TaskTargetType.TOOL, "skills.read"),
+            )
+
+            for target_type, ref in cases:
+                with self.subTest(target_type=target_type.value):
+                    definition = loads_task_definition(
+                        _skills_task_source(target_type, ref),
+                        skills_settings=settings,
+                    )
+
+                    assert definition.skills is not None
+                    self.assertEqual(
+                        tuple(
+                            source.label
+                            for source in definition.skills.sources
+                        ),
+                        ("workspace-main",),
+                    )
+                    self.assertEqual(
+                        definition.skills.read_limits.max_lines_per_read,
+                        50,
+                    )
+                    self.assertIsNotNone(definition.skills_config)
+
+    def test_loader_constructor_accepts_trusted_skills_settings(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = _trusted_skills(Path(temporary_directory))
+
+            definition = TaskDefinitionLoader(skills_settings=settings).loads(
+                _task_source(TaskTargetType.AGENT, "agents/agent.toml")
+            )
+
+        assert isinstance(definition, TaskDefinition)
+        self.assertIs(definition.skills, settings)
+
+    def test_schema_resolution_preserves_base_for_skills_tasks(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            schema_path = root / "schema.json"
+            schema_path.write_text('{"type":"object"}', encoding="utf-8")
+            task_path = root / "task.toml"
+            task_path.write_text(
+                """
+                [task]
+                name = "skills_schema_task"
+                version = "1"
+
+                [input]
+                type = "string"
+
+                [output]
+                type = "object"
+                schema_ref = "schema.json"
+
+                [execution]
+                type = "agent"
+                ref = "agents/agent.toml"
+
+                [skills]
+                source_labels = ["workspace-main"]
+                """,
+                encoding="utf-8",
+            )
+            settings = _trusted_skills(root)
+
+            definition = load_task_definition(
+                task_path,
+                skills_settings=settings,
+            )
+
+        assert isinstance(definition, TaskDefinition)
+        self.assertEqual(definition.definition_base, task_path)
+        self.assertIsNotNone(definition.output.schema)
+
+    def test_loads_inherits_trusted_skills_settings_without_override(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = _trusted_skills(Path(temporary_directory))
+
+            definition = loads_task_definition(
+                _task_source(TaskTargetType.AGENT, "agents/agent.toml"),
+                skills_settings=settings,
+            )
+
+        self.assertIs(definition.skills, settings)
+        self.assertIsNone(definition.skills_config)
+
+    def test_skills_section_requires_trusted_settings(self) -> None:
+        result = loads_task_definition_result(
+            _skills_task_source(TaskTargetType.AGENT, "agents/agent.toml")
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.issues[0].code,
+            "task.skills_trusted_settings_required",
+        )
+
+    def test_skills_section_must_be_table(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = _trusted_skills(Path(temporary_directory))
+            issues: list[object] = []
+
+            skills, skills_config = task_loader_module._skills_settings(
+                "not-a-table",  # type: ignore[arg-type]
+                settings,
+                execution_type=TaskTargetType.AGENT,
+                issues=issues,  # type: ignore[arg-type]
+            )
+
+        self.assertIsNone(skills)
+        self.assertIsNone(skills_config)
+        self.assertEqual(len(issues), 1)
+        issue = issues[0]
+        self.assertEqual(issue.code, "task.invalid_type")
+        self.assertEqual(issue.path, "skills")
+
+    def test_skills_reject_untrusted_authority(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = _trusted_skills(
+                Path(temporary_directory),
+                authority_kinds=(SkillSourceAuthorityKind.WORKSPACE,),
+            )
+
+            result = loads_task_definition_result(
+                _task_source(TaskTargetType.AGENT, "agents/agent.toml") + """
+
+                [skills]
+                authority_kinds = ["user_local"]
+                """,
+                skills_settings=settings,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "skills.policy_denied")
+        self.assertEqual(result.issues[0].path, "skills.authority_kinds")
+
+    def test_skills_reject_unsupported_syntax(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = _trusted_skills(Path(temporary_directory))
+
+            result = loads_task_definition_result(
+                _task_source(TaskTargetType.AGENT, "agents/agent.toml") + """
+
+                [skills]
+                sources = ["workspace-main"]
+                """,
+                skills_settings=settings,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "task.invalid_skills_settings")
+
+    def test_skills_reject_unsafe_source_labels(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = _trusted_skills(Path(temporary_directory))
+
+            result = loads_task_definition_result(
+                _task_source(TaskTargetType.AGENT, "agents/agent.toml") + """
+
+                [skills]
+                source_labels = ["/Users/private/skills"]
+                """,
+                skills_settings=settings,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "task.invalid_skills_settings")
+
+    def test_skills_reject_unknown_fields(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = _trusted_skills(Path(temporary_directory))
+
+            result = loads_task_definition_result(
+                _task_source(TaskTargetType.AGENT, "agents/agent.toml") + """
+
+                [skills]
+                registry = "remote"
+                """,
+                skills_settings=settings,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "task.invalid_skills_settings")
+
+    def test_skills_reject_unsupported_targets(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = _trusted_skills(Path(temporary_directory))
+
+            result = loads_task_definition_result(
+                _skills_task_source(
+                    TaskTargetType.CALLABLE,
+                    "tests.task_target:run",
+                ),
+                skills_settings=settings,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.issues[0].code,
+            "task.skills_unsupported_target",
+        )
+        self.assertEqual(result.issues[0].path, "skills")
 
     def test_loads_preserves_logical_relative_refs(self) -> None:
         definition = loads_task_definition(
@@ -747,6 +982,55 @@ class TaskDefinitionLoaderTest(TestCase):
                 self.assertEqual(definition.execution.type, target_type)
                 self.assertEqual(definition.execution.ref, ref)
                 self.assertEqual(definition.run.mode, RunMode.DIRECT)
+
+
+def _trusted_skills(
+    root: Path,
+    *,
+    authority_kinds: tuple[SkillSourceAuthorityKind, ...] = (
+        SkillSourceAuthorityKind.WORKSPACE,
+    ),
+) -> TrustedSkillSettings:
+    return TrustedSkillSettings(
+        authority_kinds=authority_kinds,
+        sources=(
+            SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path=root,
+            ),
+        ),
+        read_limits=SkillReadLimits(max_lines_per_read=100),
+    )
+
+
+def _task_source(target_type: TaskTargetType, ref: str) -> str:
+    return f"""
+        [task]
+        name = "skills_task"
+        version = "1"
+
+        [input]
+        type = "string"
+
+        [output]
+        type = "text"
+
+        [execution]
+        type = "{target_type.value}"
+        ref = "{ref}"
+        """
+
+
+def _skills_task_source(target_type: TaskTargetType, ref: str) -> str:
+    return _task_source(target_type, ref) + """
+
+        [skills]
+        source_labels = ["workspace-main"]
+
+        [skills.read_limits]
+        max_lines_per_read = 50
+        """
 
 
 if __name__ == "__main__":

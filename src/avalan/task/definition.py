@@ -1,4 +1,5 @@
 from ..container import ContainerEffectiveSettings
+from ..skill.settings import TrustedSkillSettings, UntrustedSkillSettings
 from ..types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
@@ -708,6 +709,9 @@ class TaskDefinition:
     output: TaskOutputContract
     execution: TaskExecutionTarget
     definition_base: str | Path | None = None
+    skills: TrustedSkillSettings | None = None
+    skills_config: UntrustedSkillSettings | None = None
+    skills_identity: FrozenMetadata | None = None
     run: TaskRunPolicy = field(default_factory=TaskRunPolicy)
     retry: TaskRetryPolicy = field(default_factory=TaskRetryPolicy)
     privacy: TaskPrivacyPolicy = field(default_factory=TaskPrivacyPolicy)
@@ -729,6 +733,16 @@ class TaskDefinition:
             assert isinstance(self.definition_base, str | Path)
             _assert_non_empty_string(
                 str(self.definition_base), "definition_base"
+            )
+        if self.skills is not None:
+            assert isinstance(self.skills, TrustedSkillSettings)
+        if self.skills_config is not None:
+            assert isinstance(self.skills_config, UntrustedSkillSettings)
+        if self.skills_identity is not None:
+            object.__setattr__(
+                self,
+                "skills_identity",
+                _freeze_mapping(self.skills_identity),
             )
         assert isinstance(self.run, TaskRunPolicy)
         assert isinstance(self.retry, TaskRetryPolicy)

@@ -13,6 +13,7 @@ from .schema import (
     resolve_schema_ref,
     task_definition_schema_base_path,
 )
+from .skills import task_definition_with_skills_identity
 
 from collections.abc import Mapping
 from enum import StrEnum
@@ -61,6 +62,10 @@ async def canonical_definition(
 ) -> dict[str, object]:
     assert isinstance(definition, TaskDefinition)
     schema_base_path = task_definition_schema_base_path(
+        definition,
+        schema_base_path=schema_base_path,
+    )
+    definition = await task_definition_with_skills_identity(
         definition,
         schema_base_path=schema_base_path,
     )
@@ -155,6 +160,11 @@ async def canonical_definition(
             "queue": definition.run.queue,
             "timeout_seconds": definition.run.timeout_seconds,
         },
+        "skills": (
+            _normalize_definition_mapping(definition.skills_identity)
+            if definition.skills_identity is not None
+            else None
+        ),
         "task": {
             "annotations": _normalize_definition_mapping(
                 definition.task.annotations

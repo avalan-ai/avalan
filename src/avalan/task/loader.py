@@ -8,6 +8,14 @@ from ..filesystem import (
     assert_text_encoding,
     read_text,
 )
+from ..skill import (
+    SkillDiagnosticInfo,
+    SkillSettingsSurface,
+    TrustedSkillSettings,
+    UntrustedSkillSettings,
+    merge_skill_settings,
+    parse_untrusted_skill_settings_config,
+)
 from .definition import (
     FrozenMetadata,
     IdempotencyMode,
@@ -36,7 +44,7 @@ from .schema import (
 )
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from tomllib import TOMLDecodeError, loads
@@ -47,6 +55,15 @@ DefinitionValue = TypeVar("DefinitionValue")
 RawSection = Mapping[str, object]
 
 _REQUIRED_SECTIONS = ("task", "input", "output", "execution")
+_SKILLS_TARGETS = frozenset(
+    {
+        TaskTargetType.AGENT,
+        TaskTargetType.FLOW,
+        TaskTargetType.MODEL,
+        TaskTargetType.TASK,
+        TaskTargetType.TOOL,
+    }
+)
 _UNSUPPORTED_ISOLATION_PATHS = (
     "isolation",
     "sandbox",
@@ -117,17 +134,30 @@ class TaskLoadError(ValueError):
 
 
 class TaskDefinitionLoader:
-    def __init__(self, *, encoding: str = DEFAULT_TEXT_ENCODING) -> None:
+    def __init__(
+        self,
+        *,
+        encoding: str = DEFAULT_TEXT_ENCODING,
+        skills_settings: TrustedSkillSettings | None = None,
+    ) -> None:
         assert_text_encoding(encoding)
+        if skills_settings is not None:
+            assert isinstance(skills_settings, TrustedSkillSettings)
         self._encoding = encoding
+        self._skills_settings = skills_settings
 
     async def load(
         self,
         path: str | Path,
         *,
         encoding: str | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> TaskDefinition:
-        result = await self.load_result(path, encoding=encoding)
+        result = await self.load_result(
+            path,
+            encoding=encoding,
+            skills_settings=skills_settings,
+        )
         if result.definition is None:
             raise TaskLoadError(result.issues)
         return result.definition
@@ -137,13 +167,18 @@ class TaskDefinitionLoader:
         path: str | Path,
         *,
         encoding: str | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> TaskLoadResult:
         source_path = Path(path)
         source = await read_text(
             source_path,
             encoding=self._text_encoding(encoding),
         )
-        return await self.loads_result(source, source_path=source_path)
+        return await self.loads_result(
+            source,
+            source_path=source_path,
+            skills_settings=skills_settings,
+        )
 
     def _text_encoding(self, encoding: str | None) -> str:
         if encoding is None:
@@ -152,15 +187,27 @@ class TaskDefinitionLoader:
         return encoding
 
     async def loads(
-        self, source: str, *, source_path: str | Path | None = None
+        self,
+        source: str,
+        *,
+        source_path: str | Path | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> TaskDefinition:
-        result = await self.loads_result(source, source_path=source_path)
+        result = await self.loads_result(
+            source,
+            source_path=source_path,
+            skills_settings=skills_settings,
+        )
         if result.definition is None:
             raise TaskLoadError(result.issues)
         return result.definition
 
     async def loads_result(
-        self, source: str, *, source_path: str | Path | None = None
+        self,
+        source: str,
+        *,
+        source_path: str | Path | None = None,
+        skills_settings: TrustedSkillSettings | None = None,
     ) -> TaskLoadResult:
         assert isinstance(source, str), "source must be a string"
         try:
@@ -179,40 +226,60 @@ class TaskDefinitionLoader:
                 ),
             )
 
-        return await _build_definition(raw, source_path=source_path)
+        return await _build_definition(
+            raw,
+            source_path=source_path,
+            trusted_skills=skills_settings or self._skills_settings,
+        )
 
 
 async def load_task_definition(
     path: str | Path,
     *,
     encoding: str = DEFAULT_TEXT_ENCODING,
+    skills_settings: TrustedSkillSettings | None = None,
 ) -> TaskDefinition:
-    return await TaskDefinitionLoader(encoding=encoding).load(path)
+    return await TaskDefinitionLoader(encoding=encoding).load(
+        path,
+        skills_settings=skills_settings,
+    )
 
 
 async def load_task_definition_result(
     path: str | Path,
     *,
     encoding: str = DEFAULT_TEXT_ENCODING,
+    skills_settings: TrustedSkillSettings | None = None,
 ) -> TaskLoadResult:
-    return await TaskDefinitionLoader(encoding=encoding).load_result(path)
+    return await TaskDefinitionLoader(encoding=encoding).load_result(
+        path,
+        skills_settings=skills_settings,
+    )
 
 
 async def loads_task_definition(
-    source: str, *, source_path: str | Path | None = None
+    source: str,
+    *,
+    source_path: str | Path | None = None,
+    skills_settings: TrustedSkillSettings | None = None,
 ) -> TaskDefinition:
     return await TaskDefinitionLoader().loads(
         source,
         source_path=source_path,
+        skills_settings=skills_settings,
     )
 
 
 async def loads_task_definition_result(
-    source: str, *, source_path: str | Path | None = None
+    source: str,
+    *,
+    source_path: str | Path | None = None,
+    skills_settings: TrustedSkillSettings | None = None,
 ) -> TaskLoadResult:
     return await TaskDefinitionLoader().loads_result(
         source,
         source_path=source_path,
+        skills_settings=skills_settings,
     )
 
 
@@ -220,6 +287,7 @@ async def _build_definition(
     raw: Mapping[str, object],
     *,
     source_path: str | Path | None,
+    trusted_skills: TrustedSkillSettings | None,
 ) -> TaskLoadResult:
     issues: list[TaskLoadIssue] = []
     issues.extend(_container_issues(raw))
@@ -238,6 +306,12 @@ async def _build_definition(
     input_contract = _input_contract(sections["input"], issues)
     output_contract = _output_contract(sections["output"], issues)
     execution = _execution_target(sections["execution"], issues)
+    skills, skills_config = _skills_settings(
+        sections.get("skills"),
+        trusted_skills,
+        execution_type=execution.type if execution is not None else None,
+        issues=issues,
+    )
     run = _run_policy(sections.get("run", {}), issues)
     retry = _retry_policy(sections.get("retry", {}), issues)
     privacy = _privacy_policy(sections.get("privacy", {}), issues)
@@ -265,6 +339,9 @@ async def _build_definition(
         input=input_contract,
         output=output_contract,
         execution=execution,
+        definition_base=source_path,
+        skills=skills,
+        skills_config=skills_config,
         run=run,
         retry=retry,
         privacy=privacy,
@@ -280,6 +357,8 @@ async def _build_definition(
     except TaskSchemaResolutionError as error:
         issues.append(_schema_resolution_issue(error))
         return TaskLoadResult(definition=None, issues=tuple(issues))
+    if (skills is not None or skills_config is not None) and source_path:
+        definition = replace(definition, definition_base=source_path)
     return TaskLoadResult(definition=definition)
 
 
@@ -465,6 +544,77 @@ def _execution_target(
         "execution",
         issues,
     )
+
+
+def _skills_settings(
+    raw: RawSection | None,
+    trusted: TrustedSkillSettings | None,
+    *,
+    execution_type: TaskTargetType | None,
+    issues: list[TaskLoadIssue],
+) -> tuple[TrustedSkillSettings | None, UntrustedSkillSettings | None]:
+    if trusted is not None:
+        assert isinstance(trusted, TrustedSkillSettings)
+    if raw is None:
+        if execution_type in _SKILLS_TARGETS:
+            return trusted, None
+        return None, None
+    if not isinstance(raw, Mapping):
+        issues.append(_invalid_type("skills", "Use a TOML table value."))
+        return None, None
+    if execution_type not in _SKILLS_TARGETS:
+        issues.append(
+            _issue(
+                code="task.skills_unsupported_target",
+                path="skills",
+                message="Task skills settings are not supported here.",
+                hint=(
+                    "Use skills settings only with agent, flow, model, tool, "
+                    "or task execution targets."
+                ),
+                category=TaskLoadIssueCategory.UNSUPPORTED,
+            )
+        )
+        return None, None
+    if trusted is None:
+        issues.append(
+            _issue(
+                code="task.skills_trusted_settings_required",
+                path="skills",
+                message="Task skills settings require trusted defaults.",
+                hint=(
+                    "Provide trusted skills settings from SDK, CLI, worker, "
+                    "or operator configuration."
+                ),
+                category=TaskLoadIssueCategory.UNSUPPORTED,
+            )
+        )
+        return None, None
+    try:
+        override = parse_untrusted_skill_settings_config(
+            raw,
+            trusted=trusted,
+            surface=SkillSettingsSurface.TASK,
+            section="skills",
+        )
+    except (AssertionError, ValueError) as error:
+        issues.append(
+            _issue(
+                code="task.invalid_skills_settings",
+                path="skills",
+                message="Task skills settings are invalid.",
+                hint=_assertion_hint(error),
+                category=TaskLoadIssueCategory.VALUE,
+            )
+        )
+        return None, None
+    result = merge_skill_settings(trusted, override)
+    issues.extend(
+        _skill_issue(diagnostic) for diagnostic in result.diagnostics
+    )
+    if result.diagnostics:
+        return None, override
+    return result.settings, override
 
 
 def _run_policy(
@@ -906,6 +1056,28 @@ def _construct(
             )
         )
         return None
+
+
+def _skill_issue(diagnostic: SkillDiagnosticInfo) -> TaskLoadIssue:
+    assert isinstance(diagnostic, SkillDiagnosticInfo)
+    return _issue(
+        code=diagnostic.code.value,
+        path=_skill_diagnostic_path(diagnostic.path),
+        message=diagnostic.message,
+        hint=diagnostic.hint,
+        category=TaskLoadIssueCategory.VALUE,
+    )
+
+
+def _skill_diagnostic_path(path: str) -> str:
+    assert isinstance(path, str) and path.strip()
+    suffix = path[len("settings.") :] if path.startswith("settings.") else path
+    return f"skills.{suffix}"
+
+
+def _assertion_hint(error: BaseException) -> str:
+    message = str(error).strip()
+    return message or "Use supported task skills settings."
 
 
 def _missing_section(section: str) -> TaskLoadIssue:

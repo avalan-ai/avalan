@@ -5,6 +5,12 @@ from unittest import TestCase, main
 
 from async_helpers import run_async
 
+from avalan.skill import (
+    SkillReadLimits,
+    SkillSourceConfig,
+    TrustedSkillSettings,
+    WorkspaceSkillSourceAuthority,
+)
 from avalan.task import (
     IdempotencyMode,
     PrivacyAction,
@@ -376,6 +382,91 @@ class TaskCanonicalizationTest(TestCase):
                     self.assertNotIn("123", canonical)
                     self.assertNotIn("private-agent", canonical)
 
+    def test_skills_registry_version_changes_durable_identity(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            skills_root = root / "skills"
+            skill_path = skills_root / "pdf" / "SKILL.md"
+            _write_skill(skill_path, body="# PDF Body\nFIRST_BODY\n")
+            definition = TaskDefinition(
+                task=TaskMetadata(name="skills_registry", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.text(),
+                execution=TaskExecutionTarget.agent("agents/a.toml"),
+                skills=_trusted_skills(skills_root),
+                skills_identity={
+                    "version": "task.skills.v1",
+                    "registry_version": "skills-registry:injected",
+                    "enabled_tools": ("skills.read",),
+                },
+            )
+
+            first = canonical_json(definition)
+            first_hash = spec_hash(definition)
+            _write_skill(skill_path, body="# PDF Body\nSECOND_BODY\n")
+            second = canonical_json(definition)
+            second_hash = spec_hash(definition)
+
+        parsed = loads(first)
+        self.assertNotEqual(first_hash, second_hash)
+        self.assertNotEqual(
+            parsed["skills"]["registry_version"],
+            "skills-registry:injected",
+        )
+        self.assertEqual(parsed["skills"]["enabled_tools"], [])
+        self.assertNotEqual(
+            parsed["skills"]["registry_version"],
+            loads(second)["skills"]["registry_version"],
+        )
+        self.assertNotIn("FIRST_BODY", first)
+        self.assertNotIn("SECOND_BODY", second)
+        self.assertNotIn(str(root), first)
+        self.assertNotIn("SKILL.md", first)
+
+    def test_skills_read_limits_change_durable_identity(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            skills_root = root / "skills"
+            _write_skill(
+                skills_root / "pdf" / "SKILL.md",
+                body="# PDF Body\nStable body\n",
+            )
+            restricted = TaskDefinition(
+                task=TaskMetadata(name="skills_limits", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.text(),
+                execution=TaskExecutionTarget.agent("agents/a.toml"),
+                skills=_trusted_skills(
+                    skills_root,
+                    read_limits=SkillReadLimits(max_lines_per_read=20),
+                ),
+            )
+            wider = TaskDefinition(
+                task=TaskMetadata(name="skills_limits", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.text(),
+                execution=TaskExecutionTarget.agent("agents/a.toml"),
+                skills=_trusted_skills(
+                    skills_root,
+                    read_limits=SkillReadLimits(max_lines_per_read=200),
+                ),
+            )
+
+            restricted_json = canonical_json(restricted)
+            wider_json = canonical_json(wider)
+
+        self.assertNotEqual(spec_hash(restricted), spec_hash(wider))
+        self.assertEqual(
+            loads(restricted_json)["skills"]["read_limits"][
+                "max_lines_per_read"
+            ],
+            20,
+        )
+        self.assertEqual(
+            loads(wider_json)["skills"]["read_limits"]["max_lines_per_read"],
+            200,
+        )
+
     def test_machine_specific_values_do_not_enter_canonical_json(self) -> None:
         first = TaskDefinition(
             task=TaskMetadata(
@@ -655,6 +746,37 @@ class TaskCanonicalizationTest(TestCase):
             "schema keys must be strings",
         ):
             canonical_json(definition)
+
+
+def _trusted_skills(
+    root: Path,
+    *,
+    read_limits: SkillReadLimits | None = None,
+) -> TrustedSkillSettings:
+    return TrustedSkillSettings(
+        sources=(
+            SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path=root,
+            ),
+        ),
+        read_limits=read_limits or SkillReadLimits(),
+    )
+
+
+def _write_skill(path: Path, *, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\n"
+        "name: pdf\n"
+        "description: PDF rendering guidance.\n"
+        'tags: ["pdf"]\n'
+        "resources: []\n"
+        "---\n"
+        f"{body}",
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

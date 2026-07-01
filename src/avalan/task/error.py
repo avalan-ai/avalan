@@ -141,6 +141,24 @@ class TaskError:
         )
 
     @classmethod
+    def validation(
+        cls,
+        issues: tuple[TaskValidationIssue, ...],
+    ) -> "TaskError":
+        assert issues, "issues must not be empty"
+        return cls(
+            category=TaskErrorCategory.RUNNABLE,
+            code=TaskErrorCode.RUNNABLE_FAILED,
+            message="Task runnable validation failed.",
+            retryable=False,
+            details={
+                "issues": tuple(
+                    _validation_issue_detail(issue) for issue in issues
+                )
+            },
+        )
+
+    @classmethod
     def timeout(cls) -> "TaskError":
         return cls(
             category=TaskErrorCategory.TIMEOUT,
@@ -200,7 +218,7 @@ def classify_task_error(error: BaseException) -> TaskError:
             return TaskError.output_contract(error.issues)
         if _is_input_contract_error(error.issues):
             return TaskError.input_contract(error.issues)
-        return TaskError.runnable(retryable=False)
+        return TaskError.validation(error.issues)
     if isinstance(error, MemoryError):
         return TaskError.budget()
     if error.__class__.__name__ == "PrivacySanitizationError":

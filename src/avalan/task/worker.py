@@ -4,6 +4,7 @@ from ..container import (
     ContainerResultStatus,
     run_container_managed_lifecycle,
 )
+from ..skill import SkillRegistry, TrustedSkillSettings
 from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactPurpose, TaskArtifactState
 from .attempt import TaskAttemptPolicy
@@ -68,6 +69,10 @@ from .runner import (
     is_trusted_task_worker_runtime_envelope_runner,
     task_execution_file_entries_from_value,
     task_input_file_groups_from_materialized,
+)
+from .skills import (
+    TASK_SKILLS_METADATA_KEY,
+    revalidate_task_skills_for_worker,
 )
 from .state import TaskAttemptState, TaskRunState
 from .store import (
@@ -189,6 +194,9 @@ class TaskWorker:
         worker_runtime_envelope_runner: (
             TaskWorkerRuntimeEnvelopeRunner | None
         ) = None,
+        skills_settings: TrustedSkillSettings | None = None,
+        skills_registry: SkillRegistry | None = None,
+        definition_base: str | Path | None = None,
         shutdown: TaskWorkerShutdown | None = None,
         heartbeat_seconds: float | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -224,6 +232,15 @@ class TaskWorker:
                 worker_runtime_envelope_runner
             ), "worker runtime envelope runner must be trusted"
         self._worker_runtime_envelope_runner = worker_runtime_envelope_runner
+        if skills_settings is not None:
+            assert isinstance(skills_settings, TrustedSkillSettings)
+        if skills_registry is not None:
+            assert isinstance(skills_registry, SkillRegistry)
+        self._skills_settings = skills_settings
+        self._skills_registry = skills_registry
+        if definition_base is not None:
+            assert isinstance(definition_base, str | Path)
+        self._definition_base = definition_base
         if heartbeat_seconds is not None:
             assert isinstance(heartbeat_seconds, int | float)
             assert not isinstance(heartbeat_seconds, bool)
@@ -259,6 +276,7 @@ class TaskWorker:
         except TaskStoreConflictError:
             return TaskWorkerProcessResult(claimed=claim, lease_lost=True)
         try:
+            definition = await self._revalidate_skills(definition, claim.run)
             await self._validate_target(definition)
             output = await self._execute(
                 definition,
@@ -317,6 +335,19 @@ class TaskWorker:
             claimed=claim,
             completion=completion,
             output=output,
+        )
+
+    async def _revalidate_skills(
+        self,
+        definition: TaskDefinition,
+        run: TaskRun,
+    ) -> TaskDefinition:
+        return await revalidate_task_skills_for_worker(
+            definition,
+            trusted_settings=self._skills_settings,
+            registry=self._skills_registry,
+            expected_identity=_task_skills_identity_from_run(run),
+            schema_base_path=self._definition_base,
         )
 
     async def _execute(
@@ -1177,6 +1208,15 @@ def _target_runner(
     if callable(run) and callable(validate_definition):
         return cast(TaskTargetRunner, target)
     return CallableTaskTargetRunner(cast(TaskQueuedTarget, target))
+
+
+def _task_skills_identity_from_run(
+    run: TaskRun,
+) -> Mapping[str, object] | None:
+    value = run.request.metadata.get(TASK_SKILLS_METADATA_KEY)
+    if isinstance(value, Mapping):
+        return value
+    return None
 
 
 def _utc_now() -> datetime:

@@ -12,6 +12,7 @@ from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
+from avalan.entities import ToolCall, ToolCallContext, ToolCallResult
 from avalan.event import Event, EventType
 from avalan.flow import (
     FlowDefinition,
@@ -41,6 +42,11 @@ from avalan.flow import (
 )
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
+from avalan.skill import (
+    SkillSourceConfig,
+    TrustedSkillSettings,
+    WorkspaceSkillSourceAuthority,
+)
 from avalan.task import (
     DROPPED_MARKER,
     ENCRYPTED_MARKER,
@@ -105,6 +111,10 @@ from avalan.task import (
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.idempotency import TaskIdempotencyIdentity
+from avalan.task.skills import (
+    TASK_SKILLS_METADATA_KEY,
+    build_task_skill_registry,
+)
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import (
     FLOW_TASK_INPUT_KEY,
@@ -113,7 +123,9 @@ from avalan.task.targets import (
 )
 from avalan.task.targets import flow as flow_target_module
 from avalan.tool.context import ToolSettingsContext
+from avalan.tool.manager import ToolManager
 from avalan.tool.shell import ShellToolSettings
+from avalan.tool.skills import SkillsToolSet
 
 
 class StaticHmacProvider:
@@ -262,6 +274,54 @@ class TextTarget(TaskTargetRunner):
         self.inputs.append(context.input_value)
         await context.check_cancelled()
         return "public answer"
+
+
+class SkillsToolTarget(TaskTargetRunner):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        assert context.definition.skills is not None
+        registry = await build_task_skill_registry(context.definition.skills)
+        manager = ToolManager.create_instance(
+            available_toolsets=[SkillsToolSet(registry)],
+            enable_tools=["skills"],
+        )
+        matched = await manager(
+            ToolCall(
+                id="match",
+                name="skills.match",
+                arguments={"query": "render a pdf"},
+            ),
+            ToolCallContext(),
+        )
+        self.calls.append("skills.match")
+        match_result = _tool_result_dict(matched)
+        matched_items = cast(list[Mapping[str, object]], match_result["items"])
+        metadata = cast(Mapping[str, object], matched_items[0]["metadata"])
+        skill_id = metadata["skill_id"]
+        assert isinstance(skill_id, str)
+        read = await manager(
+            ToolCall(
+                id="read",
+                name="skills.read",
+                arguments={"skill": skill_id},
+            ),
+            ToolCallContext(),
+        )
+        self.calls.append("skills.read")
+        content = cast(dict[str, object], _tool_result_dict(read)["content"])
+        text = content["text"]
+        assert isinstance(text, str)
+        return "answered after read" if "FOLLOW_THE_PDF_STEPS" in text else ""
 
 
 class UsageTextOutput(str):
@@ -1118,6 +1178,354 @@ allow_pipelines = true
         rendered = str(inspection.as_dict())
         self.assertIn("runnable.failed", rendered)
         self.assertNotIn("private prompt", rendered)
+
+    async def test_queued_task_uses_skills_tools_after_revalidation(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            _write_agent(root / "agent.toml", enable_skills=False)
+            skills_root = root / "skills"
+            _write_skill(
+                skills_root / "pdf" / "SKILL.md",
+                body="# PDF Body\nFOLLOW_THE_PDF_STEPS\n",
+            )
+            settings = _trusted_skills(skills_root)
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = SkillsToolTarget()
+            client = _client(store, queue, target=target, clock=clock)
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                skills_settings=settings,
+                definition_base=root / "task.toml",
+                clock=clock,
+            )
+            definition = replace(
+                _definition(
+                    observability=TaskObservabilityPolicy.noop(),
+                    retry=TaskRetryPolicy(max_attempts=1),
+                ),
+                skills=settings,
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value="private prompt",
+            )
+            queued_run = await store.get_run(submission.run.run_id)
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(target.calls, ["skills.match", "skills.read"])
+        self.assertEqual(processed.output, "answered after read")
+        self.assertIn(TASK_SKILLS_METADATA_KEY, queued_run.request.metadata)
+        rendered_metadata = str(queued_run.request.metadata)
+        self.assertNotIn("FOLLOW_THE_PDF_STEPS", rendered_metadata)
+        self.assertNotIn(str(root), rendered_metadata)
+        self.assertNotIn("SKILL.md", rendered_metadata)
+
+    async def test_queued_task_blocks_skills_tools_when_identity_is_stale(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            _write_agent(root / "agent.toml", enable_skills=False)
+            skills_root = root / "skills"
+            skill_path = skills_root / "pdf" / "SKILL.md"
+            _write_skill(
+                skill_path,
+                body="# PDF Body\nFOLLOW_THE_PDF_STEPS\n",
+            )
+            settings = _trusted_skills(skills_root)
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = SkillsToolTarget()
+            client = _client(store, queue, target=target, clock=clock)
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                skills_settings=settings,
+                definition_base=root / "task.toml",
+                clock=clock,
+            )
+            definition = replace(
+                _definition(
+                    observability=TaskObservabilityPolicy.noop(),
+                    retry=TaskRetryPolicy(max_attempts=1),
+                ),
+                skills=settings,
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value="private prompt",
+            )
+            _write_skill(skill_path, body="# PDF Body\nCHANGED\n")
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(target.calls, [])
+        error = output.error
+        assert isinstance(error, Mapping)
+        details = error.get("details")
+        assert isinstance(details, Mapping)
+        issues = details.get("issues")
+        assert isinstance(issues, list | tuple)
+        issue = issues[0]
+        assert isinstance(issue, Mapping)
+        self.assertEqual(issue["code"], "task.skills_registry_stale")
+
+    async def test_queued_agent_task_fails_when_ref_adds_skills_tools(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            agent_path = root / "agents" / "assistant.toml"
+            _write_agent(agent_path, enable_skills=False)
+            skills_root = root / "skills"
+            _write_skill(skills_root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(skills_root)
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = TextTarget()
+            client = _client(store, queue, target=target, clock=clock)
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                skills_settings=settings,
+                definition_base=root / "task.toml",
+                clock=clock,
+            )
+            definition = replace(
+                _definition(
+                    execution=TaskExecutionTarget.agent(
+                        "agents/assistant.toml"
+                    ),
+                    observability=TaskObservabilityPolicy.noop(),
+                    retry=TaskRetryPolicy(max_attempts=1),
+                ),
+                definition_base=root / "task.toml",
+                skills=settings,
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value="private prompt",
+            )
+            _write_agent(agent_path, enable_skills=True)
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(target.inputs, [])
+        _assert_skills_issue(output.error, "task.skills_registry_widened")
+
+    async def test_queued_flow_task_fails_when_ref_adds_skills_tools(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            flow_path = root / "flows" / "report.toml"
+            _write_flow(flow_path, enable_skills=False)
+            skills_root = root / "skills"
+            _write_skill(skills_root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(skills_root)
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = TextTarget()
+            client = _client(store, queue, target=target, clock=clock)
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                skills_settings=settings,
+                definition_base=root / "task.toml",
+                clock=clock,
+            )
+            definition = replace(
+                _definition(
+                    execution=TaskExecutionTarget.flow("flows/report.toml"),
+                    observability=TaskObservabilityPolicy.noop(),
+                    retry=TaskRetryPolicy(max_attempts=1),
+                ),
+                definition_base=root / "task.toml",
+                skills=settings,
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value="private prompt",
+            )
+            _write_flow(flow_path, enable_skills=True)
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(target.inputs, [])
+        _assert_skills_issue(output.error, "task.skills_registry_widened")
+
+    async def test_queued_flow_task_fails_when_agent_ref_adds_skills_tools(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            flow_path = root / "flows" / "report.toml"
+            agent_path = root / "agents" / "assistant.toml"
+            _write_agent(agent_path, enable_skills=False)
+            _write_agent_flow(
+                flow_path,
+                agent_ref="agents/assistant.toml",
+            )
+            skills_root = root / "skills"
+            _write_skill(skills_root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(skills_root)
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = TextTarget()
+            client = _client(store, queue, target=target, clock=clock)
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                skills_settings=settings,
+                definition_base=root / "task.toml",
+                clock=clock,
+            )
+            definition = replace(
+                _definition(
+                    execution=TaskExecutionTarget.flow("flows/report.toml"),
+                    observability=TaskObservabilityPolicy.noop(),
+                    retry=TaskRetryPolicy(max_attempts=1),
+                ),
+                definition_base=root / "task.toml",
+                skills=settings,
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value="private prompt",
+            )
+            _write_agent(agent_path, enable_skills=True)
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(target.inputs, [])
+        _assert_skills_issue(output.error, "task.skills_registry_widened")
+
+    async def test_queued_agent_task_fails_without_worker_definition_base(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            _write_agent(
+                root / "agents" / "assistant.toml",
+                enable_skills=False,
+            )
+            skills_root = root / "skills"
+            _write_skill(skills_root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(skills_root)
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = TextTarget()
+            client = _client(store, queue, target=target, clock=clock)
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                skills_settings=settings,
+                clock=clock,
+            )
+            definition = replace(
+                _definition(
+                    execution=TaskExecutionTarget.agent(
+                        "agents/assistant.toml"
+                    ),
+                    observability=TaskObservabilityPolicy.noop(),
+                    retry=TaskRetryPolicy(max_attempts=1),
+                ),
+                definition_base=root / "task.toml",
+                skills=settings,
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value="private prompt",
+            )
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(target.inputs, [])
+        _assert_skills_issue(output.error, "task.skills_registry_unavailable")
+
+    async def test_queued_agent_task_fails_with_wrong_worker_definition_base(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            _write_agent(
+                root / "agents" / "assistant.toml",
+                enable_skills=False,
+            )
+            skills_root = root / "skills"
+            _write_skill(skills_root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(skills_root)
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = TextTarget()
+            client = _client(store, queue, target=target, clock=clock)
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                skills_settings=settings,
+                definition_base=root / "other" / "task.toml",
+                clock=clock,
+            )
+            definition = replace(
+                _definition(
+                    execution=TaskExecutionTarget.agent(
+                        "agents/assistant.toml"
+                    ),
+                    observability=TaskObservabilityPolicy.noop(),
+                    retry=TaskRetryPolicy(max_attempts=1),
+                ),
+                definition_base=root / "task.toml",
+                skills=settings,
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value="private prompt",
+            )
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(target.inputs, [])
+        _assert_skills_issue(output.error, "task.skills_registry_unavailable")
 
     async def test_file_task_runs_through_client_worker_and_inspection(
         self,
@@ -3966,6 +4374,8 @@ def _worker(
     file_converters: Mapping[str, FileConverter] | None = None,
     shutdown: TaskWorkerShutdown | None = None,
     heartbeat_seconds: float | None = None,
+    skills_settings: TrustedSkillSettings | None = None,
+    definition_base: str | Path | None = None,
     clock: Clock,
 ) -> TaskWorker:
     return TaskWorker(
@@ -3980,6 +4390,8 @@ def _worker(
         file_converters=file_converters,
         shutdown=shutdown,
         heartbeat_seconds=heartbeat_seconds,
+        skills_settings=skills_settings,
+        definition_base=definition_base,
         clock=lambda: clock.now,
     )
 
@@ -4453,6 +4865,94 @@ def _definition(
         observability=observability or TaskObservabilityPolicy(),
         retry=retry or TaskRetryPolicy(max_attempts=2),
     )
+
+
+def _trusted_skills(root: Path) -> TrustedSkillSettings:
+    return TrustedSkillSettings(
+        sources=(
+            SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path=root,
+            ),
+        ),
+    )
+
+
+def _write_skill(path: Path, *, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\n"
+        "name: pdf\n"
+        "description: PDF rendering guidance.\n"
+        'tags: ["pdf"]\n'
+        "resources: []\n"
+        "---\n"
+        f"{body}",
+        encoding="utf-8",
+    )
+
+
+def _write_agent(path: Path, *, enable_skills: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tool_section = (
+        '[tool]\nenable = ["skills.read"]\n' if enable_skills else ""
+    )
+    path.write_text(
+        "[agent]\n"
+        'name = "Assistant"\n'
+        'task = "Answer."\n\n'
+        "[engine]\n"
+        'uri = "ai://env:KEY@openai/gpt-4o-mini"\n\n'
+        f"{tool_section}",
+        encoding="utf-8",
+    )
+
+
+def _write_flow(path: Path, *, enable_skills: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    node = (
+        '[nodes.answer]\ntype = "tool"\nref = "skills.read"\n'
+        if enable_skills
+        else (
+            '[nodes.answer]\ntype = "constant"\n\n[nodes.answer.config]\n'
+            'value = "ok"\n'
+        )
+    )
+    path.write_text(
+        f'[flow]\nname = "Report"\nversion = "1"\n\n{node}',
+        encoding="utf-8",
+    )
+
+
+def _write_agent_flow(path: Path, *, agent_ref: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "[flow]\n"
+        'name = "Agent Report"\n'
+        'version = "1"\n\n'
+        "[nodes.answer]\n"
+        'type = "agent"\n'
+        f'ref = "{agent_ref}"\n',
+        encoding="utf-8",
+    )
+
+
+def _tool_result_dict(outcome: object) -> dict[str, object]:
+    assert isinstance(outcome, ToolCallResult)
+    assert isinstance(outcome.result, dict)
+    return outcome.result
+
+
+def _assert_skills_issue(error: object, code: str) -> None:
+    assert isinstance(error, Mapping)
+    details = error.get("details")
+    assert isinstance(details, Mapping)
+    issues = details.get("issues")
+    assert isinstance(issues, list | tuple)
+    issue = issues[0]
+    assert isinstance(issue, Mapping)
+    assert issue["code"] == code
 
 
 if __name__ == "__main__":
