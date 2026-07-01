@@ -27,6 +27,7 @@ from ..entities import (
     ToolTransformer,
     ToolTransformerResult,
 )
+from ..skill.bootstrap import skills_bootstrap_prompt
 from . import Tool, ToolSet
 from .json_schema import get_json_schema
 from .name_policy import ToolNamePolicy
@@ -157,6 +158,10 @@ class ToolManager:
     def list_tools(self) -> list[ToolDescriptor]:
         """Return descriptors for enabled tools."""
         return list(self._descriptors.values())
+
+    def bootstrap_prompt(self) -> str | None:
+        """Return compact prompt text for enabled toolsets."""
+        return skills_bootstrap_prompt(tuple(self._descriptors))
 
     def describe_tool(self, name: str) -> ToolDescriptor | None:
         """Return the descriptor for an enabled tool."""
