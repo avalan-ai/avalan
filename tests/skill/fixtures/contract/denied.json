@@ -1,0 +1,18 @@
+{
+  "case": "denied",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-denied",
+    "root": "/Users/example/private/skills/denied",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/denied/SKILL.md",
+      "policy": "denied",
+      "content": "---\nname: \"denied\"\ndescription: \"A skill denied by runtime policy.\"\n---\n# Denied Skill"
+    }
+  ]
+}

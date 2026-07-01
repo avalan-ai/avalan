@@ -1,0 +1,18 @@
+{
+  "case": "stale",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-stale",
+    "root": "/Users/example/private/skills/stale",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/stale/SKILL.md",
+      "resource_state": "stale",
+      "content": "---\nname: \"stale\"\ndescription: \"A skill that changed after registry build.\"\n---\n# Stale Skill"
+    }
+  ]
+}

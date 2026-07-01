@@ -1,0 +1,17 @@
+{
+  "case": "malformed",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-malformed",
+    "root": "/Users/example/private/skills/malformed",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/malformed/SKILL.md",
+      "content": "---\nname: \"broken\"\n---\n# Broken Skill\n\nMissing required description."
+    }
+  ]
+}

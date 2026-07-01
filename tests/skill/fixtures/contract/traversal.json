@@ -1,0 +1,17 @@
+{
+  "case": "traversal",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-traversal",
+    "root": "/Users/example/private/skills/traversal",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/traversal/SKILL.md",
+      "content": "---\nname: \"traversal\"\ndescription: \"A skill declaring an unsafe resource.\"\nresources: [\"../secret.md\"]\n---\n# Traversal Skill"
+    }
+  ]
+}

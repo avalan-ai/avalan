@@ -1,0 +1,18 @@
+{
+  "case": "oversized",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-oversized",
+    "root": "/Users/example/private/skills/oversized",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/oversized/SKILL.md",
+      "resource_state": "oversized",
+      "content": "---\nname: \"oversized\"\ndescription: \"A skill requiring cursoring for large content.\"\n---\n# Oversized Skill"
+    }
+  ]
+}
