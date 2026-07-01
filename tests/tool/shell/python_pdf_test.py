@@ -224,10 +224,8 @@ class PythonPdfRunnerTest(TestCase):
                     "reportlab",
                     "--page-size",
                     "a4",
-                    "--title",
-                    "Stub Title",
-                    "--text",
-                    "line one\nline two",
+                    "--title=--Stub Title",
+                    "--text=- line one\nline two",
                     "--output",
                     str(output_prefix),
                 )
@@ -246,8 +244,8 @@ class PythonPdfRunnerTest(TestCase):
             f"{output_prefix}.pdf",
         )
         self.assertEqual(canvas_module.instances[0].pagesize, (595.0, 842.0))
-        self.assertEqual(canvas_module.instances[0].title, "Stub Title")
-        self.assertIn("line one", canvas_module.instances[0].lines)
+        self.assertEqual(canvas_module.instances[0].title, "--Stub Title")
+        self.assertIn("- line one", canvas_module.instances[0].lines)
         self.assertIn("line two", canvas_module.instances[0].lines)
         self.assertTrue(canvas_module.instances[0].saved)
 

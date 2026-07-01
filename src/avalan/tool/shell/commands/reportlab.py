@@ -56,10 +56,8 @@ def build_argv(
         (
             "--page-size",
             page_size,
-            "--title",
-            title,
-            "--text",
-            text,
+            f"--title={title}",
+            f"--text={text}",
             "--output",
             GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
         )

@@ -2850,10 +2850,8 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 "reportlab",
                 "--page-size",
                 "a4",
-                "--title",
-                "Policy PDF",
-                "--text",
-                "Body",
+                "--title=Policy PDF",
+                "--text=Body",
                 "--output",
                 GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
             ),
@@ -2868,10 +2866,8 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 "reportlab",
                 "--page-size",
                 "a4",
-                "--title",
-                "Policy PDF",
-                "--text",
-                "Body",
+                "--title=Policy PDF",
+                "--text=Body",
                 "--output",
                 "GENERATED_PREFIX.pdf",
             ),
@@ -3025,6 +3021,59 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 "pypdf",
                 "pypdf",
                 "tesseract",
+            ),
+        )
+
+    async def test_reportlab_argv_preserves_dash_prefixed_values(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(
+            settings=ShellToolSettings(allow_media_tools=True),
+            resolver=_CountingResolver("/usr/bin/python3"),
+        )
+
+        spec = await policy.normalize(
+            _request(
+                tool_name="shell.reportlab",
+                command="reportlab",
+                options={
+                    "text": "- text starts with a dash",
+                    "title": "--draft title",
+                    "page_size": "letter",
+                },
+            )
+        )
+
+        self.assertEqual(
+            spec.argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "reportlab",
+                "--page-size",
+                "letter",
+                "--title=--draft title",
+                "--text=- text starts with a dash",
+                "--output",
+                GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
+            ),
+        )
+        self.assertEqual(
+            spec.display_argv,
+            (
+                "python3",
+                "-I",
+                "-m",
+                PYTHON_PDF_RUNNER_MODULE,
+                "reportlab",
+                "--page-size",
+                "letter",
+                "--title=--draft title",
+                "--text=- text starts with a dash",
+                "--output",
+                "GENERATED_PREFIX.pdf",
             ),
         )
 
