@@ -33,23 +33,23 @@ _T = TypeVar("_T")
 
 class SkillSourceFileSystem(Protocol):
     async def resolve_path(self, path: Path) -> Path:
-        raise NotImplementedError  # pragma: no cover
+        pass
 
     async def stat_path(self, path: Path) -> stat_result:
-        raise NotImplementedError  # pragma: no cover
+        pass
 
     async def lstat_path(self, path: Path) -> stat_result:
-        raise NotImplementedError  # pragma: no cover
+        pass
 
     async def list_directory(
         self,
         path: Path,
         limit: int,
     ) -> tuple[Path, ...]:
-        raise NotImplementedError  # pragma: no cover
+        pass
 
     async def read_bytes(self, path: Path, limit: int) -> bytes:
-        raise NotImplementedError  # pragma: no cover
+        pass
 
 
 class SkillAsyncFileSystem:
