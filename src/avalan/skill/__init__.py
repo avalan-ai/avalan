@@ -265,6 +265,15 @@ from .path_policy import (
 from .path_policy import (
     skill_source_root_denial_reason as skill_source_root_denial_reason,
 )
+from .reader import (
+    SkillResourceReader as SkillResourceReader,
+)
+from .reader import (
+    check_skill_registry_read as check_skill_registry_read,
+)
+from .reader import (
+    read_skill_registry_resource as read_skill_registry_resource,
+)
 from .registry import (
     SkillRegisteredResource as SkillRegisteredResource,
 )
