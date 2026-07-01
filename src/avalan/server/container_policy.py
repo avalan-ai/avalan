@@ -136,12 +136,15 @@ def server_runtime_envelope_status_from_runtime_settings(
     *,
     server_name: str = "server",
     request_id: str = "server",
+    metadata: Mapping[str, object] | None = None,
     envelope_runtime_available: bool = False,
     readiness_timeout_seconds: int = 30,
 ) -> ServerRuntimeEnvelopeStatus:
     """Return trusted server runtime envelope plan and diagnostics."""
     assert isinstance(server_name, str) and server_name.strip()
     assert isinstance(request_id, str) and request_id.strip()
+    if metadata is not None:
+        assert isinstance(metadata, Mapping)
     assert isinstance(envelope_runtime_available, bool)
     effective_settings = (
         None
@@ -166,6 +169,7 @@ def server_runtime_envelope_status_from_runtime_settings(
             cwd="/workspace",
             scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
             request_id=request_id,
+            metadata={} if metadata is None else metadata,
         ),
         envelope_kind=ContainerRuntimeEnvelopeKind.SERVER,
         readiness_timeout_seconds=readiness_timeout_seconds,

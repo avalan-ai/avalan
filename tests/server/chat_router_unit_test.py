@@ -314,6 +314,128 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         assert isinstance(resp, dict)
         self.assertEqual(resp["model"], "request-model")
 
+    async def test_create_response_non_stream_redacts_skill_echoes(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: (
+                "# Demo Skill\n\n"
+                "Use when handling private operator tasks.\n\n"
+                "Secret skill body: never expose this instruction.\n"
+                "Source: C:/Users/me/skills/demo/SKILL.md"
+            ),
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+        req = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.responses.create_response(req, logger, orch)
+
+        assert isinstance(resp, dict)
+        output_text = resp["output"][0]["content"][0]["text"]
+        self.assertIn("redacted-skill-content", output_text)
+        self.assertNotIn("Secret skill body", output_text)
+        self.assertNotIn("C:/Users", output_text)
+
+    async def test_create_response_stream_redacts_split_skill_echoes(
+        self,
+    ) -> None:
+        async def output_gen():
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="#",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=2,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta=" Demo Skill\n\n",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=3,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="Use when handling private operator tasks.\n",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=4,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta=(
+                        "Secret skill body.\nSource: /tmp/skills/demo/SKILL.md"
+                    ),
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=5,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=6,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage={"input_tokens": 1, "output_tokens": 2},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ):
+                yield item
+
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = output_gen()
+        req = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.responses.create_response(req, logger, orch)
+        chunks = [chunk async for chunk in resp.body_iterator]
+        projected = "".join(chunks)
+
+        self.assertIn("redacted-skill-content", projected)
+        self.assertNotIn('"delta":"#"', projected)
+        self.assertNotIn("# Demo Skill", projected)
+        self.assertNotIn("Use when handling private", projected)
+        self.assertNotIn("Secret skill body", projected)
+        self.assertNotIn("/tmp/skills", projected)
+
     def test_resolve_model_id_prefers_request_model(self) -> None:
         routers = importlib.import_module("avalan.server.routers")
 
@@ -1641,6 +1763,78 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             self.chat._stream_text(ToolCallToken(token="raw"))  # type: ignore[arg-type]
 
+    def test_chat_stream_text_redacts_host_paths(self) -> None:
+        answer = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="see /Users/mariano/.codex/skills/demo/SKILL.md",
+        )
+
+        self.assertEqual(
+            self.chat._stream_text(project_canonical_stream_item(answer)),
+            "see <host-path>/SKILL.md",
+        )
+
+    def test_responses_tool_execution_redacts_skills_content(self) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            data={
+                "name": "skills.read",
+                "result": {
+                    "content": "private instructions",
+                    "path": "/Users/mariano/.codex/skills/demo/SKILL.md",
+                },
+            },
+            metadata={"tool_name": "skills.read"},
+        )
+
+        event = self.responses._tool_execution_sse_event(
+            project_canonical_stream_item(item),
+            7,
+        )
+        projected = str(event.data)
+
+        self.assertIn("redacted-skill-content", projected)
+        self.assertIn("<host-path>/SKILL.md", projected)
+        self.assertNotIn("private instructions", projected)
+        self.assertNotIn("/Users/mariano", projected)
+
+    def test_responses_terminal_failed_event_redacts_host_paths(self) -> None:
+        terminal = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=9,
+            kind=StreamItemKind.STREAM_ERRORED,
+            channel=StreamChannel.CONTROL,
+            data={
+                "error_type": "RuntimeError",
+                "message": r"failed at /tmp/run.log and C:\Users\me\trace.txt",
+            },
+            terminal_outcome=StreamTerminalOutcome.ERRORED,
+        )
+
+        events = self.responses._terminal_response_events(
+            project_canonical_stream_item(terminal)
+        )
+
+        self.assertEqual(events[0].event, "response.failed")
+        projected = str(events[0].data)
+        self.assertIn("<host-path>/run.log", projected)
+        self.assertIn("<host-path>/trace.txt", projected)
+        self.assertNotIn("/tmp/run.log", projected)
+        self.assertNotIn(r"C:\Users", projected)
+
     def test_chat_terminal_event_preserves_non_completed_outcomes(
         self,
     ) -> None:
@@ -1714,6 +1908,32 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             data["error"],
             {"error_type": "RuntimeError", "message": "provider failed"},
         )
+
+    def test_chat_terminal_event_redacts_host_paths(self) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=4,
+            kind=StreamItemKind.STREAM_ERRORED,
+            channel=StreamChannel.CONTROL,
+            data={
+                "error_type": "RuntimeError",
+                "message": "failed at /Users/mariano/run.log",
+            },
+            terminal_outcome=StreamTerminalOutcome.ERRORED,
+        )
+
+        event = self.chat._chat_terminal_event(
+            "response-id",
+            1,
+            "model-id",
+            project_canonical_stream_item(item),
+        )
+
+        assert event is not None
+        self.assertIn("<host-path>/run.log", event)
+        self.assertNotIn("/Users/mariano", event)
 
     def test_chat_terminal_helpers_reject_bad_state(self) -> None:
         item = CanonicalStreamItem(

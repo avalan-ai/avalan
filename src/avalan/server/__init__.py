@@ -9,7 +9,7 @@ from .container_policy import (
     remote_container_policy_from_runtime_settings,
     server_runtime_envelope_status_from_runtime_settings,
 )
-from .entities import OrchestratorContext
+from .entities import OrchestratorContext, server_skills_registry_metadata
 from .routers import mcp as mcp_router
 
 from collections.abc import AsyncIterator, Callable
@@ -118,20 +118,35 @@ def _create_lifespan(
                 stack=stack,
             )
             tool_ctx = tool_settings
+            skills_settings = tool_ctx.skills if tool_ctx is not None else None
+            skills_registry_metadata = server_skills_registry_metadata(
+                skills_settings
+            )
             ctx = OrchestratorContext(
                 participant_id=pid,
                 specs_path=specs_path,
                 settings=settings,
                 tool_settings=tool_ctx,
                 tool_name_policy=tool_name_policy,
+                skills_settings=skills_settings,
+                skills_registry_metadata=skills_registry_metadata,
             )
             app.state.ctx = ctx
+            if skills_registry_metadata is None:
+                if hasattr(app.state, "skills_registry_metadata"):
+                    delattr(app.state, "skills_registry_metadata")
+            else:
+                app.state.skills_registry_metadata = skills_registry_metadata
             app.state.stack = stack
             app.state.loader = loader
             app.state.logger = logger
             app.state.agent_id = agent_id
             _configure_remote_container_policy(app, tool_settings)
-            _configure_server_runtime_envelope(app, tool_settings)
+            _configure_server_runtime_envelope(
+                app,
+                tool_settings,
+                skills_registry_metadata=skills_registry_metadata,
+            )
             if "a2a" in selected_protocols:
                 app.state.a2a_tool_name = a2a_tool_name or "run"
                 if a2a_tool_description:
@@ -165,12 +180,19 @@ def _configure_remote_container_policy(
 def _configure_server_runtime_envelope(
     app: FastAPI,
     tool_settings: ToolSettingsContext | None,
+    *,
+    skills_registry_metadata: Mapping[str, object] | None = None,
 ) -> None:
     container_runtime = (
         None if tool_settings is None else tool_settings.container
     )
     status = server_runtime_envelope_status_from_runtime_settings(
-        container_runtime
+        container_runtime,
+        metadata=(
+            {"skills_registry": skills_registry_metadata}
+            if skills_registry_metadata is not None
+            else None
+        ),
     )
     if status.plan is None:
         if hasattr(app.state, "server_runtime_envelope_status"):

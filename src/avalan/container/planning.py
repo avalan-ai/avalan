@@ -19,11 +19,12 @@ from .settings import (
 )
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import sha256
 from json import dumps
 from posixpath import normpath as normalize_posix_path
+from types import MappingProxyType
 from typing import TypeVar, cast, final
 
 EnumValue = TypeVar("EnumValue", bound=StrEnum)
@@ -66,6 +67,7 @@ class ContainerPlanRequest:
     )
     request_id: str | None = None
     attempt_id: str | None = None
+    metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         request_kind = _enum_value(
@@ -83,6 +85,7 @@ class ContainerPlanRequest:
             _assert_non_empty_string(self.request_id, "request_id")
         if self.attempt_id is not None:
             _assert_non_empty_string(self.attempt_id, "attempt_id")
+        metadata = _metadata_mapping(self.metadata, "metadata")
         if request_kind is ContainerPlanRequestKind.TASK_ATTEMPT:
             assert (
                 self.attempt_id is not None
@@ -91,6 +94,7 @@ class ContainerPlanRequest:
         object.__setattr__(self, "scope", scope)
         object.__setattr__(self, "cwd", cwd)
         object.__setattr__(self, "argv", argv)
+        object.__setattr__(self, "metadata", metadata)
 
     def to_command_plan(self) -> ContainerCommandPlan:
         request_kind = cast(ContainerPlanRequestKind, self.request_kind)
@@ -105,7 +109,7 @@ class ContainerPlanRequest:
     def to_dict(self) -> dict[str, object]:
         request_kind = cast(ContainerPlanRequestKind, self.request_kind)
         scope = cast(ContainerExecutionScope, self.scope)
-        return {
+        value: dict[str, object] = {
             "request_kind": request_kind.value,
             "logical_name": self.logical_name,
             "command": self.command,
@@ -115,6 +119,9 @@ class ContainerPlanRequest:
             "request_id": self.request_id,
             "attempt_id": self.attempt_id,
         }
+        if self.metadata:
+            value["metadata"] = _metadata_plain(self.metadata)
+        return value
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, object]) -> "ContainerPlanRequest":
@@ -129,6 +136,7 @@ class ContainerPlanRequest:
                 "scope",
                 "request_id",
                 "attempt_id",
+                "metadata",
             },
             "request",
         )
@@ -145,6 +153,7 @@ class ContainerPlanRequest:
             ),
             request_id=_optional_str(raw, "request_id"),
             attempt_id=_optional_str(raw, "attempt_id"),
+            metadata=_mapping(raw.get("metadata", {}), "metadata"),
         )
 
 
@@ -183,7 +192,7 @@ class ContainerNormalizedRunPlan:
         run_plan = self.run_plan
         backend = run_plan.to_dict()["backend"]
         command = _canonical_command_plan(run_plan.command)
-        return {
+        value: dict[str, object] = {
             "backend": backend,
             "command": command,
             "command_mode": command_mode.value,
@@ -200,6 +209,9 @@ class ContainerNormalizedRunPlan:
             "resources": run_plan.resources.to_dict(),
             "secret_names": sorted(run_plan.secret_names),
         }
+        if self.request.metadata:
+            value["request_metadata"] = _metadata_plain(self.request.metadata)
+        return value
 
     def to_dict(self) -> dict[str, object]:
         command_mode = cast(ContainerCommandMode, self.command_mode)
@@ -835,6 +847,47 @@ def _string_tuple(value: object, field_name: str) -> tuple[str, ...]:
 
 def _mapping(value: object, field_name: str) -> Mapping[str, object]:
     assert isinstance(value, Mapping), f"{field_name} must be a mapping"
+    return value
+
+
+def _metadata_mapping(
+    value: Mapping[str, object],
+    field_name: str,
+) -> Mapping[str, object]:
+    assert isinstance(value, Mapping), f"{field_name} must be a mapping"
+    return MappingProxyType(
+        {
+            str(key): _metadata_value(item, f"{field_name}.{key}")
+            for key, item in value.items()
+        }
+    )
+
+
+def _metadata_value(value: object, field_name: str) -> object:
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    assert not isinstance(
+        value,
+        bytes | bytearray | memoryview,
+    ), f"{field_name} must be JSON-safe"
+    if isinstance(value, Mapping):
+        return _metadata_mapping(cast(Mapping[str, object], value), field_name)
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        return tuple(
+            _metadata_value(item, f"{field_name}[{index}]")
+            for index, item in enumerate(value)
+        )
+    raise AssertionError(f"{field_name} must be JSON-safe")
+
+
+def _metadata_plain(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _metadata_plain(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        bytes | bytearray | memoryview | str,
+    ):
+        return [_metadata_plain(item) for item in value]
     return value
 
 
