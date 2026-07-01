@@ -83,6 +83,8 @@ class SkillSourceLimits:
     max_sources: int = 16
     max_resources_per_source: int = 512
     max_source_depth: int = 8
+    max_files_per_source: int = 1024
+    max_directory_entries_per_source: int = 4096
 
     def __post_init__(self) -> None:
         _assert_positive_int(self.max_sources, "max_sources")
@@ -90,6 +92,11 @@ class SkillSourceLimits:
             self.max_resources_per_source, "max_resources_per_source"
         )
         _assert_positive_int(self.max_source_depth, "max_source_depth")
+        _assert_positive_int(self.max_files_per_source, "max_files_per_source")
+        _assert_positive_int(
+            self.max_directory_entries_per_source,
+            "max_directory_entries_per_source",
+        )
 
     def allows(self, requested: "SkillSourceLimits") -> bool:
         assert isinstance(requested, SkillSourceLimits)
@@ -98,6 +105,9 @@ class SkillSourceLimits:
             and requested.max_resources_per_source
             <= self.max_resources_per_source
             and requested.max_source_depth <= self.max_source_depth
+            and requested.max_files_per_source <= self.max_files_per_source
+            and requested.max_directory_entries_per_source
+            <= self.max_directory_entries_per_source
         )
 
     def as_model_dict(self) -> dict[str, SkillModelValue]:
@@ -106,6 +116,10 @@ class SkillSourceLimits:
                 "max_sources": self.max_sources,
                 "max_resources_per_source": self.max_resources_per_source,
                 "max_source_depth": self.max_source_depth,
+                "max_files_per_source": self.max_files_per_source,
+                "max_directory_entries_per_source": (
+                    self.max_directory_entries_per_source
+                ),
             }
         )
 
