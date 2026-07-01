@@ -247,6 +247,30 @@ from .path_policy import (
 from .path_policy import (
     skill_source_root_denial_reason as skill_source_root_denial_reason,
 )
+from .registry import (
+    SkillRegisteredResource as SkillRegisteredResource,
+)
+from .registry import (
+    SkillRegistry as SkillRegistry,
+)
+from .registry import (
+    SkillRegistryResourceCheck as SkillRegistryResourceCheck,
+)
+from .registry import (
+    SkillRegistrySkill as SkillRegistrySkill,
+)
+from .registry import (
+    SkillRegistrySource as SkillRegistrySource,
+)
+from .registry import (
+    SkillResourceFingerprint as SkillResourceFingerprint,
+)
+from .registry import (
+    build_skill_registry as build_skill_registry,
+)
+from .registry import (
+    check_skill_registry_resource as check_skill_registry_resource,
+)
 from .resolver import (
     AuthorizedSkillResource as AuthorizedSkillResource,
 )
