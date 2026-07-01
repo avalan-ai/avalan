@@ -1543,6 +1543,7 @@ def _skills_source_authority(value: str) -> SkillSourceAuthority:
             identity
         ), "preinstalled_remote skills authority requires registry id"
         return PreinstalledRemoteSkillSourceAuthority(registry_id=identity)
+    raise AssertionError("unsupported skills source authority")
 
 
 def _skills_authority_kind_tuple(
