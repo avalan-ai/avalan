@@ -127,6 +127,25 @@ collapse_replacement = {{ tool_name_policy.collapse_replacement | lower }}
 {% endif %}
 {% endif %}
 
+{% if skills_tool %}
+[tool.skills]
+{% for k, v in skills_tool.items() %}
+{% if v is not mapping %}
+{{ k }} = {{ v | toml_value }}
+{% endif %}
+{% endfor %}
+{% for section, values in skills_tool.items() %}
+{% if values is mapping %}
+
+[tool.skills.{{ section }}]
+{% for k, v in values.items() %}
+{{ k }} = {{ v | toml_value }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+
+{% endif %}
+
 {% if browser_tool %}
 [tool.browser.open]
 {% for k, v in browser_tool.items() %}

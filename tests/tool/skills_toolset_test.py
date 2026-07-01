@@ -17,16 +17,26 @@ from avalan.entities import (
 from avalan.skill import (
     SkillConfiguredSource,
     SkillIndexLimits,
+    SkillObservabilitySettings,
+    SkillPrivacySettings,
     SkillReadLimits,
     SkillRegistry,
     SkillRegistryVersion,
+    SkillResourceReader,
+    SkillSourceConfig,
     SkillStatus,
+    TrustedSkillSettings,
     WorkspaceSkillSourceAuthority,
     build_skill_registry,
     resolve_skill_sources,
 )
 from avalan.tool.manager import ToolManager
-from avalan.tool.skills import ListSkillsTool, MatchSkillsTool, SkillsToolSet
+from avalan.tool.skills import (
+    ListSkillsTool,
+    MatchSkillsTool,
+    ReadSkillTool,
+    SkillsToolSet,
+)
 
 
 class SkillsToolSetSchemaTestCase(IsolatedAsyncioTestCase):
@@ -141,6 +151,368 @@ class SkillsToolSetSchemaTestCase(IsolatedAsyncioTestCase):
 
 
 class SkillsToolSetCallTestCase(IsolatedAsyncioTestCase):
+    async def test_sdk_privacy_observability_filter_model_responses(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_skill(
+                root / "pdf" / "SKILL.md",
+                name="pdf",
+                description="PDF rendering guidance.",
+                tags=("pdf",),
+                body="# PDF Body\nUNIQUE_BODY_TOKEN\n",
+            )
+            registry = await _registry(
+                root,
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="workspace-main",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            root_path=root,
+                        ),
+                    ),
+                    privacy=SkillPrivacySettings(
+                        include_source_labels=False,
+                        include_authority=False,
+                        include_diagnostic_paths=False,
+                    ),
+                    observability=SkillObservabilitySettings(
+                        include_diagnostics=False,
+                        include_byte_counts=False,
+                    ),
+                ),
+            )
+            manager = ToolManager.create_instance(
+                available_toolsets=[SkillsToolSet(registry)],
+                enable_tools=["skills"],
+                settings=ToolManagerSettings(),
+            )
+
+            listed = await manager(
+                ToolCall(id="call-1", name="skills.list", arguments={}),
+                ToolCallContext(),
+            )
+            matched = await manager(
+                ToolCall(
+                    id="call-2",
+                    name="skills.match",
+                    arguments={"query": "render pdf"},
+                ),
+                ToolCallContext(),
+            )
+            checked = await manager(
+                ToolCall(
+                    id="call-3",
+                    name="skills.check",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+            read = await manager(
+                ToolCall(
+                    id="call-4",
+                    name="skills.read",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+
+        for outcome in (listed, matched, checked, read):
+            assert isinstance(outcome, ToolCallResult)
+            encoded = dumps(_result_dict(outcome), sort_keys=True)
+            self.assertNotIn("source_label", encoded)
+            self.assertNotIn("authority", encoded)
+            self.assertNotIn("diagnostics", encoded)
+            self.assertNotIn("path", encoded)
+            self.assertNotIn("size_bytes", encoded)
+            self.assertNotIn("start_byte", encoded)
+            self.assertNotIn("end_byte", encoded)
+            self.assertNotIn(str(root), encoded)
+
+    async def test_sdk_diagnostic_paths_and_byte_counts_filter_when_kept(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_skill(
+                root / "pdf" / "SKILL.md",
+                name="pdf",
+                description="PDF rendering guidance.",
+                tags=("pdf",),
+                body="# PDF Body\n" + ("READ_ME\n" * 64),
+            )
+            registry = await _registry(
+                root,
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="workspace-main",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            root_path=root,
+                        ),
+                    ),
+                    privacy=SkillPrivacySettings(
+                        include_diagnostic_paths=False,
+                    ),
+                    observability=SkillObservabilitySettings(
+                        include_diagnostics=True,
+                        include_byte_counts=False,
+                    ),
+                ),
+            )
+            tool = ReadSkillTool(
+                registry,
+                SkillResourceReader(
+                    read_limits=SkillReadLimits(
+                        max_bytes_per_read=64,
+                        max_lines_per_read=16,
+                    )
+                ),
+            )
+
+            result = await tool(
+                context=ToolCallContext(),
+                skill="pdf",
+            )
+
+        self.assertEqual(result["status"], SkillStatus.TRUNCATED.value)
+        self.assertIn("diagnostics", result)
+        encoded = dumps(result, sort_keys=True)
+        self.assertNotIn('"path":', encoded)
+        self.assertNotIn('"max_bytes_per_read":', encoded)
+        self.assertNotIn('"max_lines_per_read":', encoded)
+        self.assertNotIn('"size_bytes":', encoded)
+        self.assertNotIn('"start_byte":', encoded)
+        self.assertNotIn('"end_byte":', encoded)
+        self.assertNotIn(str(root), encoded)
+
+    async def test_hidden_source_labels_do_not_affect_list_match_behavior(
+        self,
+    ) -> None:
+        source_label = "workspace-main"
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_skill(
+                root / "pdf" / "SKILL.md",
+                name="pdf",
+                description="PDF rendering guidance.",
+                tags=("pdf",),
+            )
+            registry = await _registry(
+                root,
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label=source_label,
+                            authority=WorkspaceSkillSourceAuthority(),
+                            root_path=root,
+                        ),
+                    ),
+                    privacy=SkillPrivacySettings(
+                        include_source_labels=False,
+                    ),
+                ),
+            )
+            toolset = SkillsToolSet(registry)
+            list_tool = cast(ListSkillsTool, toolset.tools[0])
+            match_tool = cast(MatchSkillsTool, toolset.tools[1])
+
+            filtered = await list_tool(
+                context=ToolCallContext(),
+                source_label=source_label,
+            )
+            match_filtered = await match_tool(
+                context=ToolCallContext(),
+                source_label=source_label,
+            )
+            listed = await list_tool(
+                context=ToolCallContext(),
+                query=source_label,
+            )
+            matched = await match_tool(
+                context=ToolCallContext(),
+                query=source_label,
+            )
+
+        self.assertEqual(filtered["status"], SkillStatus.POLICY_DENIED.value)
+        self.assertNotIn("items", filtered)
+        self.assertNotIn(source_label, dumps(filtered, sort_keys=True))
+
+        self.assertEqual(
+            match_filtered["status"],
+            SkillStatus.POLICY_DENIED.value,
+        )
+        self.assertNotIn("items", match_filtered)
+        self.assertNotIn(source_label, dumps(match_filtered, sort_keys=True))
+
+        self.assertEqual(listed["status"], SkillStatus.EMPTY.value)
+        self.assertNotIn("items", listed)
+        self.assertNotIn(source_label, dumps(listed, sort_keys=True))
+
+        self.assertEqual(matched["status"], SkillStatus.EMPTY.value)
+        self.assertNotIn("items", matched)
+        matched_encoded = dumps(matched, sort_keys=True)
+        self.assertNotIn(source_label, matched_encoded)
+        self.assertNotIn("source label matched query", matched_encoded)
+        self.assertNotIn("source filter matched", matched_encoded)
+
+    async def test_hidden_source_labels_deny_read_check_filters(
+        self,
+    ) -> None:
+        source_label = "workspace-main"
+        wrong_label = "other-source"
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_skill(
+                root / "pdf" / "SKILL.md",
+                name="pdf",
+                description="PDF rendering guidance.",
+                tags=("pdf",),
+                body="# PDF Body\nUNIQUE_BODY_TOKEN\n",
+            )
+            registry = await _registry(
+                root,
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label=source_label,
+                            authority=WorkspaceSkillSourceAuthority(),
+                            root_path=root,
+                        ),
+                    ),
+                    privacy=SkillPrivacySettings(
+                        include_source_labels=False,
+                    ),
+                ),
+            )
+            manager = ToolManager.create_instance(
+                available_toolsets=[SkillsToolSet(registry)],
+                enable_tools=["skills"],
+                settings=ToolManagerSettings(),
+            )
+
+            read_real = await manager(
+                ToolCall(
+                    id="read-real",
+                    name="skills.read",
+                    arguments={
+                        "skill": "pdf",
+                        "source_label": source_label,
+                    },
+                ),
+                ToolCallContext(),
+            )
+            read_wrong = await manager(
+                ToolCall(
+                    id="read-wrong",
+                    name="skills.read",
+                    arguments={
+                        "skill": "pdf",
+                        "source_label": wrong_label,
+                    },
+                ),
+                ToolCallContext(),
+            )
+            check_real = await manager(
+                ToolCall(
+                    id="check-real",
+                    name="skills.check",
+                    arguments={
+                        "skill": "pdf",
+                        "source_label": source_label,
+                    },
+                ),
+                ToolCallContext(),
+            )
+            check_wrong = await manager(
+                ToolCall(
+                    id="check-wrong",
+                    name="skills.check",
+                    arguments={
+                        "skill": "pdf",
+                        "source_label": wrong_label,
+                    },
+                ),
+                ToolCallContext(),
+            )
+            read = await manager(
+                ToolCall(
+                    id="read",
+                    name="skills.read",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+            checked = await manager(
+                ToolCall(
+                    id="check",
+                    name="skills.check",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+
+        for outcome in (read_real, read_wrong, check_real, check_wrong):
+            assert isinstance(outcome, ToolCallResult)
+            result = _result_dict(outcome)
+            self.assertEqual(
+                result["status"],
+                SkillStatus.POLICY_DENIED.value,
+            )
+            encoded = dumps(result, sort_keys=True)
+            self.assertNotIn("content", result)
+            self.assertNotIn(source_label, encoded)
+            self.assertNotIn(wrong_label, encoded)
+
+        assert isinstance(read, ToolCallResult)
+        read_result = _result_dict(read)
+        self.assertEqual(read_result["status"], SkillStatus.OK.value)
+        read_content = cast(dict[str, Any], read_result["content"])
+        self.assertIn("UNIQUE_BODY_TOKEN", read_content["text"])
+        self.assertNotIn("source_label", dumps(read_result, sort_keys=True))
+
+        assert isinstance(checked, ToolCallResult)
+        check_result = _result_dict(checked)
+        self.assertEqual(check_result["status"], SkillStatus.OK.value)
+        self.assertNotIn("source_label", dumps(check_result, sort_keys=True))
+
+    async def test_visible_source_labels_keep_default_list_match_behavior(
+        self,
+    ) -> None:
+        source_label = "workspace-main"
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_skill(
+                root / "pdf" / "SKILL.md",
+                name="pdf",
+                description="PDF rendering guidance.",
+                tags=("pdf",),
+            )
+            registry = await _registry(root)
+            toolset = SkillsToolSet(registry)
+            list_tool = cast(ListSkillsTool, toolset.tools[0])
+            match_tool = cast(MatchSkillsTool, toolset.tools[1])
+
+            listed = await list_tool(
+                context=ToolCallContext(),
+                query=source_label,
+            )
+            matched = await match_tool(
+                context=ToolCallContext(),
+                query=source_label,
+            )
+
+        self.assertEqual(listed["status"], SkillStatus.OK.value)
+        listed_items = cast(tuple[dict[str, Any], ...], listed["items"])
+        self.assertEqual(listed_items[0]["skill_id"], "pdf")
+
+        self.assertEqual(matched["status"], SkillStatus.OK.value)
+        matched_items = cast(tuple[dict[str, Any], ...], matched["items"])
+        reasons = cast(tuple[str, ...], matched_items[0]["reasons"])
+        self.assertIn("source label matched query", reasons)
+
     async def test_list_match_check_do_not_return_skill_bodies(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -529,7 +901,11 @@ class SkillsBootstrapPromptTestCase(TestCase):
         self.assertIn("Use skills.match or skills.list", prompt)
 
 
-async def _registry(root: Path) -> SkillRegistry:
+async def _registry(
+    root: Path,
+    *,
+    settings: TrustedSkillSettings | None = None,
+) -> SkillRegistry:
     if not any(root.iterdir()):
         _write_skill(
             root / "pdf" / "SKILL.md",
@@ -537,8 +913,10 @@ async def _registry(root: Path) -> SkillRegistry:
             description="PDF rendering guidance.",
             tags=("pdf",),
         )
-    source_result = await resolve_skill_sources((_config(root),))
-    return await build_skill_registry(source_result)
+    source_result = await resolve_skill_sources(
+        (_config(root),), settings=settings
+    )
+    return await build_skill_registry(source_result, settings=settings)
 
 
 def _result_dict(outcome: ToolCallResult) -> dict[str, Any]:
