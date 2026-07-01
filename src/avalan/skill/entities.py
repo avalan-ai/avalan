@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from json import dumps
 from math import isfinite
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from re import fullmatch, search
 from types import MappingProxyType
 from typing import TypeAlias
@@ -192,7 +192,10 @@ class SkillDiagnosticInfo:
 class SkillSourceConfig:
     label: str
     authority: SkillSourceAuthority
+    root_path: str | Path | None = None
+    package_path: str | None = None
     enabled: bool = True
+    allow_hidden_paths: bool = False
     status: SkillStatus = SkillStatus.OK
     tags: tuple[str, ...] = ()
     diagnostics: tuple[SkillDiagnosticInfo, ...] = ()
@@ -200,7 +203,17 @@ class SkillSourceConfig:
     def __post_init__(self) -> None:
         _assert_source_label(self.label)
         assert isinstance(self.authority, SkillSourceAuthority)
+        if self.root_path is not None:
+            assert isinstance(
+                self.root_path, str | Path
+            ), "root_path must be a path"
+        if self.package_path is not None:
+            assert isinstance(
+                self.package_path, str
+            ), "package_path must be a string"
+            assert self.package_path.strip(), "package_path must be non-empty"
         assert isinstance(self.enabled, bool)
+        assert isinstance(self.allow_hidden_paths, bool)
         assert isinstance(self.status, SkillStatus)
         if self.enabled:
             assert self.status != SkillStatus.DISABLED
@@ -214,8 +227,11 @@ class SkillSourceConfig:
             "label": self.label,
             "authority": self.authority.as_model_dict(),
             "enabled": self.enabled,
+            "allow_hidden_paths": self.allow_hidden_paths,
             "status": self.status.value,
         }
+        if self.package_path is not None:
+            value["package_path"] = _model_safe_package_path(self.package_path)
         if self.tags:
             value["tags"] = self.tags
         if self.diagnostics:
@@ -716,6 +732,14 @@ def _is_resource_id(value: str) -> bool:
         return False
     path = PurePosixPath(value)
     return not path.is_absolute() and ".." not in path.parts
+
+
+def _model_safe_package_path(value: str) -> str:
+    if value == ".":
+        return "."
+    if not _is_resource_id(value):
+        return "redacted"
+    return value
 
 
 def _is_model_safe_text(value: str) -> bool:

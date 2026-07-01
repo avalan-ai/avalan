@@ -233,6 +233,7 @@ class SkillObservabilitySettings:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TrustedSkillSettings:
     enabled: bool = True
+    bootstrap_enabled: bool = True
     authority_kinds: tuple[SkillSourceAuthorityKind, ...] = (
         SkillSourceAuthorityKind.BUNDLED,
         SkillSourceAuthorityKind.WORKSPACE,
@@ -253,6 +254,7 @@ class TrustedSkillSettings:
 
     def __post_init__(self) -> None:
         _assert_bool(self.enabled, "enabled")
+        _assert_bool(self.bootstrap_enabled, "bootstrap_enabled")
         _assert_authority_kind_tuple(self.authority_kinds)
         _assert_source_tuple(self.sources)
         _assert_unique_source_labels(self.sources)
@@ -272,6 +274,7 @@ class TrustedSkillSettings:
     def as_model_dict(self) -> dict[str, SkillModelValue]:
         value: dict[str, object] = {
             "enabled": self.enabled,
+            "bootstrap_enabled": self.bootstrap_enabled,
             "authority_kinds": tuple(
                 authority_kind.value for authority_kind in self.authority_kinds
             ),
@@ -294,6 +297,7 @@ class TrustedSkillSettings:
 class UntrustedSkillSettings:
     surface: SkillSettingsSurface
     enabled: bool | None = None
+    bootstrap_enabled: bool | None = None
     authority_kinds: tuple[SkillSourceAuthorityKind, ...] = ()
     source_labels: tuple[str, ...] = ()
     skill_ids: tuple[str, ...] = ()
@@ -310,6 +314,8 @@ class UntrustedSkillSettings:
         assert self.surface is not SkillSettingsSurface.OPERATOR
         if self.enabled is not None:
             _assert_bool(self.enabled, "enabled")
+        if self.bootstrap_enabled is not None:
+            _assert_bool(self.bootstrap_enabled, "bootstrap_enabled")
         _assert_authority_kind_tuple(self.authority_kinds, allow_empty=True)
         _assert_source_label_tuple(self.source_labels, "source_labels")
         _assert_logical_id_tuple(self.skill_ids, "skill_ids")
@@ -369,6 +375,11 @@ def merge_skill_settings(
         settings = replace(settings, enabled=False)
     elif override.enabled is True and not trusted.enabled:
         diagnostics.append(_policy_diagnostic("settings.enabled"))
+
+    if override.bootstrap_enabled is False:
+        settings = replace(settings, bootstrap_enabled=False)
+    elif override.bootstrap_enabled is True and not trusted.bootstrap_enabled:
+        diagnostics.append(_policy_diagnostic("settings.bootstrap_enabled"))
 
     if override.sources:
         diagnostics.append(_policy_diagnostic("settings.sources"))

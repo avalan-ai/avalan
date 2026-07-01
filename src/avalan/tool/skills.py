@@ -15,11 +15,25 @@ from ..skill.entities import model_dict
 from ..skill.registry import SkillRegistry
 from . import Tool, ToolSet
 
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from re import fullmatch
 
 _MAIN_RESOURCE_ID = "main"
 _LOGICAL_ID_PATTERN = r"[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*"
+_BYTE_COUNT_KEYS = frozenset(
+    {
+        "end_byte",
+        "limit_bytes",
+        "line_count",
+        "max_bytes_per_read",
+        "max_lines_per_read",
+        "offset_bytes",
+        "size_bytes",
+        "start_byte",
+    }
+)
+_SOURCE_LABEL_KEYS = frozenset({"candidates", "source_label", "source_id"})
 _READ_ONLY_PARALLEL_SAFE = ToolCapabilities(
     side_effecting=False,
     parallel_safe=True,
@@ -64,24 +78,44 @@ class ListSkillsTool(Tool):
         del context
         parsed_status = _parse_status(status)
         if parsed_status is None and status is not None:
-            return _invalid_status_envelope(
+            return _skills_model_dict(
                 self._registry,
-                status,
-                path="skills.list.status",
-            ).as_model_dict()
+                _invalid_status_envelope(
+                    self._registry,
+                    status,
+                    path="skills.list.status",
+                ),
+            )
         tag_filter = _tag_filter(tags)
         if tag_filter is None and tags is not None:
-            return _invalid_argument_envelope(
+            return _skills_model_dict(
                 self._registry,
-                path="skills.list.tags",
-                reason="invalid_tags",
-            ).as_model_dict()
+                _invalid_argument_envelope(
+                    self._registry,
+                    path="skills.list.tags",
+                    reason="invalid_tags",
+                ),
+            )
         if not _is_optional_logical_id(source_label):
-            return _invalid_argument_envelope(
+            return _skills_model_dict(
                 self._registry,
-                path="skills.list.source_label",
-                reason="invalid_source_label",
-            ).as_model_dict()
+                _invalid_argument_envelope(
+                    self._registry,
+                    path="skills.list.source_label",
+                    reason="invalid_source_label",
+                ),
+            )
+        if source_label is not None and not _include_source_labels(
+            self._registry
+        ):
+            return _skills_model_dict(
+                self._registry,
+                _invalid_argument_envelope(
+                    self._registry,
+                    path="skills.list.source_label",
+                    reason="source_labels_hidden",
+                ),
+            )
         envelope = _list_skills(
             self._registry,
             query=query,
@@ -90,7 +124,7 @@ class ListSkillsTool(Tool):
             status=parsed_status,
             usable_only=usable_only,
         )
-        return envelope.as_model_dict()
+        return _skills_model_dict(self._registry, envelope)
 
 
 class MatchSkillsTool(Tool):
@@ -129,30 +163,52 @@ class MatchSkillsTool(Tool):
         del context
         parsed_status = _parse_status(status)
         if parsed_status is None and status is not None:
-            return _invalid_status_envelope(
+            return _skills_model_dict(
                 self._registry,
-                status,
-                path="skills.match.status",
-            ).as_model_dict()
+                _invalid_status_envelope(
+                    self._registry,
+                    status,
+                    path="skills.match.status",
+                ),
+            )
         tag_filter = _tag_filter(tags)
         if tag_filter is None and tags is not None:
-            return _invalid_argument_envelope(
+            return _skills_model_dict(
                 self._registry,
-                path="skills.match.tags",
-                reason="invalid_tags",
-            ).as_model_dict()
+                _invalid_argument_envelope(
+                    self._registry,
+                    path="skills.match.tags",
+                    reason="invalid_tags",
+                ),
+            )
         if not _is_optional_logical_id(source_label):
-            return _invalid_argument_envelope(
+            return _skills_model_dict(
                 self._registry,
-                path="skills.match.source_label",
-                reason="invalid_source_label",
-            ).as_model_dict()
+                _invalid_argument_envelope(
+                    self._registry,
+                    path="skills.match.source_label",
+                    reason="invalid_source_label",
+                ),
+            )
+        include_source_labels = _include_source_labels(self._registry)
+        if source_label is not None and not include_source_labels:
+            return _skills_model_dict(
+                self._registry,
+                _invalid_argument_envelope(
+                    self._registry,
+                    path="skills.match.source_label",
+                    reason="source_labels_hidden",
+                ),
+            )
         if not _is_optional_positive_int(max_results):
-            return _invalid_argument_envelope(
+            return _skills_model_dict(
                 self._registry,
-                path="skills.match.max_results",
-                reason="invalid_max_results",
-            ).as_model_dict()
+                _invalid_argument_envelope(
+                    self._registry,
+                    path="skills.match.max_results",
+                    reason="invalid_max_results",
+                ),
+            )
         envelope = await match_skill_registry(
             self._registry,
             query=query,
@@ -162,8 +218,9 @@ class MatchSkillsTool(Tool):
             usable_only=usable_only,
             max_results=max_results,
             match_limits=SkillMatchLimits(),
+            include_source_labels=include_source_labels,
         )
-        return envelope.as_model_dict()
+        return _skills_model_dict(self._registry, envelope)
 
 
 class ReadSkillTool(Tool):
@@ -202,6 +259,17 @@ class ReadSkillTool(Tool):
         cursor_id: str | None = None,
     ) -> dict[str, SkillModelValue]:
         del context
+        if source_label is not None and not _include_source_labels(
+            self._registry
+        ):
+            return _skills_model_dict(
+                self._registry,
+                _invalid_argument_envelope(
+                    self._registry,
+                    path="skills.read.source_label",
+                    reason="source_labels_hidden",
+                ),
+            )
         envelope = await self._reader.read(
             self._registry,
             skill,
@@ -209,7 +277,7 @@ class ReadSkillTool(Tool):
             source_label=source_label,
             cursor_id=cursor_id,
         )
-        return envelope.as_model_dict()
+        return _skills_model_dict(self._registry, envelope)
 
 
 class CheckSkillTool(Tool):
@@ -246,6 +314,17 @@ class CheckSkillTool(Tool):
         source_label: str | None = None,
     ) -> dict[str, SkillModelValue]:
         del context
+        if source_label is not None and not _include_source_labels(
+            self._registry
+        ):
+            return _skills_model_dict(
+                self._registry,
+                _invalid_argument_envelope(
+                    self._registry,
+                    path="skills.check.source_label",
+                    reason="source_labels_hidden",
+                ),
+            )
         envelope = await check_skill_registry_read(
             self._registry,
             skill,
@@ -253,7 +332,7 @@ class CheckSkillTool(Tool):
             source_label=source_label,
             reader=self._reader,
         )
-        return envelope.as_model_dict()
+        return _skills_model_dict(self._registry, envelope)
 
 
 class SkillsToolSet(ToolSet):
@@ -262,9 +341,12 @@ class SkillsToolSet(ToolSet):
         self,
         registry: SkillRegistry,
         *,
+        bootstrap_enabled: bool = True,
         exit_stack: AsyncExitStack | None = None,
         namespace: str | None = "skills",
     ) -> None:
+        assert isinstance(bootstrap_enabled, bool)
+        self.bootstrap_enabled = bootstrap_enabled
         reader = SkillResourceReader()
         tools = [
             ListSkillsTool(registry),
@@ -291,13 +373,17 @@ def _list_skills(
     assert isinstance(query, str)
     assert isinstance(source_label, str | None)
     assert isinstance(usable_only, bool)
+    include_source_labels = _include_source_labels(registry)
     candidates = registry.usable_metadata if usable_only else registry.metadata
     normalized_query = query.casefold().strip()
     items = tuple(
         metadata
         for metadata in candidates
         if _metadata_matches(
-            metadata.as_model_dict(),
+            _metadata_model_dict(
+                metadata.as_model_dict(),
+                include_source_labels=include_source_labels,
+            ),
             query=normalized_query,
             tags=tags,
             source_label=source_label,
@@ -330,6 +416,118 @@ def _list_skills(
     )
 
 
+def _include_source_labels(registry: SkillRegistry) -> bool:
+    assert isinstance(registry, SkillRegistry)
+    return (
+        registry.settings is None
+        or registry.settings.privacy.include_source_labels
+    )
+
+
+def _metadata_model_dict(
+    metadata: dict[str, SkillModelValue],
+    *,
+    include_source_labels: bool,
+) -> dict[str, SkillModelValue]:
+    assert isinstance(metadata, dict)
+    if include_source_labels:
+        return metadata
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key not in _SOURCE_LABEL_KEYS
+    }
+
+
+def _skills_model_dict(
+    registry: SkillRegistry,
+    envelope: SkillResponseEnvelope,
+) -> dict[str, SkillModelValue]:
+    assert isinstance(registry, SkillRegistry)
+    assert isinstance(envelope, SkillResponseEnvelope)
+    value = envelope.as_model_dict()
+    settings = registry.settings
+    if settings is None:
+        return value
+    filtered = _filter_skill_model_value(
+        value,
+        include_source_labels=settings.privacy.include_source_labels,
+        include_authority=settings.privacy.include_authority,
+        include_diagnostic_paths=settings.privacy.include_diagnostic_paths,
+        include_diagnostics=settings.observability.include_diagnostics,
+        include_byte_counts=settings.observability.include_byte_counts,
+    )
+    assert isinstance(filtered, Mapping)
+    return model_dict(filtered)
+
+
+def _filter_skill_model_value(
+    value: SkillModelValue,
+    *,
+    include_source_labels: bool,
+    include_authority: bool,
+    include_diagnostic_paths: bool,
+    include_diagnostics: bool,
+    include_byte_counts: bool,
+) -> SkillModelValue:
+    if isinstance(value, Mapping):
+        result: dict[str, SkillModelValue] = {}
+        for key, item in value.items():
+            if _drop_skill_model_key(
+                key,
+                include_source_labels=include_source_labels,
+                include_authority=include_authority,
+                include_diagnostic_paths=include_diagnostic_paths,
+                include_diagnostics=include_diagnostics,
+                include_byte_counts=include_byte_counts,
+            ):
+                continue
+            result[key] = _filter_skill_model_value(
+                item,
+                include_source_labels=include_source_labels,
+                include_authority=include_authority,
+                include_diagnostic_paths=include_diagnostic_paths,
+                include_diagnostics=include_diagnostics,
+                include_byte_counts=include_byte_counts,
+            )
+        return model_dict(result)
+    if isinstance(value, tuple):
+        return tuple(
+            _filter_skill_model_value(
+                item,
+                include_source_labels=include_source_labels,
+                include_authority=include_authority,
+                include_diagnostic_paths=include_diagnostic_paths,
+                include_diagnostics=include_diagnostics,
+                include_byte_counts=include_byte_counts,
+            )
+            for item in value
+        )
+    return value
+
+
+def _drop_skill_model_key(
+    key: str,
+    *,
+    include_source_labels: bool,
+    include_authority: bool,
+    include_diagnostic_paths: bool,
+    include_diagnostics: bool,
+    include_byte_counts: bool,
+) -> bool:
+    if not include_source_labels and key in _SOURCE_LABEL_KEYS:
+        return True
+    if not include_authority and key == "authority":
+        return True
+    if not include_diagnostics and key == "diagnostics":
+        return True
+    if not include_diagnostic_paths and key == "path":
+        return True
+    if not include_byte_counts and key in _BYTE_COUNT_KEYS:
+        return True
+    return False
+
+
 def _metadata_matches(
     metadata: dict[str, SkillModelValue],
     *,
@@ -338,7 +536,10 @@ def _metadata_matches(
     source_label: str | None,
     status: SkillStatus | None,
 ) -> bool:
-    if source_label is not None and metadata["source_label"] != source_label:
+    if (
+        source_label is not None
+        and metadata.get("source_label") != source_label
+    ):
         return False
     if status is not None and metadata["status"] != status.value:
         return False

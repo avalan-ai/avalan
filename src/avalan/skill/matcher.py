@@ -328,8 +328,10 @@ async def match_skill_registry(
     include_resource_excerpts: bool = False,
     file_system: SkillSourceFileSystem | None = None,
     match_limits: SkillMatchLimits | None = None,
+    include_source_labels: bool = True,
 ) -> SkillResponseEnvelope:
     assert isinstance(registry, SkillRegistry)
+    assert isinstance(include_source_labels, bool)
     if index is not None:
         assert isinstance(index, SkillMatchIndex)
         assert index.registry_version == registry.registry_version
@@ -349,6 +351,15 @@ async def match_skill_registry(
         status=status,
         usable_only=usable_only,
     )
+    if filters.source_label is not None and not include_source_labels:
+        diagnostic = _hidden_source_label_diagnostic(
+            "skills.match.source_label"
+        )
+        return SkillResponseEnvelope(
+            status=diagnostic.status,
+            registry_version=registry.registry_version,
+            diagnostics=(diagnostic,),
+        )
     prepared_query = _prepare_query(filters.query, match_limits)
     if index is None:
         index = await build_skill_match_index(
@@ -380,7 +391,12 @@ async def match_skill_registry(
             diagnostics=diagnostics,
         )
 
-    scored = _scored_entries(index.entries, filters, prepared_query)
+    scored = _scored_entries(
+        index.entries,
+        filters,
+        prepared_query,
+        include_source_labels=include_source_labels,
+    )
     excluded: tuple[_ScoredEntry, ...] = ()
     if filters.usable_only:
         excluded = tuple(
@@ -789,12 +805,19 @@ def _scored_entries(
     entries: tuple[SkillMatchIndexEntry, ...],
     filters: SkillMatchFilters,
     prepared_query: _PreparedQuery,
+    *,
+    include_source_labels: bool,
 ) -> tuple[_ScoredEntry, ...]:
     scored: list[_ScoredEntry] = []
     for entry in entries:
         if not _passes_filters(entry, filters):
             continue
-        score = _score_entry(entry, filters, prepared_query)
+        score = _score_entry(
+            entry,
+            filters,
+            prepared_query,
+            include_source_labels=include_source_labels,
+        )
         if score is not None:
             scored.append(score)
     return tuple(
@@ -828,17 +851,21 @@ def _score_entry(
     entry: SkillMatchIndexEntry,
     filters: SkillMatchFilters,
     prepared_query: _PreparedQuery,
+    *,
+    include_source_labels: bool,
 ) -> _ScoredEntry | None:
     query_tokens = prepared_query.tokens
     if not query_tokens:
-        reasons = _filter_reasons(filters) or ("available skill matched",)
+        filter_reasons = _filter_reasons(
+            filters,
+            include_source_labels=include_source_labels,
+        )
+        reasons = filter_reasons or ("available skill matched",)
         return _ScoredEntry(
             entry=entry,
-            score=0.5 if _filter_reasons(filters) else 0.2,
+            score=0.5 if filter_reasons else 0.2,
             rank=(
-                _RANK_STRONG_METADATA
-                if _filter_reasons(filters)
-                else _RANK_AVAILABLE
+                _RANK_STRONG_METADATA if filter_reasons else _RANK_AVAILABLE
             ),
             reasons=reasons,
         )
@@ -867,7 +894,9 @@ def _score_entry(
     strong_reasons: list[str] = []
     if set(query_tokens).issubset(entry.tag_tokens):
         strong_reasons.append("tag metadata matched query")
-    if set(query_tokens).issubset(entry.source_tokens):
+    if include_source_labels and set(query_tokens).issubset(
+        entry.source_tokens
+    ):
         strong_reasons.append("source label matched query")
     if set(query_tokens).issubset(entry.description_tokens):
         strong_reasons.append("description matched query")
@@ -880,11 +909,9 @@ def _score_entry(
         )
 
     possible_reasons: list[str] = []
-    metadata_tokens = (
-        set(entry.tag_tokens)
-        | set(entry.source_tokens)
-        | set(entry.description_tokens)
-    )
+    metadata_tokens = set(entry.tag_tokens) | set(entry.description_tokens)
+    if include_source_labels:
+        metadata_tokens |= set(entry.source_tokens)
     if metadata_tokens.intersection(query_tokens):
         possible_reasons.append("metadata partially matched query")
     if set(query_tokens).issubset(entry.excerpt_tokens):
@@ -903,15 +930,30 @@ def _score_entry(
     return None
 
 
-def _filter_reasons(filters: SkillMatchFilters) -> tuple[str, ...]:
+def _filter_reasons(
+    filters: SkillMatchFilters,
+    *,
+    include_source_labels: bool,
+) -> tuple[str, ...]:
     reasons: list[str] = []
     if filters.tags:
         reasons.append("tag filter matched")
-    if filters.source_label is not None:
+    if filters.source_label is not None and include_source_labels:
         reasons.append("source filter matched")
     if filters.status is not None:
         reasons.append("status filter matched")
     return tuple(reasons)
+
+
+def _hidden_source_label_diagnostic(path: str) -> SkillDiagnosticInfo:
+    return SkillDiagnosticInfo(
+        code=SkillDiagnosticCode.POLICY_DENIED,
+        status=SkillStatus.POLICY_DENIED,
+        message="The requested source label filter is not exposed.",
+        path=path,
+        hint="Use skills.list or skills.match without a source label filter.",
+        details=model_dict({"reason": "source_labels_hidden"}),
+    )
 
 
 def _match_result(score: _ScoredEntry) -> SkillMatchResult:

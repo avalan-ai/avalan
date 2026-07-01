@@ -47,6 +47,24 @@ from ..memory.manager import MemoryManager
 from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
+from ..skill import (
+    CANONICAL_SKILLS_TOOL_NAMES,
+    SkillConfiguredSource,
+    SkillCursorLimits,
+    SkillIndexLimits,
+    SkillObservabilitySettings,
+    SkillPrivacySettings,
+    SkillReadLimits,
+    SkillSettingsSurface,
+    SkillSourceAuthorityKind,
+    SkillSourceConfig,
+    SkillSourceLimits,
+    TrustedSkillSettings,
+    UntrustedSkillSettings,
+    build_skill_registry,
+    merge_skill_settings,
+    resolve_skill_sources,
+)
 from ..task.schema import TaskSchemaResolutionError, resolve_schema_ref
 from ..tool import ToolSet
 from ..tool.a2a import A2AToolSet
@@ -77,6 +95,7 @@ from ..tool.shell import (
 )
 from ..tool.shell.input_files import shell_input_file_filter
 from ..tool.shell.opt_in import enables_shell_pipeline
+from ..tool.skills import SkillsToolSet
 
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, fields, replace
@@ -117,6 +136,73 @@ def should_append_a2a_toolset(enabled_tools: list[str] | None) -> bool:
     return any(
         matches_tool_namespace("a2a.call", enabled)
         for enabled in enabled_tools
+    )
+
+
+def should_append_skills_toolset(
+    skills_settings: TrustedSkillSettings | None,
+    enabled_tools: list[str] | None,
+) -> bool:
+    """Return whether configured skills should be exposed as tools."""
+    return (
+        skills_settings is not None
+        and skills_settings.enabled
+        and _skills_tools_requested(enabled_tools)
+    )
+
+
+def _skills_tools_requested(enabled_tools: list[str] | None) -> bool:
+    """Return whether the tool list explicitly selects skills tools."""
+    if not enabled_tools:
+        return False
+    return any(
+        matches_tool_namespace(tool_name, enabled)
+        for enabled in enabled_tools
+        for tool_name in CANONICAL_SKILLS_TOOL_NAMES
+    )
+
+
+def _skill_configured_sources(
+    skills_settings: TrustedSkillSettings,
+) -> tuple[SkillConfiguredSource, ...]:
+    """Return resolver source configs from trusted skill settings."""
+    assert isinstance(skills_settings, TrustedSkillSettings)
+    sources: list[SkillConfiguredSource] = []
+    for source in skills_settings.sources:
+        assert isinstance(source, SkillSourceConfig)
+        if source.root_path is None:
+            continue
+        sources.append(
+            SkillConfiguredSource(
+                label=source.label,
+                authority=source.authority,
+                root_path=source.root_path,
+                package_path=source.package_path,
+                enabled=source.enabled,
+                allow_hidden_paths=source.allow_hidden_paths,
+            )
+        )
+    return tuple(sources)
+
+
+async def _build_skills_toolset(
+    skills_settings: TrustedSkillSettings,
+) -> SkillsToolSet:
+    """Build a skills toolset from trusted settings."""
+    sources = _skill_configured_sources(skills_settings)
+    assert sources, "skills require at least one trusted source"
+    source_result = await resolve_skill_sources(
+        sources,
+        settings=skills_settings,
+    )
+    registry = await build_skill_registry(
+        source_result,
+        settings=skills_settings,
+    )
+    return SkillsToolSet(
+        registry,
+        bootstrap_enabled=skills_settings.bootstrap_enabled,
+        namespace="skills",
     )
 
 
@@ -1006,6 +1092,7 @@ class OrchestratorLoader:
             assert isinstance(
                 tool_section, dict
             ), "Tool section must be a mapping"
+        skills_config = self._skills_config_from_tool_section(tool_section)
         container_source = trusted_container_source(
             ContainerSurface.AGENT_TOML
         )
@@ -1239,11 +1326,13 @@ class OrchestratorLoader:
                 )
             shell_settings = ShellToolSettings(**shell_config)
 
+        skills_settings = None
         extra: dict[str, object] | None
         if tool_settings:
             browser_settings = tool_settings.browser or browser_settings
             database_settings = tool_settings.database or database_settings
             graph_settings = tool_settings.graph or graph_settings
+            skills_settings = tool_settings.skills
             shell_settings = _merge_shell_tool_settings(
                 shell_settings,
                 tool_settings.shell,
@@ -1255,10 +1344,30 @@ class OrchestratorLoader:
         else:
             extra = None
 
+        if skills_config is not None:
+            assert (
+                skills_settings is not None
+            ), "tool.skills requires trusted skills settings"
+            skills_override = self._untrusted_skills_settings_from_config(
+                skills_config,
+                trusted=skills_settings,
+            )
+            skills_merge = merge_skill_settings(
+                skills_settings,
+                skills_override,
+            )
+            assert not skills_merge.diagnostics, (
+                skills_merge.diagnostics[0].message
+                if skills_merge.diagnostics
+                else "Invalid tool.skills settings"
+            )
+            skills_settings = skills_merge.settings
+
         tool_settings = ToolSettingsContext(
             browser=browser_settings,
             database=database_settings,
             graph=graph_settings,
+            skills=skills_settings,
             shell=shell_settings,
             shell_explicit_fields=(
                 tool_settings.shell_explicit_fields if tool_settings else None
@@ -1347,6 +1456,256 @@ class OrchestratorLoader:
             tool_format=tool_format,
             tool_name_policy=tool_name_policy,
         )
+
+    @classmethod
+    def _skills_config_from_tool_section(
+        cls,
+        tool_section: Mapping[str, object],
+    ) -> Mapping[str, object] | None:
+        skills_config = tool_section.get("skills")
+        if skills_config is None:
+            return None
+        assert isinstance(
+            skills_config,
+            dict,
+        ), "tool.skills section must be a mapping"
+        return skills_config
+
+    @classmethod
+    def _untrusted_skills_settings_from_config(
+        cls,
+        skills_config: Mapping[str, object],
+        *,
+        trusted: TrustedSkillSettings,
+    ) -> UntrustedSkillSettings:
+        assert isinstance(trusted, TrustedSkillSettings)
+        supported_keys = {
+            "enabled",
+            "bootstrap",
+            "authority_kinds",
+            "source_labels",
+            "skill_ids",
+            "read_limits",
+            "index_limits",
+            "source_limits",
+            "cursor_limits",
+            "privacy",
+            "observability",
+        }
+        assert "source" not in skills_config, (
+            "tool.skills cannot define sources; configure trusted sources "
+            "through SDK or CLI settings"
+        )
+        assert "sources" not in skills_config, (
+            "tool.skills cannot define sources; configure trusted sources "
+            "through SDK or CLI settings"
+        )
+        unknown_keys = sorted(set(skills_config) - supported_keys)
+        assert not unknown_keys, "tool.skills has unknown keys"
+
+        enabled_value = skills_config.get("enabled")
+        assert enabled_value is None or isinstance(
+            enabled_value, bool
+        ), "tool.skills.enabled must be a boolean"
+        bootstrap_enabled = cls._skills_bootstrap_enabled(
+            skills_config.get("bootstrap")
+        )
+
+        return UntrustedSkillSettings(
+            surface=SkillSettingsSurface.AGENT,
+            enabled=enabled_value,
+            bootstrap_enabled=bootstrap_enabled,
+            authority_kinds=cls._skills_authority_kinds(
+                skills_config.get("authority_kinds")
+            ),
+            source_labels=cls._skills_string_tuple(
+                skills_config.get("source_labels"),
+                "tool.skills.source_labels",
+            ),
+            skill_ids=cls._skills_string_tuple(
+                skills_config.get("skill_ids"),
+                "tool.skills.skill_ids",
+            ),
+            read_limits=cast(
+                SkillReadLimits | None,
+                cls._skills_limit_settings(
+                    skills_config.get("read_limits"),
+                    settings_cls=SkillReadLimits,
+                    supported_keys={
+                        "max_bytes_per_read",
+                        "max_lines_per_read",
+                    },
+                    section="tool.skills.read_limits",
+                    base=trusted.read_limits,
+                ),
+            ),
+            index_limits=cast(
+                SkillIndexLimits | None,
+                cls._skills_limit_settings(
+                    skills_config.get("index_limits"),
+                    settings_cls=SkillIndexLimits,
+                    supported_keys={
+                        "max_skills",
+                        "max_resources_per_skill",
+                        "max_indexed_bytes",
+                    },
+                    section="tool.skills.index_limits",
+                    base=trusted.index_limits,
+                ),
+            ),
+            source_limits=cast(
+                SkillSourceLimits | None,
+                cls._skills_limit_settings(
+                    skills_config.get("source_limits"),
+                    settings_cls=SkillSourceLimits,
+                    supported_keys={
+                        "max_sources",
+                        "max_resources_per_source",
+                        "max_source_depth",
+                        "max_files_per_source",
+                        "max_directory_entries_per_source",
+                    },
+                    section="tool.skills.source_limits",
+                    base=trusted.source_limits,
+                ),
+            ),
+            cursor_limits=cast(
+                SkillCursorLimits | None,
+                cls._skills_limit_settings(
+                    skills_config.get("cursor_limits"),
+                    settings_cls=SkillCursorLimits,
+                    supported_keys={
+                        "max_active_cursors",
+                        "max_cursor_age_seconds",
+                    },
+                    section="tool.skills.cursor_limits",
+                    base=trusted.cursor_limits,
+                ),
+            ),
+            privacy=cast(
+                SkillPrivacySettings | None,
+                cls._skills_limit_settings(
+                    skills_config.get("privacy"),
+                    settings_cls=SkillPrivacySettings,
+                    supported_keys={
+                        "include_source_labels",
+                        "include_authority",
+                        "include_diagnostic_paths",
+                        "redact_host_paths",
+                    },
+                    section="tool.skills.privacy",
+                    base=trusted.privacy,
+                ),
+            ),
+            observability=cast(
+                SkillObservabilitySettings | None,
+                cls._skills_limit_settings(
+                    skills_config.get("observability"),
+                    settings_cls=SkillObservabilitySettings,
+                    supported_keys={
+                        "enabled",
+                        "emit_events",
+                        "include_diagnostics",
+                        "include_byte_counts",
+                    },
+                    section="tool.skills.observability",
+                    base=trusted.observability,
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _skills_bootstrap_enabled(value: object) -> bool | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        assert isinstance(value, str), "tool.skills.bootstrap must be a string"
+        assert value in {
+            "auto",
+            "off",
+        }, "tool.skills.bootstrap must be auto or off"
+        return value == "auto"
+
+    @staticmethod
+    def _skills_authority_kinds(
+        value: object,
+    ) -> tuple[SkillSourceAuthorityKind, ...]:
+        if value is None:
+            return ()
+        assert isinstance(
+            value,
+            list,
+        ), "tool.skills.authority_kinds must be a list"
+        kinds: list[SkillSourceAuthorityKind] = []
+        for item in value:
+            assert isinstance(
+                item,
+                str,
+            ), "tool.skills.authority_kinds entries must be strings"
+            kinds.append(SkillSourceAuthorityKind(item))
+        return tuple(kinds)
+
+    @staticmethod
+    def _skills_string_tuple(
+        value: object,
+        section: str,
+    ) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        assert isinstance(value, list), f"{section} must be a list"
+        values: list[str] = []
+        for item in value:
+            assert isinstance(item, str), f"{section} entries must be strings"
+            values.append(item)
+        return tuple(values)
+
+    @staticmethod
+    def _skills_limit_settings(
+        value: object,
+        *,
+        settings_cls: (
+            type[SkillReadLimits]
+            | type[SkillIndexLimits]
+            | type[SkillSourceLimits]
+            | type[SkillCursorLimits]
+            | type[SkillPrivacySettings]
+            | type[SkillObservabilitySettings]
+        ),
+        supported_keys: set[str],
+        section: str,
+        base: (
+            SkillReadLimits
+            | SkillIndexLimits
+            | SkillSourceLimits
+            | SkillCursorLimits
+            | SkillPrivacySettings
+            | SkillObservabilitySettings
+            | None
+        ) = None,
+    ) -> (
+        SkillReadLimits
+        | SkillIndexLimits
+        | SkillSourceLimits
+        | SkillCursorLimits
+        | SkillPrivacySettings
+        | SkillObservabilitySettings
+        | None
+    ):
+        if value is None:
+            return None
+        assert isinstance(value, dict), f"{section} must be a mapping"
+        unknown_keys = sorted(set(value) - supported_keys)
+        assert not unknown_keys, f"{section} has unknown keys"
+        values = dict(value)
+        if base is not None:
+            assert isinstance(base, settings_cls)
+            inherited = {
+                field.name: getattr(base, field.name) for field in fields(base)
+            }
+            inherited.update(values)
+            values = inherited
+        return settings_cls(**values)
 
     @staticmethod
     def _tool_name_policy_from_tool_section(
@@ -1503,10 +1862,18 @@ class OrchestratorLoader:
         browser_settings = tool_settings.browser if tool_settings else None
         database_settings = tool_settings.database if tool_settings else None
         graph_settings = tool_settings.graph if tool_settings else None
+        skills_settings = tool_settings.skills if tool_settings else None
         shell_settings = tool_settings.shell if tool_settings else None
         container_runtime = tool_settings.container if tool_settings else None
         isolation_runtime = tool_settings.isolation if tool_settings else None
         enabled_tools = normalize_shell_enabled_tools(settings.tools)
+        if _skills_tools_requested(enabled_tools):
+            assert (
+                skills_settings is not None
+            ), "skills tools require trusted skills settings"
+            assert (
+                skills_settings.enabled
+            ), "skills tools require enabled trusted skills settings"
 
         _l(
             "Tool settings: browser=%s, database=%s, graph=%s, shell=%s",
@@ -1551,6 +1918,11 @@ class OrchestratorLoader:
                 DatabaseToolSet(
                     settings=database_settings, namespace="database"
                 )
+            )
+        if should_append_skills_toolset(skills_settings, enabled_tools):
+            assert skills_settings is not None
+            available_toolsets.append(
+                await _build_skills_toolset(skills_settings)
             )
         active_shell_settings = None
         if should_append_shell_toolset(

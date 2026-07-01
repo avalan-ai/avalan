@@ -28,6 +28,7 @@ from ..entities import (
 )
 from ..filesystem import read_text
 from ..model.manager import ModelManager
+from ..skill import SkillSourceAuthorityKind
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
 from ..tool.graph_settings import GraphToolSettings
@@ -1329,6 +1330,7 @@ class CLI:
             prefix="shell",
             settings_cls=ShellToolSettings,
         )
+        CLI._add_skills_settings_arguments(agent_message_search_parser)
 
         agent_common_parser = ArgumentParser(add_help=False)
         agent_common_parser.add_argument(
@@ -1466,6 +1468,7 @@ class CLI:
             prefix="shell",
             settings_cls=ShellToolSettings,
         )
+        CLI._add_skills_settings_arguments(agent_run_parser)
 
         agent_serve_parser = agent_command_parsers.add_parser(
             name="serve",
@@ -1495,6 +1498,7 @@ class CLI:
             prefix="shell",
             settings_cls=ShellToolSettings,
         )
+        CLI._add_skills_settings_arguments(agent_serve_parser)
 
         agent_proxy_parser = agent_command_parsers.add_parser(
             name="proxy",
@@ -1524,6 +1528,7 @@ class CLI:
             prefix="shell",
             settings_cls=ShellToolSettings,
         )
+        CLI._add_skills_settings_arguments(agent_proxy_parser)
 
         agent_init_parser = agent_command_parsers.add_parser(
             name="init",
@@ -1542,6 +1547,7 @@ class CLI:
             prefix="shell",
             settings_cls=ShellToolSettings,
         )
+        CLI._add_skills_settings_arguments(agent_init_parser)
 
         # Cache command
         cache_parser = command_parsers.add_parser(
@@ -4143,6 +4149,177 @@ class CLI:
                 help="Fail closed instead of falling back to local shell.",
             )
 
+        return group
+
+    @staticmethod
+    def _add_skills_settings_arguments(
+        parser: ArgumentParser,
+    ) -> _ArgumentGroup:
+        group = parser.add_argument_group("skills tool settings")
+        group.add_argument(
+            "--tool-skills-source",
+            dest="tool_skills_source",
+            action="append",
+            type=str,
+            default=None,
+            metavar="LABEL=PATH",
+            help="Add a trusted filesystem skills source.",
+        )
+        group.add_argument(
+            "--tool-skills-source-authority",
+            dest="tool_skills_source_authority",
+            action="append",
+            type=str,
+            default=None,
+            metavar="LABEL=KIND[:ID]",
+            help="Assign a trusted authority to a skills source.",
+        )
+        group.add_argument(
+            "--tool-skills-source-package",
+            dest="tool_skills_source_package",
+            action="append",
+            type=str,
+            default=None,
+            metavar="LABEL=PATH",
+            help="Select a package directory inside a trusted source.",
+        )
+        group.add_argument(
+            "--tool-skills-source-allow-hidden",
+            dest="tool_skills_source_allow_hidden",
+            action="append",
+            type=str,
+            default=None,
+            metavar="LABEL",
+            help="Allow hidden paths inside a trusted skills source.",
+        )
+        group.add_argument(
+            "--tool-skills-authority-kind",
+            dest="tool_skills_authority_kind",
+            action="append",
+            choices=[kind.value for kind in SkillSourceAuthorityKind],
+            default=None,
+            help="Restrict trusted skills source authority kinds.",
+        )
+        group.add_argument(
+            "--tool-skills-skill",
+            dest="tool_skills_skill",
+            action="append",
+            type=str,
+            default=None,
+            help="Allow only a specific logical skill ID.",
+        )
+        group.add_argument(
+            "--tool-skills-disable",
+            dest="tool_skills_disabled",
+            action="store_true",
+            default=None,
+            help="Disable trusted skills settings.",
+        )
+        group.add_argument(
+            "--tool-skills-bootstrap",
+            dest="tool_skills_bootstrap",
+            choices=("auto", "off"),
+            default=None,
+            help="Skills bootstrap prompt mode.",
+        )
+        group.add_argument(
+            "--tool-skills-diagnostics",
+            dest="tool_skills_diagnostics",
+            choices=("off", "standard", "verbose"),
+            default=None,
+            help="Skills diagnostic verbosity.",
+        )
+        group.add_argument(
+            "--tool-skills-observability",
+            dest="tool_skills_observability",
+            choices=("off", "standard", "verbose"),
+            default=None,
+            help="Skills observability verbosity.",
+        )
+        group.add_argument(
+            "--tool-skills-max-bytes-per-read",
+            dest="tool_skills_max_bytes_per_read",
+            type=int,
+            default=None,
+            help="Maximum bytes returned by one skills read.",
+        )
+        group.add_argument(
+            "--tool-skills-max-lines-per-read",
+            dest="tool_skills_max_lines_per_read",
+            type=int,
+            default=None,
+            help="Maximum lines returned by one skills read.",
+        )
+        group.add_argument(
+            "--tool-skills-max-skills",
+            dest="tool_skills_max_skills",
+            type=int,
+            default=None,
+            help="Maximum indexed skills.",
+        )
+        group.add_argument(
+            "--tool-skills-max-resources-per-skill",
+            dest="tool_skills_max_resources_per_skill",
+            type=int,
+            default=None,
+            help="Maximum declared resources per skill.",
+        )
+        group.add_argument(
+            "--tool-skills-max-indexed-bytes",
+            dest="tool_skills_max_indexed_bytes",
+            type=int,
+            default=None,
+            help="Maximum indexed skills bytes.",
+        )
+        group.add_argument(
+            "--tool-skills-max-sources",
+            dest="tool_skills_max_sources",
+            type=int,
+            default=None,
+            help="Maximum trusted skills sources.",
+        )
+        group.add_argument(
+            "--tool-skills-max-resources-per-source",
+            dest="tool_skills_max_resources_per_source",
+            type=int,
+            default=None,
+            help="Maximum resources scanned per skills source.",
+        )
+        group.add_argument(
+            "--tool-skills-max-source-depth",
+            dest="tool_skills_max_source_depth",
+            type=int,
+            default=None,
+            help="Maximum directory depth scanned per skills source.",
+        )
+        group.add_argument(
+            "--tool-skills-max-files-per-source",
+            dest="tool_skills_max_files_per_source",
+            type=int,
+            default=None,
+            help="Maximum files scanned per skills source.",
+        )
+        group.add_argument(
+            "--tool-skills-max-directory-entries-per-source",
+            dest="tool_skills_max_directory_entries_per_source",
+            type=int,
+            default=None,
+            help="Maximum directory entries scanned per skills source.",
+        )
+        group.add_argument(
+            "--tool-skills-max-active-cursors",
+            dest="tool_skills_max_active_cursors",
+            type=int,
+            default=None,
+            help="Maximum active skills read cursors.",
+        )
+        group.add_argument(
+            "--tool-skills-max-cursor-age-seconds",
+            dest="tool_skills_max_cursor_age_seconds",
+            type=int,
+            default=None,
+            help="Maximum skills read cursor age in seconds.",
+        )
         return group
 
     @staticmethod

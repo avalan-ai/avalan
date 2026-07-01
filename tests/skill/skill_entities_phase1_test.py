@@ -45,6 +45,9 @@ class SkillEntitiesTest(TestCase):
         source = SkillSourceConfig(
             label="workspace-main",
             authority=authorities[1],
+            root_path="/Users/example/skills",
+            package_path="package",
+            allow_hidden_paths=True,
             tags=("workspace",),
         )
         main_resource = SkillResourceHandle(
@@ -98,6 +101,8 @@ class SkillEntitiesTest(TestCase):
         for authority in authorities:
             self.assertIn("kind", authority.as_model_dict())
         self.assertEqual(source.as_model_dict()["label"], "workspace-main")
+        self.assertEqual(source.as_model_dict()["package_path"], "package")
+        self.assertTrue(source.as_model_dict()["allow_hidden_paths"])
         self.assertEqual(metadata.as_model_dict()["skill_id"], "pdf")
         self.assertEqual(
             diagnostic.details["reason"], "Multiple names matched."
@@ -120,12 +125,28 @@ class SkillEntitiesTest(TestCase):
             sort_keys=True,
         )
         self.assertNotIn("/Users/", encoded)
+        self.assertNotIn("/Users/example/skills", encoded)
         self.assertNotIn("/private/", encoded)
 
         with self.assertRaises(FrozenInstanceError):
             metadata.skill_id = "other"  # type: ignore[misc]
         with self.assertRaises(TypeError):
             diagnostic.details["new"] = "value"  # type: ignore[index]
+
+    def test_source_config_redacts_model_unsafe_package_paths(self) -> None:
+        current = SkillSourceConfig(
+            label="workspace-main",
+            authority=WorkspaceSkillSourceAuthority(),
+            package_path=".",
+        )
+        unsafe = SkillSourceConfig(
+            label="workspace-main",
+            authority=WorkspaceSkillSourceAuthority(),
+            package_path="../private",
+        )
+
+        self.assertEqual(current.as_model_dict()["package_path"], ".")
+        self.assertEqual(unsafe.as_model_dict()["package_path"], "redacted")
 
     def test_diagnostic_details_are_deeply_immutable(self) -> None:
         nested = {"count": 1}

@@ -34,6 +34,7 @@ class SkillSettingsTest(TestCase):
         )
         trusted = TrustedSkillSettings(
             enabled=True,
+            bootstrap_enabled=True,
             authority_kinds=(
                 SkillSourceAuthorityKind.WORKSPACE,
                 SkillSourceAuthorityKind.PLUGIN_PROVIDED,
@@ -49,6 +50,7 @@ class SkillSettingsTest(TestCase):
         )
         override = UntrustedSkillSettings(
             surface=SkillSettingsSurface.TASK,
+            bootstrap_enabled=False,
             authority_kinds=(SkillSourceAuthorityKind.WORKSPACE,),
             source_labels=("workspace-main",),
             skill_ids=("pdf",),
@@ -64,6 +66,7 @@ class SkillSettingsTest(TestCase):
         settings = result.settings
 
         self.assertEqual(result.status, SkillStatus.OK)
+        self.assertFalse(settings.bootstrap_enabled)
         self.assertEqual(settings.sources, (workspace_source,))
         self.assertEqual(
             settings.authority_kinds,
@@ -124,6 +127,7 @@ class SkillSettingsTest(TestCase):
         )
         trusted = TrustedSkillSettings(
             enabled=False,
+            bootstrap_enabled=False,
             authority_kinds=(SkillSourceAuthorityKind.WORKSPACE,),
             sources=(workspace_source,),
             allowed_skill_ids=("pdf",),
@@ -138,6 +142,10 @@ class SkillSettingsTest(TestCase):
             UntrustedSkillSettings(
                 surface=SkillSettingsSurface.REQUEST,
                 enabled=True,
+            ),
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.REQUEST,
+                bootstrap_enabled=True,
             ),
             UntrustedSkillSettings(
                 surface=SkillSettingsSurface.REQUEST,
@@ -281,6 +289,10 @@ class SkillSettingsTest(TestCase):
             lambda: UntrustedSkillSettings(
                 surface=SkillSettingsSurface.TASK,
                 source_labels=["workspace-main"],  # type: ignore[arg-type]
+            ),
+            lambda: UntrustedSkillSettings(
+                surface=SkillSettingsSurface.TASK,
+                bootstrap_enabled="off",  # type: ignore[arg-type]
             ),
         )
 

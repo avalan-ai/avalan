@@ -286,6 +286,36 @@ class SkillMatcherPhase5AsyncTest(IsolatedAsyncioTestCase):
             self.assertEqual(missing_status.status, SkillStatus.EMPTY)
             self.assertEqual(missing_tag.status, SkillStatus.EMPTY)
 
+    async def test_hidden_source_label_filter_is_policy_denied(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_skill(
+                root / "pdf" / "SKILL.md",
+                name="pdf",
+                description="PDF guidance.",
+            )
+            registry = await _registry((_config(root),))
+
+            result = await match_skill_registry(
+                registry,
+                source_label="workspace-main",
+                include_source_labels=False,
+            )
+
+        self.assertEqual(result.status, SkillStatus.POLICY_DENIED)
+        self.assertEqual(
+            result.diagnostics[0].code.value,
+            "skills.policy_denied",
+        )
+        self.assertEqual(
+            result.diagnostics[0].path,
+            "skills.match.source_label",
+        )
+        self.assertNotIn(
+            "workspace-main",
+            dumps(result.as_model_dict(), sort_keys=True),
+        )
+
     async def test_empty_no_match_and_unavailable_diagnostics(
         self,
     ) -> None:
