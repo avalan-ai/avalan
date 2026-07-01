@@ -15,6 +15,8 @@ from avalan.skill import (
     SkillReadLimits,
     SkillRegistry,
     SkillResourceReader,
+    SkillSourceAuthorityKind,
+    SkillSourceConfig,
     SkillStatus,
     TrustedSkillSettings,
     WorkspaceSkillSourceAuthority,
@@ -529,6 +531,108 @@ class SkillReaderPhase6Test(IsolatedAsyncioTestCase):
             self.assertEqual(missing_resource_reader.active_cursor_count, 0)
             self.assertEqual(unusable.status, SkillStatus.POLICY_DENIED)
             self.assertEqual(unusable_reader.active_cursor_count, 0)
+
+    async def test_cursor_continuation_rechecks_settings_policy(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_skill(
+                root / "pdf" / "SKILL.md",
+                name="pdf",
+                description="PDF guidance.",
+                resources='["references/rendering.md"]',
+            )
+            _write_text(
+                root / "pdf" / "references" / "rendering.md",
+                "one\ntwo\n",
+            )
+            registry = await _registry(root)
+            limits = SkillReadLimits(
+                max_bytes_per_read=128,
+                max_lines_per_read=1,
+            )
+
+            disabled_reader = SkillResourceReader()
+            disabled_first = await disabled_reader.read(
+                registry,
+                "pdf",
+                resource_id="references/rendering.md",
+                read_limits=limits,
+            )
+            assert disabled_first.next_cursor is not None
+            disabled = await disabled_reader.read(
+                replace(
+                    registry,
+                    settings=TrustedSkillSettings(enabled=False),
+                ),
+                cursor_id=disabled_first.next_cursor.cursor_id,
+            )
+
+            source_reader = SkillResourceReader()
+            source_first = await source_reader.read(
+                registry,
+                "pdf",
+                resource_id="references/rendering.md",
+                read_limits=limits,
+            )
+            assert source_first.next_cursor is not None
+            source_denied = await source_reader.read(
+                replace(
+                    registry,
+                    settings=TrustedSkillSettings(
+                        sources=(
+                            SkillSourceConfig(
+                                label="other-source",
+                                authority=WorkspaceSkillSourceAuthority(),
+                            ),
+                        ),
+                    ),
+                ),
+                cursor_id=source_first.next_cursor.cursor_id,
+            )
+
+            authority_reader = SkillResourceReader()
+            authority_first = await authority_reader.read(
+                registry,
+                "pdf",
+                resource_id="references/rendering.md",
+                read_limits=limits,
+            )
+            assert authority_first.next_cursor is not None
+            authority_denied = await authority_reader.read(
+                replace(
+                    registry,
+                    settings=TrustedSkillSettings(
+                        authority_kinds=(
+                            SkillSourceAuthorityKind.PLUGIN_PROVIDED,
+                        ),
+                    ),
+                ),
+                cursor_id=authority_first.next_cursor.cursor_id,
+            )
+
+            self.assertEqual(disabled.status, SkillStatus.DISABLED)
+            self.assertEqual(
+                disabled.diagnostics[0].details["reason"],
+                "settings_disabled",
+            )
+            self.assertEqual(disabled_reader.active_cursor_count, 0)
+            self.assertEqual(source_denied.status, SkillStatus.POLICY_DENIED)
+            self.assertEqual(
+                source_denied.diagnostics[0].details["reason"],
+                "source_not_allowed",
+            )
+            self.assertEqual(source_reader.active_cursor_count, 0)
+            self.assertEqual(
+                authority_denied.status,
+                SkillStatus.POLICY_DENIED,
+            )
+            self.assertEqual(
+                authority_denied.diagnostics[0].details["reason"],
+                "authority_not_allowed",
+            )
+            self.assertEqual(authority_reader.active_cursor_count, 0)
 
     async def test_unknown_cursor_prunes_expired_stored_state(
         self,

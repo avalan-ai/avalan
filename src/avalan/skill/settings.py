@@ -971,9 +971,10 @@ def _normalized_effective_root_path(
     root_path: str | Path,
     package_path: str | None,
 ) -> str:
+    if package_path is None or package_path == ".":
+        return _normalized_root_path(root_path)
     root = Path(root_path).expanduser()
-    if package_path is not None and package_path != ".":
-        root = root.joinpath(*PurePosixPath(package_path).parts)
+    root = root.joinpath(*PurePosixPath(package_path).parts)
     return str(root.resolve(strict=False))
 
 
