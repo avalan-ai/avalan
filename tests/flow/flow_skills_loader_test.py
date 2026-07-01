@@ -4,9 +4,13 @@ from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.flow import (
     FlowDefinitionLoader,
+    FlowNodeKind,
+    FlowNodeMetadata,
+    FlowNodeRegistry,
     serialize_flow_definition,
     tool_flow_node_registry,
 )
+from avalan.flow.node import Node
 from avalan.skill import (
     SkillConfiguredSource,
     SkillReadLimits,
@@ -209,6 +213,122 @@ class FlowSkillsLoaderTestCase(IsolatedAsyncioTestCase):
         node = result.definition.node_map["start"]
         self.assertIsNotNone(node.skills)
 
+    async def test_node_skills_without_trusted_base_fails_closed(self) -> None:
+        result = await FlowDefinitionLoader().loads_validation_result(
+            _skills_read_tool_source()
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.issues[0].code,
+            "flow.skills_trusted_settings_required",
+        )
+        self.assertEqual(result.issues[0].path, "nodes.start.skills")
+
+    async def test_node_skills_reject_non_mapping_values(self) -> None:
+        with TemporaryDirectory() as directory:
+            result = await FlowDefinitionLoader(
+                skills_settings=_trusted_settings(Path(directory)),
+            ).loads_validation_result(
+                _flow_source("""
+                    skills = "bad"
+                    """)
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "flow.invalid_section")
+        self.assertEqual(result.issues[0].path, "nodes.start.skills")
+
+    async def test_agent_node_skills_are_supported(self) -> None:
+        with TemporaryDirectory() as directory:
+            result = await FlowDefinitionLoader(
+                _agent_node_registry(),
+                skills_settings=_trusted_settings(Path(directory)),
+            ).loads_validation_result(
+                _agent_node_source("""
+                    [nodes.start.skills]
+                    skill_ids = ["pdf"]
+                    """)
+            )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        assert result.definition is not None
+        node = result.definition.node_map["start"]
+        self.assertIsNotNone(node.skills)
+
+    async def test_tool_kind_without_resolution_rejects_node_skills(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            result = await FlowDefinitionLoader(
+                _unresolved_tool_kind_registry(),
+                skills_settings=_trusted_settings(Path(directory)),
+            ).loads_validation_result(
+                _custom_tool_node_source("""
+                    [nodes.start.skills]
+                    skill_ids = ["pdf"]
+                    """)
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "flow.skills_unsupported_node")
+
+    async def test_malformed_tool_node_rejects_node_skills(self) -> None:
+        with TemporaryDirectory() as directory:
+            manager = ToolManager.create_instance()
+            result = await FlowDefinitionLoader(
+                tool_flow_node_registry(manager),
+                skills_settings=_trusted_settings(Path(directory)),
+            ).loads_validation_result(
+                _malformed_tool_node_source("""
+                    [nodes.start.skills]
+                    skill_ids = ["pdf"]
+                    """)
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "flow.skills_unsupported_node")
+
+    async def test_node_skills_round_trip_only_when_fields_are_serialized(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            settings = _trusted_settings(Path(directory))
+            result = await FlowDefinitionLoader(
+                await _skills_flow_node_registry(Path(directory), settings),
+                skills_settings=settings,
+            ).loads_validation_result(_skills_read_tool_source())
+
+            self.assertTrue(result.ok, result.public_diagnostics)
+            assert result.definition is not None
+            serialized = serialize_flow_definition(result.definition)
+            round_trip = await FlowDefinitionLoader(
+                await _skills_flow_node_registry(Path(directory), settings),
+                skills_settings=settings,
+            ).loads_validation_result(serialized)
+
+        self.assertIn("[nodes.start.skills]", serialized)
+        self.assertIn('skill_ids = ["pdf"]', serialized)
+        self.assertTrue(round_trip.ok, round_trip.public_diagnostics)
+
+    async def test_empty_node_skills_config_is_not_serialized(self) -> None:
+        with TemporaryDirectory() as directory:
+            settings = _trusted_settings(Path(directory))
+            result = await FlowDefinitionLoader(
+                _agent_node_registry(),
+                skills_settings=settings,
+            ).loads_validation_result(
+                _agent_node_source("""
+                    [nodes.start.skills]
+                    """)
+            )
+
+            self.assertTrue(result.ok, result.public_diagnostics)
+            assert result.definition is not None
+            serialized = serialize_flow_definition(result.definition)
+
+        self.assertNotIn("[nodes.start.skills]", serialized)
+
     async def test_node_skills_reject_non_skills_tool_node(self) -> None:
         with TemporaryDirectory() as directory:
             settings = _trusted_settings(Path(directory))
@@ -333,6 +453,99 @@ def _non_skills_tool_source() -> str:
     """
 
 
+def _agent_node_source(extra: str) -> str:
+    return f"""
+        [flow]
+        name = "agent_node_skills"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "answer"
+        type = "object"
+
+        [entry]
+        type = "node"
+        node = "start"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        answer = "start.value"
+
+        [nodes.start]
+        type = "agent"
+
+        {extra}
+    """
+
+
+def _custom_tool_node_source(extra: str) -> str:
+    return f"""
+        [flow]
+        name = "custom_tool_node_skills"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "answer"
+        type = "object"
+
+        [entry]
+        type = "node"
+        node = "start"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        answer = "start.result"
+
+        [nodes.start]
+        type = "custom-tool"
+
+        {extra}
+    """
+
+
+def _malformed_tool_node_source(extra: str) -> str:
+    return f"""
+        [flow]
+        name = "malformed_tool_node_skills"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "answer"
+        type = "object"
+
+        [entry]
+        type = "node"
+        node = "start"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        answer = "start.result"
+
+        [nodes.start]
+        type = "tool"
+
+        {extra}
+    """
+
+
 def _skills_read_tool_source() -> str:
     return """
         [flow]
@@ -386,6 +599,20 @@ def _trusted_settings(
             ),
         ),
         read_limits=read_limits or SkillReadLimits(),
+    )
+
+
+def _agent_node_registry() -> FlowNodeRegistry:
+    return FlowNodeRegistry(
+        {"agent": lambda definition: Node(definition.name)},
+        {"agent": FlowNodeMetadata(kind=FlowNodeKind.AGENT)},
+    )
+
+
+def _unresolved_tool_kind_registry() -> FlowNodeRegistry:
+    return FlowNodeRegistry(
+        {"custom-tool": lambda definition: Node(definition.name)},
+        {"custom-tool": FlowNodeMetadata(kind=FlowNodeKind.TOOL)},
     )
 
 

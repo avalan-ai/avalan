@@ -20,6 +20,8 @@ from avalan.skill import (
     WorkspaceSkillSourceAuthority,
     merge_skill_settings,
     trusted_skill_settings_identity_dict,
+    trusted_skill_source_identity_dict,
+    untrusted_skill_settings_config_dict,
 )
 
 
@@ -255,6 +257,143 @@ class SkillSettingsTest(TestCase):
         encoded = dumps(identity_a, sort_keys=True)
         self.assertNotIn(str(root_a), encoded)
         self.assertNotIn(str(root_b), encoded)
+
+    def test_source_identity_hashes_effective_package_paths(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested_source = SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path=root,
+                package_path="guides/pdf",
+            )
+            effective_source = SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path=root / "guides" / "pdf",
+            )
+            windows_package_source = SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                package_path="guides\\pdf ",
+            )
+            posix_package_source = SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                package_path="guides/pdf",
+            )
+
+            nested_identity = trusted_skill_source_identity_dict(nested_source)
+            effective_identity = trusted_skill_source_identity_dict(
+                effective_source
+            )
+            windows_package_identity = trusted_skill_source_identity_dict(
+                windows_package_source
+            )
+            posix_package_identity = trusted_skill_source_identity_dict(
+                posix_package_source
+            )
+
+        self.assertEqual(nested_identity, effective_identity)
+        self.assertEqual(windows_package_identity, posix_package_identity)
+        self.assertIn("effective_root_sha256", nested_identity)
+        self.assertIn("package_path_sha256", windows_package_identity)
+        encoded = dumps(nested_identity, sort_keys=True)
+        self.assertNotIn(str(root), encoded)
+
+    def test_untrusted_config_dict_serializes_complete_manual_override(
+        self,
+    ) -> None:
+        settings = UntrustedSkillSettings(
+            surface=SkillSettingsSurface.WORKER_ENVELOPE,
+            authority_kinds=(SkillSourceAuthorityKind.WORKSPACE,),
+            read_limits=SkillReadLimits(
+                max_bytes_per_read=1024,
+                max_lines_per_read=10,
+            ),
+            index_limits=SkillIndexLimits(
+                max_skills=8,
+                max_resources_per_skill=3,
+                max_indexed_bytes=4096,
+            ),
+            source_limits=SkillSourceLimits(
+                max_sources=2,
+                max_resources_per_source=5,
+                max_source_depth=3,
+                max_files_per_source=11,
+                max_directory_entries_per_source=13,
+            ),
+            cursor_limits=SkillCursorLimits(
+                max_active_cursors=4,
+                max_cursor_age_seconds=30,
+            ),
+            privacy=SkillPrivacySettings(
+                include_source_labels=False,
+                include_authority=False,
+                include_diagnostic_paths=False,
+                redact_host_paths=True,
+            ),
+            observability=SkillObservabilitySettings(
+                enabled=True,
+                emit_events=False,
+                include_diagnostics=False,
+                include_byte_counts=True,
+            ),
+        )
+
+        config = untrusted_skill_settings_config_dict(settings)
+
+        self.assertEqual(config["authority_kinds"], ("workspace",))
+        self.assertEqual(
+            config["read_limits"],
+            {
+                "max_bytes_per_read": 1024,
+                "max_lines_per_read": 10,
+            },
+        )
+        self.assertEqual(
+            config["index_limits"],
+            {
+                "max_skills": 8,
+                "max_resources_per_skill": 3,
+                "max_indexed_bytes": 4096,
+            },
+        )
+        self.assertEqual(
+            config["source_limits"],
+            {
+                "max_sources": 2,
+                "max_resources_per_source": 5,
+                "max_source_depth": 3,
+                "max_files_per_source": 11,
+                "max_directory_entries_per_source": 13,
+            },
+        )
+        self.assertEqual(
+            config["cursor_limits"],
+            {
+                "max_active_cursors": 4,
+                "max_cursor_age_seconds": 30,
+            },
+        )
+        self.assertEqual(
+            config["privacy"],
+            {
+                "include_source_labels": False,
+                "include_authority": False,
+                "include_diagnostic_paths": False,
+                "redact_host_paths": True,
+            },
+        )
+        self.assertEqual(
+            config["observability"],
+            {
+                "enabled": True,
+                "emit_events": False,
+                "include_diagnostics": False,
+                "include_byte_counts": True,
+            },
+        )
 
     def test_settings_reject_non_ascii_and_invalid_logical_ids(self) -> None:
         invalid_builders = (
