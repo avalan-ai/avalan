@@ -426,6 +426,9 @@ class SkillProvenance:
     skill_id: str
     resource_id: str
     authority: SkillSourceAuthorityKind
+    content_sha256_prefix: str | None = None
+    truncated: bool = False
+    declared_follow_up_resources: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         assert isinstance(self.registry_version, SkillRegistryVersion)
@@ -433,17 +436,33 @@ class SkillProvenance:
         _assert_skill_id(self.skill_id, "skill_id")
         _assert_resource_id(self.resource_id, "resource_id")
         assert isinstance(self.authority, SkillSourceAuthorityKind)
+        if self.content_sha256_prefix is not None:
+            assert (
+                fullmatch(r"[a-f0-9]{8,64}", self.content_sha256_prefix)
+                is not None
+            ), "content_sha256_prefix must be a SHA-256 hex prefix"
+        assert isinstance(self.truncated, bool)
+        _assert_resource_id_tuple(
+            self.declared_follow_up_resources,
+            "declared_follow_up_resources",
+        )
 
     def as_model_dict(self) -> dict[str, SkillModelValue]:
-        return model_dict(
-            {
-                "registry_version": self.registry_version.as_model_value(),
-                "source_label": self.source_label,
-                "skill_id": self.skill_id,
-                "resource_id": self.resource_id,
-                "authority": self.authority.value,
-            }
-        )
+        value: dict[str, object] = {
+            "registry_version": self.registry_version.as_model_value(),
+            "source_label": self.source_label,
+            "skill_id": self.skill_id,
+            "resource_id": self.resource_id,
+            "authority": self.authority.value,
+            "truncated": self.truncated,
+        }
+        if self.content_sha256_prefix is not None:
+            value["content_sha256_prefix"] = self.content_sha256_prefix
+        if self.declared_follow_up_resources:
+            value["declared_follow_up_resources"] = (
+                self.declared_follow_up_resources
+            )
+        return model_dict(value)
 
 
 def diagnostic_from_failure(
@@ -642,6 +661,16 @@ def _assert_model_text_tuple(values: tuple[str, ...], field_name: str) -> None:
     assert isinstance(values, tuple), f"{field_name} must be a tuple"
     for value in values:
         _assert_non_empty_model_text(value, field_name)
+
+
+def _assert_resource_id_tuple(
+    values: tuple[str, ...],
+    field_name: str,
+) -> None:
+    assert isinstance(values, tuple), f"{field_name} must be a tuple"
+    for value in values:
+        _assert_resource_id(value, field_name)
+    _assert_unique(values, field_name)
 
 
 def _assert_diagnostic_tuple(values: tuple[SkillDiagnosticInfo, ...]) -> None:
