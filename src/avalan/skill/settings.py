@@ -1,3 +1,14 @@
+from ..types import (
+    assert_bool as _assert_bool,
+)
+from ..types import (
+    assert_non_empty_model_safe_text_tuple,
+    assert_tuple_items,
+    assert_unique_sequence,
+)
+from ..types import (
+    assert_positive_int as _assert_positive_int,
+)
 from .contract import SkillDiagnosticCode, SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
@@ -247,9 +258,87 @@ class SkillObservabilitySettings:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SkillBootstrapPromptSettings:
+    include_tool_summary: bool = True
+    include_discovery_guidance: bool = True
+    include_read_guidance: bool = True
+    include_check_guidance: bool = True
+    include_behavior_guidance: bool = True
+    additional_instructions: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _assert_bool(self.include_tool_summary, "include_tool_summary")
+        _assert_bool(
+            self.include_discovery_guidance,
+            "include_discovery_guidance",
+        )
+        _assert_bool(self.include_read_guidance, "include_read_guidance")
+        _assert_bool(self.include_check_guidance, "include_check_guidance")
+        _assert_bool(
+            self.include_behavior_guidance,
+            "include_behavior_guidance",
+        )
+        assert_non_empty_model_safe_text_tuple(
+            self.additional_instructions,
+            "additional_instructions",
+            unique=True,
+        )
+
+    def allows(self, requested: "SkillBootstrapPromptSettings") -> bool:
+        assert isinstance(requested, SkillBootstrapPromptSettings)
+        if not (
+            _allows_exposure(
+                self.include_tool_summary,
+                requested.include_tool_summary,
+            )
+            and _allows_exposure(
+                self.include_discovery_guidance,
+                requested.include_discovery_guidance,
+            )
+            and _allows_exposure(
+                self.include_read_guidance,
+                requested.include_read_guidance,
+            )
+            and _allows_exposure(
+                self.include_check_guidance,
+                requested.include_check_guidance,
+            )
+            and _allows_exposure(
+                self.include_behavior_guidance,
+                requested.include_behavior_guidance,
+            )
+        ):
+            return False
+        return _sequence_contains_ordered_subset(
+            self.additional_instructions,
+            requested.additional_instructions,
+        )
+
+    def as_model_dict(self) -> dict[str, SkillModelValue]:
+        value: dict[str, object] = {
+            "include_tool_summary": self.include_tool_summary,
+            "include_discovery_guidance": self.include_discovery_guidance,
+            "include_read_guidance": self.include_read_guidance,
+            "include_check_guidance": self.include_check_guidance,
+            "include_behavior_guidance": self.include_behavior_guidance,
+        }
+        if self.additional_instructions:
+            value["additional_instruction_count"] = len(
+                self.additional_instructions
+            )
+            value["additional_instructions_sha256"] = _settings_fingerprint(
+                {"additional_instructions": self.additional_instructions}
+            )
+        return model_dict(value)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TrustedSkillSettings:
     enabled: bool = True
     bootstrap_enabled: bool = True
+    bootstrap_prompt: SkillBootstrapPromptSettings = field(
+        default_factory=SkillBootstrapPromptSettings
+    )
     authority_kinds: tuple[SkillSourceAuthorityKind, ...] = (
         SkillSourceAuthorityKind.BUNDLED,
         SkillSourceAuthorityKind.WORKSPACE,
@@ -272,6 +361,7 @@ class TrustedSkillSettings:
     def __post_init__(self) -> None:
         _assert_bool(self.enabled, "enabled")
         _assert_bool(self.bootstrap_enabled, "bootstrap_enabled")
+        assert isinstance(self.bootstrap_prompt, SkillBootstrapPromptSettings)
         _assert_authority_kind_tuple(self.authority_kinds)
         _assert_source_tuple(self.sources)
         _assert_bool(self.sources_explicit, "sources_explicit")
@@ -298,6 +388,7 @@ class TrustedSkillSettings:
         value: dict[str, object] = {
             "enabled": self.enabled,
             "bootstrap_enabled": self.bootstrap_enabled,
+            "bootstrap_prompt": self.bootstrap_prompt.as_model_dict(),
             "authority_kinds": tuple(
                 authority_kind.value for authority_kind in self.authority_kinds
             ),
@@ -713,6 +804,7 @@ def trusted_skill_settings_identity_dict(
         {
             "enabled": settings.enabled,
             "bootstrap_enabled": settings.bootstrap_enabled,
+            "bootstrap_prompt": settings.bootstrap_prompt.as_model_dict(),
             "authority_kinds": tuple(
                 authority.value for authority in settings.authority_kinds
             ),
@@ -1046,21 +1138,8 @@ def _not_found_diagnostic(
     )
 
 
-def _assert_positive_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int) and not isinstance(
-        value, bool
-    ), f"{field_name} must be an integer"
-    assert value > 0, f"{field_name} must be positive"
-
-
-def _assert_bool(value: bool, field_name: str) -> None:
-    assert isinstance(value, bool), f"{field_name} must be a bool"
-
-
 def _assert_source_tuple(values: tuple[SkillSourceConfig, ...]) -> None:
-    assert isinstance(values, tuple), "sources must be a tuple"
-    for value in values:
-        assert isinstance(value, SkillSourceConfig)
+    assert_tuple_items(values, "sources", SkillSourceConfig)
 
 
 def _assert_authority_kind_tuple(
@@ -1080,14 +1159,14 @@ def _assert_unique_source_labels(
     values: tuple[SkillSourceConfig, ...],
 ) -> None:
     labels = tuple(value.label for value in values)
-    assert len(set(labels)) == len(labels), "source labels must be unique"
+    assert_unique_sequence(labels, "source labels")
 
 
 def _assert_logical_id_tuple(values: tuple[str, ...], field_name: str) -> None:
     assert isinstance(values, tuple), f"{field_name} must be a tuple"
     for value in values:
         _assert_logical_id(value, field_name)
-    assert len(set(values)) == len(values), f"{field_name} must be unique"
+    assert_unique_sequence(values, field_name)
 
 
 def _assert_source_label_tuple(
@@ -1096,7 +1175,7 @@ def _assert_source_label_tuple(
     assert isinstance(values, tuple), f"{field_name} must be a tuple"
     for value in values:
         _assert_source_label(value, field_name)
-    assert len(set(values)) == len(values), f"{field_name} must be unique"
+    assert_unique_sequence(values, field_name)
 
 
 def _assert_source_label(value: str, field_name: str) -> None:
@@ -1132,9 +1211,7 @@ def _assert_explicit_fields(
 
 
 def _assert_diagnostic_tuple(values: tuple[SkillDiagnosticInfo, ...]) -> None:
-    assert isinstance(values, tuple), "diagnostics must be a tuple"
-    for value in values:
-        assert isinstance(value, SkillDiagnosticInfo)
+    assert_tuple_items(values, "diagnostics", SkillDiagnosticInfo)
 
 
 def _allows_exposure(trusted: bool, requested: bool) -> bool:
@@ -1147,3 +1224,19 @@ def _allows_redaction(trusted: bool, requested: bool) -> bool:
 
 def _allows_enforcement(trusted: bool, requested: bool) -> bool:
     return requested or not trusted
+
+
+def _sequence_contains_ordered_subset(
+    trusted: tuple[str, ...],
+    requested: tuple[str, ...],
+) -> bool:
+    assert isinstance(trusted, tuple)
+    assert isinstance(requested, tuple)
+    trusted_index = 0
+    for item in requested:
+        while trusted_index < len(trusted) and trusted[trusted_index] != item:
+            trusted_index += 1
+        if trusted_index == len(trusted):
+            return False
+        trusted_index += 1
+    return True

@@ -59,6 +59,7 @@ from ...skill import (
     BundledSkillSourceAuthority,
     PluginProvidedSkillSourceAuthority,
     PreinstalledRemoteSkillSourceAuthority,
+    SkillBootstrapPromptSettings,
     SkillCursorLimits,
     SkillIndexLimits,
     SkillObservabilitySettings,
@@ -115,6 +116,13 @@ _SUPPORTED_CONTAINER_BACKENDS = frozenset({"apple-container", "docker"})
 _BUBBLEWRAP_SANDBOX_BACKEND = "bubblewrap"
 _SEATBELT_SANDBOX_BACKEND = "seatbelt"
 _SUPPORTED_SANDBOX_BACKENDS = frozenset({"bubblewrap", "seatbelt"})
+_SKILL_BOOTSTRAP_PROMPT_OMIT_FIELDS = {
+    "tool_summary": "include_tool_summary",
+    "discovery_guidance": "include_discovery_guidance",
+    "read_guidance": "include_read_guidance",
+    "check_guidance": "include_check_guidance",
+    "behavior_guidance": "include_behavior_guidance",
+}
 
 
 def _parse_permanent_memory_items(
@@ -1409,6 +1417,7 @@ def _agent_skills_settings(args: Namespace) -> TrustedSkillSettings | None:
         "bootstrap_enabled": (
             getattr(args, "tool_skills_bootstrap", None) != "off"
         ),
+        "bootstrap_prompt": _skills_bootstrap_prompt_settings(args),
         "sources": sources,
         "read_limits": _skills_read_limits(args),
         "index_limits": _skills_index_limits(args),
@@ -1438,6 +1447,8 @@ def _has_agent_skills_args(args: Namespace) -> bool:
         "tool_skills_skill",
         "tool_skills_disabled",
         "tool_skills_bootstrap",
+        "tool_skills_bootstrap_omit",
+        "tool_skills_bootstrap_instruction",
         "tool_skills_diagnostics",
         "tool_skills_observability",
         "tool_skills_max_bytes_per_read",
@@ -1460,6 +1471,24 @@ def _has_agent_skills_args(args: Namespace) -> bool:
         elif value is not None:
             return True
     return False
+
+
+def _skills_bootstrap_prompt_settings(
+    args: Namespace,
+) -> SkillBootstrapPromptSettings:
+    omitted = tuple(getattr(args, "tool_skills_bootstrap_omit", None) or ())
+    unknown = sorted(set(omitted) - set(_SKILL_BOOTSTRAP_PROMPT_OMIT_FIELDS))
+    assert not unknown, "--tool-skills-bootstrap-omit has unknown sections"
+    values: dict[str, object] = {
+        field_name: section not in omitted
+        for section, field_name in _SKILL_BOOTSTRAP_PROMPT_OMIT_FIELDS.items()
+    }
+    instructions = tuple(
+        getattr(args, "tool_skills_bootstrap_instruction", None) or ()
+    )
+    if instructions:
+        values["additional_instructions"] = instructions
+    return SkillBootstrapPromptSettings(**cast(Any, values))
 
 
 def _skills_assignment_map(

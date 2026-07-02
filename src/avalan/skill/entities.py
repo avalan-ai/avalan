@@ -1,3 +1,29 @@
+from ..types import (
+    assert_model_safe_text as _assert_model_text,
+)
+from ..types import (
+    assert_non_empty_model_safe_text as _assert_non_empty_model_text,
+)
+from ..types import (
+    assert_non_empty_model_safe_text_tuple,
+    assert_tuple_items,
+    assert_unique_sequence,
+)
+from ..types import (
+    assert_non_negative_int as _assert_non_negative_int,
+)
+from ..types import (
+    assert_positive_int as _assert_positive_int,
+)
+from ..types import (
+    assert_relative_resource_id as _assert_resource_id,
+)
+from ..types import (
+    assert_relative_resource_id_tuple as _assert_resource_id_tuple,
+)
+from ..types import (
+    is_relative_resource_id as _is_resource_id,
+)
 from .contract import (
     SkillDiagnosticCode,
     SkillFailureMode,
@@ -10,8 +36,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from json import dumps
 from math import isfinite
-from pathlib import Path, PurePosixPath
-from re import fullmatch, search
+from pathlib import Path
+from re import fullmatch
 from types import MappingProxyType
 from typing import TypeAlias
 
@@ -639,11 +665,6 @@ def _assert_opaque_id(value: str, field_name: str) -> None:
     ), f"{field_name} must be an opaque logical ID"
 
 
-def _assert_resource_id(value: str, field_name: str) -> None:
-    _assert_non_empty_string(value, field_name)
-    assert _is_resource_id(value), f"{field_name} must be a resource ID"
-
-
 def _assert_media_type(value: str) -> None:
     _assert_non_empty_string(value, "media_type")
     assert fullmatch(
@@ -656,16 +677,6 @@ def _assert_non_empty_string(value: str, field_name: str) -> None:
     assert value.strip(), f"{field_name} must be non-empty"
 
 
-def _assert_model_text(value: str, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert _is_model_safe_text(value), f"{field_name} must be model-safe text"
-
-
-def _assert_non_empty_model_text(value: str, field_name: str) -> None:
-    _assert_non_empty_string(value, field_name)
-    _assert_model_text(value, field_name)
-
-
 def _assert_logical_id_tuple(values: tuple[str, ...], field_name: str) -> None:
     assert isinstance(values, tuple), f"{field_name} must be a tuple"
     for value in values:
@@ -674,64 +685,23 @@ def _assert_logical_id_tuple(values: tuple[str, ...], field_name: str) -> None:
 
 
 def _assert_model_text_tuple(values: tuple[str, ...], field_name: str) -> None:
-    assert isinstance(values, tuple), f"{field_name} must be a tuple"
-    for value in values:
-        _assert_non_empty_model_text(value, field_name)
-
-
-def _assert_resource_id_tuple(
-    values: tuple[str, ...],
-    field_name: str,
-) -> None:
-    assert isinstance(values, tuple), f"{field_name} must be a tuple"
-    for value in values:
-        _assert_resource_id(value, field_name)
-    _assert_unique(values, field_name)
+    assert_non_empty_model_safe_text_tuple(values, field_name)
 
 
 def _assert_diagnostic_tuple(values: tuple[SkillDiagnosticInfo, ...]) -> None:
-    assert isinstance(values, tuple), "diagnostics must be a tuple"
-    for value in values:
-        assert isinstance(value, SkillDiagnosticInfo)
+    assert_tuple_items(values, "diagnostics", SkillDiagnosticInfo)
 
 
 def _assert_resource_tuple(values: tuple[SkillResourceHandle, ...]) -> None:
-    assert isinstance(values, tuple), "resources must be a tuple"
-    for value in values:
-        assert isinstance(value, SkillResourceHandle)
-
-
-def _assert_non_negative_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int) and not isinstance(
-        value, bool
-    ), f"{field_name} must be an integer"
-    assert value >= 0, f"{field_name} must be non-negative"
-
-
-def _assert_positive_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int) and not isinstance(
-        value, bool
-    ), f"{field_name} must be an integer"
-    assert value > 0, f"{field_name} must be positive"
+    assert_tuple_items(values, "resources", SkillResourceHandle)
 
 
 def _assert_unique(values: tuple[str, ...], field_name: str) -> None:
-    assert len(set(values)) == len(values), f"{field_name} must be unique"
+    assert_unique_sequence(values, field_name)
 
 
 def _is_logical_id(value: str) -> bool:
     return fullmatch(r"[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*", value) is not None
-
-
-def _is_resource_id(value: str) -> bool:
-    if "\x00" in value or "\\" in value:
-        return False
-    if value.startswith(("/", "~", "$")):
-        return False
-    if any(part in {"", "."} for part in value.split("/")):
-        return False
-    path = PurePosixPath(value)
-    return not path.is_absolute() and ".." not in path.parts
 
 
 def _model_safe_package_path(value: str) -> str:
@@ -740,48 +710,3 @@ def _model_safe_package_path(value: str) -> str:
     if not _is_resource_id(value):
         return "redacted"
     return value
-
-
-def _is_model_safe_text(value: str) -> bool:
-    if "\x00" in value:
-        return False
-
-    normalized = value.replace("\\", "/")
-    lowered = normalized.lower()
-    stripped = lowered.strip()
-    if stripped.startswith(("/", "~", "$")):
-        return False
-    if "../" in lowered:
-        return False
-    if search(r"(^|[\s(])/(?:[^/\s]+/)+[^\s]*", lowered) is not None:
-        return False
-    if search(r"(^|[\s(])[a-z]:/", lowered) is not None:
-        return False
-    return not any(
-        fragment in lowered
-        for fragment in (
-            "$home",
-            "${home}",
-            "~/",
-            ".aws/",
-            ".codex/",
-            ".config/",
-            ".env",
-            ".ssh/",
-            "/.aws",
-            "/.codex",
-            "/.config",
-            "/.env",
-            "/.ssh",
-            "/home/",
-            "/private/",
-            "/root/",
-            "/secrets/",
-            "/tmp/",
-            "/users/",
-            "/var/folders/",
-            "c:/users/",
-            "private/",
-            "secrets/",
-        )
-    )

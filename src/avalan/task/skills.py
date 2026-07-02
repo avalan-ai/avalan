@@ -407,6 +407,7 @@ def task_skills_identity(
         "policy_version": SKILL_SETTINGS_POLICY_VERSION,
         "enabled": settings.enabled,
         "bootstrap_enabled": settings.bootstrap_enabled,
+        "bootstrap_prompt": settings.bootstrap_prompt.as_model_dict(),
         "read_limits": settings.read_limits.as_model_dict(),
         "index_limits": settings.index_limits.as_model_dict(),
         "source_limits": settings.source_limits.as_model_dict(),
@@ -606,7 +607,8 @@ def task_skill_settings_allow(
         ):
             return False
     return (
-        parent.read_limits.allows(child.read_limits)
+        parent.bootstrap_prompt.allows(child.bootstrap_prompt)
+        and parent.read_limits.allows(child.read_limits)
         and parent.index_limits.allows(child.index_limits)
         and parent.source_limits.allows(child.source_limits)
         and parent.cursor_limits.allows(child.cursor_limits)

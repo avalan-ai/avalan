@@ -4223,6 +4223,28 @@ class CLI:
             help="Skills bootstrap prompt mode.",
         )
         group.add_argument(
+            "--tool-skills-bootstrap-omit",
+            dest="tool_skills_bootstrap_omit",
+            action="append",
+            choices=(
+                "tool_summary",
+                "discovery_guidance",
+                "read_guidance",
+                "check_guidance",
+                "behavior_guidance",
+            ),
+            default=None,
+            help="Omit a trusted default skills bootstrap prompt section.",
+        )
+        group.add_argument(
+            "--tool-skills-bootstrap-instruction",
+            dest="tool_skills_bootstrap_instruction",
+            action="append",
+            type=str,
+            default=None,
+            help="Append a trusted skills bootstrap instruction.",
+        )
+        group.add_argument(
             "--tool-skills-diagnostics",
             dest="tool_skills_diagnostics",
             choices=("off", "standard", "verbose"),

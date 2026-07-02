@@ -40,6 +40,7 @@ from avalan.flow import (
 )
 from avalan.flow.node import Node
 from avalan.skill import (
+    SkillBootstrapPromptSettings,
     SkillDiagnosticCode,
     SkillDiagnosticInfo,
     SkillIndexLimits,
@@ -454,6 +455,31 @@ class FlowSkillsRuntimeTestCase(IsolatedAsyncioTestCase):
             plan_module._trusted_settings_allow(
                 TrustedSkillSettings(bootstrap_enabled=False),
                 TrustedSkillSettings(bootstrap_enabled=True),
+            )
+        )
+        self.assertFalse(
+            plan_module._trusted_settings_allow(
+                TrustedSkillSettings(
+                    bootstrap_prompt=SkillBootstrapPromptSettings(
+                        include_read_guidance=False
+                    )
+                ),
+                TrustedSkillSettings(),
+            )
+        )
+        self.assertTrue(
+            plan_module._trusted_settings_allow(
+                TrustedSkillSettings(
+                    bootstrap_prompt=SkillBootstrapPromptSettings(
+                        additional_instructions=("Approved.",)
+                    )
+                ),
+                TrustedSkillSettings(
+                    bootstrap_prompt=SkillBootstrapPromptSettings(
+                        include_check_guidance=False,
+                        additional_instructions=("Approved.",),
+                    )
+                ),
             )
         )
         self.assertFalse(

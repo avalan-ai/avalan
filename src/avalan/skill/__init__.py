@@ -386,6 +386,9 @@ from .settings import (
     SKILL_SETTINGS_POLICY_VERSION as SKILL_SETTINGS_POLICY_VERSION,
 )
 from .settings import (
+    SkillBootstrapPromptSettings as SkillBootstrapPromptSettings,
+)
+from .settings import (
     SkillCursorLimits as SkillCursorLimits,
 )
 from .settings import (

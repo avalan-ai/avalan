@@ -1,9 +1,11 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from os import PathLike
 from os.path import isabs
+from pathlib import PurePosixPath
 from re import compile as compile_pattern
-from typing import TypeAlias
+from re import search
+from typing import Protocol, TypeAlias, TypeVar, runtime_checkable
 
 JsonScalar: TypeAlias = None | bool | int | float | str
 JsonValue: TypeAlias = (
@@ -19,8 +21,24 @@ _ENV_NAME_PATTERN = compile_pattern(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MEDIA_TYPE_PATTERN = compile_pattern(
     r"^[A-Za-z0-9][A-Za-z0-9.+-]*/[A-Za-z0-9][A-Za-z0-9.+-]*$"
 )
+_LOGICAL_ID_PATTERN = compile_pattern(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 _SAFE_PATH_NAME_PATTERN = compile_pattern(r"^[A-Za-z0-9_-]+$")
 _SHA256_HEX_PATTERN = compile_pattern(r"^[0-9a-f]{64}$")
+
+_T = TypeVar("_T")
+
+
+@runtime_checkable
+class SkillRegistryProtocol(Protocol):
+    @property
+    def registry_version(self) -> object:
+        """Return the registry version object."""
+        ...
+
+    @property
+    def settings(self) -> object | None:
+        """Return trusted registry settings when available."""
+        ...
 
 
 def assert_bool(value: object, field_name: str) -> None:
@@ -85,6 +103,45 @@ def assert_string_tuple(value: object, field_name: str) -> None:
         assert_non_empty_string(item, field_name)
 
 
+def assert_tuple(value: object, field_name: str) -> None:
+    assert isinstance(value, tuple), f"{field_name} must be a tuple"
+
+
+def assert_tuple_items(
+    value: object,
+    field_name: str,
+    item_type: type[_T],
+) -> None:
+    assert_tuple(value, field_name)
+    assert isinstance(value, tuple)
+    for item in value:
+        assert isinstance(
+            item, item_type
+        ), f"{field_name} must contain {item_type.__name__}"
+
+
+def assert_unique_sequence(value: Sequence[object], field_name: str) -> None:
+    seen: list[object] = []
+    for item in value:
+        assert item not in seen, f"{field_name} must be unique"
+        seen.append(item)
+
+
+def assert_validated_string_tuple(
+    value: object,
+    field_name: str,
+    validator: Callable[[object, str], None],
+    *,
+    unique: bool = False,
+) -> None:
+    assert_tuple(value, field_name)
+    assert isinstance(value, tuple)
+    for item in value:
+        validator(item, field_name)
+    if unique:
+        assert_unique_sequence(value, field_name)
+
+
 def assert_string_sequence(value: object, field_name: str) -> None:
     assert isinstance(value, Sequence), f"{field_name} must be a sequence"
     assert not isinstance(
@@ -140,6 +197,70 @@ def assert_string_mapping(value: object, field_name: str) -> None:
     for key, item in value.items():
         assert_non_empty_string(key, f"{field_name} key")
         assert_non_empty_string(item, f"{field_name}.{key}")
+
+
+def assert_logical_id(value: object, field_name: str) -> None:
+    assert_non_empty_string(value, field_name)
+    assert isinstance(value, str), f"{field_name} must be a string"
+    assert (
+        _LOGICAL_ID_PATTERN.match(value) is not None
+    ), f"{field_name} must be a logical ID"
+
+
+def assert_logical_id_tuple(value: object, field_name: str) -> None:
+    assert_validated_string_tuple(
+        value,
+        field_name,
+        assert_logical_id,
+        unique=True,
+    )
+
+
+def assert_model_safe_text(value: object, field_name: str) -> None:
+    assert isinstance(value, str), f"{field_name} must be a string"
+    assert is_model_safe_text(value), f"{field_name} must be model-safe text"
+
+
+def assert_non_empty_model_safe_text(
+    value: object,
+    field_name: str,
+) -> None:
+    assert_non_empty_string(value, field_name)
+    assert_model_safe_text(value, field_name)
+
+
+def assert_non_empty_model_safe_text_tuple(
+    value: object,
+    field_name: str,
+    *,
+    unique: bool = False,
+) -> None:
+    assert_validated_string_tuple(
+        value,
+        field_name,
+        assert_non_empty_model_safe_text,
+        unique=unique,
+    )
+
+
+def assert_relative_resource_id(value: object, field_name: str) -> None:
+    assert_non_empty_string(value, field_name)
+    assert isinstance(value, str), f"{field_name} must be a string"
+    assert is_relative_resource_id(
+        value
+    ), f"{field_name} must be a resource ID"
+
+
+def assert_relative_resource_id_tuple(
+    value: object,
+    field_name: str,
+) -> None:
+    assert_validated_string_tuple(
+        value,
+        field_name,
+        assert_relative_resource_id,
+        unique=True,
+    )
 
 
 def assert_known_string(
@@ -312,3 +433,61 @@ def _number_value(value: object, field_name: str) -> int | float:
 
 def _assert_bound_number(value: object, field_name: str) -> None:
     _number_value(value, field_name)
+
+
+def is_relative_resource_id(value: str) -> bool:
+    assert isinstance(value, str), "value must be a string"
+    if "\x00" in value or "\\" in value:
+        return False
+    if value.startswith(("/", "~", "$")):
+        return False
+    if any(part in {"", "."} for part in value.split("/")):
+        return False
+    path = PurePosixPath(value)
+    return not path.is_absolute() and ".." not in path.parts
+
+
+def is_model_safe_text(value: str) -> bool:
+    assert isinstance(value, str), "value must be a string"
+    if "\x00" in value:
+        return False
+
+    normalized = value.replace("\\", "/")
+    lowered = normalized.lower()
+    stripped = lowered.strip()
+    if stripped.startswith(("/", "~", "$")):
+        return False
+    if "../" in lowered:
+        return False
+    if search(r"(^|[\s(])/(?:[^/\s]+/)+[^\s]*", lowered) is not None:
+        return False
+    if search(r"(^|[\s(])[a-z]:/", lowered) is not None:
+        return False
+    return not any(
+        fragment in lowered
+        for fragment in (
+            "$home",
+            "${home}",
+            "~/",
+            ".aws/",
+            ".codex/",
+            ".config/",
+            ".env",
+            ".ssh/",
+            "/.aws",
+            "/.codex",
+            "/.config",
+            "/.env",
+            "/.ssh",
+            "/home/",
+            "/private/",
+            "/root/",
+            "/secrets/",
+            "/tmp/",
+            "/users/",
+            "/var/folders/",
+            "c:/users/",
+            "private/",
+            "secrets/",
+        )
+    )

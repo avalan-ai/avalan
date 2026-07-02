@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from unittest import TestCase, main
 
 from avalan.types import (
+    SkillRegistryProtocol,
     assert_absolute_path,
     assert_absolute_path_mapping,
     assert_absolute_path_sequence,
@@ -12,7 +13,11 @@ from avalan.types import (
     assert_int_sequence,
     assert_known_string,
     assert_known_string_sequence,
+    assert_logical_id,
+    assert_logical_id_tuple,
     assert_media_type,
+    assert_model_safe_text,
+    assert_non_empty_model_safe_text_tuple,
     assert_non_empty_string,
     assert_non_empty_string_sequence,
     assert_non_negative_int,
@@ -24,6 +29,8 @@ from avalan.types import (
     assert_optional_positive_number,
     assert_positive_int,
     assert_positive_number,
+    assert_relative_resource_id,
+    assert_relative_resource_id_tuple,
     assert_safe_path_name,
     assert_safe_suffix,
     assert_safe_suffix_sequence,
@@ -32,11 +39,32 @@ from avalan.types import (
     assert_string_sequence,
     assert_string_tuple,
     assert_suffix_media_type_mapping,
+    assert_unique_sequence,
     coerce_datetime,
+    is_relative_resource_id,
 )
 
 
+class _RegistryLike:
+    def __init__(
+        self,
+        registry_version: object,
+        settings: object | None = None,
+    ) -> None:
+        self.registry_version = registry_version
+        self.settings = settings
+
+
 class TypesTest(TestCase):
+    def test_skill_registry_protocol_accepts_structural_registry(
+        self,
+    ) -> None:
+        self.assertIsInstance(
+            _RegistryLike("skills-registry:abc123"),
+            SkillRegistryProtocol,
+        )
+        self.assertNotIsInstance(object(), SkillRegistryProtocol)
+
     def test_assert_bool_accepts_bool(self) -> None:
         assert_bool(True, "field")
         assert_bool(False, "field")
@@ -190,6 +218,59 @@ class TypesTest(TestCase):
             assert_string_mapping({"": "value"}, "field")
         with self.assertRaises(AssertionError):
             assert_string_mapping({"KEY": ""}, "field")
+
+    def test_model_safe_text_rejects_host_paths(self) -> None:
+        assert_model_safe_text("Use the configured skill source.", "field")
+        assert_non_empty_model_safe_text_tuple(
+            ("Prefer reviewed skill instructions.",),
+            "field",
+            unique=True,
+        )
+
+        with self.assertRaises(AssertionError):
+            assert_model_safe_text("/Users/example/.ssh/id_rsa", "field")
+        with self.assertRaises(AssertionError):
+            assert_non_empty_model_safe_text_tuple(
+                ("duplicate", "duplicate"),
+                "field",
+                unique=True,
+            )
+
+    def test_logical_id_helpers_validate_ids(self) -> None:
+        assert_logical_id("skill", "logical_id")
+        assert_logical_id_tuple(
+            ("skill-one", "skill_two.path", "skill3"),
+            "logical_ids",
+        )
+
+        for value in ("", " ", "Skill", "1skill", "bad/path", "bad..id"):
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_logical_id(value, "logical_id")
+
+        with self.assertRaises(AssertionError):
+            assert_logical_id_tuple(["skill"], "logical_ids")
+        with self.assertRaises(AssertionError):
+            assert_logical_id_tuple(("skill", "bad/path"), "logical_ids")
+        with self.assertRaises(AssertionError):
+            assert_logical_id_tuple(("skill", "skill"), "logical_ids")
+
+    def test_relative_resource_id_helpers_validate_paths(self) -> None:
+        assert_relative_resource_id("guides/main.md", "resource_id")
+        assert_relative_resource_id_tuple(("main", "guides/pdf"), "resources")
+        self.assertTrue(is_relative_resource_id("guides/main.md"))
+        self.assertFalse(is_relative_resource_id("../secret"))
+
+        for value in ("/absolute", "../secret", "bad\\path", "a//b"):
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_relative_resource_id(value, "resource_id")
+
+    def test_assert_unique_sequence_rejects_duplicates(self) -> None:
+        assert_unique_sequence(("a", "b"), "values")
+
+        with self.assertRaises(AssertionError):
+            assert_unique_sequence(("a", "a"), "values")
 
     def test_assert_known_string_accepts_allowlisted_value(self) -> None:
         assert_known_string("txt", "field", ("txt", "json"))

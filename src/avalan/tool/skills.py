@@ -2,6 +2,7 @@ from ..compat import override
 from ..entities import ToolCallContext, ToolCapabilities
 from ..event import EventType
 from ..skill import (
+    SkillBootstrapPromptSettings,
     SkillDiagnosticCode,
     SkillDiagnosticInfo,
     SkillMatchLimits,
@@ -445,14 +446,23 @@ class SkillsToolSet(ToolSet):
         registry: SkillRegistry,
         *,
         bootstrap_enabled: bool = True,
+        bootstrap_prompt_settings: SkillBootstrapPromptSettings | None = None,
         exit_stack: AsyncExitStack | None = None,
         event_manager: SkillEventPublisher | None = None,
         namespace: str | None = "skills",
     ) -> None:
         assert isinstance(bootstrap_enabled, bool)
+        if bootstrap_prompt_settings is None and registry.settings is not None:
+            bootstrap_prompt_settings = registry.settings.bootstrap_prompt
+        if bootstrap_prompt_settings is not None:
+            assert isinstance(
+                bootstrap_prompt_settings,
+                SkillBootstrapPromptSettings,
+            )
         assert_skill_event_publisher(event_manager)
         self.registry = registry
         self.bootstrap_enabled = bootstrap_enabled
+        self.bootstrap_prompt_settings = bootstrap_prompt_settings
         reader = SkillResourceReader()
         tools = [
             ListSkillsTool(registry, event_manager=event_manager),
