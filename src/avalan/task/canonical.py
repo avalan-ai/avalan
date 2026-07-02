@@ -1,5 +1,8 @@
 from ..filesystem import read_text
-from ..skill.observability import SkillEventPublisher
+from ..skill.observability import (
+    SkillEventPublisher,
+    assert_skill_event_publisher,
+)
 from ..types import LooseJsonValue
 from .container import task_container_canonical_value
 from .definition import (
@@ -63,9 +66,7 @@ async def canonical_definition(
     schema_base_path: str | Path | None = None,
 ) -> dict[str, object]:
     assert isinstance(definition, TaskDefinition)
-    assert event_manager is None or isinstance(
-        event_manager, SkillEventPublisher
-    )
+    assert_skill_event_publisher(event_manager)
     schema_base_path = task_definition_schema_base_path(
         definition,
         schema_base_path=schema_base_path,
@@ -189,9 +190,7 @@ async def canonical_json(
     event_manager: SkillEventPublisher | None = None,
     schema_base_path: str | Path | None = None,
 ) -> str:
-    assert event_manager is None or isinstance(
-        event_manager, SkillEventPublisher
-    )
+    assert_skill_event_publisher(event_manager)
     return dumps(
         await canonical_definition(
             definition,
@@ -211,9 +210,7 @@ async def spec_hash(
     event_manager: SkillEventPublisher | None = None,
     schema_base_path: str | Path | None = None,
 ) -> str:
-    assert event_manager is None or isinstance(
-        event_manager, SkillEventPublisher
-    )
+    assert_skill_event_publisher(event_manager)
     canonical = await canonical_json(
         definition,
         event_manager=event_manager,

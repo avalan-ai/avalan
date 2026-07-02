@@ -8,6 +8,7 @@ from .entities import (
 )
 from .observability import (
     SkillEventPublisher,
+    assert_skill_event_publisher,
     emit_skill_audit_event,
     skill_audit_authority_value,
     skill_audit_correlation_id,
@@ -369,9 +370,7 @@ class SkillSourceResolver:
         audit_operation_id: str | None = None,
     ) -> SkillSourceResolutionResult:
         _assert_config_tuple(configs)
-        assert event_manager is None or isinstance(
-            event_manager, SkillEventPublisher
-        )
+        assert_skill_event_publisher(event_manager)
         assert audit_operation_id is None or isinstance(
             audit_operation_id, str
         )

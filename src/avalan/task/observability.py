@@ -28,6 +28,7 @@ from .usage import (
 from asyncio import gather
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from inspect import isawaitable
 from typing import Protocol, TypeAlias
 
 TaskObservedEvent: TypeAlias = (
@@ -493,7 +494,7 @@ async def _notify_observer(
         return
     try:
         result = observer(event)
-        if result is not None:
+        if isawaitable(result):
             await result
     except Exception:
         return
@@ -506,5 +507,5 @@ async def _notify_observer_strict(
     if observer is None:
         return
     result = observer(event)
-    if result is not None:
+    if isawaitable(result):
         await result

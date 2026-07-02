@@ -18,6 +18,7 @@ from .manifest import (
 from .observability import (
     SkillAuditDeliveryError,
     SkillEventPublisher,
+    assert_skill_event_publisher,
     emit_skill_audit_event,
     skill_audit_authority_value,
     skill_audit_correlation_id,
@@ -421,9 +422,7 @@ async def build_skill_registry(
     assert isinstance(resolution, SkillSourceResolutionResult | tuple)
     if settings is not None:
         assert isinstance(settings, TrustedSkillSettings)
-    assert event_manager is None or isinstance(
-        event_manager, SkillEventPublisher
-    )
+    assert_skill_event_publisher(event_manager)
     assert audit_operation_id is None or isinstance(audit_operation_id, str)
     if event_manager is not None and audit_operation_id is None:
         audit_operation_id = skill_audit_correlation_id("skill-registry-build")
