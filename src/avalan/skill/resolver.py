@@ -1,9 +1,17 @@
+from ..event import EventType
 from .contract import SkillDiagnosticCode, SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
     SkillModelValue,
     SkillSourceAuthority,
     model_dict,
+)
+from .observability import (
+    SkillEventPublisher,
+    emit_skill_audit_event,
+    skill_audit_authority_value,
+    skill_audit_correlation_id,
+    skill_audit_diagnostic_fields,
 )
 from .path_policy import (
     redact_host_path,
@@ -357,8 +365,20 @@ class SkillSourceResolver:
         configs: tuple[SkillResolverSourceConfig, ...],
         *,
         settings: TrustedSkillSettings | None = None,
+        event_manager: SkillEventPublisher | None = None,
+        audit_operation_id: str | None = None,
     ) -> SkillSourceResolutionResult:
         _assert_config_tuple(configs)
+        assert event_manager is None or isinstance(
+            event_manager, SkillEventPublisher
+        )
+        assert audit_operation_id is None or isinstance(
+            audit_operation_id, str
+        )
+        if event_manager is not None and audit_operation_id is None:
+            audit_operation_id = skill_audit_correlation_id(
+                "skill-source-resolve"
+            )
         diagnostics: list[SkillDiagnosticInfo] = []
         if settings is not None and not settings.enabled:
             diagnostics.append(
@@ -371,6 +391,18 @@ class SkillSourceResolver:
                     status=SkillStatus.DISABLED,
                 )
             )
+            for config in configs[: self._source_limits.max_sources]:
+                normalized, _ = _normalize_config(config)
+                assert normalized is not None
+                await _emit_source_event(
+                    event_manager,
+                    settings,
+                    EventType.SKILL_SOURCE_POLICY_DENIED,
+                    operation_id=audit_operation_id,
+                    source_label=normalized.source_label,
+                    authority=normalized.authority,
+                    diagnostic=diagnostics[0],
+                )
             return SkillSourceResolutionResult(diagnostics=tuple(diagnostics))
         if len(configs) > self._source_limits.max_sources:
             diagnostics.append(
@@ -381,6 +413,13 @@ class SkillSourceResolver:
                     reason="source_count",
                     status=SkillStatus.BLOCKED,
                 )
+            )
+            await _emit_source_event(
+                event_manager,
+                settings,
+                EventType.SKILL_SOURCE_POLICY_DENIED,
+                operation_id=audit_operation_id,
+                diagnostic=diagnostics[0],
             )
             return SkillSourceResolutionResult(diagnostics=tuple(diagnostics))
         configured: list[SkillSourceRootConfig] = []
@@ -394,33 +433,69 @@ class SkillSourceResolver:
             )
             if trust_diagnostic is not None:
                 diagnostics.append(trust_diagnostic)
+                await _emit_source_event(
+                    event_manager,
+                    settings,
+                    EventType.SKILL_SOURCE_POLICY_DENIED,
+                    operation_id=audit_operation_id,
+                    source_label=normalized.source_label,
+                    authority=normalized.authority,
+                    diagnostic=trust_diagnostic,
+                )
                 continue
             configured.append(normalized)
         configured_tuple = tuple(configured)
         duplicate_labels = _duplicate_labels(configured_tuple)
         if duplicate_labels:
-            diagnostics.append(
-                _policy_diagnostic(
-                    path="source.label",
-                    message="Configured skill sources use duplicate labels.",
-                    hint="Assign a unique logical label to each source.",
-                    reason="duplicate_source_label",
-                    candidates=duplicate_labels,
-                    code=SkillDiagnosticCode.DUPLICATE_ID,
-                    status=SkillStatus.BLOCKED,
-                )
+            duplicate_diagnostic = _policy_diagnostic(
+                path="source.label",
+                message="Configured skill sources use duplicate labels.",
+                hint="Assign a unique logical label to each source.",
+                reason="duplicate_source_label",
+                candidates=duplicate_labels,
+                code=SkillDiagnosticCode.DUPLICATE_ID,
+                status=SkillStatus.BLOCKED,
             )
-
+            diagnostics.append(duplicate_diagnostic)
+            for config in configured_tuple:
+                if config.source_label in duplicate_labels:
+                    await _emit_source_event(
+                        event_manager,
+                        settings,
+                        EventType.SKILL_SOURCE_SKIPPED,
+                        operation_id=audit_operation_id,
+                        source_label=config.source_label,
+                        authority=config.authority,
+                        diagnostic=duplicate_diagnostic,
+                    )
         sources: list[SkillAuthorizedSourceRoot] = []
         for config in configured_tuple:
             source_label = config.source_label
             if source_label in duplicate_labels:
                 continue
             if not config.enabled:
+                await _emit_source_event(
+                    event_manager,
+                    settings,
+                    EventType.SKILL_SOURCE_SKIPPED,
+                    operation_id=audit_operation_id,
+                    source_label=source_label,
+                    authority=config.authority,
+                    status=SkillStatus.DISABLED,
+                )
                 continue
             root, diagnostic = await self._resolve_root(config)
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
+                await _emit_source_event(
+                    event_manager,
+                    settings,
+                    _source_diagnostic_event_type(diagnostic),
+                    operation_id=audit_operation_id,
+                    source_label=source_label,
+                    authority=config.authority,
+                    diagnostic=diagnostic,
+                )
                 continue
             assert root is not None
             trust_diagnostic = _trusted_resolved_source_diagnostic(
@@ -430,11 +505,31 @@ class SkillSourceResolver:
             )
             if trust_diagnostic is not None:
                 diagnostics.append(trust_diagnostic)
+                await _emit_source_event(
+                    event_manager,
+                    settings,
+                    EventType.SKILL_SOURCE_POLICY_DENIED,
+                    operation_id=audit_operation_id,
+                    source_label=source_label,
+                    authority=config.authority,
+                    diagnostic=trust_diagnostic,
+                )
                 continue
             resources, source_diagnostics = await self._scan_source(
                 source_label=source_label,
                 root=root,
                 allow_hidden_paths=config.allow_hidden_paths,
+            )
+            await _emit_source_event(
+                event_manager,
+                settings,
+                EventType.SKILL_SOURCE_ACCEPTED,
+                operation_id=audit_operation_id,
+                source_label=source_label,
+                authority=config.authority,
+                status=SkillStatus.OK,
+                resource_count=len(resources),
+                diagnostic_count=len(source_diagnostics),
             )
             sources.append(
                 SkillAuthorizedSourceRoot(
@@ -789,6 +884,8 @@ async def resolve_skill_sources(
     index_limits: SkillIndexLimits | None = None,
     read_limits: SkillReadLimits | None = None,
     file_system: SkillSourceFileSystem | None = None,
+    event_manager: SkillEventPublisher | None = None,
+    audit_operation_id: str | None = None,
 ) -> SkillSourceResolutionResult:
     if settings is not None:
         assert isinstance(settings, TrustedSkillSettings)
@@ -804,7 +901,12 @@ async def resolve_skill_sources(
         read_limits=read_limits,
         file_system=file_system,
     )
-    return await resolver.resolve(configs, settings=settings)
+    return await resolver.resolve(
+        configs,
+        settings=settings,
+        event_manager=event_manager,
+        audit_operation_id=audit_operation_id,
+    )
 
 
 async def authorize_skill_resource(
@@ -830,6 +932,41 @@ AuthorizedSkillSource: TypeAlias = SkillAuthorizedSourceRoot
 LocalSkillSourceFilesystem: TypeAlias = SkillAsyncFileSystem
 SkillSourceFilesystem: TypeAlias = SkillSourceFileSystem
 SkillSourceResolution: TypeAlias = SkillSourceResolutionResult
+
+
+async def _emit_source_event(
+    event_manager: SkillEventPublisher | None,
+    settings: TrustedSkillSettings | None,
+    event_type: EventType,
+    *,
+    operation_id: str | None,
+    source_label: str | None = None,
+    authority: SkillSourceAuthority | None = None,
+    status: SkillStatus | None = None,
+    resource_count: int | None = None,
+    diagnostic_count: int | None = None,
+    diagnostic: SkillDiagnosticInfo | None = None,
+) -> None:
+    fields: dict[str, object] = {
+        "operation_id": operation_id,
+        "source_label": source_label,
+        "source_authority": skill_audit_authority_value(authority),
+        "resource_count": resource_count,
+        "diagnostic_count": diagnostic_count,
+    }
+    if status is not None:
+        fields["status"] = status.value
+    fields.update(skill_audit_diagnostic_fields(diagnostic))
+    await emit_skill_audit_event(event_manager, settings, event_type, fields)
+
+
+def _source_diagnostic_event_type(
+    diagnostic: SkillDiagnosticInfo,
+) -> EventType:
+    assert isinstance(diagnostic, SkillDiagnosticInfo)
+    if diagnostic.status is SkillStatus.UNAVAILABLE:
+        return EventType.SKILL_SOURCE_UNAVAILABLE
+    return EventType.SKILL_SOURCE_POLICY_DENIED
 
 
 def _read_bytes(path: Path, limit: int) -> bytes:

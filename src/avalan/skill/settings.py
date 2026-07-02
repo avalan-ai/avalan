@@ -209,12 +209,14 @@ class SkillObservabilitySettings:
     emit_events: bool = True
     include_diagnostics: bool = True
     include_byte_counts: bool = False
+    audit_fail_closed: bool = False
 
     def __post_init__(self) -> None:
         _assert_bool(self.enabled, "enabled")
         _assert_bool(self.emit_events, "emit_events")
         _assert_bool(self.include_diagnostics, "include_diagnostics")
         _assert_bool(self.include_byte_counts, "include_byte_counts")
+        _assert_bool(self.audit_fail_closed, "audit_fail_closed")
 
     def allows(self, requested: "SkillObservabilitySettings") -> bool:
         assert isinstance(requested, SkillObservabilitySettings)
@@ -227,6 +229,9 @@ class SkillObservabilitySettings:
             and _allows_exposure(
                 self.include_byte_counts, requested.include_byte_counts
             )
+            and _allows_enforcement(
+                self.audit_fail_closed, requested.audit_fail_closed
+            )
         )
 
     def as_model_dict(self) -> dict[str, SkillModelValue]:
@@ -236,6 +241,7 @@ class SkillObservabilitySettings:
                 "emit_events": self.emit_events,
                 "include_diagnostics": self.include_diagnostics,
                 "include_byte_counts": self.include_byte_counts,
+                "audit_fail_closed": self.audit_fail_closed,
             }
         )
 
@@ -631,6 +637,7 @@ def parse_untrusted_skill_settings_config(
                     "emit_events",
                     "include_diagnostics",
                     "include_byte_counts",
+                    "audit_fail_closed",
                 },
                 section=f"{section}.observability",
                 base=trusted.observability,
@@ -1135,4 +1142,8 @@ def _allows_exposure(trusted: bool, requested: bool) -> bool:
 
 
 def _allows_redaction(trusted: bool, requested: bool) -> bool:
+    return requested or not trusted
+
+
+def _allows_enforcement(trusted: bool, requested: bool) -> bool:
     return requested or not trusted

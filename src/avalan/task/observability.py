@@ -189,11 +189,13 @@ class TaskEventPipeline:
     metrics_observer: TaskSanitizedEventObserver | None = None
     trace_observer: TaskSanitizedEventObserver | None = None
     observability_sink: ObservabilitySink | None = None
+    critical_delivery: bool = False
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.run_id, "run_id")
         assert isinstance(self.sanitizer, PrivacySanitizer)
         assert isinstance(self.capture_events, bool)
+        assert isinstance(self.critical_delivery, bool)
         if self.attempt_id is not None:
             _assert_non_empty_string(self.attempt_id, "attempt_id")
         if self.event_observer is not None:
@@ -215,7 +217,7 @@ class TaskEventPipeline:
         draft = sanitize_raw_task_event_closed(event, self.sanitizer)
         observed: TaskObservedEvent = draft
         if self.capture_events:
-            try:
+            if self.critical_delivery:
                 observed = await self.store.append_event(
                     self.run_id,
                     attempt_id=self.attempt_id,
@@ -223,8 +225,28 @@ class TaskEventPipeline:
                     event_type=draft.event_type,
                     payload=draft.payload,
                 )
-            except Exception:
-                observed = draft
+            else:
+                try:
+                    observed = await self.store.append_event(
+                        self.run_id,
+                        attempt_id=self.attempt_id,
+                        category=draft.category,
+                        event_type=draft.event_type,
+                        payload=draft.payload,
+                    )
+                except Exception:
+                    observed = draft
+        if self.critical_delivery:
+            await gather(
+                _notify_observer_strict(self.event_observer, observed),
+                _notify_observer_strict(self.metrics_observer, observed),
+                _notify_observer_strict(self.trace_observer, observed),
+                record_observability_event_strict(
+                    self.observability_sink,
+                    observed,
+                ),
+            )
+            return
         await gather(
             _notify_observer(self.event_observer, observed),
             _notify_observer(self.metrics_observer, observed),
@@ -246,6 +268,15 @@ async def record_observability_event(
         await sink.record_event(event)
     except Exception:
         return
+
+
+async def record_observability_event_strict(
+    sink: ObservabilitySink | None,
+    event: TaskObservedEvent,
+) -> None:
+    if sink is None:
+        return
+    await sink.record_event(event)
 
 
 async def record_observability_usage(
@@ -466,3 +497,14 @@ async def _notify_observer(
             await result
     except Exception:
         return
+
+
+async def _notify_observer_strict(
+    observer: TaskSanitizedEventObserver | None,
+    event: TaskObservedEvent,
+) -> None:
+    if observer is None:
+        return
+    result = observer(event)
+    if result is not None:
+        await result

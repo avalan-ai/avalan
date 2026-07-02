@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
@@ -7,6 +8,7 @@ from avalan.event import Event, EventType
 from avalan.task import (
     DirectTaskRunner,
     HmacProvider,
+    ObservabilitySinkHealth,
     PrivacyAction,
     PrivacySanitizer,
     SanitizedTaskEventDraft,
@@ -26,6 +28,8 @@ from avalan.task import (
     TaskPrivacyPolicy,
     TaskRunState,
     TaskTargetContext,
+    UsageSource,
+    UsageTotals,
 )
 from avalan.task.stores import InMemoryTaskStore
 
@@ -61,6 +65,31 @@ class StaticHmacProvider(HmacProvider):
             key_id=key_id or purpose.value,
             algorithm="hmac-sha256",
             secret=b"test-secret",
+        )
+
+
+class RecordingStrictSink:
+    def __init__(self) -> None:
+        self.events: list[TaskObservedEvent] = []
+
+    async def record_event(self, event: TaskObservedEvent) -> None:
+        self.events.append(event)
+
+    async def record_usage(
+        self,
+        *,
+        run_id: str,
+        source: UsageSource,
+        totals: UsageTotals,
+        attempt_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        _ = run_id, source, totals, attempt_id, metadata
+
+    def health(self) -> ObservabilitySinkHealth:
+        return ObservabilitySinkHealth(
+            name="strict-test",
+            event_count=len(self.events),
         )
 
 
@@ -195,6 +224,37 @@ class TaskEventPipelineTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(metrics_events[0], SanitizedTaskEventDraft)
         self.assertEqual(metrics_events[0].event_type, "model_execute_after")
         self.assertNotIn("private output", str(metrics_events))
+
+    async def test_strict_pipeline_awaits_async_observer_and_sink(
+        self,
+    ) -> None:
+        metrics_events: list[TaskObservedEvent] = []
+        sink = RecordingStrictSink()
+
+        async def observe(event: TaskObservedEvent) -> None:
+            metrics_events.append(event)
+
+        pipeline = TaskEventPipeline(
+            store=self.store,
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            sanitizer=PrivacySanitizer(),
+            capture_events=False,
+            critical_delivery=True,
+            metrics_observer=observe,
+            observability_sink=sink,
+        )
+
+        await pipeline(
+            Event(
+                type=EventType.SKILL_READ_ALLOWED,
+                payload={"status": "ok"},
+            )
+        )
+
+        self.assertEqual(len(metrics_events), 1)
+        self.assertEqual(len(sink.events), 1)
+        self.assertEqual(metrics_events[0].event_type, "skill_read_allowed")
 
     async def test_observer_failures_do_not_interrupt_safe_fanout(
         self,
