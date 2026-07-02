@@ -421,6 +421,17 @@ class BlockingResolvePath(type(Path())):
         instance._target = target
         return instance
 
+    def __init__(
+        self,
+        path: str,
+        *,
+        started: ThreadEvent,
+        release: ThreadEvent,
+        target: Path,
+    ) -> None:
+        # Newer pathlib versions pass subclass constructor kwargs to __init__.
+        pass
+
     def resolve(self, strict: bool = False) -> Path:
         self._started.set()
         self._release.wait(timeout=1.0)
