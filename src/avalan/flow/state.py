@@ -252,6 +252,15 @@ class FlowExecutionTrace:
             value["metadata"] = _public_metadata(self.metadata)
         return value
 
+    def as_snapshot_dict(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "nodes": tuple(node.as_public_dict() for node in self.nodes),
+            "edges": tuple(edge.as_public_dict() for edge in self.edges),
+        }
+        if self.metadata:
+            value["metadata"] = self.metadata
+        return value
+
 
 def _public_metadata(value: Mapping[str, object]) -> Mapping[str, object]:
     return MappingProxyType(

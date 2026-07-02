@@ -207,6 +207,8 @@ class _ResponsesSSEProjectionAdapter:
     reasoning_redactor: ModelVisibleServerProtocolTextRedactor = field(
         default_factory=ModelVisibleServerProtocolTextRedactor
     )
+    answer_pending_sequence: int | None = None
+    reasoning_pending_sequence: int | None = None
 
     @property
     def active_tool_call_id(self) -> str | None:
@@ -228,6 +230,77 @@ class _ResponsesSSEProjectionAdapter:
         self.state = None
         return events
 
+    def flush_model_text_before_switch(
+        self,
+        token: StreamConsumerProjection,
+    ) -> list[_ResponsesSSEEvent]:
+        new_state = _response_projection_state(
+            token,
+            self.active_tool_call_id,
+        )
+        if self.state == new_state:
+            return []
+        if self.state is None:
+            return []
+        if self.state.output_item_type == "reasoning_text":
+            return self._flush_reasoning_text(token.sequence)
+        if self.state.output_item_type == "output_text":
+            return self._flush_answer_text(token.sequence)
+        return []
+
+    def flush_model_text_events(self, seq: int) -> list[_ResponsesSSEEvent]:
+        assert isinstance(seq, int) and not isinstance(seq, bool)
+        ordered_events: list[tuple[int, list[_ResponsesSSEEvent]]] = []
+        if self.reasoning_redactor.has_pending:
+            ordered_events.append(
+                (
+                    (
+                        seq
+                        if self.reasoning_pending_sequence is None
+                        else self.reasoning_pending_sequence
+                    ),
+                    self._flush_reasoning_text(seq),
+                )
+            )
+        if self.answer_redactor.has_pending:
+            ordered_events.append(
+                (
+                    (
+                        seq
+                        if self.answer_pending_sequence is None
+                        else self.answer_pending_sequence
+                    ),
+                    self._flush_answer_text(seq),
+                )
+            )
+        events: list[_ResponsesSSEEvent] = []
+        for _sequence, sequence_events in sorted(
+            ordered_events,
+            key=lambda item: item[0],
+        ):
+            events.extend(sequence_events)
+        return events
+
+    def record_model_text_pending(
+        self,
+        token: StreamConsumerProjection,
+        redactor: ModelVisibleServerProtocolTextRedactor | None,
+    ) -> None:
+        if redactor is None:
+            return
+        if token.kind is StreamItemKind.ANSWER_DELTA:
+            if redactor.has_pending:
+                if self.answer_pending_sequence is None:
+                    self.answer_pending_sequence = token.sequence
+            else:
+                self.answer_pending_sequence = None
+        elif token.kind is StreamItemKind.REASONING_DELTA:
+            if redactor.has_pending:
+                if self.reasoning_pending_sequence is None:
+                    self.reasoning_pending_sequence = token.sequence
+            else:
+                self.reasoning_pending_sequence = None
+
     def model_text_redactor(
         self, token: StreamConsumerProjection
     ) -> ModelVisibleServerProtocolTextRedactor | None:
@@ -236,6 +309,38 @@ class _ResponsesSSEProjectionAdapter:
         if token.kind is StreamItemKind.REASONING_DELTA:
             return self.reasoning_redactor
         return None
+
+    def _flush_answer_text(
+        self,
+        fallback_seq: int,
+    ) -> list[_ResponsesSSEEvent]:
+        events = _model_visible_flush_events(
+            "response.output_text.delta",
+            self.answer_redactor,
+            (
+                fallback_seq
+                if self.answer_pending_sequence is None
+                else self.answer_pending_sequence
+            ),
+        )
+        self.answer_pending_sequence = None
+        return events
+
+    def _flush_reasoning_text(
+        self,
+        fallback_seq: int,
+    ) -> list[_ResponsesSSEEvent]:
+        events = _model_visible_flush_events(
+            "response.reasoning_text.delta",
+            self.reasoning_redactor,
+            (
+                fallback_seq
+                if self.reasoning_pending_sequence is None
+                else self.reasoning_pending_sequence
+            ),
+        )
+        self.reasoning_pending_sequence = None
+        return events
 
 
 def _adapter_model_text_redactor(
@@ -251,6 +356,38 @@ def _adapter_model_text_redactor(
         if isinstance(redactor, ModelVisibleServerProtocolTextRedactor)
         else None
     )
+
+
+def _adapter_model_text_pre_switch_events(
+    adapter: object,
+    token: StreamConsumerProjection,
+) -> list[_ResponsesSSEEvent]:
+    flush_events = getattr(adapter, "flush_model_text_before_switch", None)
+    if not callable(flush_events):
+        return []
+    events = flush_events(token)
+    return events if isinstance(events, list) else []
+
+
+def _adapter_record_model_text_pending(
+    adapter: object,
+    token: StreamConsumerProjection,
+    redactor: ModelVisibleServerProtocolTextRedactor | None,
+) -> None:
+    record_pending = getattr(adapter, "record_model_text_pending", None)
+    if callable(record_pending):
+        record_pending(token, redactor)
+
+
+def _adapter_model_text_flush_events(
+    adapter: object,
+    seq: int,
+) -> list[_ResponsesSSEEvent]:
+    flush_events = getattr(adapter, "flush_model_text_events", None)
+    if not callable(flush_events):
+        return []
+    events = flush_events(seq)
+    return events if isinstance(events, list) else []
 
 
 router = APIRouter(tags=["responses"])
@@ -286,6 +423,7 @@ async def create_response(
             )
             pending_event: _ResponsesSSEEvent | None = None
             terminal_projection: StreamConsumerProjection | None = None
+            event_sequence = 0
             iterator = stream_consumer_iterator(
                 response,
                 stream_session_id="responses-sse-stream",
@@ -335,6 +473,12 @@ async def create_response(
                         terminal_projection = token
                     event_sequence = token.sequence
 
+                    for ev in _adapter_model_text_pre_switch_events(
+                        adapter,
+                        token,
+                    ):
+                        for message in enqueue_event(ev):
+                            yield message
                     events = adapter.switch(token)
                     if events:
                         for event in flush_event():
@@ -342,19 +486,34 @@ async def create_response(
                     for event in events:
                         yield event
 
+                    model_text_redactor = _adapter_model_text_redactor(
+                        adapter,
+                        token,
+                    )
                     for ev in _token_to_sse_events(
                         token,
                         event_sequence,
                         adapter.active_tool_call_id,
-                        _adapter_model_text_redactor(adapter, token),
+                        model_text_redactor,
                     ):
                         for message in enqueue_event(ev):
                             yield message
+                    _adapter_record_model_text_pending(
+                        adapter,
+                        token,
+                        model_text_redactor,
+                    )
 
                     if adapter.state is None:
                         for event in flush_event():
                             yield event
 
+                for ev in _adapter_model_text_flush_events(
+                    adapter,
+                    event_sequence,
+                ):
+                    for message in enqueue_event(ev):
+                        yield message
                 for event in flush_event():
                     yield event
 
@@ -489,6 +648,23 @@ def _model_visible_stream_deltas(
         return redactor.push(value)
     sanitized = sanitize_model_visible_server_protocol_text(value)
     return (sanitized,) if sanitized else ()
+
+
+def _model_visible_flush_events(
+    event_name: str,
+    redactor: ModelVisibleServerProtocolTextRedactor,
+    seq: int,
+) -> list[_ResponsesSSEEvent]:
+    assert isinstance(event_name, str) and event_name.strip()
+    assert isinstance(redactor, ModelVisibleServerProtocolTextRedactor)
+    assert isinstance(seq, int) and not isinstance(seq, bool)
+    return [
+        _ResponsesSSEEvent(
+            event=event_name,
+            data=_response_sse_delta_data(event_name, delta, seq),
+        )
+        for delta in redactor.flush()
+    ]
 
 
 def _canonical_item_to_sse(

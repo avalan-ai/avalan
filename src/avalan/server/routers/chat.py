@@ -180,6 +180,9 @@ async def create_chat_completion(
                     for projected_text in projected_texts:
                         yield chunk_envelope.message(projected_text)
 
+                for projected_text in answer_redactor.flush():
+                    yield chunk_envelope.message(projected_text)
+
                 if terminal is None:
                     raise StreamValidationError(
                         "stream missing terminal outcome"

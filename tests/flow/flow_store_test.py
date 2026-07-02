@@ -211,6 +211,55 @@ class FlowStoreSnapshotTest(TestCase):
             ["created", "2026-01-01T00:00:00+00:00"],
         )
 
+    def test_trace_snapshot_preserves_private_resume_metadata(self) -> None:
+        trace = FlowExecutionTrace(
+            nodes=(FlowNodeTrace(node="start"),),
+            metadata={
+                "skills": {
+                    "version": "skills-v1",
+                    "flow": {
+                        "enabled": True,
+                        "source_labels": ("workspace-main",),
+                        "authority_kinds": ("workspace",),
+                        "privacy": {
+                            "include_source_labels": False,
+                            "include_authority": False,
+                        },
+                    },
+                    "nodes": {
+                        "start": {
+                            "enabled": True,
+                            "source_labels": ("workspace-main",),
+                            "authority_kinds": ("workspace",),
+                            "privacy": {
+                                "include_source_labels": False,
+                                "include_authority": False,
+                            },
+                        }
+                    },
+                }
+            },
+        )
+
+        public = trace.as_public_dict()
+        snapshot = flow_trace_to_snapshot(trace)
+        restored = flow_trace_from_snapshot(snapshot)
+        public_metadata = cast(Mapping[str, object], public["metadata"])
+        public_skills = cast(Mapping[str, object], public_metadata["skills"])
+        public_flow = cast(Mapping[str, object], public_skills["flow"])
+        public_nodes = cast(Mapping[str, object], public_skills["nodes"])
+        public_start = cast(Mapping[str, object], public_nodes["start"])
+
+        self.assertEqual(restored.metadata, trace.metadata)
+        self.assertIn("workspace-main", str(snapshot))
+        self.assertIn("source_labels", str(snapshot))
+        self.assertIn("authority_kinds", str(snapshot))
+        self.assertNotIn("workspace-main", str(public))
+        self.assertNotIn("source_labels", public_flow)
+        self.assertNotIn("authority_kinds", public_flow)
+        self.assertNotIn("source_labels", public_start)
+        self.assertNotIn("authority_kinds", public_start)
+
     def test_records_and_snapshots_reject_invalid_values(self) -> None:
         with self.assertRaises(AssertionError):
             FlowNodeAttemptRecord(

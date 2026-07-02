@@ -1676,6 +1676,49 @@ async def test_translator_redacts_answer_and_reasoning_skill_echoes(
 
 
 @pytest.mark.anyio
+async def test_translator_flushes_buffered_model_text_in_source_order(
+    fake_a2a_imports,
+) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta="# Reasoning\n",
+        )
+    )
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="# Summary\n",
+        )
+    )
+    await translator.finish()
+
+    text_artifacts = [
+        artifact for artifact in updater.artifacts if artifact["parts"]
+    ]
+
+    assert [artifact["artifact_id"] for artifact in text_artifacts] == [
+        "reasoning",
+        "answer",
+    ]
+    assert text_artifacts[0]["parts"][0].text == "# Reasoning\n"
+    assert text_artifacts[1]["parts"][0].text == "# Summary\n"
+
+
+@pytest.mark.anyio
 async def test_translator_handles_projection_cancel_error_and_bad_items(
     fake_a2a_imports,
 ) -> None:
