@@ -25,6 +25,9 @@ from ..entities import (
     ContentFile,
     ContentImage,
     ContentText,
+    ModelVisibleServerProtocolTextRedactor,
+    sanitize_server_protocol_text,
+    sanitize_server_protocol_value,
 )
 from ..routers import orchestrate, resolve_model_id
 from ..routers.streaming import (
@@ -1143,6 +1146,8 @@ class A2AResponseTranslator:
         self._a2a_pb2 = import_module("a2a.types.a2a_pb2")
         self._terminal_outcome: StreamTerminalOutcome | None = None
         self._open_artifacts: set[str] = set()
+        self._answer_redactor = ModelVisibleServerProtocolTextRedactor()
+        self._reasoning_redactor = ModelVisibleServerProtocolTextRedactor()
 
     @property
     def succeeded(self) -> bool:
@@ -1172,8 +1177,7 @@ class A2AResponseTranslator:
             self._terminal_outcome = item.terminal_outcome
             return
         if item.kind is StreamItemKind.ANSWER_DELTA:
-            text = item.text_delta or ""
-            if text:
+            for text in self._answer_redactor.push(item.text_delta or ""):
                 await self._add_text_artifact(
                     artifact_id="answer",
                     text=text,
@@ -1182,8 +1186,7 @@ class A2AResponseTranslator:
                 )
             return
         if item.kind is StreamItemKind.REASONING_DELTA:
-            text = item.text_delta or ""
-            if text:
+            for text in self._reasoning_redactor.push(item.text_delta or ""):
                 await self._add_text_artifact(
                     artifact_id="reasoning",
                     text=text,
@@ -1212,7 +1215,15 @@ class A2AResponseTranslator:
         category = _a2a_tool_item_category(data)
         if category is not None:
             metadata["category"] = category
-        text = _a2a_tool_item_text(item, data)
+        tool_name_text = tool_name if isinstance(tool_name, str) else None
+        metadata = cast(
+            dict[str, Any],
+            sanitize_server_protocol_value(
+                metadata,
+                tool_name=tool_name_text,
+            ),
+        )
+        text = _a2a_tool_item_text(item, data, tool_name=tool_name_text)
         if text:
             await self._add_text_artifact(
                 artifact_id=tool_call_id,
@@ -1272,21 +1283,26 @@ def _a2a_tool_item_category(data: Mapping[str, object]) -> str | None:
 def _a2a_tool_item_text(
     item: CanonicalStreamItem,
     data: Mapping[str, object],
+    *,
+    tool_name: str | None = None,
 ) -> str:
     if item.text_delta:
-        return item.text_delta
+        return sanitize_server_protocol_text(item.text_delta)
     if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
         content = data.get("content")
-        return content if isinstance(content, str) else ""
+        if isinstance(content, str):
+            return _a2a_protocol_text(content, tool_name=tool_name)
+        return ""
     if item.kind is StreamItemKind.TOOL_EXECUTION_PROGRESS:
         content = data.get("content")
         if isinstance(content, str):
-            return content
+            return _a2a_protocol_text(content, tool_name=tool_name)
         progress = data.get("progress")
-        return (
-            dumps({"progress": progress}, separators=(",", ":"))
-            if progress is not None
-            else ""
+        if progress is None:
+            return ""
+        return _a2a_protocol_payload_text(
+            {"progress": progress},
+            tool_name=tool_name,
         )
     if item.kind not in (
         StreamItemKind.TOOL_EXECUTION_COMPLETED,
@@ -1299,10 +1315,37 @@ def _a2a_tool_item_text(
         if payload is None:
             continue
         if isinstance(payload, str):
-            return payload
+            return _a2a_protocol_text(payload, tool_name=tool_name)
         if isinstance(payload, bool | int | float | list | dict):
-            return dumps(payload, separators=(",", ":"))
-    return _a2a_public_diagnostic_text(data.get("diagnostic"))
+            return _a2a_protocol_payload_text(payload, tool_name=tool_name)
+    return sanitize_server_protocol_text(
+        _a2a_public_diagnostic_text(data.get("diagnostic"))
+    )
+
+
+def _a2a_protocol_text(value: str, *, tool_name: str | None) -> str:
+    if _a2a_is_skills_tool(tool_name):
+        sanitized = sanitize_server_protocol_value(
+            {"content": value},
+            tool_name=tool_name,
+        )
+        return _a2a_protocol_payload_text(sanitized, tool_name=None)
+    return sanitize_server_protocol_text(value)
+
+
+def _a2a_protocol_payload_text(
+    value: object,
+    *,
+    tool_name: str | None,
+) -> str:
+    sanitized = sanitize_server_protocol_value(value, tool_name=tool_name)
+    if isinstance(sanitized, str):
+        return sanitized
+    return dumps(sanitized, separators=(",", ":"))
+
+
+def _a2a_is_skills_tool(value: str | None) -> bool:
+    return isinstance(value, str) and value.startswith("skills.")
 
 
 def _a2a_public_diagnostic_text(payload: object) -> str:

@@ -235,6 +235,52 @@ def test_register_agent_endpoints_normalizes_protocols() -> None:
         )
 
 
+def test_register_agent_endpoints_configures_cors() -> None:
+    logger = MagicMock(spec=Logger)
+    hub = MagicMock(name="hub")
+    app = SimpleNamespace(
+        state=SimpleNamespace(),
+        include_router=MagicMock(),
+        add_middleware=MagicMock(),
+        router=SimpleNamespace(lifespan_context=None),
+    )
+
+    with (
+        patch.object(
+            SERVER_MODULE.mcp_router,
+            "create_router",
+            return_value="mcp-router",
+        ),
+        patch.object(SERVER_MODULE, "OrchestratorLoader"),
+    ):
+        register_agent_endpoints(
+            app,
+            hub=hub,
+            logger=logger,
+            specs_path="agent.yaml",
+            settings=None,
+            tool_settings=None,
+            mcp_prefix="/mcp",
+            openai_prefix="/openai",
+            mcp_name="run",
+            protocols={"mcp": set()},
+            allow_origins=["https://app.example"],
+            allow_methods=["POST"],
+            allow_headers=["Authorization"],
+            allow_credentials=True,
+        )
+
+    app.add_middleware.assert_called_once_with(
+        SERVER_MODULE.CORSMiddleware,
+        allow_origins=["https://app.example"],
+        allow_origin_regex=None,
+        allow_credentials=True,
+        allow_methods=["POST"],
+        allow_headers=["Authorization"],
+    )
+    app.include_router.assert_called_once_with("mcp-router", prefix="/mcp")
+
+
 def _tool_settings_with_profiles(
     *profiles: str,
     scope: ContainerExecutionScope = (

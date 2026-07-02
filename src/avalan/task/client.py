@@ -18,7 +18,13 @@ from .container import (
 )
 from .context import TaskInputFile
 from .converters import FileConverter
-from .definition import PrivacyAction, RunMode, TaskDefinition, TaskInputType
+from .definition import (
+    ObservabilitySinkType,
+    PrivacyAction,
+    RunMode,
+    TaskDefinition,
+    TaskInputType,
+)
 from .event import SanitizedTaskEvent
 from .idempotency import task_idempotency_identity
 from .input import (
@@ -63,6 +69,12 @@ from .runner import (
 from .schema import (
     TaskSchemaResolutionError,
     resolve_task_definition_schemas,
+    task_definition_schema_base_path,
+)
+from .skills import (
+    TASK_SKILLS_METADATA_KEY,
+    task_definition_with_skills_identity,
+    task_skill_audit_event_publisher,
 )
 from .state import TASK_RUN_TERMINAL_STATES, TaskRunState
 from .store import (
@@ -474,8 +486,34 @@ class TaskClient:
     ) -> TaskClientValidationResult:
         assert isinstance(definition, TaskDefinition)
         issues: list[TaskValidationIssue] = []
+        schema_base_path = task_definition_schema_base_path(definition)
         try:
             definition = await self._resolve_definition_schemas(definition)
+            skill_audit_sanitizer = self._sanitizer(definition)
+            definition = await task_definition_with_skills_identity(
+                definition,
+                event_manager=task_skill_audit_event_publisher(
+                    sanitizer=skill_audit_sanitizer,
+                    event_observer=self._event_observer,
+                    metrics_event_observer=(
+                        self._metrics_event_observer
+                        if definition.observability.metrics
+                        else None
+                    ),
+                    trace_event_observer=(
+                        self._trace_event_observer
+                        if definition.observability.trace
+                        else None
+                    ),
+                    observability_sink=(
+                        self._observability_sink
+                        if definition.observability.sinks
+                        != (ObservabilitySinkType.NOOP,)
+                        else None
+                    ),
+                ),
+                schema_base_path=schema_base_path,
+            )
         except TaskValidationError as error:
             issues.extend(error.issues)
         issues.extend(
@@ -566,7 +604,33 @@ class TaskClient:
             raise _unsupported_queue_operation("enqueue")
         if self._queue is None:
             raise _unsupported_queue_operation("enqueue")
+        schema_base_path = task_definition_schema_base_path(definition)
         definition = await self._resolve_definition_schemas(definition)
+        skill_audit_sanitizer = self._sanitizer(definition)
+        definition = await task_definition_with_skills_identity(
+            definition,
+            event_manager=task_skill_audit_event_publisher(
+                sanitizer=skill_audit_sanitizer,
+                event_observer=self._event_observer,
+                metrics_event_observer=(
+                    self._metrics_event_observer
+                    if definition.observability.metrics
+                    else None
+                ),
+                trace_event_observer=(
+                    self._trace_event_observer
+                    if definition.observability.trace
+                    else None
+                ),
+                observability_sink=(
+                    self._observability_sink
+                    if definition.observability.sinks
+                    != (ObservabilitySinkType.NOOP,)
+                    else None
+                ),
+            ),
+            schema_base_path=schema_base_path,
+        )
         validation = await self.validate(definition, input_value=input_value)
         validation.raise_for_issues()
         sanitizer = self._sanitizer(definition)
@@ -662,7 +726,7 @@ class TaskClient:
                     ),
                     queue=selected_queue_name,
                     metadata=freeze_snapshot_metadata(
-                        task_container_run_metadata(
+                        _task_run_metadata_with_skills(
                             definition,
                             metadata,
                             input_mounts=task_container_input_mount_manifest(
@@ -1110,6 +1174,24 @@ def _queue_input_payload_required(
         TaskInputType.FILE,
         TaskInputType.FILE_ARRAY,
     }
+
+
+def _task_run_metadata_with_skills(
+    definition: TaskDefinition,
+    metadata: Mapping[str, object] | None,
+    *,
+    input_mounts: tuple[dict[str, object], ...],
+) -> Mapping[str, object]:
+    value = dict(
+        task_container_run_metadata(
+            definition,
+            metadata,
+            input_mounts=input_mounts,
+        )
+    )
+    if definition.skills_identity is not None:
+        value[TASK_SKILLS_METADATA_KEY] = definition.skills_identity
+    return value
 
 
 def _queue_input_payload_issues(

@@ -7,9 +7,11 @@ from asyncio import (
 from asyncio import (
     Event as AsyncEvent,
 )
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from gc import collect
+from statistics import median
 from time import perf_counter
 from tracemalloc import (
     get_traced_memory,
@@ -22,6 +24,8 @@ from tracemalloc import (
 )
 from typing import Any, cast
 from unittest import TestCase
+
+from coverage import Coverage
 
 from avalan.model.stream import (
     CanonicalStreamAccumulator,
@@ -50,6 +54,48 @@ class _BenchmarkSample:
     time_to_first_token_seconds: float
     total_seconds: float
     estimated_tokens_per_second_total: float
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _LocalStreamLatencySample:
+    tokens_read: int
+    items: tuple[CanonicalStreamItem, ...]
+    first_item_ms: float
+    first_answer_ms: float
+    per_item_us: float
+
+
+class _ImmediateTokens:
+    _count: int
+    read_count: int
+
+    def __init__(self, count: int) -> None:
+        assert count > 0
+        self._count = count
+        self.read_count = 0
+
+    def __aiter__(self) -> "_ImmediateTokens":
+        return self
+
+    async def __anext__(self) -> str:
+        self.read_count += 1
+        if self.read_count <= self._count:
+            return "x"
+        raise StopAsyncIteration
+
+
+@contextmanager
+def _coverage_suspended_during_timing() -> Iterator[None]:
+    coverage = Coverage.current()
+    if coverage is None:
+        yield
+        return
+
+    coverage.stop()
+    try:
+        yield
+    finally:
+        coverage.start()
 
 
 def _item(
@@ -143,6 +189,34 @@ def _local_text_stream(
             supports_cancellation=True,
             max_queue_depth=StreamPerformanceBudget().max_queue_depth,
         ),
+    )
+
+
+async def _sample_local_stream_latency(
+    count: int,
+) -> _LocalStreamLatencySample:
+    tokens = _ImmediateTokens(count)
+    stream = _local_text_stream(
+        tokens,
+        stream_session_id="latency-stream",
+        run_id="latency-run",
+        turn_id="latency-turn",
+    )
+    started = perf_counter()
+    first_item = await stream.__anext__()
+    first_item_ms = (perf_counter() - started) * 1000
+    first_answer = await stream.__anext__()
+    first_answer_ms = (perf_counter() - started) * 1000
+    items = [first_item, first_answer]
+    async for item in stream:
+        items.append(item)
+    elapsed_us = (perf_counter() - started) * 1_000_000
+    return _LocalStreamLatencySample(
+        tokens_read=tokens.read_count,
+        items=tuple(items),
+        first_item_ms=first_item_ms,
+        first_answer_ms=first_answer_ms,
+        per_item_us=elapsed_us / len(items),
     )
 
 
@@ -603,6 +677,23 @@ accepted above.
 """
 
 
+def _assert_local_stream_latency_shape(
+    test_case: TestCase,
+    sample: _LocalStreamLatencySample,
+    count: int,
+) -> None:
+    test_case.assertEqual(sample.tokens_read, count + 1)
+    test_case.assertEqual(len(sample.items), count + 4)
+    test_case.assertIs(sample.items[0].kind, StreamItemKind.STREAM_STARTED)
+    test_case.assertIs(sample.items[1].kind, StreamItemKind.ANSWER_DELTA)
+    test_case.assertIs(sample.items[-3].kind, StreamItemKind.ANSWER_DONE)
+    test_case.assertIs(
+        sample.items[-2].kind,
+        StreamItemKind.STREAM_COMPLETED,
+    )
+    test_case.assertIs(sample.items[-1].kind, StreamItemKind.STREAM_CLOSED)
+
+
 class StreamBenchmarkRegressionTestCase(TestCase):
     def test_final_benchmark_markdown_parser_accepts_complete_rows(
         self,
@@ -902,68 +993,31 @@ class StreamBenchmarkRegressionTestCase(TestCase):
     def test_local_stream_latency_and_overhead_within_budget(self) -> None:
         count = 8192
         budget = StreamPerformanceBudget()
+        sample_count = 5
 
-        class ImmediateTokens:
-            def __init__(self) -> None:
-                self.read_count = 0
+        covered_sample = run(_sample_local_stream_latency(count))
+        _assert_local_stream_latency_shape(self, covered_sample, count)
 
-            def __aiter__(self) -> "ImmediateTokens":
-                return self
-
-            async def __anext__(self) -> str:
-                self.read_count += 1
-                if self.read_count <= count:
-                    return "x"
-                raise StopAsyncIteration
-
-        async def consume() -> tuple[
-            ImmediateTokens,
-            tuple[CanonicalStreamItem, ...],
-            float,
-            float,
-            float,
-        ]:
-            tokens = ImmediateTokens()
-            stream = _local_text_stream(
-                tokens,
-                stream_session_id="latency-stream",
-                run_id="latency-run",
-                turn_id="latency-turn",
-            )
-            started = perf_counter()
-            first_item = await stream.__anext__()
-            first_item_ms = (perf_counter() - started) * 1000
-            first_answer = await stream.__anext__()
-            first_answer_ms = (perf_counter() - started) * 1000
-            items = [first_item, first_answer]
-            async for item in stream:
-                items.append(item)
-            elapsed_us = (perf_counter() - started) * 1_000_000
-            return (
-                tokens,
-                tuple(items),
-                first_item_ms,
-                first_answer_ms,
-                elapsed_us / len(items),
+        with _coverage_suspended_during_timing():
+            run(_sample_local_stream_latency(count))
+            samples = tuple(
+                run(_sample_local_stream_latency(count))
+                for _ in range(sample_count)
             )
 
-        tokens, items, first_item_ms, first_answer_ms, per_item_us = run(
-            consume()
-        )
+        first_item_ms = median(sample.first_item_ms for sample in samples)
+        first_answer_ms = median(sample.first_answer_ms for sample in samples)
+        per_item_us = median(sample.per_item_us for sample in samples)
+        max_per_item_us = max(sample.per_item_us for sample in samples)
 
         print(
             "phase7 benchmark local_stream_latency "
-            f"tokens={count} first_item_ms={first_item_ms:.3f} "
+            f"tokens={count} samples={sample_count} "
+            f"first_item_ms={first_item_ms:.3f} "
             f"first_answer_ms={first_answer_ms:.3f} "
-            f"per_item_us={per_item_us:.3f}"
+            f"median_per_item_us={per_item_us:.3f} "
+            f"max_per_item_us={max_per_item_us:.3f}"
         )
-        self.assertEqual(tokens.read_count, count + 1)
-        self.assertEqual(len(items), count + 4)
-        self.assertIs(items[0].kind, StreamItemKind.STREAM_STARTED)
-        self.assertIs(items[1].kind, StreamItemKind.ANSWER_DELTA)
-        self.assertIs(items[-3].kind, StreamItemKind.ANSWER_DONE)
-        self.assertIs(items[-2].kind, StreamItemKind.STREAM_COMPLETED)
-        self.assertIs(items[-1].kind, StreamItemKind.STREAM_CLOSED)
         self.assertLessEqual(first_item_ms, budget.time_to_first_item_ms)
         self.assertLessEqual(first_answer_ms, budget.time_to_first_item_ms)
         self.assertLessEqual(per_item_us, budget.per_item_overhead_us)

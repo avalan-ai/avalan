@@ -1,6 +1,7 @@
 from asyncio import CancelledError
 from asyncio import run as asyncio_run
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -25,6 +26,11 @@ from avalan.model import (
     FileDeliveryMode,
     FileDeliveryProfile,
     LocalFileDeliveryProfile,
+)
+from avalan.skill import (
+    SkillSettingsSurface,
+    TrustedSkillSettings,
+    UntrustedSkillSettings,
 )
 from avalan.task import (
     ArtifactStorePolicyError,
@@ -322,6 +328,67 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
 
         self.assertEqual(issues, ())
         self.assertEqual(rooted_issues, ())
+
+    def test_validation_reports_task_skills_settings_errors(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            _write_valid_agent(agent_path)
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+            issues = self._run_validate(
+                runner,
+                replace(
+                    self._definition(),
+                    skills_config=UntrustedSkillSettings(
+                        surface=SkillSettingsSurface.TASK,
+                        enabled=False,
+                    ),
+                ),
+            )
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(
+            issues[0].code,
+            "task.skills_registry_missing",
+        )
+
+    def test_validation_accepts_definition_skills_without_tool_settings(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            _write_valid_agent(agent_path)
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+            issues = self._run_validate(
+                runner,
+                replace(
+                    self._definition(),
+                    skills=TrustedSkillSettings(enabled=False),
+                ),
+            )
+
+        self.assertEqual(issues, ())
+
+    def test_validation_replaces_existing_tool_settings_skills(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            _write_valid_agent(agent_path)
+            runner = AgentTaskTargetRunner(
+                FakeLoader(),
+                ref_base=root,
+                tool_settings=ToolSettingsContext(),
+            )
+            issues = self._run_validate(
+                runner,
+                replace(
+                    self._definition(),
+                    skills=TrustedSkillSettings(enabled=False),
+                ),
+            )
+
+        self.assertEqual(issues, ())
 
     def test_simple_prompt_agent_reference_loads_through_loader_boundary(
         self,
@@ -4317,6 +4384,21 @@ def _provider_reference(
     )
     assert descriptor.provider_reference is not None
     return descriptor.provider_reference
+
+
+def _write_valid_agent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        """
+        [agent]
+        name = "Valid"
+        task = "Answer"
+
+        [engine]
+        uri = "ai://env:KEY@openai/gpt-4o-mini"
+        """,
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

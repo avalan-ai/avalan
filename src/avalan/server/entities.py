@@ -4,6 +4,13 @@ from ..entities import (
     ReasoningEffort,
     ToolNamePolicySettings,
 )
+from ..skill import (
+    SkillModelValue,
+    TrustedSkillSettings,
+    trusted_skill_settings_fingerprint,
+    trusted_skill_source_fingerprint,
+    trusted_skill_source_identity_dict,
+)
 from ..tool.context import ToolSettingsContext
 from .authority import (
     reject_remote_runtime_authority_extra_fields,
@@ -15,7 +22,9 @@ from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import Mapping
 from dataclasses import dataclass
-from re import fullmatch
+from pathlib import Path, PureWindowsPath
+from re import Match, fullmatch
+from re import compile as compile_pattern
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -40,6 +49,32 @@ MCP_BASE64_SOURCE_PATTERN = (
     r"|[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)$"
 )
 NON_WHITESPACE_PATTERN = r".*\S.*"
+SKILL_CONTENT_REDACTION = "<redacted-skill-content>"
+HOST_PATH_REDACTION = "<host-path>"
+_HOST_PATH_PATTERN = compile_pattern(
+    r"(?P<path>"
+    r"(?:/Users|/home|/private|/secret|/var|/etc|/root|/tmp|/opt|/Volumes)"
+    r"(?:/+[^/\s,;:\"'\\\]}]+)*(?:/+)?"
+    r"|[A-Za-z]:\\Users\\[^\s,;:\"'\\\]}]+"
+    r"(?:\\[^\s,;:\"'\\\]}]+)*"
+    r"|[A-Za-z]:/Users(?:/+[^/\s,;:\"'\\\]}]+)*(?:/+)?"
+    r")"
+    r"(?=$|[\s,;:\"'\\\]}])"
+)
+_SKILL_BODY_HEADING_PATTERN = compile_pattern(
+    r"(?is)(?:^|\n)\s*#\s+[^\n]{1,160}\n"
+    r".{0,12000}\b(?:use when|trigger rules|how to use|instructions?)\b"
+)
+_SKILL_BODY_RESOURCE_PATTERN = compile_pattern(
+    r"(?is)(?:^|\n)\s*(?:#\s+[^\n]{1,160}|---\s*\n|description\s*:)"
+    r".{0,12000}\b(?:SKILL\.md|\.codex[/\\]skills|[/\\]skills[/\\])\b"
+)
+_SKILL_BODY_STREAM_START_PATTERN = compile_pattern(
+    r"(?is)(?:^|\n)\s*(?:#\s+|---\s*(?:\n|$)|description\s*:)"
+)
+_URL_SCHEME_PATTERN = compile_pattern(r"(?i)[A-Za-z][A-Za-z0-9+.-]*:")
+_SKILLS_TOOL_PREFIX = "skills."
+_SKILL_CONTENT_KEYS = frozenset({"content"})
 
 
 def _has_non_empty_file_source(value: object) -> bool:
@@ -174,6 +209,180 @@ class OrchestratorContext:
     settings: OrchestratorSettings | None = None
     tool_settings: ToolSettingsContext | None = None
     tool_name_policy: ToolNamePolicySettings | None = None
+    skills_settings: TrustedSkillSettings | None = None
+    skills_registry_metadata: Mapping[str, SkillModelValue] | None = None
+
+    def __post_init__(self) -> None:
+        if self.skills_settings is not None:
+            assert isinstance(self.skills_settings, TrustedSkillSettings)
+        if self.skills_registry_metadata is not None:
+            assert isinstance(self.skills_registry_metadata, Mapping)
+
+
+def server_skills_registry_metadata(
+    settings: TrustedSkillSettings | None,
+) -> dict[str, SkillModelValue] | None:
+    """Return logical skills metadata for server runtime boundaries."""
+    if settings is None:
+        return None
+    assert isinstance(settings, TrustedSkillSettings)
+    return {
+        "enabled": settings.enabled,
+        "settings_fingerprint": trusted_skill_settings_fingerprint(settings),
+        "source_fingerprint": trusted_skill_source_fingerprint(settings),
+        "source_labels": tuple(source.label for source in settings.sources),
+        "authority_kinds": tuple(
+            authority.value for authority in settings.authority_kinds
+        ),
+        "allowed_skill_ids": settings.allowed_skill_ids,
+        "read_limits": settings.read_limits.as_model_dict(),
+        "source_mappings": tuple(
+            trusted_skill_source_identity_dict(source)
+            for source in settings.sources
+        ),
+    }
+
+
+def sanitize_server_protocol_value(
+    value: object,
+    *,
+    tool_name: str | None = None,
+) -> object:
+    """Return a protocol-safe value with skill bodies and paths redacted."""
+    return _sanitize_server_protocol_value(
+        value,
+        redact_skill_content=_is_skills_tool_name(tool_name),
+    )
+
+
+def sanitize_server_protocol_text(value: str) -> str:
+    """Return text with host paths redacted for remote protocols."""
+    assert isinstance(value, str)
+    return _redact_host_paths(value)
+
+
+def sanitize_model_visible_server_protocol_text(value: str) -> str:
+    """Return model text safe for remote protocol emission."""
+    assert isinstance(value, str)
+    if _looks_like_echoed_skill_body(value):
+        return SKILL_CONTENT_REDACTION
+    return _redact_host_paths(value)
+
+
+class ModelVisibleServerProtocolTextRedactor:
+    """Redact streaming model text for remote protocols."""
+
+    def __init__(self) -> None:
+        self._pending = ""
+        self._redacted = False
+
+    def push(self, value: str) -> tuple[str, ...]:
+        """Return safe text chunks for a streaming delta."""
+        assert isinstance(value, str)
+        if not value or self._redacted:
+            return ()
+        candidate = self._pending + value
+        self._pending = ""
+        if _could_be_echoed_skill_body_start_prefix(candidate):
+            self._pending = candidate
+            return ()
+        sanitized = sanitize_model_visible_server_protocol_text(candidate)
+        if sanitized == SKILL_CONTENT_REDACTION:
+            self._redacted = True
+            return (sanitized,)
+        if _could_start_echoed_skill_body(candidate):
+            self._redacted = True
+            return (SKILL_CONTENT_REDACTION,)
+        return (sanitized,) if sanitized else ()
+
+
+def _sanitize_server_protocol_value(
+    value: object,
+    *,
+    redact_skill_content: bool,
+) -> object:
+    if isinstance(value, Mapping):
+        sanitized: dict[str, object] = {}
+        for raw_key, item in value.items():
+            key = str(raw_key)
+            if redact_skill_content and key in _SKILL_CONTENT_KEYS:
+                sanitized[key] = {
+                    "redacted": True,
+                    "reason": SKILL_CONTENT_REDACTION,
+                }
+                continue
+            sanitized[key] = _sanitize_server_protocol_value(
+                item,
+                redact_skill_content=redact_skill_content,
+            )
+        return sanitized
+    if isinstance(value, list | tuple):
+        return [
+            _sanitize_server_protocol_value(
+                item,
+                redact_skill_content=redact_skill_content,
+            )
+            for item in value
+        ]
+    if isinstance(value, str):
+        return _redact_host_paths(value)
+    if isinstance(value, bytes | bytearray | memoryview):
+        return "<redacted-bytes>"
+    if isinstance(value, bool | int | float) or value is None:
+        return value
+    return _redact_host_paths(str(value))
+
+
+def _is_skills_tool_name(value: str | None) -> bool:
+    return isinstance(value, str) and value.startswith(_SKILLS_TOOL_PREFIX)
+
+
+def _redact_host_paths(value: str) -> str:
+    return _HOST_PATH_PATTERN.sub(_redact_host_path_match, value)
+
+
+def _path_match_inside_url(match: Match[str]) -> bool:
+    start = match.start("path")
+    token_start = start
+    while token_start > 0 and not match.string[token_start - 1].isspace():
+        token_start -= 1
+    token_prefix = match.string[token_start:start]
+    scheme_matches = tuple(_URL_SCHEME_PATTERN.finditer(token_prefix))
+    if not scheme_matches:
+        return False
+    scheme_match = scheme_matches[-1]
+    if scheme_match.group(0).lower() == "file:":
+        return False
+    return token_prefix[scheme_match.end() :].startswith("//")
+
+
+def _looks_like_echoed_skill_body(value: str) -> bool:
+    stripped = value.strip()
+    if len(stripped) < 40:
+        return False
+    return bool(
+        _SKILL_BODY_HEADING_PATTERN.search(stripped)
+        or _SKILL_BODY_RESOURCE_PATTERN.search(stripped)
+    )
+
+
+def _could_start_echoed_skill_body(value: str) -> bool:
+    return bool(_SKILL_BODY_STREAM_START_PATTERN.search(value))
+
+
+def _could_be_echoed_skill_body_start_prefix(value: str) -> bool:
+    tail = value.rsplit("\n", 1)[-1].lstrip()
+    if not tail:
+        return False
+    return "#".startswith(tail) or "---".startswith(tail)
+
+
+def _redact_host_path_match(match: Match[str]) -> str:
+    path = match.group("path")
+    if _path_match_inside_url(match):
+        return path
+    name = PureWindowsPath(path).name if "\\" in path else Path(path).name
+    return f"{HOST_PATH_REDACTION}/{name}" if name else HOST_PATH_REDACTION
 
 
 class ResponseFormatText(BaseModel):
@@ -249,6 +458,14 @@ class FunctionDefinition(BaseModel):
     name: str
     description: str | None = None
     parameters: FunctionParameters
+
+    @model_validator(mode="after")
+    def validate_remote_skills_tool_definition(
+        self,
+    ) -> "FunctionDefinition":
+        if _is_skills_tool_name(self.name):
+            raise ValueError("Remote requests cannot define skills tools")
+        return self
 
 
 class ToolFunction(BaseModel):
@@ -467,6 +684,10 @@ class ResponsesRequest(BaseModel):
                 value.get("model"),
                 path="responses.model",
             )
+            _reject_remote_skills_tool_definitions(
+                value.get("tools"),
+                path="responses.tools",
+            )
         return value
 
     @property
@@ -504,6 +725,29 @@ def _reject_request_remote_runtime_authority(
         allow_container_profile_selector=True,
         path=path,
     )
+
+
+def _reject_remote_skills_tool_definitions(
+    value: object,
+    *,
+    path: str,
+) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list | tuple):
+        return
+    for index, tool in enumerate(value):
+        if not isinstance(tool, Mapping):
+            continue
+        function = tool.get("function")
+        if not isinstance(function, Mapping):
+            continue
+        name = function.get("name")
+        if _is_skills_tool_name(name if isinstance(name, str) else None):
+            raise ValueError(
+                "Remote requests cannot define skills tools"
+                f" at {path}[{index}].function.name"
+            )
 
 
 class MCPFileDescriptor(BaseModel):

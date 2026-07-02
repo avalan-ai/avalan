@@ -1,0 +1,18 @@
+{
+  "case": "ambiguous",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-ambiguous",
+    "root": "/Users/example/private/skills/ambiguous",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "ambiguous_candidates": ["pdf-basic", "pdf-review"],
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/ambiguous/a/SKILL.md",
+      "content": "---\nname: \"pdf\"\ndescription: \"PDF guidance with ambiguous name candidates.\"\n---\n# PDF"
+    }
+  ]
+}

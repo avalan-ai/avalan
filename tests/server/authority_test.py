@@ -48,6 +48,19 @@ class RemoteRuntimeAuthorityTestCase(TestCase):
         ):
             with self.subTest(key=key):
                 self.assertTrue(remote_runtime_authority_key(key))
+        for key in (
+            "skills",
+            "skill_settings",
+            "skills_registry",
+            "skills_registry_root",
+            "source_roots",
+            "source_authority",
+            "read_limits",
+            "registry_mutation",
+            "model_facing_load_behavior",
+        ):
+            with self.subTest(key=key):
+                self.assertTrue(remote_runtime_authority_key(key))
 
     def test_reject_fields_skips_trusted_key_and_walks_sequences(
         self,

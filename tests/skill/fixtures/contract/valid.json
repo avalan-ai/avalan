@@ -1,0 +1,17 @@
+{
+  "case": "valid",
+  "source": {
+    "authority": "filesystem_trusted",
+    "label": "contract-valid",
+    "root": "/Users/example/private/skills/valid",
+    "available": true,
+    "runtime_accessible": true
+  },
+  "skills": [
+    {
+      "resource_id": "main",
+      "resource_path": "/Users/example/private/skills/valid/SKILL.md",
+      "content": "---\nname: \"pdf\"\ndescription: \"Read, create, inspect, render, and verify PDF files where visual layout matters.\"\ntags: [\"pdf\", \"documents\"]\nversion: \"1.0.0\"\n---\n# PDF Skill\n\nRead and verify PDF files."
+    }
+  ]
+}

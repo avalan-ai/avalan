@@ -1,0 +1,39 @@
+[task]
+name = "skills_pdf"
+version = "1"
+description = "Answer a PDF workflow question using a trusted PDF skill."
+labels = ["example", "skills", "pdf"]
+
+[input]
+type = "string"
+description = "PDF workflow question."
+
+[output]
+type = "text"
+description = "Answer text."
+
+[execution]
+type = "agent"
+ref = "agents/skills_pdf_reader.toml"
+
+[skills]
+source_labels = ["workspace-main"]
+skill_ids = ["pdf"]
+
+[skills.read_limits]
+max_bytes_per_read = 65536
+max_lines_per_read = 2000
+
+[run]
+mode = "direct"
+timeout_seconds = 180
+
+[privacy]
+input = "drop"
+files = "drop"
+tool_results = "drop"
+
+[limits]
+input_bytes = 4096
+output_bytes = 8192
+total_tokens = 4000

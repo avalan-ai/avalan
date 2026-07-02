@@ -186,6 +186,7 @@ from .plan import FlowMappingPlan as FlowMappingPlan
 from .plan import FlowNodePlan as FlowNodePlan
 from .plan import FlowPlanCompileResult as FlowPlanCompileResult
 from .plan import FlowRetryPlan as FlowRetryPlan
+from .plan import FlowSkillsMetadata as FlowSkillsMetadata
 from .plan import FlowTimeoutPlan as FlowTimeoutPlan
 from .plan import compile_flow_definition as compile_flow_definition
 from .plan import (
@@ -194,6 +195,8 @@ from .plan import (
 from .plan import (
     flow_resume_isolation_metadata as flow_resume_isolation_metadata,
 )
+from .plan import flow_resume_metadata as flow_resume_metadata
+from .plan import flow_resume_skills_metadata as flow_resume_skills_metadata
 from .registry import FLOW_INPUT_KEY as FLOW_INPUT_KEY
 from .registry import FLOW_TOOL_NODE_TYPE as FLOW_TOOL_NODE_TYPE
 from .registry import (

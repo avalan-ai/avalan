@@ -20,7 +20,12 @@ from uuid import UUID, uuid4
 from avalan.entities import (
     Token,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
+    ToolCallError,
     ToolCallResult,
+    ToolDescriptor,
 )
 from avalan.event import Event, EventType
 from avalan.model.stream import (
@@ -88,6 +93,39 @@ class DummyResponse:
 
     async def to_str(self) -> str:
         return self.text
+
+
+class FakeMCPToolManager:
+    def __init__(
+        self,
+        descriptors: list[ToolDescriptor],
+        *,
+        result: object | None = None,
+    ) -> None:
+        self._descriptors = descriptors
+        self._result = result
+        self.calls: list[ToolCall] = []
+
+    def list_tools(self) -> list[ToolDescriptor]:
+        return self._descriptors
+
+    def resolve_tool_name(self, name: str) -> SimpleNamespace:
+        canonical_name = (
+            name
+            if any(item.name == name for item in self._descriptors)
+            else None
+        )
+        return SimpleNamespace(canonical_name=canonical_name)
+
+    async def execute_call(self, call: ToolCall, context: object) -> object:
+        self.calls.append(call)
+        return ToolCallResult(
+            id="result-1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=self._result,
+        )
 
 
 def _ensure_typing_override() -> None:
@@ -705,6 +743,132 @@ class MCPUtilityTestCase(TestCase):
         self.assertIsNone(fullmatch(MCP_BASE64_SOURCE_PATTERN, "YWJj="))
         self.assertIsNone(fullmatch(MCP_BASE64_SOURCE_PATTERN, "notbase64"))
 
+    def test_collect_tool_descriptions_includes_enabled_skills_tools(
+        self,
+    ) -> None:
+        req = self._request()
+        descriptor = ToolDescriptor(
+            name="skills.read",
+            schema={
+                "type": "function",
+                "function": {
+                    "name": "skills.read",
+                    "description": "Read a skill.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"skill": {"type": "string"}},
+                    },
+                },
+            },
+        )
+        orchestrator = SimpleNamespace(
+            tool=FakeMCPToolManager(
+                [
+                    descriptor,
+                    ToolDescriptor(name="math.calculate"),
+                ]
+            )
+        )
+
+        descriptions = mcp_router._collect_tool_descriptions(
+            req,
+            cast(Any, orchestrator),
+        )
+
+        self.assertEqual(
+            [item["name"] for item in descriptions],
+            [
+                "run",
+                "skills.read",
+            ],
+        )
+        self.assertEqual(descriptions[1]["description"], "Read a skill.")
+        self.assertEqual(
+            descriptions[1]["inputSchema"],
+            {
+                "type": "object",
+                "properties": {"skill": {"type": "string"}},
+            },
+        )
+
+    def test_skills_tool_description_fallbacks(self) -> None:
+        self.assertIsNone(
+            mcp_router._skills_tool_description(ToolDescriptor(name="math"))
+        )
+        fallback = mcp_router._skills_tool_description(
+            ToolDescriptor(
+                name="skills.read",
+                schema={"function": "invalid"},
+                parameter_schema={"type": "object"},
+            )
+        )
+        default_schema = mcp_router._skills_tool_description(
+            ToolDescriptor(
+                name="skills.list",
+                schema={
+                    "function": {
+                        "name": "skills.list",
+                        "parameters": "invalid",
+                    }
+                },
+            )
+        )
+        renamed = mcp_router._skills_tool_description(
+            ToolDescriptor(
+                name="skills.read",
+                schema={"function": {"name": "math.read"}},
+            )
+        )
+
+        self.assertEqual(
+            fallback,
+            {
+                "name": "skills.read",
+                "description": "",
+                "inputSchema": {"type": "object"},
+            },
+        )
+        self.assertEqual(
+            default_schema,
+            {
+                "name": "skills.list",
+                "description": "",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+        )
+        self.assertIsNone(renamed)
+
+    def test_direct_skills_tool_call_detection(self) -> None:
+        orchestrator = SimpleNamespace(
+            tool=FakeMCPToolManager([ToolDescriptor(name="skills.read")])
+        )
+
+        self.assertFalse(
+            mcp_router._is_direct_skills_tool_call(
+                cast(Any, orchestrator),
+                {"params": "invalid"},
+            )
+        )
+        self.assertTrue(
+            mcp_router._is_direct_skills_tool_call(
+                cast(Any, orchestrator),
+                {"params": {"name": "skills.read"}},
+            )
+        )
+
+    def test_collect_tool_descriptions_omits_skills_when_disabled(
+        self,
+    ) -> None:
+        req = self._request()
+        orchestrator = SimpleNamespace(tool=FakeMCPToolManager([]))
+
+        descriptions = mcp_router._collect_tool_descriptions(
+            req,
+            cast(Any, orchestrator),
+        )
+
+        self.assertEqual([item["name"] for item in descriptions], ["run"])
+
     def test_mcp_tool_request_accepts_file_descriptor_aliases(self) -> None:
         tool_request = MCPToolRequest.model_validate(
             {
@@ -1120,6 +1284,40 @@ class MCPUtilityTestCase(TestCase):
             mcp_router._canonical_tool_execution_notification(item, {})
         )
 
+    def test_canonical_skills_tool_execution_redacts_result(
+        self,
+    ) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            data={
+                "name": "skills.read",
+                "arguments": {"skill": "demo"},
+                "result": {
+                    "content": "private skill body",
+                    "path": "/Users/mariano/skills/demo/SKILL.md",
+                },
+            },
+            metadata={"tool_name": "skills.read"},
+        )
+        summaries: dict[str, dict[str, mcp_router.JSONValue]] = {}
+
+        message = mcp_router._canonical_tool_execution_notification(
+            item,
+            summaries,
+        )
+        projected = dumps({"message": message, "summaries": summaries})
+
+        self.assertIn("redacted-skill-content", projected)
+        self.assertIn("<host-path>/SKILL.md", projected)
+        self.assertNotIn("private skill body", projected)
+        self.assertNotIn("/Users/mariano", projected)
+
     def test_canonical_progress_notification_empty_answer_delta(
         self,
     ) -> None:
@@ -1136,6 +1334,65 @@ class MCPUtilityTestCase(TestCase):
         self.assertIsNone(
             mcp_router._canonical_progress_notification(item, "progress")
         )
+
+    def test_direct_tool_outcome_redacts_error_and_diagnostic_payloads(
+        self,
+    ) -> None:
+        call = ToolCall(
+            id="call-1",
+            name="skills.read",
+            arguments={"skill": "demo"},
+        )
+        error = ToolCallError(
+            id="error-1",
+            call=call,
+            name="skills.read",
+            arguments={},
+            message="Failed at /tmp/skills/demo/SKILL.md",
+            error={
+                "content": "private skill body",
+                "path": "/Users/mariano/skills/demo/SKILL.md",
+            },
+        )
+        diagnostic = ToolCallDiagnostic(
+            id="diag-1",
+            call_id="call-1",
+            requested_name="skills.read",
+            canonical_name="skills.read",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Looked at /Volumes/skills/demo/SKILL.md",
+            details={
+                "content": "diagnostic private skill body",
+                "path": "C:/Users/me/skills/demo/SKILL.md",
+            },
+        )
+
+        error_payload = mcp_router._direct_tool_outcome_structured_content(
+            error,
+            tool_name="skills.read",
+        )
+        diagnostic_payload = (
+            mcp_router._direct_tool_outcome_structured_content(
+                diagnostic,
+                tool_name="skills.read",
+            )
+        )
+        projected = dumps(
+            {
+                "error": error_payload,
+                "diagnostic": diagnostic_payload,
+            }
+        )
+
+        self.assertIn("redacted-skill-content", projected)
+        self.assertIn("<host-path>/SKILL.md", projected)
+        self.assertNotIn("private skill body", projected)
+        self.assertNotIn("diagnostic private skill body", projected)
+        self.assertNotIn("/tmp/skills", projected)
+        self.assertNotIn("/Users/mariano", projected)
+        self.assertNotIn("/Volumes/skills", projected)
+        self.assertNotIn("C:/Users", projected)
 
     def test_canonical_error_message_defaults_without_message(self) -> None:
         accumulator = mcp_router.ProtocolStreamAccumulator()
@@ -1385,6 +1642,229 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 return route.endpoint
         raise AssertionError(f"Route {path} not found")
 
+    async def test_root_router_dispatches_direct_skills_tool_call(
+        self,
+    ) -> None:
+        endpoint = self._get_route("")
+        message = {
+            "jsonrpc": "2.0",
+            "id": "skill-call",
+            "method": "tools/call",
+            "params": {
+                "name": "skills.read",
+                "arguments": {"skill": "demo"},
+            },
+        }
+        request = DummyRequest(dumps(message).encode("utf-8"))
+        request.app.state.ctx = SimpleNamespace(participant_id=uuid4())
+        manager = FakeMCPToolManager(
+            [ToolDescriptor(name="skills.read")],
+            result={"content": "secret skill body"},
+        )
+
+        response = await endpoint(
+            request,
+            getLogger("test"),
+            DummyOrchestrator(manager),
+        )
+        payload = loads(response.body.decode("utf-8"))
+
+        self.assertEqual(payload["id"], "skill-call")
+        self.assertEqual(manager.calls[0].name, "skills.read")
+        self.assertIn(
+            "redacted-skill-content",
+            dumps(payload["result"]["structuredContent"]),
+        )
+
+    async def test_direct_skills_tool_call_uses_tool_manager_and_redacts(
+        self,
+    ) -> None:
+        request = DummyRequest(b"")
+        manager = FakeMCPToolManager(
+            [ToolDescriptor(name="skills.read")],
+            result={
+                "content": "secret body",
+                "path": "/Users/mariano/.codex/skills/demo/SKILL.md",
+            },
+        )
+        orchestrator = SimpleNamespace(tool=manager, _id=uuid4())
+        request.app.state.ctx = SimpleNamespace(participant_id=uuid4())
+        message = {
+            "jsonrpc": "2.0",
+            "id": "skill-call",
+            "method": "tools/call",
+            "params": {
+                "name": "skills.read",
+                "arguments": {"skill": "demo", "resource_id": "main"},
+            },
+        }
+
+        response = await mcp_router._handle_direct_skills_tool_call_message(
+            request,
+            getLogger("test"),
+            cast(Any, orchestrator),
+            message,
+        )
+        payload = loads(response.body.decode("utf-8"))
+        projected = dumps(payload, sort_keys=True)
+
+        self.assertEqual(manager.calls[0].name, "skills.read")
+        self.assertEqual(
+            payload["result"]["structuredContent"]["name"], "skills.read"
+        )
+        self.assertIn("redacted-skill-content", projected)
+        self.assertIn("<host-path>/SKILL.md", projected)
+        self.assertNotIn("secret body", projected)
+        self.assertNotIn("/Users/mariano", projected)
+
+    async def test_direct_skills_tool_call_defaults_missing_arguments(
+        self,
+    ) -> None:
+        request = DummyRequest(b"")
+        manager = FakeMCPToolManager(
+            [ToolDescriptor(name="skills.list")],
+            result={"skills": ["demo"]},
+        )
+        orchestrator = SimpleNamespace(tool=manager, _id=uuid4())
+        message = {
+            "jsonrpc": "2.0",
+            "id": "skill-call",
+            "method": "tools/call",
+            "params": {"name": "skills.list"},
+        }
+
+        await mcp_router._handle_direct_skills_tool_call_message(
+            request,
+            getLogger("test"),
+            cast(Any, orchestrator),
+            message,
+        )
+
+        self.assertEqual(manager.calls[0].arguments, {})
+
+    async def test_direct_skills_tool_call_rejects_invalid_shapes(
+        self,
+    ) -> None:
+        request = DummyRequest(b"")
+        skills_manager = FakeMCPToolManager(
+            [ToolDescriptor(name="skills.read")]
+        )
+        no_skills_manager = FakeMCPToolManager([ToolDescriptor(name="math")])
+        cases = (
+            (
+                SimpleNamespace(tool=skills_manager),
+                {"params": "invalid"},
+                "Missing MCP params",
+            ),
+            (
+                SimpleNamespace(tool=skills_manager),
+                {"params": {"name": "math.read", "arguments": {}}},
+                'Unsupported tool "math.read"',
+            ),
+            (
+                SimpleNamespace(tool=no_skills_manager),
+                {"params": {"name": "skills.read", "arguments": {}}},
+                'Unsupported tool "skills.read"',
+            ),
+            (
+                SimpleNamespace(tool=skills_manager),
+                {"params": {"name": "skills.read", "arguments": []}},
+                "Invalid tool arguments",
+            ),
+        )
+
+        for orchestrator, message, detail in cases:
+            with self.subTest(detail=detail):
+                with self.assertRaises(mcp_router.HTTPException) as exc:
+                    await mcp_router._handle_direct_skills_tool_call_message(
+                        request,
+                        getLogger("test"),
+                        cast(Any, orchestrator),
+                        cast(mcp_router.JSONObject, message),
+                    )
+
+                self.assertEqual(exc.exception.status_code, 400)
+                self.assertIn(detail, str(exc.exception.detail))
+
+    async def test_direct_skills_tool_call_rejects_remote_authority(
+        self,
+    ) -> None:
+        request = DummyRequest(b"")
+        manager = FakeMCPToolManager([ToolDescriptor(name="skills.read")])
+        orchestrator = SimpleNamespace(tool=manager, _id=uuid4())
+        message = {
+            "jsonrpc": "2.0",
+            "id": "skill-call",
+            "method": "tools/call",
+            "params": {
+                "name": "skills.read",
+                "arguments": {
+                    "skill": "demo",
+                    "source_roots": ["/Users/me/.codex/skills"],
+                },
+            },
+        }
+
+        with self.assertRaises(mcp_router.HTTPException) as exc:
+            await mcp_router._handle_direct_skills_tool_call_message(
+                request,
+                getLogger("test"),
+                cast(Any, orchestrator),
+                message,
+            )
+
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertIn("runtime authority", str(exc.exception.detail))
+        self.assertEqual(manager.calls, [])
+
+    async def test_reasoning_notification_skips_empty_delta_projection(
+        self,
+    ) -> None:
+        state = mcp_router._MCPStreamProjectionState(
+            accumulator=mcp_router.ProtocolStreamAccumulator(),
+            tool_summaries={},
+            resources={},
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/mcp",
+        )
+        start = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta="",
+        )
+
+        await mcp_router._mcp_canonical_stream_item_notifications(
+            start,
+            state,
+            "progress",
+        )
+        with patch.object(
+            mcp_router,
+            "_canonical_reasoning_deltas",
+            return_value=None,
+        ):
+            notifications = (
+                await mcp_router._mcp_canonical_stream_item_notifications(
+                    item,
+                    state,
+                    "progress",
+                )
+            )
+
+        self.assertEqual(notifications, [])
+
     async def test_stream_item_notifications_emit_canonical_answer_delta(
         self,
     ) -> None:
@@ -1465,6 +1945,148 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             {"type": "answer.delta", "delta": "answer"},
         )
         self.assertEqual(state.accumulator.snapshot().answer_text, "answer")
+
+    async def test_stream_item_notifications_redact_skill_echoes(
+        self,
+    ) -> None:
+        state = mcp_router._MCPStreamProjectionState(
+            accumulator=mcp_router.ProtocolStreamAccumulator(),
+            tool_summaries={},
+            resources={},
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/mcp",
+        )
+        start = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        reasoning_items = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="# Reasoning Skill\n\n",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="Instructions: keep this private.\n\n",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta=(
+                    "Secret reasoning skill body.\n"
+                    "Source: /tmp/skills/demo/SKILL.md"
+                ),
+            ),
+        ]
+        answer_items = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="# Answer Skill\n\n",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="Use when answering private tasks.\n\n",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=7,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=(
+                    "Secret answer skill body.\n"
+                    "Source: C:/Users/me/skills/demo/SKILL.md"
+                ),
+            ),
+        ]
+
+        await mcp_router._mcp_stream_item_notifications(
+            canonical_fixture_mcp_projection(start),
+            state,
+            "progress",
+        )
+        reasoning_notifications = []
+        for item in reasoning_items:
+            reasoning_notifications.extend(
+                await mcp_router._mcp_stream_item_notifications(
+                    canonical_fixture_mcp_projection(item),
+                    state,
+                    "progress",
+                )
+            )
+        answer_notifications = []
+        for item in answer_items:
+            answer_notifications.extend(
+                await mcp_router._mcp_stream_item_notifications(
+                    canonical_fixture_mcp_projection(item),
+                    state,
+                    "progress",
+                )
+            )
+        answer_message = loads(answer_notifications[0]["params"]["message"])
+        projected = dumps(
+            {
+                "answer": answer_notifications,
+                "reasoning": reasoning_notifications,
+            }
+        )
+
+        self.assertEqual(
+            reasoning_notifications[0]["params"]["data"]["delta"],
+            "<redacted-skill-content>",
+        )
+        self.assertEqual(
+            answer_message,
+            {
+                "type": "answer.delta",
+                "delta": "<redacted-skill-content>",
+            },
+        )
+        self.assertNotIn("# Reasoning Skill", projected)
+        self.assertNotIn("Instructions: keep this private", projected)
+        self.assertNotIn("# Answer Skill", projected)
+        self.assertNotIn("Use when answering private", projected)
+        self.assertNotIn("Secret reasoning skill body", projected)
+        self.assertNotIn("Secret answer skill body", projected)
+        self.assertNotIn("/tmp/skills", projected)
+        self.assertNotIn("C:/Users", projected)
 
     async def test_stream_item_notifications_emit_flow_events(self) -> None:
         state = legacy_fixture_mcp_projection_state()
@@ -3247,6 +3869,121 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_stream_response_final_result_redacts_skill_echoes(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta=(
+                    "# Reasoning Skill\n\n"
+                    "Instructions: keep this private.\n\n"
+                    "Secret final reasoning skill body.\n"
+                    "Source: /tmp/skills/demo/SKILL.md"
+                ),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=(
+                    "# Answer Skill\n\n"
+                    "Use when answering private tasks.\n\n"
+                    "Secret final answer skill body.\n"
+                    "Source: C:/Users/me/skills/demo/SKILL.md"
+                ),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={
+                    "input_tokens": 1,
+                    "output_tokens": 2,
+                    "total_tokens": 3,
+                },
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        chunks = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [
+            loads(part) for part in "".join(chunks).splitlines() if part
+        ]
+        result = [msg for msg in messages if msg.get("result")][-1]["result"]
+        projected = dumps(result)
+
+        self.assertEqual(
+            result["content"],
+            [{"type": "text", "text": "<redacted-skill-content>"}],
+        )
+        self.assertEqual(
+            result["structuredContent"]["reasoning"],
+            "<redacted-skill-content>",
+        )
+        self.assertNotIn("Secret final reasoning skill body", projected)
+        self.assertNotIn("Secret final answer skill body", projected)
+        self.assertNotIn("/tmp/skills", projected)
+        self.assertNotIn("C:/Users", projected)
+
     async def test_stream_response_preserves_canonical_tool_ready_payload(
         self,
     ) -> None:
@@ -4431,6 +5168,100 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             summaries["call-1"]["resources"][-1]["name"], "progress"
         )
         self.assertEqual(len(summaries["call-1"]["resources"]), 1)
+
+    async def test_skills_tool_resource_notifications_redact_content(
+        self,
+    ) -> None:
+        store = mcp_router.MCPResourceStore(resource_item_limit=2)
+        summaries: dict[str, dict[str, Any]] = {}
+        resources: dict[str, mcp_router.MCPResource] = {}
+        items = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="private skill body /tmp/skills/demo/SKILL.md",
+                data={
+                    "name": "skills.read",
+                    "category": "stdout",
+                    "content": "private skill body /tmp/skills/demo/SKILL.md",
+                },
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                data={
+                    "category": "progress",
+                    "content": (
+                        "private progress body "
+                        "/Volumes/Data/skills/demo/SKILL.md"
+                    ),
+                },
+                metadata={"tool_name": "skills.read"},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                data={
+                    "category": "progress",
+                    "progress": {
+                        "content": "private structured progress body",
+                        "path": "/Volumes/Data/skills/demo/SKILL.md",
+                    },
+                },
+                metadata={"tool_name": "skills.read"},
+            ),
+        ]
+
+        notifications: list[dict[str, Any]] = []
+        for item in items:
+            async for (
+                notification
+            ) in mcp_router._canonical_tool_resource_notifications(
+                item=item,
+                tool_summaries=summaries,
+                resources=resources,
+                resource_store=store,
+                base_path="/m",
+            ):
+                notifications.append(notification)
+
+        stored_text = [
+            (await store.get(resource.id)).text
+            for resource in resources.values()
+        ]
+        projected = dumps(
+            {"notifications": notifications, "stored_text": stored_text},
+            sort_keys=True,
+        )
+
+        self.assertIn("redacted-skill-content", projected)
+        self.assertNotIn("private skill body", projected)
+        self.assertNotIn("private progress body", projected)
+        self.assertNotIn("private structured progress body", projected)
+        self.assertNotIn("/tmp/skills", projected)
+        self.assertNotIn("/Volumes/Data", projected)
+        self.assertEqual(
+            {
+                resource["name"]
+                for resource in summaries["call-1"]["resources"]
+            },
+            {"stdout", "progress"},
+        )
 
     async def test_canonical_tool_log_aliases_update_one_resource(
         self,

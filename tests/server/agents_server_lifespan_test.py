@@ -24,6 +24,11 @@ from avalan.server.container_policy import (
     RemoteContainerRequestPolicy,
     ServerRuntimeEnvelopeStatus,
 )
+from avalan.skill import (
+    SkillSourceConfig,
+    TrustedSkillSettings,
+    WorkspaceSkillSourceAuthority,
+)
 from avalan.tool.context import ToolSettingsContext
 
 
@@ -55,7 +60,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
 
     def build_fastapi(*args, **kwargs):
         app = SimpleNamespace(
-            state=SimpleNamespace(),
+            state=SimpleNamespace(skills_registry_metadata={"stale": True}),
             include_router=MagicMock(),
             add_middleware=MagicMock(),
         )
@@ -133,6 +138,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 assert app.state.loader is loader_instance
                 assert app.state.logger is logger
                 assert app.state.agent_id == agent_identifier
+                assert not hasattr(app.state, "skills_registry_metadata")
                 assert app.state.mcp_resource_store is resource_store_instance
                 assert app.state.mcp_resource_base_path == "/mcp"
                 assert app.state.mcp_tool_name == "run"
@@ -144,6 +150,8 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 settings=None,
                 tool_settings=tool_settings,
                 tool_name_policy=None,
+                skills_settings=None,
+                skills_registry_metadata=None,
             )
             resource_store_cls.assert_called_once_with()
             uuid4_mock.assert_called_once_with()
@@ -234,6 +242,101 @@ async def test_agents_server_lifespan_exposes_remote_policy() -> None:
                     status.diagnostics[0]["code"]
                     == "server.runtime_envelope_unavailable"
                 )
+
+
+@pytest.mark.anyio
+async def test_agents_server_lifespan_stores_trusted_skills_metadata() -> None:
+    logger = MagicMock(spec=Logger)
+    loader_instance = MagicMock(name="loader_instance")
+    config_instance = MagicMock(name="config_instance")
+    server_instance = MagicMock(name="server_instance")
+    captured_lifespan: dict[str, object] = {}
+    hub = MagicMock(name="hub")
+    skills_settings = TrustedSkillSettings(
+        sources=(
+            SkillSourceConfig(
+                label="workspace",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path="/Users/mariano/.codex/skills",
+            ),
+        )
+    )
+    runtime_settings = _tool_settings_with_profiles(
+        "workspace-readonly",
+        scope=ContainerExecutionScope.RUNTIME_ENVELOPE,
+    )
+    tool_settings = ToolSettingsContext(
+        container=runtime_settings.container,
+        skills=skills_settings,
+    )
+
+    def build_fastapi(*args, **kwargs):
+        app = SimpleNamespace(
+            state=SimpleNamespace(),
+            include_router=MagicMock(),
+            add_middleware=MagicMock(),
+        )
+        captured_lifespan["app"] = app
+        captured_lifespan["lifespan"] = kwargs["lifespan"]
+        return app
+
+    uvicorn_module = ModuleType("uvicorn")
+    uvicorn_module.Config = MagicMock(return_value=config_instance)
+    uvicorn_module.Server = MagicMock(return_value=server_instance)
+
+    with patch.dict(
+        sys.modules,
+        {"uvicorn": uvicorn_module, "avalan.server.a2a": _fake_a2a_module()},
+    ):
+        with (
+            patch("avalan.server.FastAPI", side_effect=build_fastapi),
+            patch(
+                "avalan.server.OrchestratorLoader",
+                return_value=loader_instance,
+            ),
+            patch("avalan.server.mcp_router.MCPResourceStore"),
+            patch("avalan.server.logger_replace"),
+            patch.dict(os.environ, {}, clear=True),
+            patch("avalan.server.uuid4", return_value=UUID(int=7)),
+        ):
+            server = agents_server(
+                hub=hub,
+                name="srv",
+                version="v1",
+                host="0.0.0.0",
+                port=9999,
+                reload=False,
+                specs_path="agent.yaml",
+                settings=None,
+                tool_settings=tool_settings,
+                mcp_prefix="/mcp",
+                openai_prefix="/openai",
+                mcp_name="run",
+                logger=logger,
+                agent_id=None,
+                participant_id=None,
+            )
+
+            assert server is server_instance
+
+            lifespan = captured_lifespan["lifespan"]
+            app = captured_lifespan["app"]
+
+            async with lifespan(app):
+                assert app.state.ctx.skills_settings is skills_settings
+                metadata = app.state.skills_registry_metadata
+                assert app.state.ctx.skills_registry_metadata is metadata
+                assert metadata["source_labels"] == ("workspace",)
+                status = app.state.server_runtime_envelope_status
+                assert isinstance(status, ServerRuntimeEnvelopeStatus)
+                assert status.plan is not None
+                request_metadata = status.plan.run_plan.request.to_dict()[
+                    "metadata"
+                ]
+                projected = str(request_metadata)
+                assert "effective_root_sha256" in projected
+                assert "/Users/mariano" not in projected
+                assert "root_path" not in projected
 
 
 @pytest.mark.anyio

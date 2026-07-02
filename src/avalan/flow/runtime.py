@@ -31,6 +31,7 @@ from .diagnostics import (
 from .node import CancellationChecker, Node
 from .plan import (
     FLOW_RESUME_ISOLATION_METADATA_KEY,
+    FLOW_RESUME_SKILLS_METADATA_KEY,
     FlowConditionPlan,
     FlowEdgePlan,
     FlowExecutionPlan,
@@ -39,8 +40,11 @@ from .plan import (
     FlowRetryPlan,
     flow_node_container_fingerprint,
     flow_resume_isolation_metadata,
+    flow_resume_skills_metadata,
 )
 from .registry import (
+    FLOW_TOOL_NODE_SKILLS_REGISTRY_CONFIG,
+    FLOW_TOOL_NODE_SKILLS_SETTINGS_CONFIG,
     FlowNodeConfigurationError,
     FlowNodeRegistry,
     default_flow_node_registry,
@@ -280,11 +284,17 @@ def flow_node_registry_runner(
 
 def _plan_node_definition(node: FlowNodePlan) -> FlowNodeDefinition:
     assert isinstance(node, FlowNodePlan)
+    config = dict(node.config)
+    if node.skills is not None:
+        config[FLOW_TOOL_NODE_SKILLS_SETTINGS_CONFIG] = node.skills
+        skills_registry = node.metadata.get("skills_registry")
+        if skills_registry is not None:
+            config[FLOW_TOOL_NODE_SKILLS_REGISTRY_CONFIG] = skills_registry
     return FlowNodeDefinition(
         name=node.name,
         type=node.type,
         ref=node.ref,
-        config=node.config,
+        config=config,
     )
 
 
@@ -446,14 +456,14 @@ async def execute_flow_plan(
     )
     assert concurrency_limit > 0
     flow_run_id = _flow_event_id(plan)
-    resume_isolation_diagnostics = _resume_isolation_metadata_diagnostics(
+    resume_metadata_diagnostics = _resume_metadata_diagnostics(
         plan,
         resume_trace,
     )
-    if resume_isolation_diagnostics:
+    if resume_metadata_diagnostics:
         return FlowPlanExecutionResult(
             trace=resume_trace or FlowExecutionTrace.from_plan(plan),
-            diagnostics=resume_isolation_diagnostics,
+            diagnostics=resume_metadata_diagnostics,
             node_outputs=resume_node_outputs or {},
         )
     if plan.runtime_envelope is not None:
@@ -813,6 +823,15 @@ async def execute_flow_plan(
     )
 
 
+def _resume_metadata_diagnostics(
+    plan: FlowExecutionPlan,
+    resume_trace: FlowExecutionTrace | None,
+) -> tuple[FlowDiagnostic, ...]:
+    return _resume_isolation_metadata_diagnostics(
+        plan, resume_trace
+    ) + _resume_skills_metadata_diagnostics(plan, resume_trace)
+
+
 def _resume_isolation_metadata_diagnostics(
     plan: FlowExecutionPlan,
     resume_trace: FlowExecutionTrace | None,
@@ -840,6 +859,64 @@ def _resume_isolation_metadata_diagnostics(
     if actual_isolation != expected_isolation:
         return (_stale_resume_isolation_diagnostic(),)
     return ()
+
+
+def _resume_skills_metadata_diagnostics(
+    plan: FlowExecutionPlan,
+    resume_trace: FlowExecutionTrace | None,
+) -> tuple[FlowDiagnostic, ...]:
+    if resume_trace is None:
+        return ()
+    expected = flow_resume_skills_metadata(plan)
+    actual = resume_trace.metadata
+    if not expected:
+        if FLOW_RESUME_SKILLS_METADATA_KEY in actual:
+            return (_stale_resume_skills_diagnostic(),)
+        return ()
+    expected_skills = expected.get(FLOW_RESUME_SKILLS_METADATA_KEY)
+    actual_skills = actual.get(FLOW_RESUME_SKILLS_METADATA_KEY)
+    if not isinstance(expected_skills, Mapping):
+        return ()
+    if not isinstance(actual_skills, Mapping):
+        return (_widened_resume_skills_diagnostic(),)
+    if _skills_metadata_policy_denied(actual_skills):
+        return (_policy_denied_resume_skills_diagnostic(),)
+    expected_nodes = _resume_skills_node_names(expected_skills)
+    actual_nodes = _resume_skills_node_names(actual_skills)
+    if expected_nodes is None or actual_nodes is None:
+        return (_stale_resume_skills_diagnostic(),)
+    if expected_nodes - actual_nodes:
+        return (_widened_resume_skills_diagnostic(),)
+    if actual_skills != expected_skills:
+        return (_stale_resume_skills_diagnostic(),)
+    return ()
+
+
+def _resume_skills_node_names(
+    value: Mapping[str, object],
+) -> set[str] | None:
+    nodes = value.get("nodes")
+    if not isinstance(nodes, Mapping):
+        return None
+    names: set[str] = set()
+    for node_name in nodes:
+        if not isinstance(node_name, str) or not node_name.strip():
+            return None
+        names.add(node_name)
+    return names
+
+
+def _skills_metadata_policy_denied(value: object) -> bool:
+    if isinstance(value, Mapping):
+        status = value.get("status")
+        if status == "policy_denied":
+            return True
+        return any(
+            _skills_metadata_policy_denied(item) for item in value.values()
+        )
+    if isinstance(value, list | tuple):
+        return any(_skills_metadata_policy_denied(item) for item in value)
+    return False
 
 
 def _resume_isolation_node_names(
@@ -877,6 +954,38 @@ def _stale_resume_isolation_diagnostic() -> FlowDiagnostic:
             "Recompile the original strict flow or restart after policy "
             "changes."
         ),
+    )
+
+
+def _widened_resume_skills_diagnostic() -> FlowDiagnostic:
+    return _execution_diagnostic(
+        code="flow.execution.skills_resume_metadata_widened",
+        path="trace.metadata.skills",
+        message="Flow resume skills metadata is missing or narrower.",
+        hint=(
+            "Resume with metadata captured from the exact paused skills plan."
+        ),
+    )
+
+
+def _stale_resume_skills_diagnostic() -> FlowDiagnostic:
+    return _execution_diagnostic(
+        code="flow.execution.skills_resume_metadata_stale",
+        path="trace.metadata.skills",
+        message="Flow resume skills metadata does not match this plan.",
+        hint=(
+            "Recompile the original strict flow or restart after skills "
+            "policy changes."
+        ),
+    )
+
+
+def _policy_denied_resume_skills_diagnostic() -> FlowDiagnostic:
+    return _execution_diagnostic(
+        code="flow.execution.skills_resume_metadata_policy_denied",
+        path="trace.metadata.skills",
+        message="Flow resume skills metadata is policy denied.",
+        hint="Restart the flow with an authorized skills registry.",
     )
 
 

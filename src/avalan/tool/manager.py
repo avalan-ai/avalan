@@ -27,6 +27,7 @@ from ..entities import (
     ToolTransformer,
     ToolTransformerResult,
 )
+from ..skill.bootstrap import skills_bootstrap_prompt
 from . import Tool, ToolSet
 from .json_schema import get_json_schema
 from .name_policy import ToolNamePolicy
@@ -52,6 +53,7 @@ class ToolManager:
     _aliases: dict[str, list[str]]
     _available_aliases: dict[str, list[str]]
     _available_tool_names: set[str]
+    _bootstrap_tool_names: set[str]
     _descriptors: dict[str, ToolDescriptor]
     _tool_name_policy: ToolNamePolicy
     _tools: dict[str, Callable[..., Any]] | None = None
@@ -157,6 +159,16 @@ class ToolManager:
     def list_tools(self) -> list[ToolDescriptor]:
         """Return descriptors for enabled tools."""
         return list(self._descriptors.values())
+
+    def bootstrap_prompt(self) -> str | None:
+        """Return compact prompt text for enabled toolsets."""
+        return skills_bootstrap_prompt(
+            tuple(
+                tool_name
+                for tool_name in self._descriptors
+                if tool_name in self._bootstrap_tool_names
+            )
+        )
 
     def describe_tool(self, name: str) -> ToolDescriptor | None:
         """Return the descriptor for an enabled tool."""
@@ -315,6 +327,7 @@ class ToolManager:
         self._aliases = {}
         self._available_aliases = {}
         self._available_tool_names = set()
+        self._bootstrap_tool_names = set()
         self._descriptors = {}
 
         if available_toolsets:
@@ -337,9 +350,12 @@ class ToolManager:
         self._tools = {}
         enabled_names: list[str] = []
         for toolset in enabled_toolsets:
-            enabled_names.extend(
-                name for name, _aliases in self._toolset_tool_names(toolset)
-            )
+            toolset_names = self._toolset_tool_names(toolset)
+            enabled_names.extend(name for name, _aliases in toolset_names)
+            if getattr(toolset, "bootstrap_enabled", True):
+                self._bootstrap_tool_names.update(
+                    name for name, _aliases in toolset_names
+                )
         self._tool_name_policy = ToolNamePolicy(
             settings=self._settings.tool_name_policy
         ).bind(enabled_names)
@@ -1449,6 +1465,11 @@ class ToolManager:
             and current.cancellation_checker is not None
         ):
             changes["cancellation_checker"] = current.cancellation_checker
+        if (
+            next_context.skills_registry is None
+            and current.skills_registry is not None
+        ):
+            changes["skills_registry"] = current.skills_registry
         if not changes:
             return next_context
         return replace(next_context, **changes)

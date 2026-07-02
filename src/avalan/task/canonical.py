@@ -1,4 +1,8 @@
 from ..filesystem import read_text
+from ..skill.observability import (
+    SkillEventPublisher,
+    assert_skill_event_publisher,
+)
 from ..types import LooseJsonValue
 from .container import task_container_canonical_value
 from .definition import (
@@ -13,6 +17,7 @@ from .schema import (
     resolve_schema_ref,
     task_definition_schema_base_path,
 )
+from .skills import task_definition_with_skills_identity
 
 from collections.abc import Mapping
 from enum import StrEnum
@@ -57,11 +62,18 @@ class TaskCanonicalizationError(ValueError):
 async def canonical_definition(
     definition: TaskDefinition,
     *,
+    event_manager: SkillEventPublisher | None = None,
     schema_base_path: str | Path | None = None,
 ) -> dict[str, object]:
     assert isinstance(definition, TaskDefinition)
+    assert_skill_event_publisher(event_manager)
     schema_base_path = task_definition_schema_base_path(
         definition,
+        schema_base_path=schema_base_path,
+    )
+    definition = await task_definition_with_skills_identity(
+        definition,
+        event_manager=event_manager,
         schema_base_path=schema_base_path,
     )
     return {
@@ -155,6 +167,11 @@ async def canonical_definition(
             "queue": definition.run.queue,
             "timeout_seconds": definition.run.timeout_seconds,
         },
+        "skills": (
+            _normalize_definition_mapping(definition.skills_identity)
+            if definition.skills_identity is not None
+            else None
+        ),
         "task": {
             "annotations": _normalize_definition_mapping(
                 definition.task.annotations
@@ -170,11 +187,14 @@ async def canonical_definition(
 async def canonical_json(
     definition: TaskDefinition,
     *,
+    event_manager: SkillEventPublisher | None = None,
     schema_base_path: str | Path | None = None,
 ) -> str:
+    assert_skill_event_publisher(event_manager)
     return dumps(
         await canonical_definition(
             definition,
+            event_manager=event_manager,
             schema_base_path=schema_base_path,
         ),
         allow_nan=False,
@@ -187,10 +207,13 @@ async def canonical_json(
 async def spec_hash(
     definition: TaskDefinition,
     *,
+    event_manager: SkillEventPublisher | None = None,
     schema_base_path: str | Path | None = None,
 ) -> str:
+    assert_skill_event_publisher(event_manager)
     canonical = await canonical_json(
         definition,
+        event_manager=event_manager,
         schema_base_path=schema_base_path,
     )
     return sha256(canonical.encode("utf-8")).hexdigest()

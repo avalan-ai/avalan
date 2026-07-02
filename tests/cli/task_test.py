@@ -4454,7 +4454,8 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].code, "flow.read_failed")
         loader.load_validation_result.assert_called_once_with(
-            root / "flow.toml"
+            root / "flow.toml",
+            skills_settings=None,
         )
 
     def test_flow_resolver_loads_flow_and_reports_load_issues(self) -> None:
@@ -4703,8 +4704,14 @@ class CliTaskCommandShellTestCase(TestCase):
                 )
 
         self.assertEqual(issues, (issue,))
-        loader.load_validation_result.assert_called_once_with(flow_path)
-        loader.load_result.assert_called_once_with(flow_path)
+        loader.load_validation_result.assert_called_once_with(
+            flow_path,
+            skills_settings=None,
+        )
+        loader.load_result.assert_called_once_with(
+            flow_path,
+            skills_settings=None,
+        )
 
     def test_strict_flow_resolver_compiles_graph_without_runtime_build(
         self,

@@ -156,6 +156,71 @@ _REMOTE_SHELL_AUTHORITY_MARKERS = (
     "allowpipelines",
     "allowshell",
 )
+_REMOTE_SKILL_AUTHORITY_KEYS = frozenset(
+    {
+        "allowhiddenpaths",
+        "authoritykind",
+        "authoritykinds",
+        "bootstrapenabled",
+        "cursorlimits",
+        "indexlimits",
+        "loadskills",
+        "maxactivecursors",
+        "maxbytesperread",
+        "maxcursorageseconds",
+        "maxdirectoryentriespersource",
+        "maxfilespersource",
+        "maxindexedbytes",
+        "maxlinesperread",
+        "maxresourcesperskill",
+        "maxresourcespersource",
+        "maxskills",
+        "maxsourcedepth",
+        "maxsources",
+        "modelfacingload",
+        "modelfacingloadbehavior",
+        "packagepath",
+        "packagepaths",
+        "readlimits",
+        "registry",
+        "registries",
+        "registrymutation",
+        "registrymutations",
+        "registryversion",
+        "rootpath",
+        "rootpaths",
+        "skillconfig",
+        "skillconfiguration",
+        "skillload",
+        "skillloadbehavior",
+        "skillregistry",
+        "skillregistries",
+        "skillsettings",
+        "skills",
+        "skillsconfig",
+        "skillsconfiguration",
+        "skillsload",
+        "skillsloadbehavior",
+        "skillsregistry",
+        "skillsregistries",
+        "skillssettings",
+        "sourceauthorities",
+        "sourceauthority",
+        "sourcelabels",
+        "sourcelimits",
+        "sourceroot",
+        "sourceroots",
+        "sources",
+    }
+)
+_REMOTE_SKILL_AUTHORITY_PREFIXES = (
+    "skillregistry",
+    "skillsregistry",
+    "skillsettings",
+    "skillssettings",
+    "skillsource",
+    "skillssource",
+)
 _JSON_SCHEMA_DECLARATION_MAP_KEYS = frozenset(
     {
         "$defs",
@@ -197,7 +262,11 @@ def remote_runtime_authority_key(key: object) -> bool:
         return True
     if normalized in _REMOTE_SHELL_AUTHORITY_KEYS:
         return True
+    if normalized in _REMOTE_SKILL_AUTHORITY_KEYS:
+        return True
     if normalized.startswith(_REMOTE_SHELL_AUTHORITY_PREFIXES):
+        return True
+    if normalized.startswith(_REMOTE_SKILL_AUTHORITY_PREFIXES):
         return True
     if any(marker in normalized for marker in _REMOTE_SHELL_AUTHORITY_MARKERS):
         return True

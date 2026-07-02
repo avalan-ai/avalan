@@ -92,6 +92,12 @@ from avalan.model.stream import (
     StreamItemKind,
 )
 from avalan.server.routers import flow as flow_router_module
+from avalan.skill import (
+    SkillReadLimits,
+    SkillSettingsSurface,
+    TrustedSkillSettings,
+    UntrustedSkillSettings,
+)
 from avalan.task import (
     DROPPED_MARKER,
     ENCRYPTED_MARKER,
@@ -1228,6 +1234,71 @@ def load(path):
 
         self.assertTrue(report.compatible)
         self.assertEqual(report.issues, ())
+
+    def test_validation_reports_widened_strict_flow_definition_skills(
+        self,
+    ) -> None:
+        flow = replace(
+            _strict_echo_definition(),
+            skills=_wider_skills(),
+        )
+        runner = FlowTaskTargetRunner(strict_resolver=lambda _: flow)
+
+        issues = self._run_validate(
+            runner,
+            replace(self._definition(), skills=_restricted_skills()),
+            TaskValidationContext(),
+        )
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(
+            issues[0].code,
+            "task.flow_skills_registry_widened",
+        )
+
+    def test_validation_reports_widened_strict_flow_skills_config(
+        self,
+    ) -> None:
+        flow = replace(
+            _strict_echo_definition(),
+            skills_config=UntrustedSkillSettings(
+                surface=SkillSettingsSurface.FLOW,
+                read_limits=SkillReadLimits(max_lines_per_read=200),
+            ),
+        )
+        runner = FlowTaskTargetRunner(strict_resolver=lambda _: flow)
+
+        issues = self._run_validate(
+            runner,
+            replace(self._definition(), skills=_restricted_skills()),
+            TaskValidationContext(),
+        )
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(
+            issues[0].code,
+            "task.flow_skills_registry_widened",
+        )
+
+    def test_validation_reports_widened_precompiled_plan_skills(self) -> None:
+        compile_result = asyncio_run(
+            compile_flow_definition(_strict_echo_definition())
+        )
+        assert compile_result.plan is not None
+        plan = replace(compile_result.plan, skills=_wider_skills())
+        runner = FlowTaskTargetRunner(strict_resolver=lambda _: plan)
+
+        issues = self._run_validate(
+            runner,
+            replace(self._definition(), skills=_restricted_skills()),
+            TaskValidationContext(),
+        )
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(
+            issues[0].code,
+            "task.flow_skills_registry_widened",
+        )
 
     def _run_validate(
         self,
@@ -3686,6 +3757,139 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(direct, queued)
         self.assertEqual(queued, "ready")
+
+    async def test_run_rejects_precompiled_plan_with_wider_flow_skills(
+        self,
+    ) -> None:
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
+        assert compile_result.plan is not None
+        restricted = _restricted_skills()
+        wider = _wider_skills()
+        plan = replace(compile_result.plan, skills=wider)
+        runner = FlowTaskTargetRunner(strict_resolver=lambda _: plan)
+        definition = replace(self._context_definition(), skills=restricted)
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(self._context(definition=definition))
+
+        self.assertEqual(
+            error.exception.issues[0].code,
+            "task.flow_skills_registry_widened",
+        )
+
+    async def test_run_rejects_precompiled_plan_with_wider_node_skills(
+        self,
+    ) -> None:
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
+        assert compile_result.plan is not None
+        restricted = _restricted_skills()
+        wider = _wider_skills()
+        node = replace(compile_result.plan.nodes[0], skills=wider)
+        plan = replace(
+            compile_result.plan,
+            skills=restricted,
+            nodes=(node,),
+        )
+        runner = FlowTaskTargetRunner(strict_resolver=lambda _: plan)
+        definition = replace(self._context_definition(), skills=restricted)
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(self._context(definition=definition))
+
+        self.assertEqual(
+            error.exception.issues[0].code,
+            "task.flow_skills_registry_widened",
+        )
+
+    async def test_run_accepts_strict_flow_definition_with_allowed_skills(
+        self,
+    ) -> None:
+        restricted = _restricted_skills()
+        flow = replace(_strict_echo_definition(), skills=restricted)
+        runner = FlowTaskTargetRunner(strict_resolver=lambda _: flow)
+        definition = replace(self._context_definition(), skills=restricted)
+
+        output = await runner.run(
+            self._context(definition=definition, input_value="ready")
+        )
+
+        self.assertEqual(output, "ready")
+
+    async def test_run_merges_narrowing_strict_flow_skills_config(
+        self,
+    ) -> None:
+        restricted = _restricted_skills()
+        flow = replace(
+            _strict_echo_definition(),
+            skills_config=UntrustedSkillSettings(
+                surface=SkillSettingsSurface.FLOW,
+                read_limits=SkillReadLimits(max_lines_per_read=10),
+            ),
+        )
+        runner = FlowTaskTargetRunner(strict_resolver=lambda _: flow)
+        definition = replace(self._context_definition(), skills=restricted)
+
+        output = await runner.run(
+            self._context(definition=definition, input_value="ready")
+        )
+
+        self.assertEqual(output, "ready")
+
+    async def test_run_injects_task_skills_into_strict_flow_definition(
+        self,
+    ) -> None:
+        restricted = _restricted_skills()
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_echo_definition()
+        )
+        definition = replace(self._context_definition(), skills=restricted)
+
+        output = await runner.run(
+            self._context(definition=definition, input_value="ready")
+        )
+
+        self.assertEqual(output, "ready")
+
+    async def test_run_injects_task_skills_into_precompiled_plan(
+        self,
+    ) -> None:
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
+        assert compile_result.plan is not None
+        restricted = _restricted_skills()
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: compile_result.plan
+        )
+        definition = replace(self._context_definition(), skills=restricted)
+
+        output = await runner.run(
+            self._context(definition=definition, input_value="ready")
+        )
+
+        self.assertEqual(output, "ready")
+
+    async def test_run_accepts_precompiled_plan_with_allowed_skills(
+        self,
+    ) -> None:
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
+        assert compile_result.plan is not None
+        restricted = _restricted_skills()
+        plan = replace(compile_result.plan, skills=restricted)
+        runner = FlowTaskTargetRunner(strict_resolver=lambda _: plan)
+        definition = replace(self._context_definition(), skills=restricted)
+
+        output = await runner.run(
+            self._context(definition=definition, input_value="ready")
+        )
+
+        self.assertEqual(output, "ready")
 
     async def test_run_rejects_invalid_strict_input_before_events(
         self,
@@ -6968,6 +7172,18 @@ def _strict_echo_definition() -> FlowDefinition:
                 ),
             ),
         ),
+    )
+
+
+def _restricted_skills() -> TrustedSkillSettings:
+    return TrustedSkillSettings(
+        read_limits=SkillReadLimits(max_lines_per_read=20)
+    )
+
+
+def _wider_skills() -> TrustedSkillSettings:
+    return TrustedSkillSettings(
+        read_limits=SkillReadLimits(max_lines_per_read=200)
     )
 
 

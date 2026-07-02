@@ -24,6 +24,18 @@ Tool names are namespaced. Enabling `math.calculator` exposes one tool;
 enabling `database` or `database.*` exposes the database toolset. Shell tools
 use explicit names such as `shell.rg` and `shell.pdftotext`.
 
+Skills fit the same loop but have a narrower mental model:
+
+- Agents think.
+- Tools act.
+- Skills teach.
+- Registries disclose.
+
+A skill is Markdown instruction content with model-safe metadata. It does not
+execute, grant tools, install packages, mount paths, or change policy. A
+trusted registry is built before the run; the model can then discover and
+read bounded skill resources through read-only `skills.*` tools.
+
 ## Enable Tools
 
 Declare tools in an agent file:
@@ -92,11 +104,187 @@ enabled.
 | `memory` | `memory.message.read`, `memory.read`, `memory.list`, `memory.stores` | Retrieve prior messages and permanent memory partitions. |
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
+| `skills` | `skills.list`, `skills.match`, `skills.read`, `skills.check` | Discover and read trusted instruction resources through a registry. |
 | `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline` | Read, inspect, search, transform, and compose workspace file operations under policy limits. `shell.pipeline` also requires `allow_pipelines = true`. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
 provider and registered deliberately.
+
+## Skills Tools
+
+The `skills` namespace exposes reusable operating instructions without
+stuffing every skill body into the prompt. The registry is operator or SDK
+configuration; the model-facing tools are read/query-only.
+
+Use `skills.match` or `skills.list` to discover candidates, `skills.read` to
+read the selected instruction resource, and `skills.check` to inspect
+availability or diagnostics without reading content. There is no
+model-facing `skills.load` tool.
+
+```toml
+[tool]
+enable = ["skills.match", "skills.read"]
+
+[tool.skills]
+source_labels = ["workspace-main"]
+skill_ids = ["pdf"]
+bootstrap = "auto"
+
+[tool.skills.read_limits]
+max_bytes_per_read = 65536
+max_lines_per_read = 2000
+```
+
+`[tool.skills]` in agent TOML is a narrowing surface. It can turn skills off,
+turn bootstrap instructions off, filter trusted authority kinds, filter source
+labels, filter skill IDs, and reduce read, index, source, cursor, privacy, or
+observability settings. It cannot define `source` or `sources`; trusted roots
+come from the SDK, CLI, or host process.
+
+Agent CLI commands accept trusted source flags:
+
+```sh
+echo "Use the PDF skill to plan the inspection workflow." \
+  | avalan agent run docs/examples/agent_skills_pdf.toml \
+      --tool skills.match \
+      --tool skills.read \
+      --tool-skills-source workspace-main=docs/examples/skills \
+      --tool-skills-source-authority workspace-main=workspace:docs \
+      --tool-skills-skill pdf \
+      --tool-skills-max-bytes-per-read 65536 \
+      --display-tools \
+      --display-events
+```
+
+For SDK construction, pass trusted settings through the tool context:
+
+```python
+from pathlib import Path
+
+from avalan.skill import (
+    SkillReadLimits,
+    SkillSourceConfig,
+    TrustedSkillSettings,
+    WorkspaceSkillSourceAuthority,
+)
+from avalan.tool.context import ToolSettingsContext
+
+skills = TrustedSkillSettings(
+    sources=(
+        SkillSourceConfig(
+            label="workspace-main",
+            authority=WorkspaceSkillSourceAuthority(workspace_id="docs"),
+            root_path=Path("docs/examples/skills"),
+        ),
+    ),
+    allowed_skill_ids=("pdf",),
+    read_limits=SkillReadLimits(max_bytes_per_read=65536),
+)
+tool_settings = ToolSettingsContext(skills=skills)
+```
+
+The current response envelope fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | Compact result classification. |
+| `registry_version` | Deterministic version visible to this run. |
+| `items` | Skill metadata or match candidates for discovery tools. |
+| `content` | Bounded resource content for `skills.read`. |
+| `diagnostics` | Structured findings with code, status, message, path, hint, and optional candidates/details. |
+| `provenance` | Model-facing source label, skill ID, resource ID, and content identity. |
+| `next_cursor` | Continuation handle when a resource read is truncated. |
+
+Statuses are `ok`, `empty`, `ambiguous`, `not_found`, `disabled`,
+`unavailable`, `malformed`, `policy_denied`, `truncated`, `stale`, and
+`blocked`.
+
+Diagnostic codes use the `skills.` prefix: `skills.empty_registry`,
+`skills.no_match`, `skills.not_found`, `skills.ambiguous_name`,
+`skills.disabled`, `skills.source_unavailable`,
+`skills.manifest_malformed`, `skills.resource_missing`,
+`skills.resource_outside_root`, `skills.resource_oversized`,
+`skills.resource_stale`, `skills.duplicate_id`,
+`skills.runtime_source_unavailable`, `skills.resource_binary`,
+`skills.policy_denied`, and `skills.syntax_unsupported`.
+
+### Flow and Task Skills
+
+Strict flows support a top-level `[skills]` table and node-level
+`[nodes.<name>.skills]` tables for agent nodes and strict tool nodes that call
+canonical skills tools. Flow settings also narrow trusted settings supplied by
+the SDK, host process, or registry-backed loader.
+
+```toml
+[skills]
+source_labels = ["workspace-main"]
+skill_ids = ["pdf"]
+
+[nodes.read_skill]
+type = "tool"
+ref = "skills.read"
+
+[nodes.read_skill.skills]
+skill_ids = ["pdf"]
+```
+
+Tasks support `[skills]` for eligible targets, including agent, flow, model,
+task, and tool targets. Queued tasks capture a durable skills identity with
+settings and source fingerprints, enabled skills tools, allowed skill IDs, and
+registry metadata. Workers revalidate that identity before execution and fail
+closed if the registry is missing, stale, wider than requested, unavailable,
+malformed, or policy denied.
+
+Flow resume uses the same principle: paused strict flows record skills
+metadata, and resume rejects stale, widened, or policy-denied metadata instead
+of silently substituting a different registry.
+
+The standalone flow and task CLIs expose `--tool` for strict tool nodes, but
+they do not make untrusted flow/task input a skills authority. Provide trusted
+skills settings from SDK or host code for flow/task examples that contain
+`[skills]`, and start workers with the same trusted settings in production.
+
+### Source Authority, Paths, and Privacy
+
+Source authority is explicit and logical. Supported authority kinds are
+`bundled`, `workspace`, `user_local`, `plugin_provided`, and
+`preinstalled_remote`. Model-visible output uses source labels, skill IDs,
+resource IDs, registry versions, and provenance rather than host paths.
+
+Skill resource reads are path-policy checked: traversal, undeclared resource
+IDs, hidden paths unless allowed, resources outside the authorized root,
+binary or non-UTF-8 resources, stale resources, and oversized reads are
+reported as envelopes with diagnostics. Skill content is treated as
+untrusted instruction text and remains subordinate to system, developer, user,
+repository, runtime, and tool policy.
+
+Privacy defaults include source labels, authority, and diagnostic paths while
+redacting host paths. Operators can narrow exposure with `[tool.skills.privacy]`
+or the CLI diagnostics/observability flags. Server projections redact skill
+bodies and host-looking paths from remote protocol output.
+
+### Server, MCP, and A2A Boundaries
+
+Serving an agent over OpenAI-compatible HTTP, MCP, or A2A does not let remote
+callers define skill sources, widen limits, or add model-facing `skills.*`
+tool definitions. Remote request tools named `skills.*` are rejected; only the
+served agent's trusted configuration can expose the skills registry.
+
+MCP and A2A callers may trigger the served agent's configured `skills.*`
+tools if the served agent enabled them, just as they may trigger other
+enabled tools. Treat served skills as a disclosure surface: choose trusted
+source roots deliberately, use model-safe labels, and keep diagnostic and
+observability output appropriate for the protocol audience.
+
+### Migration Note
+
+Unsupported early skill syntax has no backward compatibility guarantee.
+Unknown fields such as `source`, `sources`, or model-facing `skills.load`
+must be removed or moved into trusted operator settings. Current supported
+skill packages use Markdown `SKILL.md` files with front matter containing at
+least `name` and `description`; `tags`, `version`, `enabled`, and `resources`
+are supported optional fields.
 
 ## MCP: Tools from HTTP Servers
 

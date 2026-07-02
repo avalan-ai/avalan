@@ -71,6 +71,22 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertEqual(settings.tool_name_policy.prefix, "avl_")
         self.assertEqual(settings.recovery_formats, [])
 
+    def test_preserve_flow_context_carries_skills_registry(self) -> None:
+        skills_registry = object()
+        current = ToolCallContext(
+            flow_tool_node=True,
+            skills_registry=skills_registry,
+        )
+        next_context = ToolCallContext(flow_tool_node=True)
+
+        preserved = ToolManager._preserve_flow_context(
+            current,
+            next_context,
+            flow_tool_node=True,
+        )
+
+        self.assertIs(preserved.skills_registry, skills_registry)
+
     def test_settings_accept_outcome_compatibility_modes(self):
         settings = ToolManagerSettings(
             execution_mode=ToolManagerExecutionMode.OUTCOMES,

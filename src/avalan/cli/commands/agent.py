@@ -55,6 +55,23 @@ from ...sandbox import (
     SeatbeltSandboxBackend,
 )
 from ...server import agents_server
+from ...skill import (
+    BundledSkillSourceAuthority,
+    PluginProvidedSkillSourceAuthority,
+    PreinstalledRemoteSkillSourceAuthority,
+    SkillCursorLimits,
+    SkillIndexLimits,
+    SkillObservabilitySettings,
+    SkillPrivacySettings,
+    SkillReadLimits,
+    SkillSourceAuthority,
+    SkillSourceAuthorityKind,
+    SkillSourceConfig,
+    SkillSourceLimits,
+    TrustedSkillSettings,
+    UserLocalSkillSourceAuthority,
+    WorkspaceSkillSourceAuthority,
+)
 from ...tool.browser import BrowserToolSettings
 from ...tool.context import ToolSettingsContext
 from ...tool.database.settings import DatabaseToolSettings
@@ -513,6 +530,69 @@ def _shell_tool_template_settings(
             rendered[name] = dict(value)
         elif _is_simple_string_sequence(value):
             rendered[name] = tuple(value)
+    return rendered
+
+
+def _skills_tool_template_settings(
+    settings: TrustedSkillSettings | None,
+) -> dict[str, object] | None:
+    if settings is None:
+        return None
+
+    default_settings = TrustedSkillSettings()
+    rendered: dict[str, object] = {}
+    if settings.enabled != default_settings.enabled:
+        rendered["enabled"] = settings.enabled
+    if settings.bootstrap_enabled != default_settings.bootstrap_enabled:
+        rendered["bootstrap"] = "auto" if settings.bootstrap_enabled else "off"
+    if settings.authority_kinds != default_settings.authority_kinds:
+        rendered["authority_kinds"] = tuple(
+            authority_kind.value for authority_kind in settings.authority_kinds
+        )
+    if settings.sources:
+        rendered["source_labels"] = tuple(
+            source.label for source in settings.sources
+        )
+    if settings.allowed_skill_ids:
+        rendered["skill_ids"] = settings.allowed_skill_ids
+
+    for name, value, default_value in (
+        ("read_limits", settings.read_limits, default_settings.read_limits),
+        ("index_limits", settings.index_limits, default_settings.index_limits),
+        (
+            "source_limits",
+            settings.source_limits,
+            default_settings.source_limits,
+        ),
+        (
+            "cursor_limits",
+            settings.cursor_limits,
+            default_settings.cursor_limits,
+        ),
+        ("privacy", settings.privacy, default_settings.privacy),
+        (
+            "observability",
+            settings.observability,
+            default_settings.observability,
+        ),
+    ):
+        nested = _skills_dataclass_template_settings(value, default_value)
+        if nested:
+            rendered[name] = nested
+
+    return rendered or None
+
+
+def _skills_dataclass_template_settings(
+    settings: Any,
+    default_settings: Any,
+) -> dict[str, object]:
+    rendered: dict[str, object] = {}
+    for field in fields(settings):
+        name = field.name
+        value = getattr(settings, name)
+        if value != getattr(default_settings, name):
+            rendered[name] = value
     return rendered
 
 
@@ -1284,6 +1364,311 @@ def _cli_isolation_source() -> IsolationSettingsSource:
     return trusted_isolation_source(IsolationSettingsSurface.CLI)
 
 
+def _agent_skills_settings(args: Namespace) -> TrustedSkillSettings | None:
+    if not _has_agent_skills_args(args):
+        return None
+
+    source_roots = _skills_assignment_map(
+        getattr(args, "tool_skills_source", None),
+        "--tool-skills-source",
+    )
+    source_authorities = _skills_source_authority_map(
+        getattr(args, "tool_skills_source_authority", None),
+    )
+    source_packages = _skills_assignment_map(
+        getattr(args, "tool_skills_source_package", None),
+        "--tool-skills-source-package",
+    )
+    allow_hidden_labels = _skills_label_tuple(
+        getattr(args, "tool_skills_source_allow_hidden", None),
+        "--tool-skills-source-allow-hidden",
+    )
+    unknown_labels = (
+        set(source_authorities)
+        | set(source_packages)
+        | set(allow_hidden_labels)
+    ) - set(source_roots)
+    assert not unknown_labels, "skills source options reference unknown labels"
+
+    sources = tuple(
+        SkillSourceConfig(
+            label=label,
+            authority=source_authorities.get(
+                label,
+                WorkspaceSkillSourceAuthority(),
+            ),
+            root_path=root_path,
+            package_path=source_packages.get(label),
+            allow_hidden_paths=label in allow_hidden_labels,
+        )
+        for label, root_path in source_roots.items()
+    )
+
+    values: dict[str, object] = {
+        "enabled": not bool(getattr(args, "tool_skills_disabled", False)),
+        "bootstrap_enabled": (
+            getattr(args, "tool_skills_bootstrap", None) != "off"
+        ),
+        "sources": sources,
+        "read_limits": _skills_read_limits(args),
+        "index_limits": _skills_index_limits(args),
+        "source_limits": _skills_source_limits(args),
+        "cursor_limits": _skills_cursor_limits(args),
+        "privacy": _skills_privacy_settings(args),
+        "observability": _skills_observability_settings(args),
+    }
+    authority_kinds = _skills_authority_kind_tuple(
+        getattr(args, "tool_skills_authority_kind", None)
+    )
+    if authority_kinds:
+        values["authority_kinds"] = authority_kinds
+    skill_ids = tuple(getattr(args, "tool_skills_skill", None) or ())
+    if skill_ids:
+        values["allowed_skill_ids"] = skill_ids
+    return TrustedSkillSettings(**cast(Any, values))
+
+
+def _has_agent_skills_args(args: Namespace) -> bool:
+    for name in (
+        "tool_skills_source",
+        "tool_skills_source_authority",
+        "tool_skills_source_package",
+        "tool_skills_source_allow_hidden",
+        "tool_skills_authority_kind",
+        "tool_skills_skill",
+        "tool_skills_disabled",
+        "tool_skills_bootstrap",
+        "tool_skills_diagnostics",
+        "tool_skills_observability",
+        "tool_skills_max_bytes_per_read",
+        "tool_skills_max_lines_per_read",
+        "tool_skills_max_skills",
+        "tool_skills_max_resources_per_skill",
+        "tool_skills_max_indexed_bytes",
+        "tool_skills_max_sources",
+        "tool_skills_max_resources_per_source",
+        "tool_skills_max_source_depth",
+        "tool_skills_max_files_per_source",
+        "tool_skills_max_directory_entries_per_source",
+        "tool_skills_max_active_cursors",
+        "tool_skills_max_cursor_age_seconds",
+    ):
+        value = getattr(args, name, None)
+        if isinstance(value, bool):
+            if value:
+                return True
+        elif value is not None:
+            return True
+    return False
+
+
+def _skills_assignment_map(
+    items: Sequence[str] | None,
+    option_name: str,
+) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for item in items or ():
+        label, value = _skills_assignment(item, option_name)
+        assert label not in values, f"{option_name} labels must be unique"
+        values[label] = value
+    return values
+
+
+def _skills_assignment(value: str, option_name: str) -> tuple[str, str]:
+    assert isinstance(value, str), f"{option_name} must be a string"
+    label, separator, item = value.partition("=")
+    assert separator, f"{option_name} must use LABEL=VALUE"
+    label = label.strip()
+    item = item.strip()
+    assert label, f"{option_name} label must be non-empty"
+    assert item, f"{option_name} value must be non-empty"
+    return label, item
+
+
+def _skills_label_tuple(
+    values: Sequence[str] | None,
+    option_name: str,
+) -> tuple[str, ...]:
+    labels: list[str] = []
+    for value in values or ():
+        assert isinstance(value, str), f"{option_name} must be a string"
+        label = value.strip()
+        assert label, f"{option_name} label must be non-empty"
+        labels.append(label)
+    assert len(set(labels)) == len(
+        labels
+    ), f"{option_name} labels must be unique"
+    return tuple(labels)
+
+
+def _skills_source_authority_map(
+    items: Sequence[str] | None,
+) -> dict[str, SkillSourceAuthority]:
+    values: dict[str, SkillSourceAuthority] = {}
+    for item in items or ():
+        label, value = _skills_assignment(
+            item,
+            "--tool-skills-source-authority",
+        )
+        assert (
+            label not in values
+        ), "--tool-skills-source-authority labels must be unique"
+        values[label] = _skills_source_authority(value)
+    return values
+
+
+def _skills_source_authority(value: str) -> SkillSourceAuthority:
+    kind_value, separator, identity = value.partition(":")
+    try:
+        kind = SkillSourceAuthorityKind(kind_value)
+    except ValueError as exc:
+        raise AssertionError("unsupported skills source authority") from exc
+    if kind is SkillSourceAuthorityKind.BUNDLED:
+        return BundledSkillSourceAuthority(
+            bundle_id=identity if separator else "avalan"
+        )
+    if kind is SkillSourceAuthorityKind.WORKSPACE:
+        return WorkspaceSkillSourceAuthority(
+            workspace_id=identity if separator else "workspace"
+        )
+    if kind is SkillSourceAuthorityKind.USER_LOCAL:
+        return UserLocalSkillSourceAuthority(
+            profile_id=identity if separator else "user-local"
+        )
+    if kind is SkillSourceAuthorityKind.PLUGIN_PROVIDED:
+        assert identity, "plugin_provided skills authority requires plugin id"
+        return PluginProvidedSkillSourceAuthority(plugin_id=identity)
+    if kind is SkillSourceAuthorityKind.PREINSTALLED_REMOTE:
+        assert (
+            identity
+        ), "preinstalled_remote skills authority requires registry id"
+        return PreinstalledRemoteSkillSourceAuthority(registry_id=identity)
+    raise AssertionError("unsupported skills source authority")
+
+
+def _skills_authority_kind_tuple(
+    values: Sequence[str] | None,
+) -> tuple[SkillSourceAuthorityKind, ...]:
+    if not values:
+        return ()
+    return tuple(SkillSourceAuthorityKind(value) for value in values)
+
+
+def _skills_read_limits(args: Namespace) -> SkillReadLimits:
+    return SkillReadLimits(
+        **cast(
+            Any,
+            _skills_values(
+                args,
+                {
+                    "max_bytes_per_read": "tool_skills_max_bytes_per_read",
+                    "max_lines_per_read": "tool_skills_max_lines_per_read",
+                },
+            ),
+        )
+    )
+
+
+def _skills_index_limits(args: Namespace) -> SkillIndexLimits:
+    return SkillIndexLimits(
+        **cast(
+            Any,
+            _skills_values(
+                args,
+                {
+                    "max_skills": "tool_skills_max_skills",
+                    "max_resources_per_skill": (
+                        "tool_skills_max_resources_per_skill"
+                    ),
+                    "max_indexed_bytes": "tool_skills_max_indexed_bytes",
+                },
+            ),
+        )
+    )
+
+
+def _skills_source_limits(args: Namespace) -> SkillSourceLimits:
+    return SkillSourceLimits(
+        **cast(
+            Any,
+            _skills_values(
+                args,
+                {
+                    "max_sources": "tool_skills_max_sources",
+                    "max_resources_per_source": (
+                        "tool_skills_max_resources_per_source"
+                    ),
+                    "max_source_depth": "tool_skills_max_source_depth",
+                    "max_files_per_source": "tool_skills_max_files_per_source",
+                    "max_directory_entries_per_source": (
+                        "tool_skills_max_directory_entries_per_source"
+                    ),
+                },
+            ),
+        )
+    )
+
+
+def _skills_cursor_limits(args: Namespace) -> SkillCursorLimits:
+    return SkillCursorLimits(
+        **cast(
+            Any,
+            _skills_values(
+                args,
+                {
+                    "max_active_cursors": "tool_skills_max_active_cursors",
+                    "max_cursor_age_seconds": (
+                        "tool_skills_max_cursor_age_seconds"
+                    ),
+                },
+            ),
+        )
+    )
+
+
+def _skills_privacy_settings(args: Namespace) -> SkillPrivacySettings:
+    diagnostics = getattr(args, "tool_skills_diagnostics", None)
+    return SkillPrivacySettings(
+        include_diagnostic_paths=diagnostics != "off",
+    )
+
+
+def _skills_observability_settings(
+    args: Namespace,
+) -> SkillObservabilitySettings:
+    observability = getattr(args, "tool_skills_observability", None)
+    diagnostics = getattr(args, "tool_skills_diagnostics", None)
+    values: dict[str, object] = {}
+    if observability == "off":
+        values.update(
+            {
+                "enabled": False,
+                "emit_events": False,
+                "include_diagnostics": False,
+                "include_byte_counts": False,
+            }
+        )
+    elif observability == "verbose":
+        values["include_byte_counts"] = True
+    if diagnostics == "off":
+        values["include_diagnostics"] = False
+    elif diagnostics == "verbose":
+        values["include_diagnostics"] = True
+        values["include_byte_counts"] = True
+    return SkillObservabilitySettings(**cast(Any, values))
+
+
+def _skills_values(
+    args: Namespace,
+    mapping: Mapping[str, str],
+) -> dict[str, object]:
+    return {
+        target: value
+        for target, source in mapping.items()
+        if (value := getattr(args, source, None)) is not None
+    }
+
+
 def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
     browser_settings = get_tool_settings(
         args, prefix="browser", settings_cls=BrowserToolSettings
@@ -1310,6 +1695,7 @@ def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
         browser=browser_settings,
         database=database_settings,
         graph=graph_settings,
+        skills=_agent_skills_settings(args),
         shell=shell_settings,
         shell_explicit_fields=(
             shell_explicit_fields if shell_settings is not None else None
@@ -2013,6 +2399,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         settings_cls=ShellToolSettings,
         open_files=False,
     )
+    skills_tool = _skills_tool_template_settings(_agent_skills_settings(args))
 
     env = Environment(
         loader=FileSystemLoader(
@@ -2031,6 +2418,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         browser_tool=browser_tool,
         database_tool=database_tool,
         graph_tool=graph_tool,
+        skills_tool=skills_tool,
         shell_tool=_shell_tool_template_settings(shell_tool),
         container_tool=_container_tool_template_settings(args),
         sandbox_tool=_sandbox_tool_template_settings(args),

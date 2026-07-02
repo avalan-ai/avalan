@@ -13,6 +13,14 @@ from ..entities import (
     ToolNameResolutionStatus,
     ToolValue,
 )
+from ..skill.contract import CANONICAL_SKILLS_TOOL_NAMES, SkillStatus
+from ..skill.entities import SkillSourceAuthority
+from ..skill.registry import SkillRegistry
+from ..skill.settings import (
+    TrustedSkillSettings,
+    trusted_skill_settings_identity_dict,
+    trusted_skill_source_identity_dict,
+)
 from ..tool.shell.opt_in import SHELL_PIPELINE_TOOL
 from ..utils import tool_call_diagnostic_payload, tool_call_error_payload
 from .definition import (
@@ -30,11 +38,14 @@ from .node import Node
 
 from asyncio import CancelledError
 from collections.abc import Awaitable, Callable, Iterable, Mapping
+from dataclasses import replace
 from typing import Any, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 FLOW_INPUT_KEY = "__flow_input__"
 FLOW_TOOL_NODE_TYPE = "tool"
+FLOW_TOOL_NODE_SKILLS_REGISTRY_CONFIG = "__flow_skills_registry"
+FLOW_TOOL_NODE_SKILLS_SETTINGS_CONFIG = "__flow_skills_settings"
 
 
 class FlowNodeFactory(Protocol):
@@ -112,6 +123,7 @@ class FlowNodeRegistry:
             ContainerEffectiveSettings,
         ] = {}
         self._tool_descriptors: dict[str, Mapping[str, ToolDescriptor]] = {}
+        self._tool_skill_registries: dict[str, SkillRegistry] = {}
         self._subflow_resolvers: dict[str, FlowSubflowResolver] = {}
         node_metadata = metadata or {}
         node_validators = validators or {}
@@ -194,12 +206,15 @@ class FlowNodeRegistry:
         descriptors: Mapping[str, ToolDescriptor],
         *,
         container_settings: ContainerEffectiveSettings | None = None,
+        skills_registry: SkillRegistry | None = None,
     ) -> "FlowNodeRegistry":
         assert isinstance(node_type, str) and node_type.strip()
         assert _is_flow_tool_resolver(resolver)
         assert isinstance(descriptors, Mapping)
         if container_settings is not None:
             assert isinstance(container_settings, ContainerEffectiveSettings)
+        if skills_registry is not None:
+            assert isinstance(skills_registry, SkillRegistry)
         for name, descriptor in descriptors.items():
             assert isinstance(name, str) and name.strip()
             assert isinstance(descriptor, ToolDescriptor)
@@ -207,6 +222,8 @@ class FlowNodeRegistry:
         self._tool_descriptors[node_type] = dict(descriptors)
         if container_settings is not None:
             self._tool_container_settings[node_type] = container_settings
+        if skills_registry is not None:
+            self._tool_skill_registries[node_type] = skills_registry
         return self
 
     def supports_tool_resolution(self, node_type: str) -> bool:
@@ -230,6 +247,20 @@ class FlowNodeRegistry:
     ) -> ContainerEffectiveSettings | None:
         assert isinstance(node_type, str) and node_type.strip()
         return self._tool_container_settings.get(node_type)
+
+    def tool_skill_registry(
+        self,
+        node_type: str,
+    ) -> SkillRegistry | None:
+        assert isinstance(node_type, str) and node_type.strip()
+        return self._tool_skill_registries.get(node_type)
+
+    def tool_descriptors(
+        self,
+        node_type: str,
+    ) -> Mapping[str, ToolDescriptor]:
+        assert isinstance(node_type, str) and node_type.strip()
+        return self._tool_descriptors.get(node_type, {})
 
     def validate_tool_definition(
         self,
@@ -417,8 +448,22 @@ def tool_flow_node_registry(
         resolver,
         descriptors,
         container_settings=container_settings,
+        skills_registry=_resolver_skill_registry(resolver),
     )
     return registry
+
+
+def _resolver_skill_registry(
+    resolver: FlowToolResolver,
+) -> SkillRegistry | None:
+    toolsets = getattr(resolver, "_toolsets", None)
+    if not isinstance(toolsets, list | tuple):
+        return None
+    for toolset in toolsets:
+        registry = getattr(toolset, "registry", None)
+        if isinstance(registry, SkillRegistry):
+            return registry
+    return None
 
 
 def flow_input_binding(
@@ -571,11 +616,16 @@ def _tool_node_factory(
             diagnostic = resolver.validate_tool_call(call)
             if diagnostic is not None:
                 return _tool_node_output(definition, diagnostic)
+            flow_skill_registry = _flow_skill_registry(
+                definition,
+                descriptor.name,
+            )
             outcome = await resolver.execute_call(
                 call,
                 context=ToolCallContext(
                     cancellation_checker=cancellation_checker,
                     flow_tool_node=True,
+                    skills_registry=flow_skill_registry,
                 ),
             )
             return _tool_node_output(definition, outcome)
@@ -589,6 +639,129 @@ def _tool_node_factory(
         )
 
     return factory
+
+
+def _flow_skill_registry(
+    definition: FlowNodeDefinition,
+    tool_name: str,
+) -> SkillRegistry | None:
+    if tool_name not in CANONICAL_SKILLS_TOOL_NAMES:
+        return None
+    settings = definition.config.get(FLOW_TOOL_NODE_SKILLS_SETTINGS_CONFIG)
+    registry = definition.config.get(FLOW_TOOL_NODE_SKILLS_REGISTRY_CONFIG)
+    if not isinstance(settings, TrustedSkillSettings) or not isinstance(
+        registry,
+        SkillRegistry,
+    ):
+        return None
+    if registry.settings is not None and (
+        trusted_skill_settings_identity_dict(registry.settings)
+        == trusted_skill_settings_identity_dict(settings)
+        and _registry_sources_match_settings(registry, settings)
+    ):
+        return None
+    return _narrow_skill_registry(registry, settings)
+
+
+def _registry_sources_match_settings(
+    registry: SkillRegistry,
+    settings: TrustedSkillSettings,
+) -> bool:
+    if not settings.sources_explicit or not settings.sources:
+        return True
+    registry_sources = {
+        source.label: _registry_source_identity(source)
+        for source in registry.sources
+    }
+    for source in settings.sources:
+        if registry_sources.get(source.label) != (
+            trusted_skill_source_identity_dict(source)
+        ):
+            return False
+    return True
+
+
+def _narrow_skill_registry(
+    registry: SkillRegistry,
+    settings: TrustedSkillSettings,
+) -> SkillRegistry:
+    source_labels = {source.label for source in settings.sources}
+    source_identities = {
+        source.label: trusted_skill_source_identity_dict(source)
+        for source in settings.sources
+    }
+    sources_explicit = settings.sources_explicit
+    skill_ids = set(settings.allowed_skill_ids)
+    sources = tuple(
+        source
+        for source in registry.sources
+        if (not sources_explicit or source.label in source_labels)
+        and source.authority.kind in settings.authority_kinds
+        and (
+            not sources_explicit
+            or not source_identities
+            or _registry_source_identity(source)
+            == source_identities[source.label]
+        )
+    )
+    allowed_source_labels = {source.label for source in sources}
+    skills = tuple(
+        skill
+        for skill in registry.skills
+        if _skill_source_allowed(
+            skill.source_label,
+            registry_has_sources=bool(registry.sources),
+            allowed_source_labels=allowed_source_labels,
+            configured_source_labels=source_labels,
+            sources_explicit=sources_explicit,
+        )
+        and (not skill_ids or skill.skill_id in skill_ids)
+    )
+    return replace(
+        registry,
+        read_limits=settings.read_limits,
+        index_limits=settings.index_limits,
+        sources=sources,
+        skills=skills,
+        settings=settings,
+    )
+
+
+def _registry_source_identity(source: object) -> Mapping[str, object]:
+    source_identity = getattr(source, "source_identity", None)
+    if isinstance(source_identity, Mapping) and source_identity:
+        return source_identity
+    label = getattr(source, "label", None)
+    authority = getattr(source, "authority", None)
+    status = getattr(source, "status", None)
+    if (
+        isinstance(label, str)
+        and isinstance(authority, SkillSourceAuthority)
+        and isinstance(status, SkillStatus)
+    ):
+        return {
+            "label": label,
+            "authority": authority.as_model_dict(),
+            "enabled": True,
+            "allow_hidden_paths": False,
+            "status": status.value,
+        }
+    return {}
+
+
+def _skill_source_allowed(
+    source_label: str,
+    *,
+    registry_has_sources: bool,
+    allowed_source_labels: set[str],
+    configured_source_labels: set[str],
+    sources_explicit: bool,
+) -> bool:
+    if registry_has_sources:
+        return source_label in allowed_source_labels
+    if sources_explicit:
+        return source_label in configured_source_labels
+    return True
 
 
 def _validated_tool_node_descriptor(

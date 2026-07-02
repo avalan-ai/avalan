@@ -1,5 +1,6 @@
 from ..container import ContainerToolRuntimeSettings
 from ..isolation import IsolationToolRuntimeSettings
+from ..skill.settings import TrustedSkillSettings
 from .browser import BrowserToolSettings
 from .database import DatabaseToolSettings
 from .graph_settings import GraphToolSettings
@@ -15,6 +16,7 @@ class ToolSettingsContext:
     browser: BrowserToolSettings | None = None
     database: DatabaseToolSettings | None = None
     graph: GraphToolSettings | None = None
+    skills: TrustedSkillSettings | None = None
     shell: ShellToolSettings | None = None
     shell_explicit_fields: frozenset[str] | None = None
     container: ContainerToolRuntimeSettings | None = None

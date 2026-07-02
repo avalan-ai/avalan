@@ -88,6 +88,11 @@ from .privacy import (
 from .schema import (
     TaskSchemaResolutionError,
     resolve_task_definition_schemas,
+    task_definition_schema_base_path,
+)
+from .skills import (
+    task_definition_with_skills_identity,
+    task_skill_audit_event_publisher,
 )
 from .state import TaskAttemptState, TaskRunState
 from .store import (
@@ -794,7 +799,28 @@ class DirectTaskRunner:
             assert isinstance(file, TaskInputFile)
         if definition.run.mode != RunMode.DIRECT:
             raise TaskRunnerError("direct runner requires direct run mode")
+        schema_base_path = task_definition_schema_base_path(definition)
         definition = await self._resolve_definition_schemas(definition)
+        skill_audit_sanitizer = self._sanitizer(definition)
+        definition = await task_definition_with_skills_identity(
+            definition,
+            event_manager=task_skill_audit_event_publisher(
+                sanitizer=skill_audit_sanitizer,
+                event_observer=self._event_observer,
+                metrics_event_observer=(
+                    self._metrics_event_observer
+                    if definition.observability.metrics
+                    else None
+                ),
+                trace_event_observer=(
+                    self._trace_event_observer
+                    if definition.observability.trace
+                    else None
+                ),
+                observability_sink=self._observability_sink_for(definition),
+            ),
+            schema_base_path=schema_base_path,
+        )
         self._validate(definition, input_value)
         await self._validate_target(definition)
         sanitizer = self._sanitizer(definition)

@@ -226,6 +226,8 @@ def task_event_category(event_type: str) -> TaskEventCategory:
         return TaskEventCategory.TOKEN
     if event_type.startswith("tool_"):
         return TaskEventCategory.TOOL
+    if event_type.startswith("skill_"):
+        return TaskEventCategory.TOOL
     if event_type.startswith("model_"):
         return TaskEventCategory.MODEL
     if event_type.startswith("memory_"):

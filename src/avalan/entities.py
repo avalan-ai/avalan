@@ -1224,6 +1224,7 @@ class ToolCallContext:
     session_id: UUID | None = None
     calls: list[ToolCall] | None = None
     cancellation_checker: Callable[[], Awaitable[None]] | None = None
+    skills_registry: object | None = None
     stream_event: (
         Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
     ) = None

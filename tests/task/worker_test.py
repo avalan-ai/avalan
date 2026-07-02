@@ -11,11 +11,24 @@ from asyncio import (
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
+from avalan.skill import (
+    SkillDiagnosticCode,
+    SkillDiagnosticInfo,
+    SkillObservabilitySettings,
+    SkillReadLimits,
+    SkillRegistry,
+    SkillSourceConfig,
+    SkillStatus,
+    TrustedSkillSettings,
+    WorkspaceSkillSourceAuthority,
+)
 from avalan.task import (
     EncryptedPrivacyValue,
     ObservabilitySinkHealth,
@@ -73,6 +86,10 @@ from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.runner import (
     TaskExecutableInputFileEntry,
     task_execution_file_entries_value,
+)
+from avalan.task.skills import (
+    build_task_skill_registry,
+    task_definition_with_skills_identity,
 )
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.worker import (
@@ -803,6 +820,45 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         assert claim is not None
         return claim
 
+    async def _skills_failure_code(
+        self,
+        definition: TaskDefinition,
+        *,
+        skills_settings: TrustedSkillSettings | None = None,
+        skills_registry: SkillRegistry | None = None,
+    ) -> str:
+        await self._use_definition(
+            replace(definition, retry=TaskRetryPolicy(max_attempts=1))
+        )
+        target = FakeTarget("unused")
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            skills_settings=skills_settings,
+            skills_registry=skills_registry,
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertEqual(target.contexts, [])
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        assert self.queue.completed.run.result is not None
+        error = self.queue.completed.run.result.error
+        assert isinstance(error, Mapping)
+        details = error.get("details")
+        if isinstance(details, Mapping):
+            issues = details.get("issues")
+            if isinstance(issues, list | tuple) and issues:
+                issue = issues[0]
+                if isinstance(issue, Mapping):
+                    return cast(str, issue["code"])
+        return cast(str, error["code"])
+
     def _target_context(self, claim: TaskQueueClaim) -> TaskTargetContext:
         async def check_cancelled() -> None:
             return None
@@ -842,6 +898,181 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             target.contexts[0].execution.claim.worker_id, "worker-1"
         )
         self.assertIsNone(target.contexts[0].input_value)
+
+    async def test_process_once_revalidates_matching_skills_identity(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "skills"
+            _write_skill(root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(root)
+            await self._use_definition(await _definition_with_skills(settings))
+            target = FakeTarget("safe output")
+            worker = TaskWorker(
+                self.store,
+                cast(object, self.queue),
+                target=target,
+                worker_id="worker-1",
+                skills_settings=settings,
+                clock=lambda: self.now,
+            )
+
+            result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(result.completion)
+        assert target.contexts[0].definition.skills_identity is not None
+        self.assertEqual(
+            target.contexts[0].definition.skills_identity["status"],
+            SkillStatus.OK.value,
+        )
+
+    async def test_process_once_fails_closed_on_skill_audit_delivery_failure(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "skills"
+            _write_skill(root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(
+                root,
+                observability=SkillObservabilitySettings(
+                    audit_fail_closed=True
+                ),
+            )
+            definition = await _definition_with_skills(settings)
+            await self._use_definition(
+                replace(definition, retry=TaskRetryPolicy(max_attempts=1))
+            )
+            target = FakeTarget("safe output")
+            worker = TaskWorker(
+                self.store,
+                cast(object, self.queue),
+                target=target,
+                worker_id="worker-1",
+                skills_settings=settings,
+                clock=lambda: self.now,
+            )
+
+            with patch.object(
+                self.store,
+                "append_event",
+                side_effect=RuntimeError("private audit store failure"),
+            ):
+                result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertEqual(target.contexts, [])
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        error = self.queue.completed.run.result.error
+        self.assertIsInstance(error, Mapping)
+        self.assertNotIn("private audit store failure", str(error))
+
+    async def test_process_once_fails_closed_on_missing_skills_registry(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "skills"
+            _write_skill(root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(root)
+            definition = await _definition_with_skills(settings)
+
+            code = await self._skills_failure_code(definition)
+
+        self.assertEqual(code, "task.skills_registry_missing")
+
+    async def test_process_once_fails_closed_on_stale_skills_registry(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "skills"
+            skill_path = root / "pdf" / "SKILL.md"
+            _write_skill(skill_path, body="# Body\nFIRST\n")
+            settings = _trusted_skills(root)
+            definition = await _definition_with_skills(settings)
+            _write_skill(skill_path, body="# Body\nSECOND\n")
+
+            code = await self._skills_failure_code(
+                definition,
+                skills_settings=settings,
+            )
+
+        self.assertEqual(code, "task.skills_registry_stale")
+
+    async def test_process_once_fails_closed_on_unavailable_registry(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "skills"
+            _write_skill(root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(root)
+            definition = await _definition_with_skills(settings)
+            missing_settings = _trusted_skills(Path(directory) / "missing")
+
+            code = await self._skills_failure_code(
+                definition,
+                skills_settings=missing_settings,
+            )
+
+        self.assertEqual(code, "task.skills_registry_unavailable")
+
+    async def test_process_once_fails_closed_on_widened_registry(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "skills"
+            _write_skill(root / "pdf" / "SKILL.md", body="# Body\n")
+            restricted = _trusted_skills(
+                root,
+                read_limits=SkillReadLimits(max_lines_per_read=20),
+            )
+            widened = _trusted_skills(root)
+            definition = await _definition_with_skills(restricted)
+
+            code = await self._skills_failure_code(
+                definition,
+                skills_settings=widened,
+            )
+
+        self.assertEqual(code, "task.skills_registry_widened")
+
+    async def test_process_once_fails_closed_on_malformed_registry(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "skills"
+            _write_skill(root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(root)
+            definition = await _definition_with_skills(settings)
+            registry = await _registry_with_status(
+                settings,
+                SkillStatus.MALFORMED,
+            )
+
+            code = await self._skills_failure_code(
+                definition,
+                skills_registry=registry,
+            )
+
+        self.assertEqual(code, "task.skills_registry_malformed")
+
+    async def test_process_once_fails_closed_on_policy_denied_registry(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "skills"
+            _write_skill(root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(root)
+            definition = await _definition_with_skills(settings)
+            registry = await _registry_with_status(
+                settings,
+                SkillStatus.POLICY_DENIED,
+            )
+
+            code = await self._skills_failure_code(
+                definition,
+                skills_registry=registry,
+            )
+
+        self.assertEqual(code, "task.skills_registry_policy_denied")
 
     async def test_process_once_uses_encrypted_execution_payload(self) -> None:
         sanitizer = PrivacySanitizer(
@@ -2250,6 +2481,78 @@ def _definition(
         observability=observability or TaskObservabilityPolicy(),
         run=TaskRunPolicy.queued("default"),
         retry=retry or TaskRetryPolicy(max_attempts=2),
+    )
+
+
+async def _definition_with_skills(
+    settings: TrustedSkillSettings,
+) -> TaskDefinition:
+    return await task_definition_with_skills_identity(
+        replace(
+            _definition(),
+            execution=TaskExecutionTarget.tool("skills"),
+            skills=settings,
+        ),
+    )
+
+
+def _trusted_skills(
+    root: Path,
+    *,
+    observability: SkillObservabilitySettings | None = None,
+    read_limits: SkillReadLimits | None = None,
+) -> TrustedSkillSettings:
+    return TrustedSkillSettings(
+        sources=(
+            SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path=root,
+            ),
+        ),
+        observability=(
+            observability
+            if observability is not None
+            else SkillObservabilitySettings()
+        ),
+        read_limits=read_limits or SkillReadLimits(),
+    )
+
+
+async def _registry_with_status(
+    settings: TrustedSkillSettings,
+    status: SkillStatus,
+) -> SkillRegistry:
+    assert status in {SkillStatus.MALFORMED, SkillStatus.POLICY_DENIED}
+    registry = await build_task_skill_registry(settings)
+    diagnostic = SkillDiagnosticInfo(
+        code=(
+            SkillDiagnosticCode.MANIFEST_MALFORMED
+            if status is SkillStatus.MALFORMED
+            else SkillDiagnosticCode.POLICY_DENIED
+        ),
+        status=status,
+        message="Registry is not usable.",
+        path="skills",
+        hint="Use an operator-approved registry.",
+    )
+    return replace(
+        registry,
+        diagnostics=(diagnostic,),
+    )
+
+
+def _write_skill(path: Path, *, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\n"
+        "name: pdf\n"
+        "description: PDF rendering guidance.\n"
+        'tags: ["pdf"]\n'
+        "resources: []\n"
+        "---\n"
+        f"{body}",
+        encoding="utf-8",
     )
 
 

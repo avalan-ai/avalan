@@ -47,6 +47,19 @@ from ..memory.manager import MemoryManager
 from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
+from ..skill import (
+    CANONICAL_SKILLS_TOOL_NAMES,
+    SkillConfiguredSource,
+    SkillSettingsSurface,
+    SkillSourceConfig,
+    TrustedSkillSettings,
+    UntrustedSkillSettings,
+    build_skill_registry,
+    merge_skill_settings,
+    parse_untrusted_skill_settings_config,
+    resolve_skill_sources,
+)
+from ..skill.observability import skill_audit_correlation_id
 from ..task.schema import TaskSchemaResolutionError, resolve_schema_ref
 from ..tool import ToolSet
 from ..tool.a2a import A2AToolSet
@@ -77,6 +90,7 @@ from ..tool.shell import (
 )
 from ..tool.shell.input_files import shell_input_file_filter
 from ..tool.shell.opt_in import enables_shell_pipeline
+from ..tool.skills import SkillsToolSet
 
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, fields, replace
@@ -117,6 +131,81 @@ def should_append_a2a_toolset(enabled_tools: list[str] | None) -> bool:
     return any(
         matches_tool_namespace("a2a.call", enabled)
         for enabled in enabled_tools
+    )
+
+
+def should_append_skills_toolset(
+    skills_settings: TrustedSkillSettings | None,
+    enabled_tools: list[str] | None,
+) -> bool:
+    """Return whether configured skills should be exposed as tools."""
+    return (
+        skills_settings is not None
+        and skills_settings.enabled
+        and _skills_tools_requested(enabled_tools)
+    )
+
+
+def _skills_tools_requested(enabled_tools: list[str] | None) -> bool:
+    """Return whether the tool list explicitly selects skills tools."""
+    if not enabled_tools:
+        return False
+    return any(
+        matches_tool_namespace(tool_name, enabled)
+        for enabled in enabled_tools
+        for tool_name in CANONICAL_SKILLS_TOOL_NAMES
+    )
+
+
+def _skill_configured_sources(
+    skills_settings: TrustedSkillSettings,
+) -> tuple[SkillConfiguredSource, ...]:
+    """Return resolver source configs from trusted skill settings."""
+    assert isinstance(skills_settings, TrustedSkillSettings)
+    sources: list[SkillConfiguredSource] = []
+    for source in skills_settings.sources:
+        assert isinstance(source, SkillSourceConfig)
+        if source.root_path is None:
+            continue
+        sources.append(
+            SkillConfiguredSource(
+                label=source.label,
+                authority=source.authority,
+                root_path=source.root_path,
+                package_path=source.package_path,
+                enabled=source.enabled,
+                allow_hidden_paths=source.allow_hidden_paths,
+            )
+        )
+    return tuple(sources)
+
+
+async def _build_skills_toolset(
+    skills_settings: TrustedSkillSettings,
+    *,
+    event_manager: EventManager | None = None,
+) -> SkillsToolSet:
+    """Build a skills toolset from trusted settings."""
+    sources = _skill_configured_sources(skills_settings)
+    assert sources, "skills require at least one trusted source"
+    audit_operation_id = skill_audit_correlation_id("skill-registry-build")
+    source_result = await resolve_skill_sources(
+        sources,
+        settings=skills_settings,
+        event_manager=event_manager,
+        audit_operation_id=audit_operation_id,
+    )
+    registry = await build_skill_registry(
+        source_result,
+        settings=skills_settings,
+        event_manager=event_manager,
+        audit_operation_id=audit_operation_id,
+    )
+    return SkillsToolSet(
+        registry,
+        bootstrap_enabled=skills_settings.bootstrap_enabled,
+        event_manager=event_manager,
+        namespace="skills",
     )
 
 
@@ -1006,6 +1095,7 @@ class OrchestratorLoader:
             assert isinstance(
                 tool_section, dict
             ), "Tool section must be a mapping"
+        skills_config = self._skills_config_from_tool_section(tool_section)
         container_source = trusted_container_source(
             ContainerSurface.AGENT_TOML
         )
@@ -1239,11 +1329,13 @@ class OrchestratorLoader:
                 )
             shell_settings = ShellToolSettings(**shell_config)
 
+        skills_settings = None
         extra: dict[str, object] | None
         if tool_settings:
             browser_settings = tool_settings.browser or browser_settings
             database_settings = tool_settings.database or database_settings
             graph_settings = tool_settings.graph or graph_settings
+            skills_settings = tool_settings.skills
             shell_settings = _merge_shell_tool_settings(
                 shell_settings,
                 tool_settings.shell,
@@ -1255,10 +1347,30 @@ class OrchestratorLoader:
         else:
             extra = None
 
+        if skills_config is not None:
+            assert (
+                skills_settings is not None
+            ), "tool.skills requires trusted skills settings"
+            skills_override = self._untrusted_skills_settings_from_config(
+                skills_config,
+                trusted=skills_settings,
+            )
+            skills_merge = merge_skill_settings(
+                skills_settings,
+                skills_override,
+            )
+            assert not skills_merge.diagnostics, (
+                skills_merge.diagnostics[0].message
+                if skills_merge.diagnostics
+                else "Invalid tool.skills settings"
+            )
+            skills_settings = skills_merge.settings
+
         tool_settings = ToolSettingsContext(
             browser=browser_settings,
             database=database_settings,
             graph=graph_settings,
+            skills=skills_settings,
             shell=shell_settings,
             shell_explicit_fields=(
                 tool_settings.shell_explicit_fields if tool_settings else None
@@ -1346,6 +1458,34 @@ class OrchestratorLoader:
             tool_settings=tool_settings,
             tool_format=tool_format,
             tool_name_policy=tool_name_policy,
+        )
+
+    @classmethod
+    def _skills_config_from_tool_section(
+        cls,
+        tool_section: Mapping[str, object],
+    ) -> Mapping[str, object] | None:
+        skills_config = tool_section.get("skills")
+        if skills_config is None:
+            return None
+        assert isinstance(
+            skills_config,
+            dict,
+        ), "tool.skills section must be a mapping"
+        return skills_config
+
+    @classmethod
+    def _untrusted_skills_settings_from_config(
+        cls,
+        skills_config: Mapping[str, object],
+        *,
+        trusted: TrustedSkillSettings,
+    ) -> UntrustedSkillSettings:
+        return parse_untrusted_skill_settings_config(
+            skills_config,
+            trusted=trusted,
+            surface=SkillSettingsSurface.AGENT,
+            section="tool.skills",
         )
 
     @staticmethod
@@ -1503,10 +1643,18 @@ class OrchestratorLoader:
         browser_settings = tool_settings.browser if tool_settings else None
         database_settings = tool_settings.database if tool_settings else None
         graph_settings = tool_settings.graph if tool_settings else None
+        skills_settings = tool_settings.skills if tool_settings else None
         shell_settings = tool_settings.shell if tool_settings else None
         container_runtime = tool_settings.container if tool_settings else None
         isolation_runtime = tool_settings.isolation if tool_settings else None
         enabled_tools = normalize_shell_enabled_tools(settings.tools)
+        if _skills_tools_requested(enabled_tools):
+            assert (
+                skills_settings is not None
+            ), "skills tools require trusted skills settings"
+            assert (
+                skills_settings.enabled
+            ), "skills tools require enabled trusted skills settings"
 
         _l(
             "Tool settings: browser=%s, database=%s, graph=%s, shell=%s",
@@ -1550,6 +1698,14 @@ class OrchestratorLoader:
             available_toolsets.append(
                 DatabaseToolSet(
                     settings=database_settings, namespace="database"
+                )
+            )
+        if should_append_skills_toolset(skills_settings, enabled_tools):
+            assert skills_settings is not None
+            available_toolsets.append(
+                await _build_skills_toolset(
+                    skills_settings,
+                    event_manager=event_manager,
                 )
             )
         active_shell_settings = None
