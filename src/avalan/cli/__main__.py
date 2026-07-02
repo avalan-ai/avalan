@@ -28,6 +28,11 @@ from ..entities import (
 )
 from ..filesystem import read_text
 from ..model.manager import ModelManager
+from ..server.entities import (
+    SERVER_OUTPUT_REDACTION_CHANNELS,
+    SERVER_OUTPUT_REDACTION_PROTOCOLS,
+    SERVER_OUTPUT_REDACTION_RULES,
+)
 from ..skill import SkillSourceAuthorityKind
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
@@ -3553,6 +3558,46 @@ class CLI:
             action="store_true",
             default=False,
             help="Allow CORS credentials",
+        )
+        parser.add_argument(
+            "--server-output-redaction",
+            dest="server_output_redaction_enabled",
+            action="store_true",
+            default=None,
+            help="Enable opt-in redaction for server protocol output.",
+        )
+        parser.add_argument(
+            "--server-output-redaction-rule",
+            dest="server_output_redaction_rules",
+            action="append",
+            choices=SERVER_OUTPUT_REDACTION_RULES,
+            default=None,
+            help=(
+                "Enable server output redaction and restrict it to a rule;"
+                " may be specified multiple times."
+            ),
+        )
+        parser.add_argument(
+            "--server-output-redaction-protocol",
+            dest="server_output_redaction_protocols",
+            action="append",
+            choices=SERVER_OUTPUT_REDACTION_PROTOCOLS,
+            default=None,
+            help=(
+                "Enable server output redaction and restrict it to a"
+                " protocol; may be specified multiple times."
+            ),
+        )
+        parser.add_argument(
+            "--server-output-redaction-channel",
+            dest="server_output_redaction_channels",
+            action="append",
+            choices=SERVER_OUTPUT_REDACTION_CHANNELS,
+            default=None,
+            help=(
+                "Enable server output redaction and restrict it to a"
+                " channel; may be specified multiple times."
+            ),
         )
         return parser
 

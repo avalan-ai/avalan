@@ -31,7 +31,11 @@ from avalan.model.stream import (
     StreamValidationError,
     project_canonical_stream_item,
 )
-from avalan.server.entities import ChatMessage, ResponsesRequest
+from avalan.server.entities import (
+    ChatMessage,
+    ResponsesRequest,
+    ServerOutputRedactionSettings,
+)
 
 
 def _canonical_answer_stream_items(
@@ -570,7 +574,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                             sequence=1,
                             kind=StreamItemKind.ANSWER_DELTA,
                             channel=StreamChannel.ANSWER,
-                            text_delta="# Summary\n",
+                            text_delta="# Imagegen\n",
                         ),
                         CanonicalStreamItem(
                             stream_session_id="s",
@@ -613,6 +617,9 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             request,
             logger,
             orchestrator,
+            output_redaction_settings=ServerOutputRedactionSettings(
+                enabled=True
+            ),
         )
         chunks = [
             chunk.decode() if isinstance(chunk, bytes) else chunk
@@ -633,11 +640,235 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertLess(delta_index, done_index)
         self.assertEqual(
             data_by_event["response.output_text.delta"]["delta"],
-            "# Summary\n",
+            "# Imagegen\n",
         )
         self.assertEqual(
             data_by_event["response.output_text.delta"]["sequence_number"],
             1,
+        )
+
+    async def test_streaming_flushes_pending_heading_after_loop(
+        self,
+    ) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+        answer_safe = "a" * self.responses._MAX_COALESCED_DELTA_CHARS
+
+        class HeadingResponse:
+            input_token_count = 0
+            output_token_count = 0
+            usage = None
+
+            def __aiter__(self) -> AsyncIterator[object]:
+                return self
+
+            async def __anext__(self) -> object:
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                return None
+
+        async def orchestrate_stub(request, logger, orch):
+            return HeadingResponse(), uuid4(), 0
+
+        async def iterator_stub(*args: object, **kwargs: object):
+            _ = args, kwargs
+            yield project_canonical_stream_item(
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta=f"{answer_safe} /tmp",
+                )
+            )
+
+        original_iterator = self.responses.stream_consumer_iterator
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+        self.responses.stream_consumer_iterator = iterator_stub
+        try:
+            streaming_resp = await self.responses.create_response(
+                request,
+                logger,
+                orchestrator,
+                output_redaction_settings=ServerOutputRedactionSettings(
+                    enabled=True,
+                    rules=frozenset({"host_paths"}),
+                ),
+            )
+            chunks = []
+            with self.assertRaises(StreamValidationError):
+                async for chunk in streaming_resp.body_iterator:
+                    chunks.append(
+                        chunk.decode() if isinstance(chunk, bytes) else chunk
+                    )
+        finally:
+            self.responses.stream_consumer_iterator = original_iterator
+
+        blocks = [
+            block for block in "".join(chunks).strip().split("\n\n") if block
+        ]
+        event_data = [
+            (
+                block.split("\n")[0].split(": ")[1],
+                loads(block.split("\n")[1][6:]),
+            )
+            for block in blocks
+        ]
+        model_deltas = [
+            data["delta"]
+            for event, data in event_data
+            if event == "response.output_text.delta"
+        ]
+
+        self.assertEqual(
+            model_deltas,
+            [f"{answer_safe} ", "<host-path>/tmp"],
+        )
+
+    async def test_streaming_yields_queued_model_text_flush_events(
+        self,
+    ) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+        reasoning_safe = "r" * self.responses._MAX_COALESCED_DELTA_CHARS
+        answer_safe = "a" * self.responses._MAX_COALESCED_DELTA_CHARS
+
+        class StreamResponse:
+            input_token_count = 0
+            output_token_count = 0
+            usage = None
+
+            def __init__(self) -> None:
+                self._items = iter(
+                    (
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=1,
+                            kind=StreamItemKind.REASONING_DELTA,
+                            channel=StreamChannel.REASONING,
+                            text_delta=f"{reasoning_safe} /tmp",
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=2,
+                            kind=StreamItemKind.REASONING_DONE,
+                            channel=StreamChannel.REASONING,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=3,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta=f"{answer_safe} /tmp",
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=4,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=5,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            usage={},
+                            terminal_outcome=(StreamTerminalOutcome.COMPLETED),
+                        ),
+                    )
+                )
+
+            def __aiter__(self) -> AsyncIterator[object]:
+                return self
+
+            async def __anext__(self) -> object:
+                try:
+                    return next(self._items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+            async def aclose(self) -> None:
+                return None
+
+        async def orchestrate_stub(request, logger, orch):
+            return StreamResponse(), uuid4(), 0
+
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+        streaming_resp = await self.responses.create_response(
+            request,
+            logger,
+            orchestrator,
+            output_redaction_settings=ServerOutputRedactionSettings(
+                enabled=True,
+                rules=frozenset({"host_paths"}),
+            ),
+        )
+        chunks = [
+            chunk.decode() if isinstance(chunk, bytes) else chunk
+            async for chunk in streaming_resp.body_iterator
+        ]
+
+        blocks = [
+            block for block in "".join(chunks).strip().split("\n\n") if block
+        ]
+        event_data = [
+            (
+                block.split("\n")[0].split(": ")[1],
+                loads(block.split("\n")[1][6:]),
+            )
+            for block in blocks
+        ]
+        model_deltas = [
+            (event, data["delta"])
+            for event, data in event_data
+            if event
+            in {
+                "response.reasoning_text.delta",
+                "response.output_text.delta",
+            }
+        ]
+
+        self.assertEqual(
+            model_deltas,
+            [
+                ("response.reasoning_text.delta", f"{reasoning_safe} "),
+                ("response.reasoning_text.delta", "<host-path>/tmp"),
+                ("response.output_text.delta", f"{answer_safe} "),
+                ("response.output_text.delta", "<host-path>/tmp"),
+            ],
         )
 
     async def test_streaming_flushes_pending_heading_after_large_delta(

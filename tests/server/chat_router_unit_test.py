@@ -43,7 +43,10 @@ from avalan.server.entities import (
     ContentText,
     ReasoningConfig,
     ResponsesRequest,
+    ServerOutputRedactionSettings,
 )
+
+_MODEL_VISIBLE_REDACTION_SETTINGS = ServerOutputRedactionSettings(enabled=True)
 
 
 async def _canonical_answer_gen(
@@ -136,6 +139,71 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(resp.object, "chat.completion")
         self.assertEqual(resp.choices[0].message.content, "ok")
         orch.assert_awaited_once()
+
+    async def test_create_chat_completion_redaction_uses_openai_protocol(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        skill_echo = (
+            "# Demo Skill\n\n"
+            "Use when handling private operator tasks.\n\n"
+            "Secret skill body: visible without OpenAI policy.\n"
+        )
+        orch.return_value = TextGenerationResponse(
+            lambda: skill_echo,
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(
+                req,
+                logger,
+                orch,
+                output_redaction_settings=ServerOutputRedactionSettings(
+                    enabled=True,
+                    protocols=frozenset({"mcp"}),
+                ),
+            )
+
+        self.assertEqual(resp.choices[0].message.content, skill_echo)
+
+    async def test_create_chat_completion_non_stream_redacts_skill_echoes(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: (
+                "# Imagegen\n\n"
+                "Use when creating private bitmap assets.\n\n"
+                "Secret skill body."
+            ),
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(
+                req,
+                logger,
+                orch,
+                output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+            )
+
+        self.assertEqual(
+            resp.choices[0].message.content,
+            "<redacted-skill-content>",
+        )
 
     async def test_create_chat_completion_multiple(self) -> None:
         logger = AsyncMock(spec=Logger)
@@ -314,7 +382,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         assert isinstance(resp, dict)
         self.assertEqual(resp["model"], "request-model")
 
-    async def test_create_response_non_stream_redacts_skill_echoes(
+    async def test_create_response_non_stream_redacts_skill_echoes_opt_in(
         self,
     ) -> None:
         logger = AsyncMock(spec=Logger)
@@ -335,7 +403,12 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         )
 
         with patch("avalan.server.routers.time", return_value=1):
-            resp = await self.responses.create_response(req, logger, orch)
+            resp = await self.responses.create_response(
+                req,
+                logger,
+                orch,
+                output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+            )
 
         assert isinstance(resp, dict)
         output_text = resp["output"][0]["content"][0]["text"]
@@ -343,7 +416,71 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertNotIn("Secret skill body", output_text)
         self.assertNotIn("C:/Users", output_text)
 
-    async def test_create_response_stream_redacts_split_skill_echoes(
+    async def test_create_response_non_stream_leaves_skill_echoes_by_default(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        skill_echo = (
+            "# Demo Skill\n\n"
+            "Use when handling private operator tasks.\n\n"
+            "Secret skill body: visible by default.\n"
+            "Source: C:/Users/me/skills/demo/SKILL.md"
+        )
+        orch.return_value = TextGenerationResponse(
+            lambda: skill_echo,
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+        req = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.responses.create_response(req, logger, orch)
+
+        assert isinstance(resp, dict)
+        output_text = resp["output"][0]["content"][0]["text"]
+        self.assertEqual(output_text, skill_echo)
+
+    async def test_create_response_non_stream_redaction_uses_openai_protocol(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        skill_echo = (
+            "# Demo Skill\n\n"
+            "Use when handling private operator tasks.\n\n"
+            "Secret skill body: visible without OpenAI policy.\n"
+        )
+        orch.return_value = TextGenerationResponse(
+            lambda: skill_echo,
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+        req = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+        mcp_only = ServerOutputRedactionSettings(
+            enabled=True,
+            protocols=frozenset({"mcp"}),
+        )
+
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.responses.create_response(
+                req,
+                logger,
+                orch,
+                output_redaction_settings=mcp_only,
+            )
+
+        assert isinstance(resp, dict)
+        output_text = resp["output"][0]["content"][0]["text"]
+        self.assertEqual(output_text, skill_echo)
+
+    async def test_create_response_stream_redacts_skill_echoes_opt_in(
         self,
     ) -> None:
         async def output_gen():
@@ -425,7 +562,12 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         )
 
         with patch("avalan.server.routers.time", return_value=1):
-            resp = await self.responses.create_response(req, logger, orch)
+            resp = await self.responses.create_response(
+                req,
+                logger,
+                orch,
+                output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+            )
         chunks = [chunk async for chunk in resp.body_iterator]
         projected = "".join(chunks)
 
@@ -531,6 +673,21 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         )()
         self.assertEqual(await self.chat.di_get_orchestrator(req), 1)
 
+    def test_server_output_redaction_settings_dependency(self) -> None:
+        settings = ServerOutputRedactionSettings(enabled=True)
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    server_output_redaction_settings=settings,
+                )
+            )
+        )
+
+        self.assertIs(
+            self.chat._server_output_redaction_settings(request),
+            settings,
+        )
+
     async def test_create_chat_completion_stream(self) -> None:
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
@@ -557,13 +714,17 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
         orch.assert_awaited_once()
 
-    async def test_create_chat_completion_stream_flushes_pending_heading(
+    async def test_create_chat_completion_stream_redacts_skill_echoes(
         self,
     ) -> None:
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
-            lambda: _canonical_answer_gen("# Summary\n"),
+            lambda: _canonical_answer_gen(
+                "# Imagegen\n\n",
+                "normal intro\n",
+                "Use when creating private bitmap assets.\nSecret.",
+            ),
             logger=getLogger(),
             use_async_generator=True,
             provider_family="transformers",
@@ -575,13 +736,49 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         )
 
         with patch("avalan.server.routers.time", return_value=1):
-            resp = await self.chat.create_chat_completion(req, logger, orch)
+            resp = await self.chat.create_chat_completion(
+                req,
+                logger,
+                orch,
+                output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+            )
+        projected = "".join([chunk async for chunk in resp.body_iterator])
+
+        self.assertIn("redacted-skill-content", projected)
+        self.assertNotIn("# Imagegen", projected)
+        self.assertNotIn("Secret.", projected)
+        self.assertTrue(projected.endswith("data: [DONE]\n\n"))
+
+    async def test_create_chat_completion_stream_flushes_pending_heading(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: _canonical_answer_gen("# Imagegen\n"),
+            logger=getLogger(),
+            use_async_generator=True,
+            provider_family="transformers",
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(
+                req,
+                logger,
+                orch,
+                output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+            )
         chunks = [chunk async for chunk in resp.body_iterator]
         first_payload = loads(chunks[0][6:])
 
         self.assertEqual(
             first_payload["choices"][0]["delta"]["content"],
-            "# Summary\n",
+            "# Imagegen\n",
         )
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
         orch.assert_awaited_once()
@@ -1804,7 +2001,10 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            self.chat._stream_text(project_canonical_stream_item(answer)),
+            self.chat._stream_text(
+                project_canonical_stream_item(answer),
+                _MODEL_VISIBLE_REDACTION_SETTINGS,
+            ),
             "see <host-path>/SKILL.md",
         )
 
@@ -1830,6 +2030,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         event = self.responses._tool_execution_sse_event(
             project_canonical_stream_item(item),
             7,
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
         )
         projected = str(event.data)
 
@@ -1837,6 +2038,17 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertIn("<host-path>/SKILL.md", projected)
         self.assertNotIn("private instructions", projected)
         self.assertNotIn("/Users/mariano", projected)
+
+        mcp_only_event = self.responses._tool_execution_sse_event(
+            project_canonical_stream_item(item),
+            7,
+            output_redaction_settings=ServerOutputRedactionSettings(
+                enabled=True,
+                protocols=frozenset({"mcp"}),
+            ),
+        )
+        self.assertIn("private instructions", str(mcp_only_event.data))
+        self.assertIn("/Users/mariano", str(mcp_only_event.data))
 
     def test_responses_terminal_failed_event_redacts_host_paths(self) -> None:
         terminal = CanonicalStreamItem(
@@ -1854,7 +2066,8 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         )
 
         events = self.responses._terminal_response_events(
-            project_canonical_stream_item(terminal)
+            project_canonical_stream_item(terminal),
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
         )
 
         self.assertEqual(events[0].event, "response.failed")
@@ -1927,6 +2140,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             1,
             "model-id",
             project_canonical_stream_item(item),
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
         )
 
         assert event is not None
@@ -1958,6 +2172,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             1,
             "model-id",
             project_canonical_stream_item(item),
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
         )
 
         assert event is not None

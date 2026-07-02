@@ -24,6 +24,7 @@ from avalan.server.container_policy import (
     RemoteContainerRequestPolicy,
     ServerRuntimeEnvelopeStatus,
 )
+from avalan.server.entities import ServerOutputRedactionSettings
 from avalan.skill import (
     SkillSourceConfig,
     TrustedSkillSettings,
@@ -57,6 +58,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
     captured_lifespan: dict[str, object] = {}
     hub = MagicMock(name="hub")
     tool_settings = ToolSettingsContext(extra={"fixture": "tools"})
+    output_redaction_settings = ServerOutputRedactionSettings()
 
     def build_fastapi(*args, **kwargs):
         app = SimpleNamespace(
@@ -138,6 +140,10 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 assert app.state.loader is loader_instance
                 assert app.state.logger is logger
                 assert app.state.agent_id == agent_identifier
+                assert (
+                    app.state.server_output_redaction_settings
+                    == output_redaction_settings
+                )
                 assert not hasattr(app.state, "skills_registry_metadata")
                 assert app.state.mcp_resource_store is resource_store_instance
                 assert app.state.mcp_resource_base_path == "/mcp"
@@ -150,6 +156,7 @@ async def test_agents_server_lifespan_initializes_state() -> None:
                 settings=None,
                 tool_settings=tool_settings,
                 tool_name_policy=None,
+                output_redaction_settings=output_redaction_settings,
                 skills_settings=None,
                 skills_registry_metadata=None,
             )

@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest import TestCase
 
 from pydantic import ValidationError
@@ -18,6 +19,11 @@ from avalan.server.entities import (
     ResponseFormatJSONSchema,
     ResponsesRequest,
 )
+from avalan.skill.entities import (
+    SkillSourceConfig,
+    WorkspaceSkillSourceAuthority,
+)
+from avalan.skill.settings import TrustedSkillSettings
 
 _REMOTE_RUNTIME_POLICY_KEYS = (
     "capabilities",
@@ -40,6 +46,50 @@ _REMOTE_RUNTIME_POLICY_KEYS = (
     "workspace",
     "workspace_root",
 )
+
+_MODEL_VISIBLE_REDACTION_SETTINGS = (
+    server_entities.ServerOutputRedactionSettings(enabled=True)
+)
+
+
+def _model_visible_redactor(
+    *,
+    protocol: server_entities.ServerOutputRedactionProtocol = "openai",
+    channel: server_entities.ServerOutputRedactionChannel = "answer",
+) -> server_entities.ModelVisibleServerProtocolTextRedactor:
+    return server_entities.ModelVisibleServerProtocolTextRedactor(
+        _MODEL_VISIBLE_REDACTION_SETTINGS,
+        protocol=protocol,
+        channel=channel,
+    )
+
+
+def _sanitize_model_visible_text(
+    value: str,
+    *,
+    protocol: server_entities.ServerOutputRedactionProtocol = "openai",
+    channel: server_entities.ServerOutputRedactionChannel = "answer",
+) -> str:
+    return server_entities.sanitize_model_visible_server_protocol_text(
+        value,
+        output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+        protocol=protocol,
+        channel=channel,
+    )
+
+
+def _sanitize_server_protocol_text(
+    value: str,
+    *,
+    protocol: server_entities.ServerOutputRedactionProtocol = "openai",
+    channel: server_entities.ServerOutputRedactionChannel | None = None,
+) -> str:
+    return server_entities.sanitize_server_protocol_text(
+        value,
+        output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+        protocol=protocol,
+        channel=channel,
+    )
 
 
 class ChatEntitiesTestCase(TestCase):
@@ -541,10 +591,298 @@ class ChatEntitiesTestCase(TestCase):
             },
         )
 
+    def test_server_protocol_sanitizer_defaults_to_redaction_off(
+        self,
+    ) -> None:
+        text = "See /Users/mariano/skills/demo/SKILL.md"
+        value = {
+            "content": "secret skill content",
+            "path": text,
+            "data": b"secret",
+        }
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(text),
+            text,
+        )
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_value(
+                value,
+                tool_name="skills.demo",
+                protocol="mcp",
+            ),
+            {
+                "content": "secret skill content",
+                "path": text,
+                "data": "<redacted-bytes>",
+            },
+        )
+
+    def test_server_protocol_sanitizer_redacts_skills_content_by_rule(
+        self,
+    ) -> None:
+        settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"skills_tool_content"}),
+            protocols=frozenset({"mcp"}),
+        )
+        value = {
+            "content": "secret skill content at /Users/mariano/demo.txt",
+            "path": "/Users/mariano/demo.txt",
+        }
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_value(
+                value,
+                tool_name="skills.demo",
+                output_redaction_settings=settings,
+                protocol="mcp",
+            ),
+            {
+                "content": {
+                    "redacted": True,
+                    "reason": server_entities.SKILL_CONTENT_REDACTION,
+                },
+                "path": "/Users/mariano/demo.txt",
+            },
+        )
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_value(
+                value,
+                tool_name="skills.demo",
+                output_redaction_settings=settings,
+                protocol="openai",
+            ),
+            value,
+        )
+
+    def test_server_protocol_sanitizer_redacts_host_paths_by_rule(
+        self,
+    ) -> None:
+        settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"host_paths"}),
+        )
+        value = {
+            "content": "secret skill content",
+            "path": "/Users/mariano/demo.txt",
+        }
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_value(
+                value,
+                tool_name="skills.demo",
+                output_redaction_settings=settings,
+                protocol="mcp",
+            ),
+            {
+                "content": "secret skill content",
+                "path": "<host-path>/demo.txt",
+            },
+        )
+
+    def test_unchanneled_protocol_sanitizer_respects_channel_filters(
+        self,
+    ) -> None:
+        settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"host_paths", "skills_tool_content"}),
+            channels=frozenset({"reasoning"}),
+        )
+        text = "failed at /Users/mariano/private.txt"
+        value = {
+            "content": "private skill content",
+            "path": text,
+        }
+
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(
+                text,
+                output_redaction_settings=settings,
+                protocol="mcp",
+            ),
+            text,
+        )
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_value(
+                value,
+                tool_name="skills.demo",
+                output_redaction_settings=settings,
+                protocol="mcp",
+            ),
+            value,
+        )
+        self.assertEqual(
+            server_entities.sanitize_server_protocol_text(
+                text,
+                output_redaction_settings=settings,
+                protocol="mcp",
+                channel="reasoning",
+            ),
+            "failed at <host-path>/private.txt",
+        )
+
+    def test_server_output_redaction_settings_from_state_uses_ctx_fallback(
+        self,
+    ) -> None:
+        ctx_settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            protocols=frozenset({"a2a"}),
+        )
+        state = SimpleNamespace(
+            ctx=server_entities.OrchestratorContext(
+                participant_id=None,
+                output_redaction_settings=ctx_settings,
+            )
+        )
+
+        self.assertIs(
+            server_entities.server_output_redaction_settings_from_state(state),
+            ctx_settings,
+        )
+
+        app_state_settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            protocols=frozenset({"mcp"}),
+        )
+        state.server_output_redaction_settings = app_state_settings
+        self.assertIs(
+            server_entities.server_output_redaction_settings_from_state(state),
+            ctx_settings,
+        )
+
+        fallback_state = SimpleNamespace(
+            server_output_redaction_settings=app_state_settings
+        )
+        self.assertIs(
+            server_entities.server_output_redaction_settings_from_state(
+                fallback_state
+            ),
+            app_state_settings,
+        )
+
+    def test_server_skills_registry_metadata_handles_settings(self) -> None:
+        self.assertIsNone(
+            server_entities.server_skills_registry_metadata(None)
+        )
+
+        skills_settings = TrustedSkillSettings(
+            sources=(
+                SkillSourceConfig(
+                    label="workspace",
+                    authority=WorkspaceSkillSourceAuthority(),
+                    root_path="/Users/mariano/.codex/skills",
+                ),
+            )
+        )
+        context = server_entities.OrchestratorContext(
+            participant_id=None,
+            skills_settings=skills_settings,
+            skills_registry_metadata={"enabled": True},
+        )
+
+        self.assertIs(context.skills_settings, skills_settings)
+        self.assertEqual(context.skills_registry_metadata, {"enabled": True})
+
+        metadata = server_entities.server_skills_registry_metadata(
+            skills_settings
+        )
+
+        self.assertIsNotNone(metadata)
+        assert metadata is not None
+        self.assertTrue(metadata["enabled"])
+        self.assertEqual(metadata["source_labels"], ("workspace",))
+        self.assertIn("workspace", metadata["authority_kinds"])
+
+    def test_model_visible_redaction_defaults_to_off(self) -> None:
+        text = (
+            "# Demo Skill\n\n"
+            "Use when handling private operator tasks.\n"
+            "Secret body at /Users/mariano/skills/demo/SKILL.md"
+        )
+        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(text),
+            text,
+        )
+        self.assertEqual(redactor.push(text), (text,))
+        self.assertEqual(redactor.flush(), ())
+
+    def test_server_output_redaction_settings_apply_granularity(
+        self,
+    ) -> None:
+        settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"host_paths"}),
+            protocols=frozenset({"mcp"}),
+            channels=frozenset({"reasoning"}),
+        )
+        text = "See /Users/mariano/private.txt"
+
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(
+                text,
+                output_redaction_settings=settings,
+                protocol="mcp",
+                channel="reasoning",
+            ),
+            "See <host-path>/private.txt",
+        )
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(
+                text,
+                output_redaction_settings=settings,
+                protocol="mcp",
+                channel="answer",
+            ),
+            text,
+        )
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(
+                text,
+                output_redaction_settings=settings,
+                protocol="openai",
+                channel="reasoning",
+            ),
+            text,
+        )
+
+    def test_model_visible_redactor_can_only_redact_skill_source_paths(
+        self,
+    ) -> None:
+        settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"skill_source_paths"}),
+        )
+        redactor = server_entities.ModelVisibleServerProtocolTextRedactor(
+            settings
+        )
+
+        self.assertEqual(redactor.push("# Demo Skill\n\n"), ())
+        self.assertEqual(
+            redactor.push("Source: /skills/demo/SKILL.md"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+        self.assertEqual(redactor.push("later"), ())
+
+        body_only = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"skill_body_echoes"}),
+        )
+        source_text = "# Demo Skill\n\nSource: /skills/demo/SKILL.md"
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(
+                source_text,
+                output_redaction_settings=body_only,
+            ),
+            source_text,
+        )
+
     def test_model_visible_redactor_handles_empty_and_full_skill_body(
         self,
     ) -> None:
-        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+        redactor = _model_visible_redactor()
 
         self.assertEqual(redactor.push(""), ())
         self.assertEqual(redactor.push("   \n"), ("   \n",))
@@ -554,7 +892,7 @@ class ChatEntitiesTestCase(TestCase):
         )
         self.assertEqual(redactor.push("later token"), ())
 
-        embedded = server_entities.ModelVisibleServerProtocolTextRedactor()
+        embedded = _model_visible_redactor()
         self.assertEqual(
             embedded.push(
                 "Preamble\n# Demo Skill\n\n"
@@ -583,16 +921,14 @@ class ChatEntitiesTestCase(TestCase):
         for text in skill_bodies:
             with self.subTest(text=text):
                 self.assertEqual(
-                    server_entities.sanitize_model_visible_server_protocol_text(
-                        text
-                    ),
+                    _sanitize_model_visible_text(text),
                     server_entities.SKILL_CONTENT_REDACTION,
                 )
 
     def test_model_visible_stream_redactor_allows_markdown_starts(
         self,
     ) -> None:
-        heading = server_entities.ModelVisibleServerProtocolTextRedactor()
+        heading = _model_visible_redactor()
 
         self.assertEqual(
             heading.push("# Summary\nThis is ordinary markdown.\n"),
@@ -600,22 +936,22 @@ class ChatEntitiesTestCase(TestCase):
         )
         self.assertEqual(heading.push("Next delta."), ("Next delta.",))
 
-        split = server_entities.ModelVisibleServerProtocolTextRedactor()
-        self.assertEqual(split.push("# Summary\n"), ())
+        split = _model_visible_redactor()
+        self.assertEqual(split.push("# Summary\n"), ("# Summary\n",))
         self.assertEqual(
             split.push("This is ordinary markdown.\n"),
-            ("# Summary\nThis is ordinary markdown.\n",),
+            ("This is ordinary markdown.\n",),
         )
         self.assertEqual(split.push("Next delta."), ("Next delta.",))
 
-        frontmatter = server_entities.ModelVisibleServerProtocolTextRedactor()
+        frontmatter = _model_visible_redactor()
         self.assertEqual(
             frontmatter.push("---\ntitle: Report\n---\nBody.\n"),
             ("---\ntitle: Report\n---\nBody.\n",),
         )
         self.assertEqual(frontmatter.push("Next delta."), ("Next delta.",))
 
-        instructions = server_entities.ModelVisibleServerProtocolTextRedactor()
+        instructions = _model_visible_redactor()
         self.assertEqual(
             instructions.push("# Summary\nInstructions for deployment.\n"),
             ("# Summary\nInstructions for deployment.\n",),
@@ -627,16 +963,12 @@ class ChatEntitiesTestCase(TestCase):
             "Use when evaluating rollout options for the July train.\n"
         )
         self.assertEqual(
-            server_entities.sanitize_model_visible_server_protocol_text(
-                release_notes
-            ),
+            _sanitize_model_visible_text(release_notes),
             release_notes,
         )
         api_guide = "# API Guide\n\nSee docs/skills/demo for details.\n"
         self.assertEqual(
-            server_entities.sanitize_model_visible_server_protocol_text(
-                api_guide
-            ),
+            _sanitize_model_visible_text(api_guide),
             api_guide,
         )
         remote_skill_resource = (
@@ -644,16 +976,12 @@ class ChatEntitiesTestCase(TestCase):
             "See https://docs.example.com/skills/demo/SKILL.md\n"
         )
         self.assertEqual(
-            server_entities.sanitize_model_visible_server_protocol_text(
-                remote_skill_resource
-            ),
+            _sanitize_model_visible_text(remote_skill_resource),
             remote_skill_resource,
         )
         relative_skill_resource = "description: docs/skills/demo/SKILL.md"
         self.assertEqual(
-            server_entities.sanitize_model_visible_server_protocol_text(
-                relative_skill_resource
-            ),
+            _sanitize_model_visible_text(relative_skill_resource),
             relative_skill_resource,
         )
         skills_matrix = (
@@ -661,9 +989,7 @@ class ChatEntitiesTestCase(TestCase):
             "Use when assigning people to delivery rotations.\n"
         )
         self.assertEqual(
-            server_entities.sanitize_model_visible_server_protocol_text(
-                skills_matrix
-            ),
+            _sanitize_model_visible_text(skills_matrix),
             skills_matrix,
         )
 
@@ -680,9 +1006,7 @@ class ChatEntitiesTestCase(TestCase):
         ):
             with self.subTest(skill_body=skill_body):
                 self.assertEqual(
-                    server_entities.sanitize_model_visible_server_protocol_text(
-                        skill_body
-                    ),
+                    _sanitize_model_visible_text(skill_body),
                     server_entities.SKILL_CONTENT_REDACTION,
                 )
 
@@ -692,33 +1016,112 @@ class ChatEntitiesTestCase(TestCase):
                 "# Quarterly Planning Notes\n\n"
                 "Use when evaluating staffing and release tradeoffs.\n"
             ),
+            "# Summary\n\nnormal intro\nUse when reviewing plans.\n",
+            "# Summary\n\nnormal intro\nSource: /skills/demo/SKILL.md\n",
+            (
+                "Preamble\n# Summary\n\nnormal intro\n"
+                "Source: /skills/demo/SKILL.md\n"
+            ),
         ):
             with self.subTest(ordinary_markdown=ordinary_markdown):
                 self.assertEqual(
-                    server_entities.sanitize_model_visible_server_protocol_text(
-                        ordinary_markdown
-                    ),
+                    _sanitize_model_visible_text(ordinary_markdown),
                     ordinary_markdown,
                 )
 
     def test_model_visible_stream_redactor_releases_safe_heading_prefixes(
         self,
     ) -> None:
-        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+        redactor = _model_visible_redactor()
 
-        self.assertEqual(redactor.push("# Summary\n"), ())
-        self.assertEqual(redactor.push("Instruction"), ())
+        self.assertEqual(redactor.push("# Summary\n"), ("# Summary\n",))
+        self.assertEqual(redactor.push("Instruction"), ("Instruction",))
         self.assertEqual(
             redactor.push("al note for deployment.\n"),
-            ("# Summary\nInstructional note for deployment.\n",),
+            ("al note for deployment.\n",),
         )
         self.assertEqual(redactor.push("Next delta."), ("Next delta.",))
 
-        heading_only = server_entities.ModelVisibleServerProtocolTextRedactor()
+        ordinary_use_when = _model_visible_redactor()
+        ordinary_use_when_start = ordinary_use_when.push("# Summary\n\n")
+        self.assertEqual(
+            ordinary_use_when_start,
+            ("# Summary\n\n",),
+        )
+        use_when_streamed = (
+            *ordinary_use_when_start,
+            *ordinary_use_when.push("normal intro\n"),
+            *ordinary_use_when.push("Use when reviewing plans.\n"),
+            *ordinary_use_when.flush(),
+        )
+        use_when_text = (
+            "# Summary\n\nnormal intro\nUse when reviewing plans.\n"
+        )
+        self.assertEqual(
+            "".join(use_when_streamed),
+            _sanitize_model_visible_text(use_when_text),
+        )
+
+        ordinary_source = _model_visible_redactor()
+        ordinary_source_start = ordinary_source.push("# Summary\n\n")
+        self.assertEqual(
+            ordinary_source_start,
+            ("# Summary\n\n",),
+        )
+        source_streamed = (
+            *ordinary_source_start,
+            *ordinary_source.push("normal intro\n"),
+            *ordinary_source.push("Source: /skills/demo/SKILL.md\n"),
+            *ordinary_source.flush(),
+        )
+        source_text = (
+            "# Summary\n\nnormal intro\nSource: /skills/demo/SKILL.md\n"
+        )
+        self.assertEqual(
+            "".join(source_streamed),
+            _sanitize_model_visible_text(source_text),
+        )
+
+        long_marker_text = "# Summary\n\nUse when reviewing plans.\n" + (
+            "x" * 12001
+        )
+        long_marker = _model_visible_redactor()
+        long_marker_streamed = (
+            *long_marker.push("# Summary\n\n"),
+            *long_marker.push("Use when reviewing plans.\n" + ("x" * 12001)),
+            *long_marker.flush(),
+        )
+        self.assertEqual(
+            "".join(long_marker_streamed),
+            _sanitize_model_visible_text(long_marker_text),
+        )
+
+        preamble_source = _model_visible_redactor()
+        preamble_source_start = preamble_source.push("Preamble\n# Summary\n\n")
+        self.assertEqual(
+            preamble_source_start,
+            ("Preamble\n# Summary\n\n",),
+        )
+        preamble_source_streamed = (
+            *preamble_source_start,
+            *preamble_source.push("normal intro\n"),
+            *preamble_source.push("Source: /skills/demo/SKILL.md\n"),
+            *preamble_source.flush(),
+        )
+        preamble_source_text = (
+            "Preamble\n# Summary\n\nnormal intro\n"
+            "Source: /skills/demo/SKILL.md\n"
+        )
+        self.assertEqual(
+            "".join(preamble_source_streamed),
+            _sanitize_model_visible_text(preamble_source_text),
+        )
+
+        heading_only = _model_visible_redactor()
         self.assertEqual(heading_only.push("# Summary"), ())
         self.assertEqual(heading_only.flush(), ("# Summary",))
 
-        description = server_entities.ModelVisibleServerProtocolTextRedactor()
+        description = _model_visible_redactor()
         self.assertEqual(description.push("description:"), ())
         self.assertEqual(description.push(" Source"), ())
         self.assertEqual(
@@ -726,9 +1129,7 @@ class ChatEntitiesTestCase(TestCase):
             ("description: Source note for deployment.\n",),
         )
 
-        private_source = (
-            server_entities.ModelVisibleServerProtocolTextRedactor()
-        )
+        private_source = _model_visible_redactor()
         self.assertEqual(private_source.push("description: ~/.c"), ())
         self.assertEqual(private_source.push("odex"), ())
         self.assertEqual(
@@ -747,9 +1148,7 @@ class ChatEntitiesTestCase(TestCase):
             ("description: ", "C:\\", "skills\\demo\\README.md"),
         ):
             with self.subTest(chunks=chunks):
-                split_source = (
-                    server_entities.ModelVisibleServerProtocolTextRedactor()
-                )
+                split_source = _model_visible_redactor()
                 self.assertEqual(split_source.push(chunks[0]), ())
                 self.assertEqual(split_source.push(chunks[1]), ())
                 self.assertEqual(
@@ -759,20 +1158,18 @@ class ChatEntitiesTestCase(TestCase):
 
         for prefix in ("description: ~", "description: C:"):
             with self.subTest(prefix=prefix):
-                split_prefix = (
-                    server_entities.ModelVisibleServerProtocolTextRedactor()
-                )
+                split_prefix = _model_visible_redactor()
                 self.assertEqual(split_prefix.push(prefix), ())
                 self.assertTrue(split_prefix.has_pending)
 
     def test_model_visible_stream_redactor_redacts_split_host_paths(
         self,
     ) -> None:
-        normal = server_entities.ModelVisibleServerProtocolTextRedactor()
+        normal = _model_visible_redactor()
         self.assertEqual(normal.push("a"), ("a",))
         self.assertEqual(normal.push("b"), ("b",))
 
-        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+        redactor = _model_visible_redactor()
 
         self.assertEqual(redactor.push("See /Users/mar"), ("See ",))
         self.assertEqual(
@@ -781,42 +1178,38 @@ class ChatEntitiesTestCase(TestCase):
         )
         self.assertEqual(redactor.push(" Next delta."), (" Next delta.",))
 
-        windows = server_entities.ModelVisibleServerProtocolTextRedactor()
+        windows = _model_visible_redactor()
         self.assertEqual(windows.push("Open C:/Users/mar"), ("Open ",))
         self.assertEqual(
             windows.push("iano/secret.txt now."),
             ("<host-path>/secret.txt now.",),
         )
 
-        drive = server_entities.ModelVisibleServerProtocolTextRedactor()
+        drive = _model_visible_redactor()
         self.assertEqual(drive.push("Open C"), ("Open ",))
         self.assertEqual(
             drive.push(":/Users/mariano/secret.txt now."),
             ("<host-path>/secret.txt now.",),
         )
 
-        partial_drive = (
-            server_entities.ModelVisibleServerProtocolTextRedactor()
-        )
+        partial_drive = _model_visible_redactor()
         self.assertEqual(partial_drive.push("Open C:"), ("Open ",))
         self.assertEqual(partial_drive.flush(), ("C:",))
 
-        invalid_windows = (
-            server_entities.ModelVisibleServerProtocolTextRedactor()
-        )
+        invalid_windows = _model_visible_redactor()
         self.assertEqual(
             invalid_windows.push("Open C:Users"),
             ("Open C:Users",),
         )
 
-        file_url = server_entities.ModelVisibleServerProtocolTextRedactor()
+        file_url = _model_visible_redactor()
         self.assertEqual(
             file_url.push("Open file:///tmp/re"), ("Open file://",)
         )
         self.assertEqual(file_url.push("port.txt"), ())
         self.assertEqual(file_url.flush(), ("<host-path>/report.txt",))
 
-        remote = server_entities.ModelVisibleServerProtocolTextRedactor()
+        remote = _model_visible_redactor()
         self.assertEqual(
             remote.push("See https://files.example/tmp/re"),
             ("See https://files.example/tmp/re",),
@@ -826,32 +1219,28 @@ class ChatEntitiesTestCase(TestCase):
     def test_model_visible_stream_redactor_flushes_pending_safe_text(
         self,
     ) -> None:
-        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+        redactor = _model_visible_redactor()
 
         self.assertEqual(redactor.push("---\n"), ())
         self.assertEqual(redactor.flush(), ("---\n",))
         self.assertEqual(redactor.push("Next delta."), ("Next delta.",))
 
-        heading_redactor = (
-            server_entities.ModelVisibleServerProtocolTextRedactor()
-        )
-        self.assertEqual(heading_redactor.push("# Summary\n"), ())
+        heading_redactor = _model_visible_redactor()
+        self.assertEqual(heading_redactor.push("# Imagegen\n"), ())
         self.assertEqual(
             heading_redactor.push("Source: /tmp/report.txt"),
-            ("# Summary\nSource: ",),
+            ("# Imagegen\nSource: ",),
         )
         self.assertEqual(
             heading_redactor.flush(),
             ("<host-path>/report.txt",),
         )
 
-        path_redactor = (
-            server_entities.ModelVisibleServerProtocolTextRedactor()
-        )
-        self.assertEqual(path_redactor.push("# Summary\n"), ())
+        path_redactor = _model_visible_redactor()
+        self.assertEqual(path_redactor.push("# Summary\n"), ("# Summary\n",))
         self.assertEqual(
             path_redactor.push("See /tmp/report.txt\n"),
-            ("# Summary\nSee <host-path>/report.txt\n",),
+            ("See <host-path>/report.txt\n",),
         )
 
     def test_mcp_tool_request_accepts_text_or_files(self) -> None:
@@ -1210,7 +1599,7 @@ class ChatEntitiesTestCase(TestCase):
         for source, expected in cases.items():
             with self.subTest(source=source):
                 self.assertEqual(
-                    server_entities.sanitize_server_protocol_text(source),
+                    _sanitize_server_protocol_text(source),
                     expected,
                 )
 
@@ -1221,15 +1610,11 @@ class ChatEntitiesTestCase(TestCase):
         windows_path = "A:/Users/" + "!/" * 128 + "SKILL.md"
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(
-                f"read {posix_path}"
-            ),
+            _sanitize_server_protocol_text(f"read {posix_path}"),
             "read <host-path>/SKILL.md",
         )
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(
-                f"read {windows_path}"
-            ),
+            _sanitize_server_protocol_text(f"read {windows_path}"),
             "read <host-path>/SKILL.md",
         )
 
@@ -1244,7 +1629,7 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(text),
+            _sanitize_server_protocol_text(text),
             "read <host-path>/SKILL.md "
             "and <host-path>/SKILL.md "
             "and file://<host-path>/SKILL.md "
@@ -1263,7 +1648,7 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(text),
+            _sanitize_server_protocol_text(text),
             "read <host-path>/demo "
             "and <host-path>/demo "
             "and <host-path>/demo "
@@ -1280,7 +1665,7 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(text),
+            _sanitize_server_protocol_text(text),
             text,
         )
 
@@ -1296,7 +1681,7 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(text),
+            _sanitize_server_protocol_text(text),
             "download https://files.example/tmp/report.pdf "
             "and https://files.example/opt/logs/run.log "
             "and https://files.example/Volumes/Data/report.pdf "
@@ -1316,7 +1701,7 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(text),
+            _sanitize_server_protocol_text(text),
             "keep https://files.example/C:/Users "
             "and https://files.example/C:/Users/me/file.txt "
             "but redact <host-path>/Users and <host-path>/me "
@@ -1335,7 +1720,7 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(text),
+            _sanitize_server_protocol_text(text),
             "read (file://<host-path>/secret.txt) "
             "and [file://<host-path>/secret.txt] "
             'and "file://<host-path>/secret.txt" '
@@ -1352,7 +1737,7 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(text),
+            _sanitize_server_protocol_text(text),
             text,
         )
 
@@ -1368,7 +1753,7 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(text),
+            _sanitize_server_protocol_text(text),
             "Source:file://<host-path>/SKILL.md "
             "url:file://<host-path>/secret.txt "
             "prefix:file://<host-path>/secret.txt "
@@ -1388,7 +1773,7 @@ class ChatEntitiesTestCase(TestCase):
         )
 
         self.assertEqual(
-            server_entities.sanitize_server_protocol_text(text),
+            _sanitize_server_protocol_text(text),
             "Source:<host-path>/SKILL.md "
             "url:<host-path>/secret.txt "
             "Source:<host-path>/secret.txt "
@@ -1406,9 +1791,7 @@ class ChatEntitiesTestCase(TestCase):
             "Source: C:/Users/mariano/skills/demo/SKILL.md"
         )
 
-        sanitized = (
-            server_entities.sanitize_model_visible_server_protocol_text(text)
-        )
+        sanitized = _sanitize_model_visible_text(text)
 
         self.assertEqual(sanitized, server_entities.SKILL_CONTENT_REDACTION)
         self.assertNotIn("Secret skill body", sanitized)
@@ -1417,7 +1800,7 @@ class ChatEntitiesTestCase(TestCase):
     def test_model_visible_stream_redactor_holds_split_heading_marker(
         self,
     ) -> None:
-        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+        redactor = _model_visible_redactor()
 
         self.assertEqual(redactor.push("#"), ())
         self.assertEqual(redactor.push(" Demo Skill\n\n"), ())
@@ -1430,3 +1813,222 @@ class ChatEntitiesTestCase(TestCase):
             (server_entities.SKILL_CONTENT_REDACTION,),
         )
         self.assertEqual(redactor.flush(), ())
+
+    def test_model_visible_stream_redactor_holds_skill_heading_candidates(
+        self,
+    ) -> None:
+        body_settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"skill_body_echoes"}),
+        )
+        body_redactor = server_entities.ModelVisibleServerProtocolTextRedactor(
+            body_settings
+        )
+
+        self.assertEqual(body_redactor.push("# Demo Skill\n\n"), ())
+        self.assertEqual(body_redactor.push("normal intro\n"), ())
+        self.assertEqual(
+            body_redactor.push("Use when handling private tasks.\nSecret"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+
+        source_settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"skill_source_paths"}),
+        )
+        source_redactor = (
+            server_entities.ModelVisibleServerProtocolTextRedactor(
+                source_settings
+            )
+        )
+
+        self.assertEqual(source_redactor.push("# Demo Skill\n\n"), ())
+        self.assertEqual(source_redactor.push("normal intro\n"), ())
+        self.assertEqual(
+            source_redactor.push("Source: /skills/demo/SKILL.md"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+
+        default_redactor = (
+            server_entities.ModelVisibleServerProtocolTextRedactor()
+        )
+        self.assertEqual(
+            default_redactor.push("# Demo Skill\n\n"),
+            ("# Demo Skill\n\n",),
+        )
+        self.assertEqual(
+            default_redactor.push("normal intro\n"),
+            ("normal intro\n",),
+        )
+        self.assertEqual(
+            default_redactor.push("Use when handling private tasks.\nSecret"),
+            ("Use when handling private tasks.\nSecret",),
+        )
+
+    def test_model_visible_stream_redactor_holds_title_case_skill_heading(
+        self,
+    ) -> None:
+        body_redactor = _model_visible_redactor()
+
+        self.assertEqual(body_redactor.push("# Imagegen\n\n"), ())
+        self.assertEqual(body_redactor.push("normal intro\n"), ())
+        self.assertEqual(
+            body_redactor.push("Use when creating private bitmap assets."),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+
+        source_redactor = _model_visible_redactor()
+        self.assertEqual(source_redactor.push("# Imagegen\n\n"), ())
+        self.assertEqual(source_redactor.push("normal intro\n"), ())
+        self.assertEqual(
+            source_redactor.push("Source: /skills/imagegen/SKILL.md"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+
+    def test_model_visible_stream_redactor_buffers_body_window_after_heading(
+        self,
+    ) -> None:
+        redactor = _model_visible_redactor()
+        near_boundary_body = "x" * 11990
+
+        self.assertEqual(redactor.push("# Imagegen\n\n"), ())
+        self.assertEqual(redactor.push(near_boundary_body), ())
+        self.assertEqual(
+            redactor.push("\nUse when creating private bitmap assets."),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+
+        split_marker_body = "x" * 11997
+        split_marker_text = (
+            f"# Imagegen\n\n{split_marker_body}\nUse when private.\nSecret"
+        )
+        self.assertEqual(
+            _sanitize_model_visible_text(split_marker_text),
+            server_entities.SKILL_CONTENT_REDACTION,
+        )
+        split_marker = _model_visible_redactor()
+        self.assertEqual(split_marker.push("# Imagegen\n\n"), ())
+        self.assertEqual(split_marker.push(split_marker_body), ())
+        self.assertEqual(split_marker.push("\nUse"), ())
+        self.assertEqual(
+            split_marker.push(" when private.\nSecret"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+
+        embedded = _model_visible_redactor()
+        self.assertEqual(embedded.push("Preamble\n# Imagegen\n\n"), ())
+        self.assertEqual(embedded.push(split_marker_body), ())
+        self.assertEqual(embedded.push("\nUse"), ())
+        self.assertEqual(
+            embedded.push(" when private.\nSecret"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+
+        beyond_window_body = "x" * 12001
+        beyond_window = _model_visible_redactor()
+        self.assertEqual(beyond_window.push("# Imagegen\n\n"), ())
+        self.assertEqual(
+            beyond_window.push(beyond_window_body),
+            ("# Imagegen\n\n" + beyond_window_body,),
+        )
+        self.assertEqual(beyond_window.push("\nUse"), ("\nUse",))
+
+    def test_model_visible_stream_buffer_public_edges(self) -> None:
+        heading_only = _model_visible_redactor()
+        self.assertEqual(heading_only.push("# Imagegen"), ())
+        self.assertEqual(heading_only.flush(), ("# Imagegen",))
+
+        marker_prefix = _model_visible_redactor()
+        self.assertEqual(marker_prefix.push("# Imagegen\n\n"), ())
+        self.assertEqual(marker_prefix.push("Use"), ())
+        self.assertEqual(marker_prefix.flush(), ("# Imagegen\n\nUse",))
+
+        source_prefix = _model_visible_redactor()
+        self.assertEqual(source_prefix.push("# Imagegen\n\n"), ())
+        self.assertEqual(source_prefix.push("/sk"), ())
+        self.assertEqual(source_prefix.flush(), ("# Imagegen\n\n/sk",))
+
+        frontmatter_source = "---\nSource: /skills/demo/SKILL.md"
+        self.assertEqual(
+            _sanitize_model_visible_text(frontmatter_source),
+            server_entities.SKILL_CONTENT_REDACTION,
+        )
+
+        body_only_settings = server_entities.ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"skill_body_echoes"}),
+        )
+        heading_only_body_redactor = (
+            server_entities.ModelVisibleServerProtocolTextRedactor(
+                body_only_settings
+            )
+        )
+        self.assertEqual(heading_only_body_redactor.push("# Imagegen"), ())
+        self.assertEqual(
+            heading_only_body_redactor.flush(),
+            ("# Imagegen",),
+        )
+
+        source_prefix_body_redactor = (
+            server_entities.ModelVisibleServerProtocolTextRedactor(
+                body_only_settings
+            )
+        )
+        self.assertEqual(
+            source_prefix_body_redactor.push("# Imagegen\n\n"),
+            (),
+        )
+        self.assertEqual(source_prefix_body_redactor.push("/sk"), ())
+        self.assertEqual(
+            source_prefix_body_redactor.flush(),
+            ("# Imagegen\n\n/sk",),
+        )
+
+        beyond_window_body_redactor = (
+            server_entities.ModelVisibleServerProtocolTextRedactor(
+                body_only_settings
+            )
+        )
+        beyond_window_text = "# Imagegen\n\n" + ("x" * 12001) + "Use"
+        self.assertEqual(
+            beyond_window_body_redactor.push(beyond_window_text),
+            (beyond_window_text,),
+        )
+
+    def test_model_visible_source_path_window_matches_streaming(
+        self,
+    ) -> None:
+        near_boundary_body = "x" * 11950
+        near_boundary_text = (
+            "# Imagegen\n\n"
+            f"{near_boundary_body}\n"
+            "Source: /skills/demo/SKILL.md"
+        )
+        self.assertEqual(
+            _sanitize_model_visible_text(near_boundary_text),
+            server_entities.SKILL_CONTENT_REDACTION,
+        )
+        near_boundary = _model_visible_redactor()
+        self.assertEqual(near_boundary.push("# Imagegen\n\n"), ())
+        self.assertEqual(near_boundary.push(near_boundary_body), ())
+        self.assertEqual(
+            near_boundary.push("\nSource: /skills/demo/SKILL.md"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+
+        over_window_body = "x" * 12001
+        over_window_text = (
+            f"# Imagegen\n\n{over_window_body}\nSource: /skills/demo/SKILL.md"
+        )
+        self.assertEqual(
+            _sanitize_model_visible_text(over_window_text),
+            over_window_text,
+        )
+        over_window = _model_visible_redactor()
+        self.assertEqual(over_window.push("# Imagegen\n\n"), ())
+        over_window_streamed = (
+            *over_window.push(over_window_body),
+            *over_window.push("\nSource: /skills/demo/SKILL.md"),
+            *over_window.flush(),
+        )
+        self.assertEqual("".join(over_window_streamed), over_window_text)

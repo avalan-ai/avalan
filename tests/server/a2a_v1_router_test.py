@@ -23,7 +23,15 @@ from avalan.server.a2a.router import (
     install_a2a_routes,
 )
 from avalan.server.container_policy import RemoteContainerRequestPolicy
-from avalan.server.entities import ContentFile, ContentImage, ContentText
+from avalan.server.entities import (
+    ContentFile,
+    ContentImage,
+    ContentText,
+    OrchestratorContext,
+    ServerOutputRedactionSettings,
+)
+
+_MODEL_VISIBLE_REDACTION_SETTINGS = ServerOutputRedactionSettings(enabled=True)
 
 
 @pytest.fixture
@@ -1129,6 +1137,79 @@ async def test_executor_passes_a2a_file_parts_to_orchestrate(
 
 
 @pytest.mark.anyio
+async def test_executor_forwards_ctx_output_redaction_settings(
+    monkeypatch,
+    fake_a2a_imports,
+) -> None:
+    settings = ServerOutputRedactionSettings(
+        enabled=True,
+        protocols=frozenset({"a2a"}),
+    )
+    app = FastAPI()
+    app.state.logger = MagicMock()
+    app.state.orchestrator = _ExecutorOrchestrator()
+    app.state.ctx = OrchestratorContext(
+        participant_id=None,
+        output_redaction_settings=settings,
+    )
+    executor = AvalanA2AAgentExecutor(app)
+    captured_settings: list[ServerOutputRedactionSettings | None] = []
+
+    class CapturingTranslator:
+        succeeded = True
+
+        def __init__(
+            self,
+            updater: object,
+            *,
+            output_redaction_settings: (
+                ServerOutputRedactionSettings | None
+            ) = None,
+        ) -> None:
+            _ = updater
+            captured_settings.append(output_redaction_settings)
+
+        async def process(self, item: object) -> None:
+            _ = item
+
+        async def finish(self) -> None:
+            return None
+
+    async def fake_orchestrate(*args: object, **kwargs: object):
+        return object(), "response-id", 123
+
+    async def fake_cleanup(*args: object, **kwargs: object) -> None:
+        return None
+
+    def fake_stream_consumer_iterator(*args: object, **kwargs: object):
+        async def iterator():
+            yield _item(
+                0,
+                StreamItemKind.STREAM_COMPLETED,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+
+        return iterator()
+
+    monkeypatch.setattr(a2a_router, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(a2a_router, "cleanup_stream_sources", fake_cleanup)
+    monkeypatch.setattr(
+        a2a_router,
+        "stream_consumer_iterator",
+        fake_stream_consumer_iterator,
+    )
+    monkeypatch.setattr(
+        a2a_router,
+        "A2AResponseTranslator",
+        CapturingTranslator,
+    )
+
+    await executor.execute(_ExecutorContext(), _FakeEventQueue())
+
+    assert captured_settings == [settings]
+
+
+@pytest.mark.anyio
 async def test_executor_emits_submitted_task_for_new_a2a_task(
     monkeypatch, fake_a2a_imports
 ) -> None:
@@ -1175,7 +1256,10 @@ async def test_translator_projects_reasoning_tool_and_terminal_states(
     fake_a2a_imports,
 ) -> None:
     updater = _FakeUpdater()
-    translator = A2AResponseTranslator(updater)
+    translator = A2AResponseTranslator(
+        updater,
+        output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+    )
 
     await translator.process(
         _item(
@@ -1221,7 +1305,10 @@ async def test_translator_projects_skills_tool_activity_safely(
     fake_a2a_imports,
 ) -> None:
     updater = _FakeUpdater()
-    translator = A2AResponseTranslator(updater)
+    translator = A2AResponseTranslator(
+        updater,
+        output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+    )
 
     await translator.process(
         _tool_item(
@@ -1234,6 +1321,23 @@ async def test_translator_projects_skills_tool_activity_safely(
     await translator.process(
         _tool_item(
             1,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            text_delta="private live skill instructions",
+            data={},
+            metadata={"tool_name": "skills.read"},
+        )
+    )
+    assert len(updater.artifacts) == 1
+    live_artifact_text = "".join(
+        getattr(part, "text", "") for part in updater.artifacts[0]["parts"]
+    )
+    assert updater.artifacts[0]["artifact_id"] == "call-1"
+    assert "redacted-skill-content" in live_artifact_text
+    assert "private live skill instructions" not in live_artifact_text
+
+    await translator.process(
+        _tool_item(
+            2,
             StreamItemKind.TOOL_EXECUTION_COMPLETED,
             data={
                 "name": "skills.read",
@@ -1247,7 +1351,7 @@ async def test_translator_projects_skills_tool_activity_safely(
     )
     await translator.process(
         _item(
-            2,
+            3,
             StreamItemKind.STREAM_COMPLETED,
             terminal_outcome=StreamTerminalOutcome.COMPLETED,
         )
@@ -1265,6 +1369,7 @@ async def test_translator_projects_skills_tool_activity_safely(
     assert updater.artifacts[0]["artifact_id"] == "call-1"
     assert "redacted-skill-content" in projected
     assert "<host-path>/SKILL.md" in projected
+    assert "private live skill instructions" not in projected
     assert "private skill instructions" not in projected
     assert "/Users/mariano" not in projected
     assert updater.completed == 1
@@ -1531,6 +1636,17 @@ def test_a2a_tool_text_projection_edge_cases() -> None:
         text_delta="",
         data={"content": "private skill body"},
     )
+    skills_delta = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=3,
+        kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="call-1"),
+        text_delta="private skill body",
+        data={},
+    )
 
     assert a2a_router._a2a_tool_item_text(tool_output, tool_output.data) == ""
     assert (
@@ -1541,6 +1657,20 @@ def test_a2a_tool_text_projection_edge_cases() -> None:
             skills_output,
             skills_output.data,
             tool_name="skills.read",
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+        )
+    ) == {
+        "content": {
+            "redacted": True,
+            "reason": "<redacted-skill-content>",
+        }
+    }
+    assert loads(
+        a2a_router._a2a_tool_item_text(
+            skills_delta,
+            skills_delta.data,
+            tool_name="skills.read",
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
         )
     ) == {
         "content": {
@@ -1552,8 +1682,49 @@ def test_a2a_tool_text_projection_edge_cases() -> None:
         a2a_router._a2a_protocol_payload_text(
             "Source: /tmp/skills/demo/SKILL.md",
             tool_name=None,
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
         )
         == "Source: <host-path>/SKILL.md"
+    )
+    assert (
+        a2a_router._a2a_tool_item_text(
+            skills_output,
+            skills_output.data,
+            tool_name="skills.read",
+        )
+        == "private skill body"
+    )
+    assert (
+        a2a_router._a2a_tool_item_text(
+            skills_delta,
+            skills_delta.data,
+            tool_name="skills.read",
+        )
+        == "private skill body"
+    )
+    assert (
+        a2a_router._a2a_tool_item_text(
+            skills_output,
+            skills_output.data,
+            tool_name="skills.read",
+            output_redaction_settings=ServerOutputRedactionSettings(
+                enabled=True,
+                protocols=frozenset({"mcp"}),
+            ),
+        )
+        == "private skill body"
+    )
+    assert (
+        a2a_router._a2a_tool_item_text(
+            skills_delta,
+            skills_delta.data,
+            tool_name="skills.read",
+            output_redaction_settings=ServerOutputRedactionSettings(
+                enabled=True,
+                protocols=frozenset({"mcp"}),
+            ),
+        )
+        == "private skill body"
     )
 
 
@@ -1562,7 +1733,10 @@ async def test_translator_redacts_answer_and_reasoning_skill_echoes(
     fake_a2a_imports,
 ) -> None:
     updater = _FakeUpdater()
-    translator = A2AResponseTranslator(updater)
+    translator = A2AResponseTranslator(
+        updater,
+        output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+    )
 
     await translator.process(
         CanonicalStreamItem(
@@ -1676,11 +1850,107 @@ async def test_translator_redacts_answer_and_reasoning_skill_echoes(
 
 
 @pytest.mark.anyio
-async def test_translator_flushes_buffered_model_text_in_source_order(
+async def test_translator_respects_model_text_channel_filters(
+    fake_a2a_imports,
+) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(
+        updater,
+        output_redaction_settings=ServerOutputRedactionSettings(
+            enabled=True,
+            channels=frozenset({"reasoning"}),
+        ),
+    )
+    answer_echo = (
+        "# Demo Skill\n\n"
+        "Use when answering private operator tasks.\n"
+        "Secret answer skill body."
+    )
+    reasoning_echo = (
+        "# Reasoning Skill\n\n"
+        "Use when reasoning privately.\n"
+        "Secret reasoning skill body."
+    )
+
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=answer_echo,
+        )
+    )
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta=reasoning_echo,
+        )
+    )
+    await translator.finish()
+
+    artifact_text = "".join(
+        getattr(part, "text", "")
+        for artifact in updater.artifacts
+        for part in artifact["parts"]
+    )
+
+    assert "# Demo Skill" in artifact_text
+    assert "Secret answer skill body" in artifact_text
+    assert "redacted-skill-content" in artifact_text
+    assert "Secret reasoning skill body" not in artifact_text
+
+
+@pytest.mark.anyio
+async def test_translator_leaves_answer_skill_echoes_by_default(
     fake_a2a_imports,
 ) -> None:
     updater = _FakeUpdater()
     translator = A2AResponseTranslator(updater)
+    skill_echo = (
+        "# Demo Skill\n\n"
+        "Use when answering private operator tasks.\n"
+        "Secret answer skill body.\n"
+        "Source: /tmp/skills/demo/SKILL.md"
+    )
+
+    await translator.process(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=skill_echo,
+        )
+    )
+
+    artifact_text = "".join(
+        getattr(part, "text", "")
+        for artifact in updater.artifacts
+        for part in artifact["parts"]
+    )
+
+    assert artifact_text == skill_echo
+
+
+@pytest.mark.anyio
+async def test_translator_flushes_buffered_model_text_in_source_order(
+    fake_a2a_imports,
+) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(
+        updater,
+        output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
+    )
 
     await translator.process(
         CanonicalStreamItem(
@@ -1690,7 +1960,7 @@ async def test_translator_flushes_buffered_model_text_in_source_order(
             sequence=1,
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
-            text_delta="# Reasoning\n",
+            text_delta="# Imagegen\n",
         )
     )
     await translator.process(
@@ -1701,7 +1971,7 @@ async def test_translator_flushes_buffered_model_text_in_source_order(
             sequence=2,
             kind=StreamItemKind.ANSWER_DELTA,
             channel=StreamChannel.ANSWER,
-            text_delta="# Summary\n",
+            text_delta="# Browser\n",
         )
     )
     await translator.finish()
@@ -1714,8 +1984,8 @@ async def test_translator_flushes_buffered_model_text_in_source_order(
         "reasoning",
         "answer",
     ]
-    assert text_artifacts[0]["parts"][0].text == "# Reasoning\n"
-    assert text_artifacts[1]["parts"][0].text == "# Summary\n"
+    assert text_artifacts[0]["parts"][0].text == "# Imagegen\n"
+    assert text_artifacts[1]["parts"][0].text == "# Browser\n"
 
 
 @pytest.mark.anyio

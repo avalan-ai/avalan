@@ -13,6 +13,10 @@ from avalan.model.stream import (
     project_canonical_stream_item,
     stream_channel_for_kind,
 )
+from avalan.server.entities import (
+    ModelVisibleServerProtocolTextRedactor,
+    ServerOutputRedactionSettings,
+)
 from avalan.server.routers.responses import (
     _RESPONSE_SSE_CONTENT_INDEX_FIELDS,
     _canonical_item_to_sse,
@@ -138,6 +142,61 @@ class ResponsesUtilsTestCase(TestCase):
         self.assertEqual(
             detail_projection.metadata,
             {"token_id": 9, "probability": 0.5, "step": 3},
+        )
+
+    def test_token_to_sse_model_text_fallback_uses_redaction_settings(
+        self,
+    ) -> None:
+        answer_projection = _canonical_projection(
+            StreamItemKind.ANSWER_DELTA,
+            0,
+            text_delta="answer /Users/mariano/private.txt",
+        )
+        reasoning_projection = _canonical_projection(
+            StreamItemKind.REASONING_DELTA,
+            1,
+            text_delta="reasoning /Users/mariano/private.txt",
+        )
+        answer_only = ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"host_paths"}),
+            channels=frozenset({"answer"}),
+        )
+
+        answer_events = _token_to_sse_events(
+            answer_projection,
+            0,
+            output_redaction_settings=answer_only,
+        )
+        reasoning_events = _token_to_sse_events(
+            reasoning_projection,
+            1,
+            output_redaction_settings=answer_only,
+        )
+
+        self.assertEqual(
+            answer_events[0].data["delta"],
+            "answer <host-path>/private.txt",
+        )
+        self.assertEqual(
+            reasoning_events[0].data["delta"],
+            "reasoning /Users/mariano/private.txt",
+        )
+
+        mcp_only = ServerOutputRedactionSettings(
+            enabled=True,
+            rules=frozenset({"host_paths"}),
+            protocols=frozenset({"mcp"}),
+        )
+        mcp_only_events = _token_to_sse_events(
+            answer_projection,
+            0,
+            output_redaction_settings=mcp_only,
+        )
+
+        self.assertEqual(
+            mcp_only_events[0].data["delta"],
+            "answer /Users/mariano/private.txt",
         )
 
     def test_token_to_sse_legacy_rejection_unprojected_token(self) -> None:
@@ -469,6 +528,96 @@ class ResponsesUtilsTestCase(TestCase):
         self.assertEqual(data["id"], "call-output")
         self.assertEqual(data["delta"], "line")
         self.assertEqual(data["data"], {"category": "stdout"})
+
+    def test_token_to_sse_redacts_skills_tool_text_delta(self) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-output"),
+            text_delta="private skill body",
+            data={"name": "skills.read", "content": "private skill body"},
+        )
+        metadata_item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-output"),
+            text_delta="private metadata skill body",
+            data={},
+            metadata={"tool_name": "skills.read"},
+        )
+
+        event = _token_to_sse_events(
+            project_canonical_stream_item(item),
+            7,
+            output_redaction_settings=ServerOutputRedactionSettings(
+                enabled=True,
+                rules=frozenset({"skills_tool_content"}),
+            ),
+        )[0]
+        projected = to_json(event.data)
+
+        self.assertIn("redacted-skill-content", projected)
+        self.assertNotIn("private skill body", projected)
+        self.assertEqual(
+            loads(event.data["delta"]),
+            {
+                "content": {
+                    "redacted": True,
+                    "reason": "<redacted-skill-content>",
+                }
+            },
+        )
+        metadata_event = _token_to_sse_events(
+            project_canonical_stream_item(metadata_item),
+            8,
+            output_redaction_settings=ServerOutputRedactionSettings(
+                enabled=True,
+                rules=frozenset({"skills_tool_content"}),
+            ),
+        )[0]
+        self.assertEqual(
+            loads(metadata_event.data["delta"]),
+            {
+                "content": {
+                    "redacted": True,
+                    "reason": "<redacted-skill-content>",
+                }
+            },
+        )
+        self.assertNotIn(
+            "private metadata skill body",
+            to_json(metadata_event.data),
+        )
+
+        default_event = _token_to_sse_events(
+            project_canonical_stream_item(metadata_item),
+            9,
+        )[0]
+        self.assertEqual(
+            default_event.data["delta"],
+            "private metadata skill body",
+        )
+
+        mcp_only_event = _token_to_sse_events(
+            project_canonical_stream_item(metadata_item),
+            10,
+            output_redaction_settings=ServerOutputRedactionSettings(
+                enabled=True,
+                protocols=frozenset({"mcp"}),
+            ),
+        )[0]
+        self.assertEqual(
+            mcp_only_event.data["delta"],
+            "private metadata skill body",
+        )
 
     def test_token_to_sse_maps_stream_diagnostic_items(self) -> None:
         item = CanonicalStreamItem(
@@ -853,24 +1002,36 @@ class ResponsesUtilsTestCase(TestCase):
     def test_projection_adapter_flushes_pending_model_text_in_order(
         self,
     ) -> None:
-        adapter = _ResponsesSSEProjectionAdapter()
+        redaction_settings = ServerOutputRedactionSettings(enabled=True)
+        adapter = _ResponsesSSEProjectionAdapter(
+            answer_redactor=ModelVisibleServerProtocolTextRedactor(
+                redaction_settings,
+                protocol="openai",
+                channel="answer",
+            ),
+            reasoning_redactor=ModelVisibleServerProtocolTextRedactor(
+                redaction_settings,
+                protocol="openai",
+                channel="reasoning",
+            ),
+        )
         reasoning = _canonical_projection(
             StreamItemKind.REASONING_DELTA,
             2,
-            text_delta="# Reason\n",
+            text_delta="# Imagegen\n",
         )
         answer = _canonical_projection(
             StreamItemKind.ANSWER_DELTA,
             5,
-            text_delta="# Answer\n",
+            text_delta="# Browser\n",
         )
 
-        self.assertEqual(adapter.reasoning_redactor.push("# Reason\n"), ())
+        self.assertEqual(adapter.reasoning_redactor.push("# Imagegen\n"), ())
         adapter.record_model_text_pending(
             reasoning,
             adapter.reasoning_redactor,
         )
-        self.assertEqual(adapter.answer_redactor.push("# Answer\n"), ())
+        self.assertEqual(adapter.answer_redactor.push("# Browser\n"), ())
         adapter.record_model_text_pending(answer, adapter.answer_redactor)
 
         events = adapter.flush_model_text_events(9)
@@ -884,7 +1045,7 @@ class ResponsesUtilsTestCase(TestCase):
         )
         self.assertEqual(
             [event.data["delta"] for event in events],
-            ["# Reason\n", "# Answer\n"],
+            ["# Imagegen\n", "# Browser\n"],
         )
         self.assertEqual(
             [event.data["sequence_number"] for event in events],

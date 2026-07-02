@@ -55,6 +55,12 @@ from ...sandbox import (
     SeatbeltSandboxBackend,
 )
 from ...server import agents_server
+from ...server.entities import (
+    ServerOutputRedactionChannel,
+    ServerOutputRedactionProtocol,
+    ServerOutputRedactionRule,
+    ServerOutputRedactionSettings,
+)
 from ...skill import (
     BundledSkillSourceAuthority,
     PluginProvidedSkillSourceAuthority,
@@ -1734,6 +1740,34 @@ def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
     )
 
 
+def _agent_server_output_redaction_settings(
+    args: Namespace,
+) -> ServerOutputRedactionSettings | None:
+    enabled = getattr(args, "server_output_redaction_enabled", None)
+    rules = getattr(args, "server_output_redaction_rules", None)
+    protocols = getattr(args, "server_output_redaction_protocols", None)
+    channels = getattr(args, "server_output_redaction_channels", None)
+    if enabled is None and not rules and not protocols and not channels:
+        return None
+
+    values: dict[str, object] = {
+        "enabled": bool(enabled or rules or protocols or channels)
+    }
+    if rules:
+        values["rules"] = frozenset(
+            cast(Iterable[ServerOutputRedactionRule], rules)
+        )
+    if protocols:
+        values["protocols"] = frozenset(
+            cast(Iterable[ServerOutputRedactionProtocol], protocols)
+        )
+    if channels:
+        values["channels"] = frozenset(
+            cast(Iterable[ServerOutputRedactionChannel], channels)
+        )
+    return ServerOutputRedactionSettings(**cast(Any, values))
+
+
 async def _agent_run_input(
     input_string: str | None, file_paths: list[str] | None
 ) -> Message | str | None:
@@ -2274,6 +2308,7 @@ async def agent_serve(
         specs_path=specs_path,
         cli_protocols=getattr(args, "protocol", None),
     )
+    output_redaction_settings = _agent_server_output_redaction_settings(args)
 
     if not specs_path:
         memory_recent = (
@@ -2286,34 +2321,37 @@ async def agent_serve(
             tools=_agent_enabled_tools(args),
         )
 
-    server = agents_server(
-        hub=hub,
-        name=name,
-        version=version,
-        mcp_prefix=getattr(args, "mcp_prefix", "/mcp") or "/mcp",
-        openai_prefix=args.openai_prefix,
-        a2a_prefix=getattr(args, "a2a_prefix", "/a2a") or "/a2a",
-        mcp_name=getattr(args, "mcp_name", "run") or "run",
-        mcp_description=getattr(args, "mcp_description", None),
-        a2a_tool_name=getattr(args, "a2a_name", "run") or "run",
-        a2a_tool_description=getattr(args, "a2a_description", None),
-        specs_path=specs_path,
-        settings=settings,
-        tool_settings=tool_settings,
-        tool_name_policy=_agent_tool_name_policy(args),
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-        logger=logger,
-        agent_id=agent_id,
-        participant_id=participant_id,
-        allow_origins=args.cors_origin,
-        allow_origin_regex=args.cors_origin_regex,
-        allow_methods=args.cors_method,
-        allow_headers=args.cors_header,
-        allow_credentials=args.cors_credentials,
-        protocols=protocols,
-    )
+    server_kwargs: dict[str, Any] = {
+        "hub": hub,
+        "name": name,
+        "version": version,
+        "mcp_prefix": getattr(args, "mcp_prefix", "/mcp") or "/mcp",
+        "openai_prefix": args.openai_prefix,
+        "a2a_prefix": getattr(args, "a2a_prefix", "/a2a") or "/a2a",
+        "mcp_name": getattr(args, "mcp_name", "run") or "run",
+        "mcp_description": getattr(args, "mcp_description", None),
+        "a2a_tool_name": getattr(args, "a2a_name", "run") or "run",
+        "a2a_tool_description": getattr(args, "a2a_description", None),
+        "specs_path": specs_path,
+        "settings": settings,
+        "tool_settings": tool_settings,
+        "tool_name_policy": _agent_tool_name_policy(args),
+        "host": args.host,
+        "port": args.port,
+        "reload": args.reload,
+        "logger": logger,
+        "agent_id": agent_id,
+        "participant_id": participant_id,
+        "allow_origins": args.cors_origin,
+        "allow_origin_regex": args.cors_origin_regex,
+        "allow_methods": args.cors_method,
+        "allow_headers": args.cors_header,
+        "allow_credentials": args.cors_credentials,
+        "protocols": protocols,
+    }
+    if output_redaction_settings is not None:
+        server_kwargs["output_redaction_settings"] = output_redaction_settings
+    server = agents_server(**server_kwargs)
     await server.serve()
 
 

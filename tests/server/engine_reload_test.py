@@ -7,7 +7,11 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from avalan.event.manager import EventManagerMode
-from avalan.server.entities import EngineRequest, OrchestratorContext
+from avalan.server.entities import (
+    EngineRequest,
+    OrchestratorContext,
+    ServerOutputRedactionSettings,
+)
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.shell import ShellToolSettings
@@ -34,6 +38,12 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
                     ctx=OrchestratorContext(
                         participant_id=pid,
                         specs_path="agent.toml",
+                        output_redaction_settings=(
+                            ServerOutputRedactionSettings(
+                                enabled=True,
+                                protocols=frozenset({"mcp"}),
+                            )
+                        ),
                     ),
                     stack=stack,
                     loader=loader,
@@ -59,6 +69,17 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
             request.app, logger=logger, orchestrator=orchestrator
         )
         self.assertEqual(request.app.state.agent_id, orchestrator.id)
+        self.assertEqual(
+            request.app.state.ctx.output_redaction_settings,
+            ServerOutputRedactionSettings(
+                enabled=True,
+                protocols=frozenset({"mcp"}),
+            ),
+        )
+        self.assertEqual(
+            request.app.state.server_output_redaction_settings,
+            request.app.state.ctx.output_redaction_settings,
+        )
 
     async def test_reload_from_settings(self) -> None:
         import avalan.server.routers.engine as eng
@@ -91,6 +112,12 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
                         participant_id=pid,
                         settings=settings,
                         tool_settings=tool_settings,
+                        output_redaction_settings=(
+                            ServerOutputRedactionSettings(
+                                enabled=True,
+                                protocols=frozenset({"openai"}),
+                            )
+                        ),
                     ),
                     stack=stack,
                     loader=loader,
@@ -122,6 +149,17 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(request.app.state.agent_id, orchestrator.id)
         self.assertIs(request.app.state.ctx.settings, new_settings)
+        self.assertEqual(
+            request.app.state.ctx.output_redaction_settings,
+            ServerOutputRedactionSettings(
+                enabled=True,
+                protocols=frozenset({"openai"}),
+            ),
+        )
+        self.assertEqual(
+            request.app.state.server_output_redaction_settings,
+            request.app.state.ctx.output_redaction_settings,
+        )
 
     async def test_reload_updates_database_settings(self) -> None:
         import avalan.server.routers.engine as eng
@@ -422,6 +460,12 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
                     ctx=OrchestratorContext(
                         participant_id=pid,
                         settings=settings,
+                        output_redaction_settings=(
+                            ServerOutputRedactionSettings(
+                                enabled=True,
+                                protocols=frozenset({"a2a"}),
+                            )
+                        ),
                     ),
                     stack=stack,
                     loader=loader,
@@ -440,6 +484,17 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
             request.app, logger=logger, orchestrator=orchestrator
         )
         self.assertIs(request.app.state.ctx.settings, settings)
+        self.assertEqual(
+            request.app.state.ctx.output_redaction_settings,
+            ServerOutputRedactionSettings(
+                enabled=True,
+                protocols=frozenset({"a2a"}),
+            ),
+        )
+        self.assertEqual(
+            request.app.state.server_output_redaction_settings,
+            request.app.state.ctx.output_redaction_settings,
+        )
         self.assertEqual(request.app.state.agent_id, orchestrator.id)
 
     async def test_reload_raises_restore_error_when_recovery_fails(
@@ -517,6 +572,12 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
                     ctx=OrchestratorContext(
                         participant_id=pid,
                         settings=settings,
+                        output_redaction_settings=(
+                            ServerOutputRedactionSettings(
+                                enabled=True,
+                                protocols=frozenset({"mcp"}),
+                            )
+                        ),
                     ),
                     stack=stack,
                     loader=loader,
@@ -538,6 +599,17 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
             request.app, logger=logger, orchestrator=orchestrator
         )
         self.assertIs(request.app.state.ctx.settings, settings)
+        self.assertEqual(
+            request.app.state.ctx.output_redaction_settings,
+            ServerOutputRedactionSettings(
+                enabled=True,
+                protocols=frozenset({"mcp"}),
+            ),
+        )
+        self.assertEqual(
+            request.app.state.server_output_redaction_settings,
+            request.app.state.ctx.output_redaction_settings,
+        )
         self.assertEqual(request.app.state.agent_id, orchestrator.id)
 
     def test_engine_request_requires_uri_or_database(self) -> None:

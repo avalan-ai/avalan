@@ -23,6 +23,7 @@ from avalan.server.container_policy import (
     RemoteContainerRequestPolicy,
     ServerRuntimeEnvelopeStatus,
 )
+from avalan.server.entities import ServerOutputRedactionSettings
 from avalan.tool.context import ToolSettingsContext
 
 MODULE = register_agent_endpoints.__module__
@@ -47,6 +48,10 @@ async def test_register_agent_endpoints_wraps_existing_lifespan() -> None:
     hub = MagicMock(name="hub")
     generated_participant_id = UUID(int=5)
     tool_settings = ToolSettingsContext(extra={"fixture": "tools"})
+    output_redaction_settings = ServerOutputRedactionSettings(
+        enabled=True,
+        protocols=frozenset({"mcp"}),
+    )
     existing_events: list[str] = []
 
     @asynccontextmanager
@@ -89,6 +94,7 @@ async def test_register_agent_endpoints_wraps_existing_lifespan() -> None:
             mcp_prefix="/mcp",
             openai_prefix="/openai",
             mcp_name="run",
+            output_redaction_settings=output_redaction_settings,
         )
 
         assert app.router.lifespan_context is not None
@@ -99,6 +105,11 @@ async def test_register_agent_endpoints_wraps_existing_lifespan() -> None:
             assert ctx.specs_path == "agent.yaml"
             assert ctx.settings is None
             assert ctx.tool_settings is tool_settings
+            assert ctx.output_redaction_settings is output_redaction_settings
+            assert (
+                app.state.server_output_redaction_settings
+                is output_redaction_settings
+            )
             loader = app.state.loader
             assert loader is loader_instance
             loader_cls.assert_called_once()

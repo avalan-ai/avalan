@@ -24,7 +24,7 @@ from .authority import (
 from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 from re import Match, fullmatch
 from re import compile as compile_pattern
@@ -34,6 +34,27 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 JSONType = Literal["bool", "float", "int", "object", "string"]
+ServerOutputRedactionRule = Literal[
+    "host_paths",
+    "skill_body_echoes",
+    "skill_source_paths",
+    "skills_tool_content",
+]
+ServerOutputRedactionProtocol = Literal["openai", "mcp", "a2a"]
+ServerOutputRedactionChannel = Literal["answer", "reasoning"]
+SERVER_OUTPUT_REDACTION_RULES: tuple[ServerOutputRedactionRule, ...] = (
+    "host_paths",
+    "skill_body_echoes",
+    "skill_source_paths",
+    "skills_tool_content",
+)
+SERVER_OUTPUT_REDACTION_PROTOCOLS: tuple[
+    ServerOutputRedactionProtocol, ...
+] = ("openai", "mcp", "a2a")
+SERVER_OUTPUT_REDACTION_CHANNELS: tuple[ServerOutputRedactionChannel, ...] = (
+    "answer",
+    "reasoning",
+)
 MCP_FILE_DATA_KEYS = ("data", "base64", "file_data")
 MCP_FILE_URL_KEYS = ("uri", "url", "file_url")
 MCP_FILE_SOURCE_KEYS = MCP_FILE_DATA_KEYS + MCP_FILE_URL_KEYS
@@ -97,6 +118,7 @@ _SKILL_BODY_TEXT_FOLLOWUP_MARKERS = (
     SKILL_MAIN_RESOURCE_FILENAME.lower(),
     *_SKILL_BODY_HOST_PATH_PREFIX_MARKERS,
 )
+_SKILL_BODY_DETECTION_WINDOW = 12000
 _SKILL_BODY_HEADING_PATTERN = compile_pattern(
     r"(?is)(?:^|\n)\s*#\s+(?P<title>[^\n]{1,160})\n\s*\n"
     r".{0,12000}\b"
@@ -108,9 +130,103 @@ _SKILL_BODY_RESOURCE_START_PATTERN = compile_pattern(
 _SKILL_BODY_STREAM_START_PATTERN = compile_pattern(
     r"(?is)(?:^|\n)\s*(?:#\s+|---\s*(?:\n|$)|description\s*:)"
 )
+_SKILL_BODY_HEADING_SEPARATOR_PATTERN = compile_pattern(r"\s*\n")
 _URL_SCHEME_PATTERN = compile_pattern(r"(?i)[A-Za-z][A-Za-z0-9+.-]*:")
 _SKILLS_TOOL_PREFIX = "skills."
 _SKILL_CONTENT_KEYS = frozenset({"content"})
+_ORDINARY_TITLE_HEADING_WORDS = frozenset(
+    {
+        "answer",
+        "conclusion",
+        "intro",
+        "introduction",
+        "notes",
+        "overview",
+        "plan",
+        "reason",
+        "reasoning",
+        "report",
+        "results",
+        "summary",
+        "update",
+    }
+)
+
+
+@dataclass(kw_only=True, frozen=True)
+class ServerOutputRedactionSettings:
+    """Control optional server output redaction."""
+
+    enabled: bool = False
+    rules: frozenset[ServerOutputRedactionRule] = field(
+        default_factory=lambda: frozenset(SERVER_OUTPUT_REDACTION_RULES)
+    )
+    protocols: frozenset[ServerOutputRedactionProtocol] = field(
+        default_factory=lambda: frozenset(SERVER_OUTPUT_REDACTION_PROTOCOLS)
+    )
+    channels: frozenset[ServerOutputRedactionChannel] = field(
+        default_factory=lambda: frozenset(SERVER_OUTPUT_REDACTION_CHANNELS)
+    )
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.enabled, bool)
+        rules = frozenset(self.rules)
+        protocols = frozenset(self.protocols)
+        channels = frozenset(self.channels)
+        assert rules <= frozenset(SERVER_OUTPUT_REDACTION_RULES)
+        assert protocols <= frozenset(SERVER_OUTPUT_REDACTION_PROTOCOLS)
+        assert channels <= frozenset(SERVER_OUTPUT_REDACTION_CHANNELS)
+        object.__setattr__(self, "rules", rules)
+        object.__setattr__(self, "protocols", protocols)
+        object.__setattr__(self, "channels", channels)
+
+    def should_redact(
+        self,
+        rule: ServerOutputRedactionRule,
+        *,
+        protocol: ServerOutputRedactionProtocol | None = None,
+        channel: ServerOutputRedactionChannel | None = None,
+    ) -> bool:
+        """Return whether a redaction rule applies."""
+        assert rule in SERVER_OUTPUT_REDACTION_RULES
+        if protocol is not None:
+            assert protocol in SERVER_OUTPUT_REDACTION_PROTOCOLS
+        if channel is not None:
+            assert channel in SERVER_OUTPUT_REDACTION_CHANNELS
+        channel_applies = (
+            self.channels == frozenset(SERVER_OUTPUT_REDACTION_CHANNELS)
+            if channel is None
+            else channel in self.channels
+        )
+        return (
+            self.enabled
+            and rule in self.rules
+            and (protocol is None or protocol in self.protocols)
+            and channel_applies
+        )
+
+
+def coerce_server_output_redaction_settings(
+    value: object | None,
+) -> ServerOutputRedactionSettings:
+    """Return a server output redaction settings instance."""
+    return (
+        value
+        if isinstance(value, ServerOutputRedactionSettings)
+        else ServerOutputRedactionSettings()
+    )
+
+
+def server_output_redaction_settings_from_state(
+    state: object,
+) -> ServerOutputRedactionSettings:
+    """Return server output redaction settings from app state."""
+    ctx = getattr(state, "ctx", None)
+    ctx_settings = getattr(ctx, "output_redaction_settings", None)
+    if isinstance(ctx_settings, ServerOutputRedactionSettings):
+        return ctx_settings
+    settings = getattr(state, "server_output_redaction_settings", None)
+    return coerce_server_output_redaction_settings(settings)
 
 
 def _has_non_empty_file_source(value: object) -> bool:
@@ -245,10 +361,17 @@ class OrchestratorContext:
     settings: OrchestratorSettings | None = None
     tool_settings: ToolSettingsContext | None = None
     tool_name_policy: ToolNamePolicySettings | None = None
+    output_redaction_settings: ServerOutputRedactionSettings = field(
+        default_factory=ServerOutputRedactionSettings
+    )
     skills_settings: TrustedSkillSettings | None = None
     skills_registry_metadata: Mapping[str, SkillModelValue] | None = None
 
     def __post_init__(self) -> None:
+        assert isinstance(
+            self.output_redaction_settings,
+            ServerOutputRedactionSettings,
+        )
         if self.skills_settings is not None:
             assert isinstance(self.skills_settings, TrustedSkillSettings)
         if self.skills_registry_metadata is not None:
@@ -283,32 +406,94 @@ def sanitize_server_protocol_value(
     value: object,
     *,
     tool_name: str | None = None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
+    protocol: ServerOutputRedactionProtocol = "openai",
+    channel: ServerOutputRedactionChannel | None = None,
 ) -> object:
-    """Return a protocol-safe value with skill bodies and paths redacted."""
+    """Return a protocol-safe value with configured redaction."""
+    settings = coerce_server_output_redaction_settings(
+        output_redaction_settings
+    )
     return _sanitize_server_protocol_value(
         value,
-        redact_skill_content=_is_skills_tool_name(tool_name),
+        output_redaction_settings=settings,
+        protocol=protocol,
+        channel=channel,
+        redact_skill_content=(
+            _is_skills_tool_name(tool_name)
+            and settings.should_redact(
+                "skills_tool_content",
+                protocol=protocol,
+                channel=channel,
+            )
+        ),
     )
 
 
-def sanitize_server_protocol_text(value: str) -> str:
-    """Return text with host paths redacted for remote protocols."""
+def sanitize_server_protocol_text(
+    value: str,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
+    protocol: ServerOutputRedactionProtocol = "openai",
+    channel: ServerOutputRedactionChannel | None = None,
+) -> str:
+    """Return protocol text with optional configured redaction."""
     assert isinstance(value, str)
-    return _redact_host_paths(value)
+    settings = coerce_server_output_redaction_settings(
+        output_redaction_settings
+    )
+    if settings.should_redact(
+        "host_paths",
+        protocol=protocol,
+        channel=channel,
+    ):
+        return _redact_host_paths(value)
+    return value
 
 
-def sanitize_model_visible_server_protocol_text(value: str) -> str:
-    """Return model text safe for remote protocol emission."""
+def sanitize_model_visible_server_protocol_text(
+    value: str,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
+    protocol: ServerOutputRedactionProtocol = "openai",
+    channel: ServerOutputRedactionChannel = "answer",
+) -> str:
+    """Return model-visible text with configured redaction."""
     assert isinstance(value, str)
-    if _looks_like_echoed_skill_body(value):
+    settings = coerce_server_output_redaction_settings(
+        output_redaction_settings
+    )
+    if _looks_like_echoed_skill_body(
+        value,
+        output_redaction_settings=settings,
+        protocol=protocol,
+        channel=channel,
+    ):
         return SKILL_CONTENT_REDACTION
-    return _redact_host_paths(value)
+    if settings.should_redact(
+        "host_paths",
+        protocol=protocol,
+        channel=channel,
+    ):
+        return _redact_host_paths(value)
+    return value
 
 
 class ModelVisibleServerProtocolTextRedactor:
-    """Redact streaming model text for remote protocols."""
+    """Apply configured redaction to streaming model text."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        output_redaction_settings: ServerOutputRedactionSettings | None = None,
+        *,
+        protocol: ServerOutputRedactionProtocol = "openai",
+        channel: ServerOutputRedactionChannel = "answer",
+    ) -> None:
+        self._settings = coerce_server_output_redaction_settings(
+            output_redaction_settings
+        )
+        self._protocol = protocol
+        self._channel = channel
         self._pending = ""
         self._redacted = False
 
@@ -323,24 +508,45 @@ class ModelVisibleServerProtocolTextRedactor:
             return ()
         candidate = self._pending + value
         self._pending = ""
-        if _could_be_echoed_skill_body_start_prefix(candidate):
+        if self._should_buffer_skill_text_start() and (
+            _could_be_echoed_skill_body_start_prefix(candidate)
+        ):
             self._pending = candidate
             return ()
-        if _has_echoed_skill_body_marker(candidate):
+        if _has_echoed_skill_body_marker(
+            candidate,
+            output_redaction_settings=self._settings,
+            protocol=self._protocol,
+            channel=self._channel,
+        ):
             self._redacted = True
             return (SKILL_CONTENT_REDACTION,)
-        if _should_buffer_skill_source_path_reference_candidate(candidate):
+        if self._should_redact_skill_source_paths() and (
+            _should_buffer_skill_source_path_reference_candidate(candidate)
+        ):
             self._pending = candidate
             return ()
-        safe_text, pending_tail = _split_streaming_host_path_tail(candidate)
+        if self._should_redact_host_paths():
+            safe_text, pending_tail = _split_streaming_host_path_tail(
+                candidate
+            )
+        else:
+            safe_text, pending_tail = candidate, ""
         if pending_tail:
             self._pending = pending_tail
-            sanitized = sanitize_model_visible_server_protocol_text(safe_text)
+            sanitized = self._sanitize_text(safe_text)
             return (sanitized,) if sanitized else ()
-        if _should_buffer_echoed_skill_body_candidate(candidate):
+        if self._should_buffer_skill_body() and (
+            _should_buffer_echoed_skill_body_candidate(candidate)
+        ):
             self._pending = candidate
             return ()
-        sanitized = sanitize_model_visible_server_protocol_text(candidate)
+        if self._should_buffer_skill_text_start() and (
+            _should_hold_potential_skill_text_candidate(candidate)
+        ):
+            self._pending = candidate
+            return ()
+        sanitized = self._sanitize_text(candidate)
         return (sanitized,) if sanitized else ()
 
     def flush(self) -> tuple[str, ...]:
@@ -350,13 +556,50 @@ class ModelVisibleServerProtocolTextRedactor:
             return ()
         candidate = self._pending
         self._pending = ""
-        sanitized = sanitize_server_protocol_text(candidate)
+        sanitized = self._sanitize_text(candidate)
         return (sanitized,) if sanitized else ()
+
+    def _sanitize_text(self, value: str) -> str:
+        return sanitize_model_visible_server_protocol_text(
+            value,
+            output_redaction_settings=self._settings,
+            protocol=self._protocol,
+            channel=self._channel,
+        )
+
+    def _should_redact_host_paths(self) -> bool:
+        return self._settings.should_redact(
+            "host_paths",
+            protocol=self._protocol,
+            channel=self._channel,
+        )
+
+    def _should_buffer_skill_body(self) -> bool:
+        return self._settings.should_redact(
+            "skill_body_echoes",
+            protocol=self._protocol,
+            channel=self._channel,
+        )
+
+    def _should_redact_skill_source_paths(self) -> bool:
+        return self._settings.should_redact(
+            "skill_source_paths",
+            protocol=self._protocol,
+            channel=self._channel,
+        )
+
+    def _should_buffer_skill_text_start(self) -> bool:
+        return self._should_buffer_skill_body() or (
+            self._should_redact_skill_source_paths()
+        )
 
 
 def _sanitize_server_protocol_value(
     value: object,
     *,
+    output_redaction_settings: ServerOutputRedactionSettings,
+    protocol: ServerOutputRedactionProtocol,
+    channel: ServerOutputRedactionChannel | None,
     redact_skill_content: bool,
 ) -> object:
     if isinstance(value, Mapping):
@@ -371,6 +614,9 @@ def _sanitize_server_protocol_value(
                 continue
             sanitized[key] = _sanitize_server_protocol_value(
                 item,
+                output_redaction_settings=output_redaction_settings,
+                protocol=protocol,
+                channel=channel,
                 redact_skill_content=redact_skill_content,
             )
         return sanitized
@@ -378,17 +624,30 @@ def _sanitize_server_protocol_value(
         return [
             _sanitize_server_protocol_value(
                 item,
+                output_redaction_settings=output_redaction_settings,
+                protocol=protocol,
+                channel=channel,
                 redact_skill_content=redact_skill_content,
             )
             for item in value
         ]
     if isinstance(value, str):
-        return _redact_host_paths(value)
+        return sanitize_server_protocol_text(
+            value,
+            output_redaction_settings=output_redaction_settings,
+            protocol=protocol,
+            channel=channel,
+        )
     if isinstance(value, bytes | bytearray | memoryview):
         return "<redacted-bytes>"
     if isinstance(value, bool | int | float) or value is None:
         return value
-    return _redact_host_paths(str(value))
+    return sanitize_server_protocol_text(
+        str(value),
+        output_redaction_settings=output_redaction_settings,
+        protocol=protocol,
+        channel=channel,
+    )
 
 
 def _is_skills_tool_name(value: str | None) -> bool:
@@ -498,13 +757,27 @@ def _path_match_inside_url(match: Match[str]) -> bool:
     return token_prefix[scheme_match.end() :].startswith("//")
 
 
-def _looks_like_echoed_skill_body(value: str) -> bool:
+def _looks_like_echoed_skill_body(
+    value: str,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings,
+    protocol: ServerOutputRedactionProtocol,
+    channel: ServerOutputRedactionChannel,
+) -> bool:
     stripped = value.strip()
-    if _looks_like_skill_body_resource_reference(stripped):
+    if output_redaction_settings.should_redact(
+        "skill_source_paths",
+        protocol=protocol,
+        channel=channel,
+    ) and _looks_like_skill_body_resource_reference(stripped):
         return True
     if len(stripped) < 40:
         return False
-    return _looks_like_skill_body_phrase_heading(stripped)
+    return output_redaction_settings.should_redact(
+        "skill_body_echoes",
+        protocol=protocol,
+        channel=channel,
+    ) and _looks_like_skill_body_phrase_heading(stripped)
 
 
 def _looks_like_skill_body_phrase_heading(value: str) -> bool:
@@ -517,6 +790,8 @@ def _looks_like_skill_body_phrase_heading(value: str) -> bool:
 def _looks_like_skill_body_heading_title(value: str) -> bool:
     title = value.strip().strip("`")
     if not title:
+        return False
+    if _is_ordinary_title_heading(title):
         return False
     words = title.split()
     lowered_words = title.lower().split()
@@ -539,16 +814,63 @@ def _looks_like_skill_body_heading_title(value: str) -> bool:
 
 
 def _looks_like_skill_body_resource_reference(value: str) -> bool:
-    return _SKILL_BODY_RESOURCE_START_PATTERN.search(
-        value
-    ) is not None and contains_skill_source_resource_reference(
-        value,
+    return any(
+        _looks_like_skill_body_resource_reference_candidate(
+            value[match.start() :].lstrip()
+        )
+        for match in _SKILL_BODY_RESOURCE_START_PATTERN.finditer(value)
+    )
+
+
+def _looks_like_skill_body_resource_reference_candidate(value: str) -> bool:
+    if _starts_with_ordinary_title_heading(value):
+        return False
+    bounded = _bounded_skill_body_resource_candidate(value)
+    return contains_skill_source_resource_reference(
+        bounded,
         SKILL_MAIN_RESOURCE_FILENAME,
     )
 
 
-def _has_echoed_skill_body_marker(value: str) -> bool:
-    return _looks_like_echoed_skill_body(value)
+def _bounded_skill_body_resource_candidate(value: str) -> str:
+    if value.startswith("#"):
+        lines = value.split("\n", 1)
+        if len(lines) == 1:
+            return value
+        body = _skill_heading_body_after_separator(value)
+        return f"{lines[0]}\n\n{body[:_SKILL_BODY_DETECTION_WINDOW]}"
+    lowered = value.lower()
+    if lowered.startswith("description:"):
+        prefix, separator, body = value.partition(":")
+        return f"{prefix}{separator}{body[:_SKILL_BODY_DETECTION_WINDOW]}"
+    return f"{value[:3]}{value[3:][:_SKILL_BODY_DETECTION_WINDOW]}"
+
+
+def _starts_with_ordinary_title_heading(value: str) -> bool:
+    stripped = value.lstrip()
+    if not stripped.startswith("#"):
+        return False
+    heading = stripped.split("\n", 1)[0].lstrip("#").strip().strip("`")
+    return _is_ordinary_title_heading(heading)
+
+
+def _is_ordinary_title_heading(value: str) -> bool:
+    return value.strip().strip("`").lower() in _ORDINARY_TITLE_HEADING_WORDS
+
+
+def _has_echoed_skill_body_marker(
+    value: str,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings,
+    protocol: ServerOutputRedactionProtocol,
+    channel: ServerOutputRedactionChannel,
+) -> bool:
+    return _looks_like_echoed_skill_body(
+        value,
+        output_redaction_settings=output_redaction_settings,
+        protocol=protocol,
+        channel=channel,
+    )
 
 
 def _could_be_echoed_skill_body_start_prefix(value: str) -> bool:
@@ -577,6 +899,32 @@ def _should_buffer_echoed_skill_body_candidate(value: str) -> bool:
     return _should_buffer_skill_body_followup(after_marker)
 
 
+def _should_hold_potential_skill_text_candidate(value: str) -> bool:
+    matches = tuple(_SKILL_BODY_STREAM_START_PATTERN.finditer(value))
+    if not matches:
+        return False
+    candidate = value[matches[-1].start() :].lstrip()
+    if candidate.startswith("#"):
+        lines = candidate.split("\n", 1)
+        body = (
+            _skill_heading_body_after_separator(candidate)
+            if len(lines) > 1
+            else ""
+        )
+        if len(body) > _SKILL_BODY_DETECTION_WINDOW:
+            return False
+        heading = lines[0].lstrip("#").strip()
+        return _looks_like_definite_skill_heading_title(heading)
+    return False
+
+
+def _looks_like_definite_skill_heading_title(value: str) -> bool:
+    title = value.strip().strip("`")
+    if _is_ordinary_title_heading(title):
+        return False
+    return _looks_like_skill_body_heading_title(title)
+
+
 def _should_buffer_skill_source_path_reference_candidate(
     value: str,
 ) -> bool:
@@ -588,8 +936,14 @@ def _should_buffer_skill_source_path_reference_candidate(
     if candidate.startswith("#"):
         lines = candidate.split("\n", 1)
         if len(lines) == 1:
+            return True
+        heading = lines[0].lstrip("#").strip()
+        if _is_ordinary_title_heading(heading):
             return False
-        return _should_buffer_skill_source_path_reference_followup(lines[1])
+        body = _skill_heading_body_after_separator(candidate)
+        if len(body) > _SKILL_BODY_DETECTION_WINDOW:
+            return False
+        return _should_buffer_skill_source_path_reference_followup(body)
     if lowered.startswith("description:"):
         return _should_buffer_skill_source_path_reference_followup(
             candidate.split(":", 1)[1]
@@ -603,7 +957,7 @@ def _should_buffer_skill_source_path_reference_followup(
 ) -> bool:
     candidate = value.lstrip()
     if not candidate:
-        return False
+        return True
     lowered = candidate.lower()
     for marker in _SKILL_BODY_RESOURCE_FIELD_MARKERS:
         if marker.startswith(lowered):
@@ -619,7 +973,18 @@ def _should_buffer_heading_skill_body_candidate(value: str) -> bool:
     lines = value.split("\n", 1)
     if len(lines) == 1:
         return True
-    return _should_buffer_skill_body_followup(lines[1])
+    heading = lines[0].lstrip("#").strip()
+    if _is_ordinary_title_heading(heading):
+        return False
+    body = _skill_heading_body_after_separator(value)
+    return _should_buffer_skill_body_followup(body)
+
+
+def _skill_heading_body_after_separator(value: str) -> str:
+    lines = value.split("\n", 1)
+    body = lines[1]
+    match = _SKILL_BODY_HEADING_SEPARATOR_PATTERN.match(body)
+    return body[match.end() :] if match else body
 
 
 def _should_buffer_skill_body_followup(value: str) -> bool:
@@ -627,10 +992,41 @@ def _should_buffer_skill_body_followup(value: str) -> bool:
     if not candidate:
         return True
     lowered = candidate.lower()
-    return any(
+    if any(
         marker.startswith(lowered) or lowered.startswith(marker)
         for marker in _SKILL_BODY_TEXT_FOLLOWUP_MARKERS
-    ) or could_contain_skill_source_path_reference_prefix(candidate)
+    ):
+        return True
+    if could_contain_skill_source_path_reference_prefix(candidate):
+        return True
+    return _has_skill_body_marker_prefix_within_window(value)
+
+
+def _has_skill_body_marker_prefix_within_window(value: str) -> bool:
+    lowered = value.lower()
+    max_marker_length = max(
+        len(marker) for marker in _SKILL_BODY_TEXT_FOLLOWUP_MARKERS
+    )
+    suffix_start = max(0, len(lowered) - max_marker_length + 1)
+    for start in range(suffix_start, len(lowered)):
+        if start > _SKILL_BODY_DETECTION_WINDOW:
+            continue
+        suffix = lowered[start:]
+        if not suffix or not _is_skill_body_marker_boundary(value, start):
+            continue
+        if any(
+            marker.startswith(suffix)
+            for marker in _SKILL_BODY_TEXT_FOLLOWUP_MARKERS
+        ):
+            return True
+    return False
+
+
+def _is_skill_body_marker_boundary(value: str, start: int) -> bool:
+    if start <= 0:
+        return True
+    previous = value[start - 1]
+    return not (previous.isalnum() or previous == "_")
 
 
 def _redact_host_path_match(match: Match[str]) -> str:
