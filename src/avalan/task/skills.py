@@ -21,11 +21,22 @@ from ..skill import (
     trusted_skill_source_identity_dict,
     untrusted_skill_settings_config_dict,
 )
+from ..skill.observability import (
+    SkillEventPublisher,
+    skill_audit_correlation_id,
+)
 from ..tool.names import matches_tool_namespace
 from .definition import (
     TaskDefinition,
     TaskTargetType,
 )
+from .event import sanitize_raw_task_event_closed
+from .observability import (
+    ObservabilitySink,
+    TaskObservedEvent,
+    TaskSanitizedEventObserver,
+)
+from .privacy import PrivacySanitizer
 from .schema import task_definition_schema_base_path
 from .validation import (
     TaskValidationCategory,
@@ -33,9 +44,11 @@ from .validation import (
     TaskValidationIssue,
 )
 
-from collections.abc import Iterable, Mapping
+from asyncio import gather
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from hashlib import sha256
+from inspect import isawaitable
 from json import dumps
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from tomllib import TOMLDecodeError
@@ -63,11 +76,122 @@ _UNAVAILABLE_STATUSES = frozenset(
 )
 
 
+TaskRawEventObserver = Callable[..., Awaitable[None] | None]
+
+
 @dataclass(frozen=True, slots=True)
 class _TaskTomlDocument:
     raw: Mapping[str, object]
     source_path: Path
     root_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class TaskSkillAuditEventPublisher:
+    sanitizer: PrivacySanitizer
+    event_observer: TaskSanitizedEventObserver | None = None
+    metrics_event_observer: TaskSanitizedEventObserver | None = None
+    trace_event_observer: TaskSanitizedEventObserver | None = None
+    observability_sink: ObservabilitySink | None = None
+    raw_event_observer: TaskRawEventObserver | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.sanitizer, PrivacySanitizer)
+        if self.event_observer is not None:
+            assert callable(self.event_observer)
+        if self.metrics_event_observer is not None:
+            assert callable(self.metrics_event_observer)
+        if self.trace_event_observer is not None:
+            assert callable(self.trace_event_observer)
+        if self.observability_sink is not None:
+            assert callable(
+                getattr(self.observability_sink, "record_event", None)
+            )
+        if self.raw_event_observer is not None:
+            assert callable(self.raw_event_observer)
+
+    async def trigger(self, event: object) -> None:
+        if self.raw_event_observer is not None:
+            result = self.raw_event_observer(event)
+            if isawaitable(result):
+                await result
+            return
+        observed = sanitize_raw_task_event_closed(event, self.sanitizer)
+        await gather(
+            _notify_task_skill_observer(self.event_observer, observed),
+            _notify_task_skill_observer(
+                self.metrics_event_observer,
+                observed,
+            ),
+            _notify_task_skill_observer(
+                self.trace_event_observer,
+                observed,
+            ),
+            _record_task_skill_observability_event(
+                self.observability_sink,
+                observed,
+            ),
+        )
+
+
+def task_skill_audit_event_publisher(
+    *,
+    sanitizer: PrivacySanitizer,
+    event_observer: TaskSanitizedEventObserver | None = None,
+    metrics_event_observer: TaskSanitizedEventObserver | None = None,
+    trace_event_observer: TaskSanitizedEventObserver | None = None,
+    observability_sink: ObservabilitySink | None = None,
+    raw_event_observer: TaskRawEventObserver | None = None,
+) -> TaskSkillAuditEventPublisher | None:
+    assert isinstance(sanitizer, PrivacySanitizer)
+    if event_observer is not None:
+        assert callable(event_observer)
+    if metrics_event_observer is not None:
+        assert callable(metrics_event_observer)
+    if trace_event_observer is not None:
+        assert callable(trace_event_observer)
+    if observability_sink is not None:
+        assert callable(getattr(observability_sink, "record_event", None))
+    if raw_event_observer is not None:
+        assert callable(raw_event_observer)
+    if (
+        event_observer is None
+        and metrics_event_observer is None
+        and trace_event_observer is None
+        and observability_sink is None
+        and raw_event_observer is None
+    ):
+        # No configured audit delivery endpoint means there is nothing for
+        # fail-closed semantics to require on this task surface.
+        return None
+    return TaskSkillAuditEventPublisher(
+        sanitizer=sanitizer,
+        event_observer=event_observer,
+        metrics_event_observer=metrics_event_observer,
+        trace_event_observer=trace_event_observer,
+        observability_sink=observability_sink,
+        raw_event_observer=raw_event_observer,
+    )
+
+
+async def _notify_task_skill_observer(
+    observer: TaskSanitizedEventObserver | None,
+    event: TaskObservedEvent,
+) -> None:
+    if observer is None:
+        return
+    result = observer(event)
+    if isawaitable(result):
+        await result
+
+
+async def _record_task_skill_observability_event(
+    sink: ObservabilitySink | None,
+    event: TaskObservedEvent,
+) -> None:
+    if sink is None:
+        return
+    await sink.record_event(event)
 
 
 async def task_definition_with_skills_identity(
@@ -76,10 +200,14 @@ async def task_definition_with_skills_identity(
     trusted_settings: TrustedSkillSettings | None = None,
     registry: SkillRegistry | None = None,
     enabled_tools: Iterable[str] = (),
+    event_manager: SkillEventPublisher | None = None,
     trust_definition_skills: bool = True,
     schema_base_path: str | Path | None = None,
 ) -> TaskDefinition:
     assert isinstance(definition, TaskDefinition)
+    assert event_manager is None or isinstance(
+        event_manager, SkillEventPublisher
+    )
     settings = task_effective_skills_settings(
         definition,
         trusted_settings=trusted_settings,
@@ -91,7 +219,10 @@ async def task_definition_with_skills_identity(
             raise TaskValidationError((_task_skills_missing_issue(),))
         return definition
     if registry is None and settings.enabled:
-        registry = await build_task_skill_registry(settings)
+        registry = await build_task_skill_registry(
+            settings,
+            event_manager=event_manager,
+        )
     tools = tuple(enabled_tools) or await task_enabled_skills_tools(
         definition,
         schema_base_path=schema_base_path,
@@ -115,9 +246,13 @@ async def revalidate_task_skills_for_worker(
     trusted_settings: TrustedSkillSettings | None = None,
     registry: SkillRegistry | None = None,
     expected_identity: Mapping[str, object] | None = None,
+    event_manager: SkillEventPublisher | None = None,
     schema_base_path: str | Path | None = None,
 ) -> TaskDefinition:
     assert isinstance(definition, TaskDefinition)
+    assert event_manager is None or isinstance(
+        event_manager, SkillEventPublisher
+    )
     expected = (
         expected_identity
         if expected_identity is not None
@@ -141,7 +276,10 @@ async def revalidate_task_skills_for_worker(
     if settings is None:
         raise TaskValidationError((_task_skills_missing_issue(),))
     if registry is None and settings.enabled:
-        registry = await build_task_skill_registry(settings)
+        registry = await build_task_skill_registry(
+            settings,
+            event_manager=event_manager,
+        )
     tools = await task_enabled_skills_tools(
         definition,
         schema_base_path=schema_base_path,
@@ -202,11 +340,32 @@ def task_effective_skills_settings(
 
 async def build_task_skill_registry(
     settings: TrustedSkillSettings,
+    *,
+    event_manager: SkillEventPublisher | None = None,
+    audit_operation_id: str | None = None,
 ) -> SkillRegistry:
     assert isinstance(settings, TrustedSkillSettings)
+    assert event_manager is None or isinstance(
+        event_manager, SkillEventPublisher
+    )
+    assert audit_operation_id is None or isinstance(audit_operation_id, str)
+    if event_manager is not None and audit_operation_id is None:
+        audit_operation_id = skill_audit_correlation_id(
+            "task-skill-registry-build"
+        )
     sources = _skill_configured_sources(settings)
-    resolution = await resolve_skill_sources(sources, settings=settings)
-    return await build_skill_registry(resolution, settings=settings)
+    resolution = await resolve_skill_sources(
+        sources,
+        settings=settings,
+        event_manager=event_manager,
+        audit_operation_id=audit_operation_id,
+    )
+    return await build_skill_registry(
+        resolution,
+        settings=settings,
+        event_manager=event_manager,
+        audit_operation_id=audit_operation_id,
+    )
 
 
 def task_skills_identity(
@@ -236,6 +395,11 @@ def task_skills_identity(
             else SkillStatus.UNAVAILABLE.value
         )
     )
+    source_labels = (
+        tuple(source.label for source in settings.sources)
+        if settings.privacy.include_source_labels
+        else ()
+    )
     value: dict[str, object] = {
         "version": TASK_SKILLS_METADATA_VERSION,
         "target": target_type.value,
@@ -256,7 +420,7 @@ def task_skills_identity(
         "authority_kinds": tuple(
             authority.value for authority in settings.authority_kinds
         ),
-        "source_labels": tuple(source.label for source in settings.sources),
+        "source_labels": source_labels,
         "allowed_skill_ids": settings.allowed_skill_ids,
     }
     if registry_version is not None:

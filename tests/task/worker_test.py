@@ -21,6 +21,7 @@ from unittest.mock import patch
 from avalan.skill import (
     SkillDiagnosticCode,
     SkillDiagnosticInfo,
+    SkillObservabilitySettings,
     SkillReadLimits,
     SkillRegistry,
     SkillSourceConfig,
@@ -925,6 +926,47 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             target.contexts[0].definition.skills_identity["status"],
             SkillStatus.OK.value,
         )
+
+    async def test_process_once_fails_closed_on_skill_audit_delivery_failure(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "skills"
+            _write_skill(root / "pdf" / "SKILL.md", body="# Body\n")
+            settings = _trusted_skills(
+                root,
+                observability=SkillObservabilitySettings(
+                    audit_fail_closed=True
+                ),
+            )
+            definition = await _definition_with_skills(settings)
+            await self._use_definition(
+                replace(definition, retry=TaskRetryPolicy(max_attempts=1))
+            )
+            target = FakeTarget("safe output")
+            worker = TaskWorker(
+                self.store,
+                cast(object, self.queue),
+                target=target,
+                worker_id="worker-1",
+                skills_settings=settings,
+                clock=lambda: self.now,
+            )
+
+            with patch.object(
+                self.store,
+                "append_event",
+                side_effect=RuntimeError("private audit store failure"),
+            ):
+                result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertEqual(target.contexts, [])
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        error = self.queue.completed.run.result.error
+        self.assertIsInstance(error, Mapping)
+        self.assertNotIn("private audit store failure", str(error))
 
     async def test_process_once_fails_closed_on_missing_skills_registry(
         self,
@@ -2457,6 +2499,7 @@ async def _definition_with_skills(
 def _trusted_skills(
     root: Path,
     *,
+    observability: SkillObservabilitySettings | None = None,
     read_limits: SkillReadLimits | None = None,
 ) -> TrustedSkillSettings:
     return TrustedSkillSettings(
@@ -2466,6 +2509,11 @@ def _trusted_skills(
                 authority=WorkspaceSkillSourceAuthority(),
                 root_path=root,
             ),
+        ),
+        observability=(
+            observability
+            if observability is not None
+            else SkillObservabilitySettings()
         ),
         read_limits=read_limits or SkillReadLimits(),
     )

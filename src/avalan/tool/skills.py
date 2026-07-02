@@ -1,9 +1,12 @@
 from ..compat import override
 from ..entities import ToolCallContext, ToolCapabilities
+from ..event import EventType
 from ..skill import (
     SkillDiagnosticCode,
     SkillDiagnosticInfo,
     SkillMatchLimits,
+    SkillMatchResult,
+    SkillMetadata,
     SkillModelValue,
     SkillResourceReader,
     SkillResponseEnvelope,
@@ -12,6 +15,14 @@ from ..skill import (
     match_skill_registry,
 )
 from ..skill.entities import model_dict
+from ..skill.observability import (
+    SkillEventPublisher,
+    emit_skill_audit_event,
+    skill_audit_content_fields,
+    skill_audit_context_fields,
+    skill_audit_diagnostics_fields,
+    skill_audit_registry_fields,
+)
 from ..skill.registry import SkillRegistry
 from . import Tool, ToolSet
 
@@ -60,11 +71,20 @@ class ListSkillsTool(Tool):
 
     tool_capabilities = _READ_ONLY_PARALLEL_SAFE
 
-    def __init__(self, registry: SkillRegistry) -> None:
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        *,
+        event_manager: SkillEventPublisher | None = None,
+    ) -> None:
         super().__init__()
         assert isinstance(registry, SkillRegistry)
+        assert event_manager is None or isinstance(
+            event_manager, SkillEventPublisher
+        )
         self.__name__ = "list"
         self._registry = registry
+        self._event_manager = event_manager
 
     async def __call__(
         self,
@@ -145,11 +165,20 @@ class MatchSkillsTool(Tool):
 
     tool_capabilities = _READ_ONLY_PARALLEL_SAFE
 
-    def __init__(self, registry: SkillRegistry) -> None:
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        *,
+        event_manager: SkillEventPublisher | None = None,
+    ) -> None:
         super().__init__()
         assert isinstance(registry, SkillRegistry)
+        assert event_manager is None or isinstance(
+            event_manager, SkillEventPublisher
+        )
         self.__name__ = "match"
         self._registry = registry
+        self._event_manager = event_manager
 
     async def __call__(
         self,
@@ -213,6 +242,17 @@ class MatchSkillsTool(Tool):
                     reason="invalid_max_results",
                 ),
             )
+        await _emit_match_query_event(
+            self._event_manager,
+            context,
+            registry,
+            query=query,
+            tag_count=len(tag_filter or ()),
+            source_label=source_label,
+            status=parsed_status,
+            usable_only=usable_only,
+            max_results=max_results,
+        )
         envelope = await match_skill_registry(
             registry,
             query=query,
@@ -223,6 +263,12 @@ class MatchSkillsTool(Tool):
             max_results=max_results,
             match_limits=SkillMatchLimits(),
             include_source_labels=include_source_labels,
+        )
+        await _emit_match_result_event(
+            self._event_manager,
+            context,
+            registry,
+            envelope,
         )
         return _skills_model_dict(registry, envelope)
 
@@ -246,13 +292,19 @@ class ReadSkillTool(Tool):
         self,
         registry: SkillRegistry,
         reader: SkillResourceReader,
+        *,
+        event_manager: SkillEventPublisher | None = None,
     ) -> None:
         super().__init__()
         assert isinstance(registry, SkillRegistry)
         assert isinstance(reader, SkillResourceReader)
+        assert event_manager is None or isinstance(
+            event_manager, SkillEventPublisher
+        )
         self.__name__ = "read"
         self._registry = registry
         self._reader = reader
+        self._event_manager = event_manager
 
     async def __call__(
         self,
@@ -265,15 +317,28 @@ class ReadSkillTool(Tool):
         registry = _context_registry(context, self._registry)
         disabled = _disabled_envelope(registry, path="skills.read")
         if disabled is not None:
-            return _skills_model_dict(registry, disabled)
+            return await _skills_read_response(
+                self._event_manager,
+                context,
+                registry,
+                disabled,
+                skill=skill,
+                resource_id=resource_id,
+                source_label=source_label,
+            )
         if source_label is not None and not _include_source_labels(registry):
-            return _skills_model_dict(
+            return await _skills_read_response(
+                self._event_manager,
+                context,
                 registry,
                 _invalid_argument_envelope(
                     registry,
                     path="skills.read.source_label",
                     reason="source_labels_hidden",
                 ),
+                skill=skill,
+                resource_id=resource_id,
+                source_label=source_label,
             )
         envelope = await self._reader.read(
             registry,
@@ -282,7 +347,15 @@ class ReadSkillTool(Tool):
             source_label=source_label,
             cursor_id=cursor_id,
         )
-        return _skills_model_dict(registry, envelope)
+        return await _skills_read_response(
+            self._event_manager,
+            context,
+            registry,
+            envelope,
+            skill=skill,
+            resource_id=resource_id,
+            source_label=source_label,
+        )
 
 
 class CheckSkillTool(Tool):
@@ -303,13 +376,19 @@ class CheckSkillTool(Tool):
         self,
         registry: SkillRegistry,
         reader: SkillResourceReader,
+        *,
+        event_manager: SkillEventPublisher | None = None,
     ) -> None:
         super().__init__()
         assert isinstance(registry, SkillRegistry)
         assert isinstance(reader, SkillResourceReader)
+        assert event_manager is None or isinstance(
+            event_manager, SkillEventPublisher
+        )
         self.__name__ = "check"
         self._registry = registry
         self._reader = reader
+        self._event_manager = event_manager
 
     async def __call__(
         self,
@@ -321,22 +400,47 @@ class CheckSkillTool(Tool):
         registry = _context_registry(context, self._registry)
         disabled = _disabled_envelope(registry, path="skills.check")
         if disabled is not None:
+            await _emit_check_diagnostics_event(
+                self._event_manager,
+                context,
+                registry,
+                disabled,
+                skill=skill,
+                resource_id=resource_id,
+                source_label=source_label,
+            )
             return _skills_model_dict(registry, disabled)
         if source_label is not None and not _include_source_labels(registry):
-            return _skills_model_dict(
+            envelope = _invalid_argument_envelope(
                 registry,
-                _invalid_argument_envelope(
-                    registry,
-                    path="skills.check.source_label",
-                    reason="source_labels_hidden",
-                ),
+                path="skills.check.source_label",
+                reason="source_labels_hidden",
             )
+            await _emit_check_diagnostics_event(
+                self._event_manager,
+                context,
+                registry,
+                envelope,
+                skill=skill,
+                resource_id=resource_id,
+                source_label=source_label,
+            )
+            return _skills_model_dict(registry, envelope)
         envelope = await check_skill_registry_read(
             registry,
             skill,
             resource_id=resource_id,
             source_label=source_label,
             reader=self._reader,
+        )
+        await _emit_check_diagnostics_event(
+            self._event_manager,
+            context,
+            registry,
+            envelope,
+            skill=skill,
+            resource_id=resource_id,
+            source_label=source_label,
         )
         return _skills_model_dict(registry, envelope)
 
@@ -349,17 +453,21 @@ class SkillsToolSet(ToolSet):
         *,
         bootstrap_enabled: bool = True,
         exit_stack: AsyncExitStack | None = None,
+        event_manager: SkillEventPublisher | None = None,
         namespace: str | None = "skills",
     ) -> None:
         assert isinstance(bootstrap_enabled, bool)
+        assert event_manager is None or isinstance(
+            event_manager, SkillEventPublisher
+        )
         self.registry = registry
         self.bootstrap_enabled = bootstrap_enabled
         reader = SkillResourceReader()
         tools = [
-            ListSkillsTool(registry),
-            MatchSkillsTool(registry),
-            ReadSkillTool(registry, reader),
-            CheckSkillTool(registry, reader),
+            ListSkillsTool(registry, event_manager=event_manager),
+            MatchSkillsTool(registry, event_manager=event_manager),
+            ReadSkillTool(registry, reader, event_manager=event_manager),
+            CheckSkillTool(registry, reader, event_manager=event_manager),
         ]
         super().__init__(
             exit_stack=exit_stack,
@@ -462,6 +570,194 @@ def _include_source_labels(registry: SkillRegistry) -> bool:
         registry.settings is None
         or registry.settings.privacy.include_source_labels
     )
+
+
+async def _emit_match_query_event(
+    event_manager: SkillEventPublisher | None,
+    context: ToolCallContext,
+    registry: SkillRegistry,
+    *,
+    query: str,
+    tag_count: int,
+    source_label: str | None,
+    status: SkillStatus | None,
+    usable_only: bool,
+    max_results: int | None,
+) -> None:
+    fields: dict[str, object] = {
+        **skill_audit_context_fields(context, tool_name="skills.match"),
+        **skill_audit_registry_fields(registry.registry_version),
+        "status": "evaluated",
+        "query_character_count": len(query),
+        "query_byte_count": len(query.encode("utf-8")),
+        "tag_count": tag_count,
+        "source_label": source_label,
+        "filter_status": status.value if status is not None else None,
+        "usable_only": usable_only,
+        "max_results": max_results,
+    }
+    await emit_skill_audit_event(
+        event_manager,
+        registry.settings,
+        EventType.SKILL_MATCH_QUERY_EVALUATED,
+        fields,
+    )
+
+
+async def _emit_match_result_event(
+    event_manager: SkillEventPublisher | None,
+    context: ToolCallContext,
+    registry: SkillRegistry,
+    envelope: SkillResponseEnvelope,
+) -> None:
+    event_type = _match_result_event_type(envelope)
+    fields: dict[str, object] = {
+        **skill_audit_context_fields(context, tool_name="skills.match"),
+        **skill_audit_registry_fields(
+            envelope.registry_version,
+            status=envelope.status,
+        ),
+        "candidate_count": len(envelope.items),
+        "skill_ids": _envelope_skill_ids(envelope),
+    }
+    fields.update(skill_audit_diagnostics_fields(envelope.diagnostics))
+    await emit_skill_audit_event(
+        event_manager,
+        registry.settings,
+        event_type,
+        fields,
+    )
+
+
+def _match_result_event_type(
+    envelope: SkillResponseEnvelope,
+) -> EventType:
+    if envelope.status is SkillStatus.AMBIGUOUS:
+        return EventType.SKILL_MATCH_AMBIGUOUS
+    if envelope.items:
+        return EventType.SKILL_MATCH_CANDIDATES_RETURNED
+    return EventType.SKILL_MATCH_EMPTY
+
+
+async def _skills_read_response(
+    event_manager: SkillEventPublisher | None,
+    context: ToolCallContext,
+    registry: SkillRegistry,
+    envelope: SkillResponseEnvelope,
+    *,
+    skill: str | None,
+    resource_id: str,
+    source_label: str | None,
+) -> dict[str, SkillModelValue]:
+    await _emit_read_event(
+        event_manager,
+        context,
+        registry,
+        envelope,
+        skill=skill,
+        resource_id=resource_id,
+        source_label=source_label,
+    )
+    return _skills_model_dict(registry, envelope)
+
+
+async def _emit_read_event(
+    event_manager: SkillEventPublisher | None,
+    context: ToolCallContext,
+    registry: SkillRegistry,
+    envelope: SkillResponseEnvelope,
+    *,
+    skill: str | None,
+    resource_id: str,
+    source_label: str | None,
+) -> None:
+    fields: dict[str, object] = {
+        **skill_audit_context_fields(context, tool_name="skills.read"),
+        **skill_audit_registry_fields(
+            envelope.registry_version,
+            status=envelope.status,
+        ),
+        "source_label": source_label,
+        "skill_id": skill if skill and _is_logical_id(skill) else None,
+        "resource_id": resource_id,
+    }
+    if envelope.content is not None:
+        fields.update(
+            skill_audit_content_fields(
+                envelope.content,
+                envelope.provenance[0] if envelope.provenance else None,
+            )
+        )
+    fields.update(skill_audit_diagnostics_fields(envelope.diagnostics))
+    await emit_skill_audit_event(
+        event_manager,
+        registry.settings,
+        _read_event_type(envelope),
+        fields,
+    )
+
+
+def _read_event_type(envelope: SkillResponseEnvelope) -> EventType:
+    if envelope.content is not None:
+        if envelope.content.truncated:
+            return EventType.SKILL_READ_TRUNCATED
+        return EventType.SKILL_READ_ALLOWED
+    if envelope.status is SkillStatus.STALE:
+        return EventType.SKILL_READ_STALE
+    if envelope.diagnostics and (
+        envelope.diagnostics[0].code is SkillDiagnosticCode.RESOURCE_MISSING
+    ):
+        return EventType.SKILL_READ_DELETED
+    if envelope.status in {
+        SkillStatus.DISABLED,
+        SkillStatus.POLICY_DENIED,
+    }:
+        return EventType.SKILL_READ_DENIED
+    return EventType.SKILL_READ_BLOCKED
+
+
+async def _emit_check_diagnostics_event(
+    event_manager: SkillEventPublisher | None,
+    context: ToolCallContext,
+    registry: SkillRegistry,
+    envelope: SkillResponseEnvelope,
+    *,
+    skill: str,
+    resource_id: str,
+    source_label: str | None,
+) -> None:
+    if not envelope.diagnostics:
+        return
+    fields: dict[str, object] = {
+        **skill_audit_context_fields(context, tool_name="skills.check"),
+        **skill_audit_registry_fields(
+            envelope.registry_version,
+            status=envelope.status,
+        ),
+        "source_label": source_label,
+        "skill_id": skill if _is_logical_id(skill) else None,
+        "resource_id": resource_id,
+    }
+    fields.update(skill_audit_diagnostics_fields(envelope.diagnostics))
+    await emit_skill_audit_event(
+        event_manager,
+        registry.settings,
+        EventType.SKILL_CHECK_DIAGNOSTICS_PRODUCED,
+        fields,
+    )
+
+
+def _envelope_skill_ids(
+    envelope: SkillResponseEnvelope,
+) -> list[str]:
+    skill_ids: list[str] = []
+    for item in envelope.items[:16]:
+        metadata = (
+            item.metadata if isinstance(item, SkillMatchResult) else item
+        )
+        assert isinstance(metadata, SkillMetadata)
+        skill_ids.append(metadata.skill_id)
+    return skill_ids
 
 
 def _metadata_model_dict(

@@ -59,6 +59,7 @@ from ..skill import (
     parse_untrusted_skill_settings_config,
     resolve_skill_sources,
 )
+from ..skill.observability import skill_audit_correlation_id
 from ..task.schema import TaskSchemaResolutionError, resolve_schema_ref
 from ..tool import ToolSet
 from ..tool.a2a import A2AToolSet
@@ -181,21 +182,29 @@ def _skill_configured_sources(
 
 async def _build_skills_toolset(
     skills_settings: TrustedSkillSettings,
+    *,
+    event_manager: EventManager | None = None,
 ) -> SkillsToolSet:
     """Build a skills toolset from trusted settings."""
     sources = _skill_configured_sources(skills_settings)
     assert sources, "skills require at least one trusted source"
+    audit_operation_id = skill_audit_correlation_id("skill-registry-build")
     source_result = await resolve_skill_sources(
         sources,
         settings=skills_settings,
+        event_manager=event_manager,
+        audit_operation_id=audit_operation_id,
     )
     registry = await build_skill_registry(
         source_result,
         settings=skills_settings,
+        event_manager=event_manager,
+        audit_operation_id=audit_operation_id,
     )
     return SkillsToolSet(
         registry,
         bootstrap_enabled=skills_settings.bootstrap_enabled,
+        event_manager=event_manager,
         namespace="skills",
     )
 
@@ -1694,7 +1703,10 @@ class OrchestratorLoader:
         if should_append_skills_toolset(skills_settings, enabled_tools):
             assert skills_settings is not None
             available_toolsets.append(
-                await _build_skills_toolset(skills_settings)
+                await _build_skills_toolset(
+                    skills_settings,
+                    event_manager=event_manager,
+                )
             )
         active_shell_settings = None
         if should_append_shell_toolset(

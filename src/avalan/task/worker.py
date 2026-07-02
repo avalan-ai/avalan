@@ -73,6 +73,7 @@ from .runner import (
 from .skills import (
     TASK_SKILLS_METADATA_KEY,
     revalidate_task_skills_for_worker,
+    task_skill_audit_event_publisher,
 )
 from .state import TaskAttemptState, TaskRunState
 from .store import (
@@ -276,7 +277,12 @@ class TaskWorker:
         except TaskStoreConflictError:
             return TaskWorkerProcessResult(claimed=claim, lease_lost=True)
         try:
-            definition = await self._revalidate_skills(definition, claim.run)
+            definition = await self._revalidate_skills(
+                definition,
+                run=run,
+                attempt=attempt,
+                sanitizer=sanitizer,
+            )
             await self._validate_target(definition)
             output = await self._execute(
                 definition,
@@ -340,13 +346,27 @@ class TaskWorker:
     async def _revalidate_skills(
         self,
         definition: TaskDefinition,
+        *,
         run: TaskRun,
+        attempt: TaskAttempt,
+        sanitizer: PrivacySanitizer,
     ) -> TaskDefinition:
+        pipeline = self._event_pipeline(
+            definition,
+            run=run,
+            attempt=attempt,
+            sanitizer=sanitizer,
+            critical_delivery=True,
+        )
         return await revalidate_task_skills_for_worker(
             definition,
             trusted_settings=self._skills_settings,
             registry=self._skills_registry,
             expected_identity=_task_skills_identity_from_run(run),
+            event_manager=task_skill_audit_event_publisher(
+                sanitizer=sanitizer,
+                raw_event_observer=pipeline,
+            ),
             schema_base_path=self._definition_base,
         )
 
@@ -818,7 +838,9 @@ class TaskWorker:
         run: TaskRun,
         attempt: TaskAttempt,
         sanitizer: PrivacySanitizer,
+        critical_delivery: bool = False,
     ) -> TaskEventPipeline | None:
+        assert isinstance(critical_delivery, bool)
         metrics_observer = (
             self._metrics_event_observer
             if definition.observability.metrics
@@ -846,6 +868,7 @@ class TaskWorker:
             metrics_observer=metrics_observer,
             trace_observer=trace_observer,
             observability_sink=observability_sink,
+            critical_delivery=critical_delivery,
         )
 
     def _observability_sink_for(

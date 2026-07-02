@@ -1,3 +1,4 @@
+from ..event import EventType
 from .contract import SkillDiagnosticCode, SkillFailureMode, SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
@@ -13,6 +14,16 @@ from .manifest import (
     SkillDeclaredResource,
     SkillManifestDocument,
     parse_skill_manifests,
+)
+from .observability import (
+    SkillAuditDeliveryError,
+    SkillEventPublisher,
+    emit_skill_audit_event,
+    skill_audit_authority_value,
+    skill_audit_correlation_id,
+    skill_audit_diagnostic_fields,
+    skill_audit_hash_prefix,
+    skill_audit_registry_fields,
 )
 from .resolver import (
     SkillAsyncFileSystem,
@@ -404,10 +415,18 @@ async def build_skill_registry(
     read_limits: SkillReadLimits | None = None,
     index_limits: SkillIndexLimits | None = None,
     file_system: SkillSourceFileSystem | None = None,
+    event_manager: SkillEventPublisher | None = None,
+    audit_operation_id: str | None = None,
 ) -> SkillRegistry:
     assert isinstance(resolution, SkillSourceResolutionResult | tuple)
     if settings is not None:
         assert isinstance(settings, TrustedSkillSettings)
+    assert event_manager is None or isinstance(
+        event_manager, SkillEventPublisher
+    )
+    assert audit_operation_id is None or isinstance(audit_operation_id, str)
+    if event_manager is not None and audit_operation_id is None:
+        audit_operation_id = skill_audit_correlation_id("skill-registry-build")
     if read_limits is None:
         read_limits = (
             settings.read_limits
@@ -425,52 +444,99 @@ async def build_skill_registry(
     assert isinstance(read_limits, SkillReadLimits)
     assert isinstance(index_limits, SkillIndexLimits)
 
-    sources, resolution_diagnostics = _resolution_parts(resolution)
-    manifests = await parse_skill_manifests(
-        sources,
-        file_system=file_system,
-        read_limits=read_limits,
-        index_limits=index_limits,
+    await emit_skill_audit_event(
+        event_manager,
+        settings,
+        EventType.SKILL_REGISTRY_BUILD_STARTED,
+        {
+            "operation_id": audit_operation_id,
+            "status": "started",
+        },
     )
-    source_by_label = {source.label: source for source in sources}
-    source_resources = _source_resources_by_key(sources)
-    registry_sources = tuple(_registry_source(source) for source in sources)
-    skills, fingerprint_diagnostics = await _registry_skills(
-        manifests.manifests,
-        source_by_label=source_by_label,
-        source_resources=source_resources,
-        file_system=file_system,
-        read_limits=read_limits,
-    )
-    diagnostics = (
-        *resolution_diagnostics,
-        *manifests.diagnostics,
-        *fingerprint_diagnostics,
-    )
-    if not skills and not diagnostics:
-        diagnostics = (
-            diagnostic_from_failure(
-                SkillFailureMode.EMPTY_REGISTRY,
-                path="skills",
-            ),
+    try:
+        sources, resolution_diagnostics = _resolution_parts(resolution)
+        manifests = await parse_skill_manifests(
+            sources,
+            file_system=file_system,
+            read_limits=read_limits,
+            index_limits=index_limits,
         )
-    registry_version = _registry_version(
-        sources=registry_sources,
-        skills=skills,
-        diagnostics=diagnostics,
-        settings=settings,
-        read_limits=read_limits,
-        index_limits=index_limits,
-    )
-    return SkillRegistry(
-        registry_version=registry_version,
-        read_limits=read_limits,
-        index_limits=index_limits,
-        sources=registry_sources,
-        skills=skills,
-        diagnostics=diagnostics,
-        settings=settings,
-    )
+        source_by_label = {source.label: source for source in sources}
+        source_resources = _source_resources_by_key(sources)
+        registry_sources = tuple(
+            _registry_source(source) for source in sources
+        )
+        skills, fingerprint_diagnostics = await _registry_skills(
+            manifests.manifests,
+            source_by_label=source_by_label,
+            source_resources=source_resources,
+            file_system=file_system,
+            read_limits=read_limits,
+        )
+        diagnostics = (
+            *resolution_diagnostics,
+            *manifests.diagnostics,
+            *fingerprint_diagnostics,
+        )
+        if not skills and not diagnostics:
+            diagnostics = (
+                diagnostic_from_failure(
+                    SkillFailureMode.EMPTY_REGISTRY,
+                    path="skills",
+                ),
+            )
+        registry_version = _registry_version(
+            sources=registry_sources,
+            skills=skills,
+            diagnostics=diagnostics,
+            settings=settings,
+            read_limits=read_limits,
+            index_limits=index_limits,
+        )
+        registry = SkillRegistry(
+            registry_version=registry_version,
+            read_limits=read_limits,
+            index_limits=index_limits,
+            sources=registry_sources,
+            skills=skills,
+            diagnostics=diagnostics,
+            settings=settings,
+        )
+        await _emit_registry_skill_events(
+            event_manager,
+            settings,
+            registry,
+            operation_id=audit_operation_id,
+        )
+        await emit_skill_audit_event(
+            event_manager,
+            settings,
+            EventType.SKILL_REGISTRY_BUILD_COMPLETED,
+            {
+                "operation_id": audit_operation_id,
+                **skill_audit_registry_fields(
+                    registry.registry_version,
+                    status=registry.status,
+                ),
+                "source_count": len(registry.sources),
+                "skill_count": len(registry.skills),
+                "diagnostic_count": len(registry.diagnostics),
+            },
+        )
+        return registry
+    except SkillAuditDeliveryError:
+        raise
+    except Exception:
+        await emit_skill_audit_event(
+            event_manager,
+            settings,
+            EventType.SKILL_REGISTRY_BUILD_FAILED,
+            {
+                "operation_id": audit_operation_id,
+                "status": SkillStatus.BLOCKED.value,
+            },
+        )
+        raise
 
 
 async def check_skill_registry_resource(
@@ -560,6 +626,112 @@ def _resolution_parts(
     for source in resolution:
         assert isinstance(source, SkillAuthorizedSourceRoot)
     return resolution, ()
+
+
+async def _emit_registry_skill_events(
+    event_manager: SkillEventPublisher | None,
+    settings: TrustedSkillSettings | None,
+    registry: SkillRegistry,
+    *,
+    operation_id: str | None,
+) -> None:
+    counts = Counter(
+        skill.skill_id for skill in registry.skills if skill.skill_id
+    )
+    duplicate_ids = {
+        skill_id for skill_id, count in counts.items() if count > 1
+    }
+    seen_duplicates: set[str] = set()
+    source_by_label = {source.label: source for source in registry.sources}
+    for skill in registry.skills:
+        source_authority = _registry_source_authority_value(
+            source_by_label,
+            skill.source_label,
+        )
+        if (
+            skill.skill_id is not None
+            and skill.skill_id in duplicate_ids
+            and skill.skill_id in seen_duplicates
+        ):
+            await _emit_registry_skill_event(
+                event_manager,
+                settings,
+                EventType.SKILL_SHADOWED,
+                registry,
+                skill,
+                operation_id=operation_id,
+                source_authority=source_authority,
+            )
+        event_type = _registry_skill_event_type(skill, duplicate_ids)
+        if event_type is None:
+            continue
+        await _emit_registry_skill_event(
+            event_manager,
+            settings,
+            event_type,
+            registry,
+            skill,
+            operation_id=operation_id,
+            source_authority=source_authority,
+        )
+        if skill.skill_id is not None and skill.skill_id in duplicate_ids:
+            seen_duplicates.add(skill.skill_id)
+
+
+def _registry_skill_event_type(
+    skill: SkillRegistrySkill,
+    duplicate_ids: set[str],
+) -> EventType | None:
+    if skill.skill_id is not None and skill.skill_id in duplicate_ids:
+        return EventType.SKILL_DUPLICATE
+    if skill.status is SkillStatus.DISABLED:
+        return EventType.SKILL_DISABLED
+    if skill.status is SkillStatus.MALFORMED or skill.metadata is None:
+        return EventType.SKILL_MALFORMED
+    if skill.usable and skill.status is SkillStatus.OK:
+        return EventType.SKILL_REGISTERED
+    return None
+
+
+async def _emit_registry_skill_event(
+    event_manager: SkillEventPublisher | None,
+    settings: TrustedSkillSettings | None,
+    event_type: EventType,
+    registry: SkillRegistry,
+    skill: SkillRegistrySkill,
+    *,
+    operation_id: str | None,
+    source_authority: str | None,
+) -> None:
+    diagnostic = skill.diagnostics[0] if skill.diagnostics else None
+    fields: dict[str, object] = {
+        "operation_id": operation_id,
+        **skill_audit_registry_fields(
+            registry.registry_version,
+            status=skill.status,
+        ),
+        "source_label": skill.source_label,
+        "source_authority": source_authority,
+        "skill_id": skill.skill_id,
+        "resource_count": len(skill.resources),
+        "hash_prefix": skill_audit_hash_prefix(
+            skill.manifest_fingerprint.content_sha256
+            if skill.manifest_fingerprint is not None
+            else None
+        ),
+    }
+    fields.update(skill_audit_diagnostic_fields(diagnostic))
+    await emit_skill_audit_event(event_manager, settings, event_type, fields)
+
+
+def _registry_source_authority_value(
+    source_by_label: Mapping[str, SkillRegistrySource],
+    source_label: str,
+) -> str | None:
+    source = source_by_label.get(source_label)
+    if source is None:
+        return None
+    return skill_audit_authority_value(source.authority)
 
 
 def _registry_source(source: SkillAuthorizedSourceRoot) -> SkillRegistrySource:

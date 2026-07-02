@@ -392,6 +392,7 @@ class SkillSettingsTest(TestCase):
                 "emit_events": False,
                 "include_diagnostics": False,
                 "include_byte_counts": True,
+                "audit_fail_closed": False,
             },
         )
 
