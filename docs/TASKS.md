@@ -120,6 +120,38 @@ Validated examples live at
 [pipeline_flow.task.toml](examples/tasks/pipeline_flow.task.toml). The flow
 example uses structured step objects and local-only byte routing.
 
+## Skills in Tasks
+
+Tasks can carry `[skills]` settings for eligible targets: `agent`, `flow`,
+`model`, `task`, and `tool`. The task definition narrows a trusted registry;
+it does not authorize source roots by itself.
+
+```toml
+[execution]
+type = "agent"
+ref = "agents/skills_pdf_reader.toml"
+
+[skills]
+source_labels = ["workspace-main"]
+skill_ids = ["pdf"]
+
+[skills.read_limits]
+max_bytes_per_read = 65536
+max_lines_per_read = 2000
+```
+
+Direct SDK or host execution supplies `TrustedSkillSettings` while loading the
+task. Queue submission records a durable skills identity containing settings
+and source fingerprints, enabled skills tools, allowed skill IDs, and registry
+metadata. Workers revalidate that identity before execution and fail closed if
+the trusted registry is missing, stale, wider than requested, unavailable,
+malformed, or policy denied.
+
+The example at [skills_pdf.task.toml](examples/tasks/skills_pdf.task.toml)
+uses the hermetic PDF skill under [docs/examples/skills](examples/skills/).
+It is covered by focused loader tests with trusted settings; a plain task
+payload or remote request cannot grant that authority.
+
 ## File Delivery
 
 Tasks are the safest place to describe file behavior:

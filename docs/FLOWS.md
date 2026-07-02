@@ -241,6 +241,43 @@ validation must include `shell.pipeline` availability outside the test suite.
 Byte-stream pipelines are local-only; sandbox and container byte pipelines fail
 closed.
 
+## Skills in Flows
+
+Flows can narrow a trusted skills registry with top-level `[skills]` settings.
+Agent nodes inherit the effective flow settings, and strict tool nodes that
+call canonical skills tools can also use `[nodes.<name>.skills]` to narrow a
+single node.
+
+```toml
+[skills]
+source_labels = ["workspace-main"]
+skill_ids = ["pdf"]
+
+[nodes.read_skill]
+type = "tool"
+ref = "skills.read"
+
+[nodes.read_skill.skills]
+skill_ids = ["pdf"]
+
+[nodes.read_skill.config.arguments]
+skill = "pdf"
+resource_id = "main"
+```
+
+Flow skills settings do not define trusted source paths. They require trusted
+operator settings from SDK, host code, or a registry-backed loader. The
+standalone flow CLI can enable strict tool names with `--tool skills.read`,
+but it does not accept untrusted flow input as skills source authority.
+
+Strict flow plans carry durable skills metadata. Resume revalidates that
+metadata and rejects stale, widened, or policy-denied registries instead of
+silently replacing the paused plan's skill authority.
+
+The hermetic example at
+[skills_read.flow.toml](examples/tasks/skills_read.flow.toml) validates with a
+runtime registry built from [docs/examples/skills](examples/skills/).
+
 ## Branching and Review
 
 Flows can route based on state or output. Common branches include:

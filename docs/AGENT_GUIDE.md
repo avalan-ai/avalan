@@ -116,6 +116,44 @@ log them, display them, or require approval before execution. In the CLI, use
 
 See [TOOLS.md](TOOLS.md) for tool configuration and reasoning strategies.
 
+## Skills
+
+Skills are reusable instruction resources exposed as read-only tools. The
+agent can enable `skills.list`, `skills.match`, `skills.read`, or
+`skills.check`, while trusted source roots are supplied by SDK, CLI, or host
+configuration.
+
+```toml
+[tool]
+enable = ["skills.match", "skills.read"]
+
+[tool.skills]
+source_labels = ["workspace-main"]
+skill_ids = ["pdf"]
+bootstrap = "auto"
+
+[tool.skills.read_limits]
+max_bytes_per_read = 65536
+max_lines_per_read = 2000
+```
+
+`[tool.skills]` can only narrow trusted settings. It must not define source
+paths, install skills, or grant tools. Skill instructions remain subordinate
+to higher-priority instructions and runtime policy.
+
+Run the tracked PDF skill example with trusted CLI settings:
+
+```sh
+echo "Plan a PDF review." \
+    | avalan agent run docs/examples/agent_skills_pdf.toml \
+        --tool-skills-source workspace-main=docs/examples/skills \
+        --tool-skills-source-authority workspace-main=workspace:docs \
+        --display-tools
+```
+
+See [TOOLS.md](TOOLS.md#skills-tools) for response envelopes, statuses,
+diagnostics, path policy, privacy defaults, and migration notes.
+
 ## Memory
 
 Agents can keep short-term conversation state and retrieve long-term context
