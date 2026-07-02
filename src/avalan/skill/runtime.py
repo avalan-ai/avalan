@@ -1,3 +1,4 @@
+from ._async import skill_cancellation_checkpoint
 from .contract import SkillDiagnosticCode, SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
@@ -28,6 +29,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from os import stat_result
 from pathlib import Path
+from stat import S_ISLNK
 from typing import Protocol
 
 
@@ -66,34 +68,53 @@ class SkillRuntimeMappedFileSystem:
             assert isinstance(root, Path)
         if file_system is None:
             file_system = SkillAsyncFileSystem()
-        root_candidates: list[Path] = []
-        for root in roots:
-            root_candidates.append(root)
-            resolved = root.resolve(strict=False)
-            if resolved != root:
-                root_candidates.append(resolved)
-        self._roots = tuple(root_candidates)
+        self._roots = roots
         self._file_system = file_system
 
     async def resolve_path(self, path: Path) -> Path:
-        self._assert_path_authorized(path)
+        await skill_cancellation_checkpoint()
+        root = self._authorized_root(path)
+        if root is None:
+            raise PermissionError("skill runtime path outside mapped roots")
+        await self._assert_authorized_root_is_not_symlink(root)
         resolved = await self._file_system.resolve_path(path)
-        self._assert_path_authorized(resolved)
+        if not self._path_authorized(resolved):
+            self._assert_path_authorized(resolved)
         return resolved
 
     async def stat_path(self, path: Path) -> stat_result:
+        await skill_cancellation_checkpoint()
         resolved = await self.resolve_path(path)
         return await self._file_system.stat_path(resolved)
 
     async def lstat_path(self, path: Path) -> stat_result:
-        self._assert_path_authorized(path)
+        await skill_cancellation_checkpoint()
+        root = self._authorized_root(path)
+        if root is None:
+            raise PermissionError("skill runtime path outside mapped roots")
+        await self._assert_authorized_root_is_not_symlink(root)
         return await self._file_system.lstat_path(path)
+
+    async def _assert_authorized_root_is_not_symlink(
+        self,
+        root: Path,
+    ) -> None:
+        assert isinstance(root, Path)
+        try:
+            root_stat = await self._file_system.lstat_path(root)
+        except OSError as exc:
+            raise PermissionError(
+                "skill runtime path outside mapped roots"
+            ) from exc
+        if S_ISLNK(root_stat.st_mode):
+            raise PermissionError("skill runtime path outside mapped roots")
 
     async def list_directory(
         self,
         path: Path,
         limit: int,
     ) -> tuple[Path, ...]:
+        await skill_cancellation_checkpoint()
         resolved = await self.resolve_path(path)
         entries = await self._file_system.list_directory(resolved, limit)
         for entry in entries:
@@ -101,14 +122,26 @@ class SkillRuntimeMappedFileSystem:
         return entries
 
     async def read_bytes(self, path: Path, limit: int) -> bytes:
+        await skill_cancellation_checkpoint()
         resolved = await self.resolve_path(path)
         return await self._file_system.read_bytes(resolved, limit)
 
     def _assert_path_authorized(self, path: Path) -> None:
         assert isinstance(path, Path)
-        if any(_path_is_relative_to(path, root) for root in self._roots):
+        if self._path_authorized(path):
             return
         raise PermissionError("skill runtime path outside mapped roots")
+
+    def _path_authorized(self, path: Path) -> bool:
+        assert isinstance(path, Path)
+        return self._authorized_root(path) is not None
+
+    def _authorized_root(self, path: Path) -> Path | None:
+        assert isinstance(path, Path)
+        for root in self._roots:
+            if _path_is_relative_to(path, root):
+                return root
+        return None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -281,6 +314,7 @@ class SkillLocalRuntimeBackend:
         sources: tuple[SkillAuthorizedSourceRoot, ...],
     ) -> SkillRuntimeMappingResult:
         _assert_sources(sources)
+        await skill_cancellation_checkpoint()
         return SkillRuntimeMappingResult(
             mode=self.mode,
             file_system=self._file_system,
@@ -316,6 +350,7 @@ async def resolve_skill_runtime_sources(
             config,
             SkillConfiguredSource | SkillSourceRootConfig,
         )
+    await skill_cancellation_checkpoint()
     if file_system is None:
         file_system = SkillAsyncFileSystem()
     if backend is None:
@@ -358,6 +393,7 @@ async def resolve_skill_runtime_sources(
         )
 
     try:
+        await skill_cancellation_checkpoint()
         mapping = await backend.map_sources(host_resolution.sources)
     except (OSError, RuntimeError, ValueError):
         mapping = SkillRuntimeMappingResult(
@@ -384,6 +420,7 @@ async def resolve_skill_runtime_sources(
         host_resolution.sources,
         mapping,
     )
+    await skill_cancellation_checkpoint()
     mapping = replace(mapping, mappings=validated_mappings)
     runtime_file_system = SkillRuntimeMappedFileSystem(
         roots=tuple(source.runtime_root for source in validated_mappings),
@@ -401,6 +438,7 @@ async def resolve_skill_runtime_sources(
         host_resolution.sources,
         mapped_resolution.sources,
     )
+    await skill_cancellation_checkpoint()
     if parity_diagnostics:
         mapping = replace(mapping, diagnostics=parity_diagnostics)
         return _failed_runtime_resolution(
@@ -444,6 +482,7 @@ async def build_skill_runtime_registry(
         read_limits=read_limits,
         file_system=file_system,
     )
+    await skill_cancellation_checkpoint()
     registry = await build_skill_registry(
         runtime_resolution.resolution,
         settings=settings,

@@ -55,7 +55,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
         )
 
         with TemporaryDirectory() as directory:
-            root = Path(directory) / "source"
+            root = Path(directory).resolve() / "source"
             _write_text(root / "note.md", "note")
             file_system = SkillRuntimeMappedFileSystem(roots=(root,))
             self.assertEqual(
@@ -136,7 +136,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             source_root = base / "source"
             _write_skill(
                 source_root / "pdf" / "SKILL.md",
@@ -208,7 +208,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
 
     async def test_fake_modes_return_matching_unsafe_denials(self) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             cases = (
                 (
                     "hidden",
@@ -268,7 +268,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
 
     async def test_widened_runtime_mount_is_denied_before_scan(self) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             source_root = base / "source" / "authorized"
             _write_skill(
                 source_root / "SKILL.md",
@@ -304,7 +304,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
 
     async def test_duplicate_runtime_mapping_label_fails_closed(self) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             source_root = base / "source" / "authorized"
             widened_root = source_root.parent
             _write_skill(
@@ -347,7 +347,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             source_root = base / "source"
             _write_skill(
                 source_root / "SKILL.md",
@@ -414,7 +414,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             source_root = base / "source"
             secret_path = base / "secret.md"
             _write_skill(
@@ -504,7 +504,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             missing_root = base / "missing"
             secret_path = base / "secret.md"
             _write_text(secret_path, "secret")
@@ -541,7 +541,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             source_root = base / "source"
             _write_skill(
                 source_root / "SKILL.md",
@@ -583,7 +583,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             source_root = base / "source"
             original = (
                 "---\n"
@@ -639,7 +639,7 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
 
     async def test_mapped_filesystem_blocks_direct_symlink_read(self) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             root = base / "root"
             outside = base / "outside.md"
             _write_text(outside, "outside")
@@ -655,11 +655,65 @@ class SkillRuntimeParityPhase13Test(IsolatedAsyncioTestCase):
             with self.assertRaises(PermissionError):
                 await file_system.stat_path(root / "link.md")
 
+    async def test_mapped_filesystem_blocks_lstat_outside_roots(self) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            root = base / "root"
+            outside = base / "outside.md"
+            root.mkdir(parents=True)
+            _write_text(outside, "outside")
+            file_system = SkillRuntimeMappedFileSystem(
+                roots=(root,),
+                file_system=SkillAsyncFileSystem(),
+            )
+
+            with self.assertRaises(PermissionError):
+                await file_system.lstat_path(outside)
+
+    async def test_mapped_filesystem_denies_missing_configured_root(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            missing_root = base / "missing"
+            file_system = SkillRuntimeMappedFileSystem(
+                roots=(missing_root,),
+                file_system=SkillAsyncFileSystem(),
+            )
+
+            with self.assertRaises(PermissionError):
+                await file_system.read_bytes(
+                    missing_root / "secret.txt",
+                    1024,
+                )
+
+    async def test_mapped_filesystem_blocks_retargeted_symlink_root(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            allowed = base / "allowed"
+            outside = base / "outside"
+            link = base / "link"
+            _write_text(allowed / "secret.txt", "allowed")
+            _write_text(outside / "secret.txt", "outside")
+            symlink(allowed, link)
+            file_system = SkillRuntimeMappedFileSystem(
+                roots=(link,),
+                file_system=SkillAsyncFileSystem(),
+            )
+
+            link.unlink()
+            symlink(outside, link)
+
+            with self.assertRaises(PermissionError):
+                await file_system.read_bytes(link / "secret.txt", 1024)
+
     async def test_mapped_filesystem_blocks_symlink_directory_listing(
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             root = base / "root"
             outside = base / "outside"
             _write_text(outside / "outside-secret.md", "secret")

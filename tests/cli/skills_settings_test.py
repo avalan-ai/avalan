@@ -2,6 +2,7 @@ from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
+from unittest.mock import patch
 
 from avalan.cli.__main__ import CLI
 from avalan.cli.commands import agent as agent_cmds
@@ -289,6 +290,26 @@ class SkillsSettingsCliTestCase(TestCase):
 
         with self.assertRaisesRegex(AssertionError, "unsupported"):
             agent_cmds._agent_tool_settings(args)
+
+    def test_skills_source_authority_rejects_unhandled_kind(self) -> None:
+        class UnsupportedAuthorityKind:
+            BUNDLED = object()
+            PLUGIN_PROVIDED = object()
+            PREINSTALLED_REMOTE = object()
+            USER_LOCAL = object()
+            WORKSPACE = object()
+
+            def __call__(self, value: str) -> object:
+                assert isinstance(value, str)
+                return object()
+
+        with patch.object(
+            agent_cmds,
+            "SkillSourceAuthorityKind",
+            UnsupportedAuthorityKind(),
+        ):
+            with self.assertRaisesRegex(AssertionError, "unsupported"):
+                agent_cmds._skills_source_authority("unsupported")
 
     def test_argparse_rejects_unknown_skills_choices(self) -> None:
         parser = ArgumentParser()

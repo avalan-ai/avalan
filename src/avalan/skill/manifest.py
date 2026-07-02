@@ -1,3 +1,4 @@
+from ._async import skill_cancellation_checkpoint
 from .contract import (
     SKILL_MAIN_RESOURCE_FILENAME,
     SKILL_MAIN_RESOURCE_ID,
@@ -249,6 +250,7 @@ async def parse_skill_manifests(
         read_limits = SkillReadLimits()
     if index_limits is None:
         index_limits = SkillIndexLimits()
+    await skill_cancellation_checkpoint()
 
     manifests: list[SkillManifestDocument] = []
     diagnostics: list[SkillDiagnosticInfo] = []
@@ -274,6 +276,7 @@ async def parse_skill_manifests(
 
     source_by_label = {source.label: source for source in sources}
     for resource in manifest_resources:
+        await skill_cancellation_checkpoint()
         source = source_by_label[resource.source_label]
         document = await _parse_manifest_resource(
             source=source,
@@ -284,6 +287,7 @@ async def parse_skill_manifests(
         )
         manifests.append(document)
     manifests.extend(projected_documents)
+    await skill_cancellation_checkpoint()
 
     normalized_manifests, duplicate_diagnostics = normalize_manifest_documents(
         tuple(manifests)
@@ -409,6 +413,7 @@ async def _parse_manifest_resource(
     read_limits: SkillReadLimits,
     index_limits: SkillIndexLimits,
 ) -> SkillManifestDocument:
+    await skill_cancellation_checkpoint()
     try:
         content = await file_system.read_bytes(
             resource.path,
@@ -446,6 +451,7 @@ async def _parse_manifest_resource(
             manifest_resource_id=resource.resource_id,
             diagnostic=_binary_resource_diagnostic(reason="non_utf8"),
         )
+    await skill_cancellation_checkpoint()
     return parse_skill_manifest_markdown(
         text,
         source_label=source.label,

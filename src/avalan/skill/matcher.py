@@ -1,3 +1,4 @@
+from ._async import skill_cancellation_checkpoint
 from .contract import SkillDiagnosticCode, SkillFailureMode, SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
@@ -13,7 +14,6 @@ from .registry import SkillRegistry, SkillRegistrySkill
 from .resolver import SkillAsyncFileSystem, SkillSourceFileSystem
 from .settings import SkillIndexLimits
 
-from asyncio import sleep
 from dataclasses import dataclass, field, replace
 from re import findall, fullmatch
 
@@ -237,6 +237,7 @@ async def build_skill_match_index(
         file_system = SkillAsyncFileSystem()
     assert isinstance(index_limits, SkillIndexLimits)
     assert isinstance(match_limits, SkillMatchLimits)
+    await skill_cancellation_checkpoint()
 
     if len(registry.skills) > index_limits.max_skills:
         return _trusted_match_index(
@@ -255,6 +256,7 @@ async def build_skill_match_index(
     entries: list[SkillMatchIndexEntry] = []
     indexed_bytes = 0
     for skill in registry.skills:
+        await skill_cancellation_checkpoint()
         if len(skill.resources) > index_limits.max_resources_per_skill:
             return _trusted_match_index(
                 SkillMatchIndex(
@@ -295,7 +297,7 @@ async def build_skill_match_index(
                     match_limits=match_limits,
                 )
             )
-        await sleep(0)
+        await skill_cancellation_checkpoint()
 
     if not entries and not diagnostics:
         diagnostics.append(
@@ -344,6 +346,7 @@ async def match_skill_registry(
     if max_results is not None:
         _assert_positive_int(max_results, "max_results")
         match_limits = replace(match_limits, max_results=max_results)
+    await skill_cancellation_checkpoint()
     filters = SkillMatchFilters(
         query=query,
         tags=tags,
@@ -368,6 +371,7 @@ async def match_skill_registry(
             file_system=file_system,
             match_limits=match_limits,
         )
+    await skill_cancellation_checkpoint()
     index = _validated_match_index(
         registry,
         index,
@@ -391,7 +395,7 @@ async def match_skill_registry(
             diagnostics=diagnostics,
         )
 
-    scored = _scored_entries(
+    scored = await _scored_entries(
         index.entries,
         filters,
         prepared_query,
@@ -504,6 +508,7 @@ async def _indexed_excerpt_tokens(
         )
     remaining_skill = match_limits.max_excerpt_bytes_per_skill
     for resource in skill.resources:
+        await skill_cancellation_checkpoint()
         if remaining_skill <= 0 or remaining_global <= 0:
             break
         limit = min(remaining_skill, remaining_global)
@@ -801,7 +806,7 @@ def _with_query_diagnostics(
     return (*diagnostics, *prepared_query.diagnostics)
 
 
-def _scored_entries(
+async def _scored_entries(
     entries: tuple[SkillMatchIndexEntry, ...],
     filters: SkillMatchFilters,
     prepared_query: _PreparedQuery,
@@ -810,6 +815,7 @@ def _scored_entries(
 ) -> tuple[_ScoredEntry, ...]:
     scored: list[_ScoredEntry] = []
     for entry in entries:
+        await skill_cancellation_checkpoint()
         if not _passes_filters(entry, filters):
             continue
         score = _score_entry(

@@ -1,6 +1,11 @@
 from ..entities import ToolCallContext
 from ..event import Event, EventObservabilityPayload, EventType
 from ..types import LooseJsonValue
+from ._async import (
+    DEFAULT_SKILL_IO_TIMEOUT_SECONDS,
+    skill_bounded_await,
+    skill_cancellation_checkpoint,
+)
 from .contract import SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
@@ -73,6 +78,8 @@ async def emit_skill_audit_event(
     settings: TrustedSkillSettings | None,
     event_type: EventType,
     fields: Mapping[str, object],
+    *,
+    delivery_timeout_seconds: float | None = DEFAULT_SKILL_IO_TIMEOUT_SECONDS,
 ) -> None:
     assert_skill_event_publisher(publisher)
     assert settings is None or isinstance(settings, TrustedSkillSettings)
@@ -83,15 +90,21 @@ async def emit_skill_audit_event(
     if publisher is None or not skill_audit_events_enabled(settings):
         return
 
+    await skill_cancellation_checkpoint()
     data = skill_audit_payload_data(event_type, fields, settings=settings)
     event = Event.from_observability_payload(
         type=event_type,
         observability_payload=EventObservabilityPayload.canonical_stream(data),
     )
     try:
+        await skill_cancellation_checkpoint()
         result = publisher.trigger(event)
         assert isawaitable(result)
-        await result
+        await skill_bounded_await(
+            result,
+            timeout_seconds=delivery_timeout_seconds,
+        )
+        await skill_cancellation_checkpoint()
     except Exception:
         if skill_audit_fail_closed(settings):
             raise SkillAuditDeliveryError(

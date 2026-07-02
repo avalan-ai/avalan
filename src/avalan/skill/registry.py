@@ -1,4 +1,5 @@
 from ..event import EventType
+from ._async import skill_cancellation_checkpoint
 from .contract import SkillDiagnosticCode, SkillFailureMode, SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
@@ -442,6 +443,7 @@ async def build_skill_registry(
         file_system = SkillAsyncFileSystem()
     assert isinstance(read_limits, SkillReadLimits)
     assert isinstance(index_limits, SkillIndexLimits)
+    await skill_cancellation_checkpoint()
 
     await emit_skill_audit_event(
         event_manager,
@@ -462,6 +464,7 @@ async def build_skill_registry(
         )
         source_by_label = {source.label: source for source in sources}
         source_resources = _source_resources_by_key(sources)
+        await skill_cancellation_checkpoint()
         registry_sources = tuple(
             _registry_source(source) for source in sources
         )
@@ -492,6 +495,7 @@ async def build_skill_registry(
             read_limits=read_limits,
             index_limits=index_limits,
         )
+        await skill_cancellation_checkpoint()
         registry = SkillRegistry(
             registry_version=registry_version,
             read_limits=read_limits,
@@ -552,6 +556,7 @@ async def check_skill_registry_resource(
     if read_limits is None:
         read_limits = registry.read_limits
     assert isinstance(read_limits, SkillReadLimits)
+    await skill_cancellation_checkpoint()
 
     registered = registry.resource_for_handle(handle)
     if registered is None:
@@ -584,6 +589,7 @@ async def check_skill_registry_resource(
         file_system=file_system,
         read_limits=read_limits,
     )
+    await skill_cancellation_checkpoint()
     if diagnostic is not None:
         return SkillRegistryResourceCheck(
             handle=_diagnostic_handle(canonical_handle, diagnostic.status),
@@ -643,6 +649,7 @@ async def _emit_registry_skill_events(
     seen_duplicates: set[str] = set()
     source_by_label = {source.label: source for source in registry.sources}
     for skill in registry.skills:
+        await skill_cancellation_checkpoint()
         source_authority = _registry_source_authority_value(
             source_by_label,
             skill.source_label,
@@ -775,6 +782,7 @@ async def _registry_skills(
     skills: list[SkillRegistrySkill] = []
     diagnostics: list[SkillDiagnosticInfo] = []
     for manifest in manifests:
+        await skill_cancellation_checkpoint()
         source = source_by_label.get(manifest.source_label)
         resources: list[SkillRegisteredResource] = []
         manifest_fingerprint = await _manifest_fingerprint(
@@ -787,6 +795,7 @@ async def _registry_skills(
             manifest.diagnostics
         )
         for declaration in manifest.declared_resources:
+            await skill_cancellation_checkpoint()
             source_resource = source_resources.get(
                 (
                     declaration.source_label,
@@ -847,6 +856,7 @@ async def _manifest_fingerprint(
     )
     if source_resource is None:
         return None
+    await skill_cancellation_checkpoint()
     fingerprint, _ = await _build_fingerprint(
         source_resource,
         file_system=file_system,
@@ -861,6 +871,7 @@ async def _build_fingerprint(
     file_system: SkillSourceFileSystem,
     read_limits: SkillReadLimits,
 ) -> tuple[SkillResourceFingerprint, SkillDiagnosticInfo | None]:
+    await skill_cancellation_checkpoint()
     try:
         content = await file_system.read_bytes(
             resource.path,
@@ -886,6 +897,7 @@ async def _build_fingerprint(
         content=content[: read_limits.max_bytes_per_read],
         status=SkillStatus.OK,
     )
+    await skill_cancellation_checkpoint()
     if (
         len(content) > read_limits.max_bytes_per_read
         or current.size_bytes != resource.size_bytes
@@ -912,6 +924,7 @@ async def _runtime_fingerprint(
     file_system: SkillSourceFileSystem,
     read_limits: SkillReadLimits,
 ) -> tuple[SkillResourceFingerprint | None, SkillDiagnosticInfo | None]:
+    await skill_cancellation_checkpoint()
     try:
         stat = await file_system.stat_path(registered.path)
     except FileNotFoundError:
@@ -947,6 +960,7 @@ async def _runtime_fingerprint(
         content=content[: read_limits.max_bytes_per_read],
         status=SkillStatus.OK,
     )
+    await skill_cancellation_checkpoint()
     if len(content) > read_limits.max_bytes_per_read:
         return current, _stale_resource_diagnostic(
             reason="read_limit_exceeded",
