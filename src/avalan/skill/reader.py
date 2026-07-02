@@ -1,3 +1,4 @@
+from ._async import skill_cancellation_checkpoint
 from .contract import SkillDiagnosticCode, SkillFailureMode, SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
@@ -103,6 +104,7 @@ class SkillResourceReader:
     ) -> SkillResponseEnvelope:
         assert isinstance(registry, SkillRegistry)
         assert isinstance(allow_cursor, bool)
+        await skill_cancellation_checkpoint()
         file_system = file_system or self._file_system
         if cursor_id is not None:
             return await self._read_cursor(
@@ -153,6 +155,7 @@ class SkillResourceReader:
         file_system: SkillSourceFileSystem | None = None,
     ) -> SkillResponseEnvelope:
         assert isinstance(registry, SkillRegistry)
+        await skill_cancellation_checkpoint()
         file_system = file_system or self._file_system
         target, diagnostics = _target_for_request(
             registry,
@@ -198,6 +201,7 @@ class SkillResourceReader:
         allow_cursor: bool,
         file_system: SkillSourceFileSystem,
     ) -> SkillResponseEnvelope:
+        await skill_cancellation_checkpoint()
         stored, diagnostic = await self._stored_cursor(
             registry,
             cursor_id,
@@ -246,6 +250,7 @@ class SkillResourceReader:
         allow_cursor: bool,
         file_system: SkillSourceFileSystem,
     ) -> SkillResponseEnvelope:
+        await skill_cancellation_checkpoint()
         check = await _checked_resource(
             registry,
             target.resource,
@@ -265,6 +270,7 @@ class SkillResourceReader:
         if diagnostic is not None:
             return _diagnostic_envelope(registry, diagnostic)
         assert content_bytes is not None
+        await skill_cancellation_checkpoint()
 
         window, diagnostic = _read_window(
             content_bytes,
@@ -322,6 +328,7 @@ class SkillResourceReader:
                 cursor_limits=effective_cursor_limits,
             )
 
+        await skill_cancellation_checkpoint()
         diagnostics: tuple[SkillDiagnosticInfo, ...] = ()
         status = SkillStatus.OK
         if window.truncated:
@@ -360,6 +367,7 @@ class SkillResourceReader:
         if not _is_opaque_id(cursor_id):
             return None, _cursor_diagnostic(reason="invalid_cursor")
         now = self._clock()
+        await skill_cancellation_checkpoint()
         async with self._lock:
             stored = self._cursors.get(cursor_id)
             if stored is None:
@@ -388,6 +396,7 @@ class SkillResourceReader:
         cursor_limits: SkillCursorLimits,
     ) -> SkillReadCursor:
         now = self._clock()
+        await skill_cancellation_checkpoint()
         async with self._lock:
             self._prune_expired_locked(now)
             while len(self._cursors) >= cursor_limits.max_active_cursors:
@@ -452,6 +461,7 @@ async def read_skill_registry_resource(
     owns_reader = reader is None
     if reader is None:
         reader = SkillResourceReader(file_system=file_system)
+    await skill_cancellation_checkpoint()
     return await reader.read(
         registry,
         skill,
@@ -477,6 +487,7 @@ async def check_skill_registry_read(
     assert isinstance(registry, SkillRegistry)
     if reader is None:
         reader = SkillResourceReader(file_system=file_system)
+    await skill_cancellation_checkpoint()
     return await reader.check(
         registry,
         skill,
@@ -747,6 +758,7 @@ async def _checked_resource(
     *,
     file_system: SkillSourceFileSystem,
 ) -> SkillRegistryResourceCheck:
+    await skill_cancellation_checkpoint()
     path_diagnostic = await _runtime_path_diagnostic(
         resource,
         file_system=file_system,
@@ -770,6 +782,7 @@ async def _runtime_path_diagnostic(
     file_system: SkillSourceFileSystem,
 ) -> SkillDiagnosticInfo | None:
     resource_id = resource.handle.resource_id
+    await skill_cancellation_checkpoint()
     try:
         lstat = await file_system.lstat_path(resource.path)
     except FileNotFoundError:
@@ -800,6 +813,7 @@ async def _runtime_path_diagnostic(
             reason="path_escape",
             resource_id=resource_id,
         )
+    await skill_cancellation_checkpoint()
     try:
         stat = await file_system.stat_path(resource.path)
     except FileNotFoundError:
@@ -825,6 +839,7 @@ async def _verified_content(
 ) -> tuple[bytes | None, SkillDiagnosticInfo | None]:
     resource_id = resource.handle.resource_id
     limit = resource.fingerprint.size_bytes + 1
+    await skill_cancellation_checkpoint()
     try:
         content = await file_system.read_bytes(resource.path, limit)
     except FileNotFoundError:
@@ -858,6 +873,7 @@ async def _verified_content(
             reason="content_changed",
             resource_id=resource_id,
         )
+    await skill_cancellation_checkpoint()
     try:
         model_dict({"text": text})
     except AssertionError:

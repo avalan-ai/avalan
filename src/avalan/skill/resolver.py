@@ -1,4 +1,5 @@
 from ..event import EventType
+from ._async import skill_cancellation_checkpoint
 from .contract import SkillDiagnosticCode, SkillStatus
 from .entities import (
     SkillDiagnosticInfo,
@@ -30,7 +31,15 @@ from .settings import (
     trusted_skill_source_identity_dict,
 )
 
-from asyncio import Semaphore, to_thread
+from asyncio import (
+    CancelledError,
+    Future,
+    Semaphore,
+    create_task,
+    shield,
+    to_thread,
+    wait_for,
+)
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -39,7 +48,7 @@ from os import stat_result
 from pathlib import Path, PurePosixPath
 from re import fullmatch
 from stat import S_ISDIR, S_ISLNK, S_ISREG
-from typing import Protocol, TypeAlias, TypeVar
+from typing import Any, Protocol, TypeAlias, TypeVar
 
 _T = TypeVar("_T")
 
@@ -66,12 +75,28 @@ class SkillSourceFileSystem(Protocol):
 
 
 class SkillAsyncFileSystem:
-    def __init__(self, *, max_concurrency: int = 8) -> None:
+    def __init__(
+        self,
+        *,
+        max_concurrency: int = 8,
+        max_operation_seconds: float | None = 30.0,
+    ) -> None:
         assert isinstance(max_concurrency, int) and not isinstance(
             max_concurrency, bool
         ), "max_concurrency must be an integer"
         assert max_concurrency > 0, "max_concurrency must be positive"
+        assert max_operation_seconds is None or isinstance(
+            max_operation_seconds,
+            int | float,
+        )
+        assert not isinstance(max_operation_seconds, bool)
+        if max_operation_seconds is not None:
+            assert (
+                max_operation_seconds > 0
+            ), "max_operation_seconds must be positive"
         self._semaphore = Semaphore(max_concurrency)
+        self._max_operation_seconds = max_operation_seconds
+        self._pending_workers: set[Future[Any]] = set()
 
     async def resolve_path(self, path: Path) -> Path:
         assert isinstance(path, Path)
@@ -102,8 +127,44 @@ class SkillAsyncFileSystem:
         return await self._run(lambda: _read_bytes(path, limit))
 
     async def _run(self, call: Callable[[], _T]) -> _T:
-        async with self._semaphore:
-            return await to_thread(call)
+        acquired = False
+        worker: Future[_T] | None = None
+        release_on_worker_done = False
+
+        def release_worker_slot(future: Future[_T]) -> None:
+            self._pending_workers.discard(future)
+            self._semaphore.release()
+            try:
+                future.result()
+            except BaseException:
+                pass
+
+        try:
+            if self._max_operation_seconds is None:
+                await self._semaphore.acquire()
+            else:
+                await wait_for(
+                    self._semaphore.acquire(),
+                    timeout=self._max_operation_seconds,
+                )
+            acquired = True
+            worker = create_task(to_thread(call))
+            if self._max_operation_seconds is None:
+                return await shield(worker)
+            return await wait_for(
+                shield(worker),
+                timeout=self._max_operation_seconds,
+            )
+        except (CancelledError, TimeoutError):
+            if worker is None:
+                raise
+            release_on_worker_done = True
+            self._pending_workers.add(worker)
+            worker.add_done_callback(release_worker_slot)
+            raise
+        finally:
+            if acquired and not release_on_worker_done:
+                self._semaphore.release()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -388,6 +449,7 @@ class SkillSourceResolver:
             audit_operation_id = skill_audit_correlation_id(
                 "skill-source-resolve"
             )
+        await skill_cancellation_checkpoint()
         diagnostics: list[SkillDiagnosticInfo] = []
         if settings is not None and not settings.enabled:
             diagnostics.append(
@@ -401,6 +463,7 @@ class SkillSourceResolver:
                 )
             )
             for config in configs[: self._source_limits.max_sources]:
+                await skill_cancellation_checkpoint()
                 normalized, _ = _normalize_config(config)
                 assert normalized is not None
                 await _emit_source_event(
@@ -433,6 +496,7 @@ class SkillSourceResolver:
             return SkillSourceResolutionResult(diagnostics=tuple(diagnostics))
         configured: list[SkillSourceRootConfig] = []
         for config in configs[: self._source_limits.max_sources]:
+            await skill_cancellation_checkpoint()
             normalized, diagnostic = _normalize_config(config)
             assert diagnostic is None
             assert normalized is not None
@@ -479,6 +543,7 @@ class SkillSourceResolver:
                     )
         sources: list[SkillAuthorizedSourceRoot] = []
         for config in configured_tuple:
+            await skill_cancellation_checkpoint()
             source_label = config.source_label
             if source_label in duplicate_labels:
                 continue
@@ -562,6 +627,7 @@ class SkillSourceResolver:
     ) -> SkillResourceAuthorizationResult:
         assert isinstance(source, SkillAuthorizedSourceRoot)
         assert isinstance(model_handle, str)
+        await skill_cancellation_checkpoint()
         reason = skill_model_handle_denial_reason(
             model_handle,
             allow_hidden_paths=source.allow_hidden_paths,
@@ -599,6 +665,7 @@ class SkillSourceResolver:
     async def _resolve_root(
         self, config: SkillSourceRootConfig
     ) -> tuple[Path | None, SkillDiagnosticInfo | None]:
+        await skill_cancellation_checkpoint()
         root_text = str(config.root)
         if "\x00" in config.label:
             return None, _policy_diagnostic(
@@ -638,6 +705,7 @@ class SkillSourceResolver:
         if config.package_path == ".":
             return root, None
         package_root = root.joinpath(*PurePosixPath(config.package_path).parts)
+        await skill_cancellation_checkpoint()
         try:
             resolved_package = await self._file_system.resolve_path(
                 package_root
@@ -675,6 +743,7 @@ class SkillSourceResolver:
         work_units = 0
 
         while stack:
+            await skill_cancellation_checkpoint()
             directory, depth = stack.pop()
             remaining_work = (
                 self._source_limits.max_directory_entries_per_source
@@ -695,6 +764,7 @@ class SkillSourceResolver:
                 return tuple(resources), tuple(diagnostics)
             work_units += len(entries)
             for entry in entries:
+                await skill_cancellation_checkpoint()
                 relative = _relative_resource_id(root, entry)
                 reason = skill_model_handle_denial_reason(
                     relative,
@@ -769,6 +839,7 @@ class SkillSourceResolver:
         relative: str,
         allow_hidden_paths: bool,
     ) -> tuple[SkillAuthorizedResource | None, SkillDiagnosticInfo | None]:
+        await skill_cancellation_checkpoint()
         try:
             resolved = await self._file_system.resolve_path(path)
         except (OSError, RuntimeError, ValueError):
@@ -807,6 +878,7 @@ class SkillSourceResolver:
         resource_id: str,
         allow_hidden_paths: bool,
     ) -> tuple[SkillAuthorizedResource | None, SkillDiagnosticInfo | None]:
+        await skill_cancellation_checkpoint()
         try:
             resolved = await self._file_system.resolve_path(resource_path)
         except FileNotFoundError:
@@ -873,6 +945,7 @@ class SkillSourceResolver:
                 reason="line_count",
                 resource_id=resource_id,
             )
+        await skill_cancellation_checkpoint()
         return (
             SkillAuthorizedResource(
                 source_label=source_label,
