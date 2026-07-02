@@ -734,6 +734,11 @@ def _registry_source_authority_value(
 
 
 def _registry_source(source: SkillAuthorizedSourceRoot) -> SkillRegistrySource:
+    identity_root = (
+        source.identity_root
+        if source.identity_root is not None
+        else source.root
+    )
     return SkillRegistrySource(
         label=source.label,
         authority=source.authority,
@@ -743,7 +748,7 @@ def _registry_source(source: SkillAuthorizedSourceRoot) -> SkillRegistrySource:
         source_identity=skill_source_identity_dict(
             label=source.label,
             authority=source.authority,
-            root_path=source.root,
+            root_path=identity_root,
             allow_hidden_paths=source.allow_hidden_paths,
             status=_status_for_source(source),
         ),
