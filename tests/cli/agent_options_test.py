@@ -1,4 +1,6 @@
 from argparse import Namespace
+from contextlib import redirect_stdout
+from io import StringIO
 from logging import Logger
 from tempfile import NamedTemporaryFile
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -141,6 +143,57 @@ class AgentParserOptionsTestCase(TestCase):
         )
         self.assertEqual(args.protocol, ["openai:responses", "mcp"])
 
+    def test_serve_parser_server_output_redaction_options(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "serve",
+                "spec.toml",
+                "--server-output-redaction",
+                "--server-output-redaction-rule",
+                "host_paths",
+                "--server-output-redaction-protocol",
+                "mcp",
+                "--server-output-redaction-channel",
+                "reasoning",
+            ]
+        )
+
+        self.assertTrue(args.server_output_redaction_enabled)
+        self.assertEqual(args.server_output_redaction_rules, ["host_paths"])
+        self.assertEqual(args.server_output_redaction_protocols, ["mcp"])
+        self.assertEqual(
+            args.server_output_redaction_channels,
+            ["reasoning"],
+        )
+
+    def test_serve_parser_server_output_redaction_filter_help(
+        self,
+    ) -> None:
+        output = StringIO()
+
+        with redirect_stdout(output), self.assertRaises(SystemExit) as exc:
+            self.parser.parse_args(["agent", "serve", "--help"])
+
+        self.assertEqual(exc.exception.code, 0)
+        help_text = " ".join(output.getvalue().split())
+        self.assertIn(
+            "Enable opt-in redaction for server protocol output.",
+            help_text,
+        )
+        self.assertIn(
+            "Enable server output redaction and restrict it to a rule",
+            help_text,
+        )
+        self.assertIn(
+            "Enable server output redaction and restrict it to a protocol",
+            help_text,
+        )
+        self.assertIn(
+            "Enable server output redaction and restrict it to a channel",
+            help_text,
+        )
+
     def test_serve_parser_reasoning_effort_alias(self) -> None:
         args = self.parser.parse_args(
             [
@@ -218,6 +271,35 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(srv_patch.call_args.kwargs["a2a_prefix"], "/a2a")
         self.assertIsNone(srv_patch.call_args.kwargs["protocols"])
         server.serve.assert_awaited_once()
+
+    async def test_agent_serve_forwards_server_output_redaction(
+        self,
+    ) -> None:
+        hub = MagicMock()
+        logger = MagicMock(spec=Logger)
+        server = MagicMock()
+        server.serve = AsyncMock()
+
+        with NamedTemporaryFile("w") as spec:
+            spec.write("[agent]\nname='a'\n[engine]\nuri='m'\n")
+            spec.flush()
+            args = self._make_args(
+                specifications_file=spec.name,
+                server_output_redaction_rules=["host_paths"],
+                server_output_redaction_protocols=["mcp"],
+                server_output_redaction_channels=["reasoning"],
+            )
+            with patch(
+                "avalan.cli.commands.agent.agents_server",
+                return_value=server,
+            ) as srv_patch:
+                await agent_cmds.agent_serve(args, hub, logger, "name", "v")
+
+        settings = srv_patch.call_args.kwargs["output_redaction_settings"]
+        self.assertTrue(settings.enabled)
+        self.assertEqual(settings.rules, frozenset({"host_paths"}))
+        self.assertEqual(settings.protocols, frozenset({"mcp"}))
+        self.assertEqual(settings.channels, frozenset({"reasoning"}))
 
     async def test_agent_serve_protocols_forwarded(self) -> None:
         args = self._make_args(

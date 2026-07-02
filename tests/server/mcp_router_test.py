@@ -48,8 +48,12 @@ from avalan.server.entities import (
     ContentFile,
     ContentText,
     MCPToolRequest,
+    ModelVisibleServerProtocolTextRedactor,
+    ServerOutputRedactionSettings,
 )
 from avalan.server.routers import mcp as mcp_router
+
+_MODEL_VISIBLE_REDACTION_SETTINGS = ServerOutputRedactionSettings(enabled=True)
 
 
 class DummyRequest:
@@ -148,6 +152,29 @@ def legacy_fixture_mcp_projection_state() -> (
         resources={},
         resource_store=mcp_router.MCPResourceStore(),
         base_path="/mcp",
+    )
+
+
+def redacting_fixture_mcp_projection_state() -> (
+    mcp_router._MCPStreamProjectionState
+):
+    return mcp_router._MCPStreamProjectionState(
+        accumulator=mcp_router.ProtocolStreamAccumulator(),
+        tool_summaries={},
+        resources={},
+        resource_store=mcp_router.MCPResourceStore(),
+        base_path="/mcp",
+        answer_redactor=ModelVisibleServerProtocolTextRedactor(
+            _MODEL_VISIBLE_REDACTION_SETTINGS,
+            protocol="mcp",
+            channel="answer",
+        ),
+        reasoning_redactor=ModelVisibleServerProtocolTextRedactor(
+            _MODEL_VISIBLE_REDACTION_SETTINGS,
+            protocol="mcp",
+            channel="reasoning",
+        ),
+        output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
     )
 
 
@@ -1354,6 +1381,7 @@ class MCPUtilityTestCase(TestCase):
         message = mcp_router._canonical_tool_execution_notification(
             item,
             summaries,
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
         )
         projected = dumps({"message": message, "summaries": summaries})
 
@@ -1361,6 +1389,20 @@ class MCPUtilityTestCase(TestCase):
         self.assertIn("<host-path>/SKILL.md", projected)
         self.assertNotIn("private skill body", projected)
         self.assertNotIn("/Users/mariano", projected)
+
+        openai_only_message = (
+            mcp_router._canonical_tool_execution_notification(
+                item,
+                {},
+                output_redaction_settings=ServerOutputRedactionSettings(
+                    enabled=True,
+                    protocols=frozenset({"openai"}),
+                ),
+            )
+        )
+        openai_only_projected = dumps(openai_only_message)
+        self.assertIn("private skill body", openai_only_projected)
+        self.assertIn("/Users/mariano", openai_only_projected)
 
     def test_canonical_progress_notification_empty_answer_delta(
         self,
@@ -1415,11 +1457,13 @@ class MCPUtilityTestCase(TestCase):
         error_payload = mcp_router._direct_tool_outcome_structured_content(
             error,
             tool_name="skills.read",
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
         )
         diagnostic_payload = (
             mcp_router._direct_tool_outcome_structured_content(
                 diagnostic,
                 tool_name="skills.read",
+                output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
             )
         )
         projected = dumps(
@@ -1437,6 +1481,25 @@ class MCPUtilityTestCase(TestCase):
         self.assertNotIn("/Users/mariano", projected)
         self.assertNotIn("/Volumes/skills", projected)
         self.assertNotIn("C:/Users", projected)
+
+        reasoning_only = ServerOutputRedactionSettings(
+            enabled=True,
+            channels=frozenset({"reasoning"}),
+        )
+        unchanneled_error_payload = (
+            mcp_router._direct_tool_outcome_structured_content(
+                error,
+                tool_name="skills.read",
+                output_redaction_settings=reasoning_only,
+            )
+        )
+        unchanneled_projected = dumps(unchanneled_error_payload)
+        self.assertIn("private skill body", unchanneled_projected)
+        self.assertIn("/tmp/skills/demo/SKILL.md", unchanneled_projected)
+        self.assertIn(
+            "/Users/mariano/skills/demo/SKILL.md",
+            unchanneled_projected,
+        )
 
     def test_canonical_error_message_defaults_without_message(self) -> None:
         accumulator = mcp_router.ProtocolStreamAccumulator()
@@ -1701,6 +1764,9 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         }
         request = DummyRequest(dumps(message).encode("utf-8"))
         request.app.state.ctx = SimpleNamespace(participant_id=uuid4())
+        request.app.state.server_output_redaction_settings = (
+            _MODEL_VISIBLE_REDACTION_SETTINGS
+        )
         manager = FakeMCPToolManager(
             [ToolDescriptor(name="skills.read")],
             result={"content": "secret skill body"},
@@ -1733,6 +1799,9 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         orchestrator = SimpleNamespace(tool=manager, _id=uuid4())
         request.app.state.ctx = SimpleNamespace(participant_id=uuid4())
+        request.app.state.server_output_redaction_settings = (
+            _MODEL_VISIBLE_REDACTION_SETTINGS
+        )
         message = {
             "jsonrpc": "2.0",
             "id": "skill-call",
@@ -1993,13 +2062,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_stream_item_notifications_redact_skill_echoes(
         self,
     ) -> None:
-        state = mcp_router._MCPStreamProjectionState(
-            accumulator=mcp_router.ProtocolStreamAccumulator(),
-            tool_summaries={},
-            resources={},
-            resource_store=mcp_router.MCPResourceStore(),
-            base_path="/mcp",
-        )
+        state = redacting_fixture_mcp_projection_state()
         start = CanonicalStreamItem(
             stream_session_id="s",
             run_id="r",
@@ -2135,7 +2198,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_stream_item_notifications_flush_pending_model_text(
         self,
     ) -> None:
-        state = legacy_fixture_mcp_projection_state()
+        state = redacting_fixture_mcp_projection_state()
         start = CanonicalStreamItem(
             stream_session_id="s",
             run_id="r",
@@ -2160,8 +2223,8 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             state,
             "progress",
         )
-        self.assertEqual(state.reasoning_redactor.push("# Reason\n"), ())
-        self.assertEqual(state.answer_redactor.push("# Answer\n"), ())
+        self.assertEqual(state.reasoning_redactor.push("# Imagegen\n"), ())
+        self.assertEqual(state.answer_redactor.push("# Browser\n"), ())
 
         notifications = (
             await mcp_router._mcp_canonical_stream_item_notifications(
@@ -2183,10 +2246,10 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             reasoning_notifications[0]["params"]["data"],
-            {"type": "reasoning", "delta": "# Reason\n"},
+            {"type": "reasoning", "delta": "# Imagegen\n"},
         )
         self.assertIn(
-            {"type": "answer.delta", "delta": "# Answer\n"},
+            {"type": "answer.delta", "delta": "# Browser\n"},
             progress_messages,
         )
         self.assertIn({"type": "answer.completed"}, progress_messages)
@@ -4065,6 +4128,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             resource_store=mcp_router.MCPResourceStore(),
             base_path="/m",
             cancel_event=AsyncEvent(),
+            output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
         ):
             chunks.append(chunk.decode("utf-8"))
 
@@ -4086,6 +4150,127 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertNotIn("Secret final answer skill body", projected)
         self.assertNotIn("/tmp/skills", projected)
         self.assertNotIn("C:/Users", projected)
+
+    async def test_stream_response_final_result_filters_redaction_channels(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta=(
+                    "# Reasoning Skill\n\n"
+                    "Use when reasoning privately.\n\n"
+                    "Secret final reasoning skill body."
+                ),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=(
+                    "# Answer Skill\n\n"
+                    "Use when answering private tasks.\n\n"
+                    "Secret final answer skill body."
+                ),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={
+                    "input_tokens": 1,
+                    "output_tokens": 2,
+                    "total_tokens": 3,
+                },
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        chunks = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+            output_redaction_settings=ServerOutputRedactionSettings(
+                enabled=True,
+                channels=frozenset({"reasoning"}),
+            ),
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [
+            loads(part) for part in "".join(chunks).splitlines() if part
+        ]
+        result = [msg for msg in messages if msg.get("result")][-1]["result"]
+
+        self.assertEqual(
+            result["structuredContent"]["reasoning"],
+            "<redacted-skill-content>",
+        )
+        self.assertEqual(
+            result["content"],
+            [
+                {
+                    "type": "text",
+                    "text": (
+                        "# Answer Skill\n\n"
+                        "Use when answering private tasks.\n\n"
+                        "Secret final answer skill body."
+                    ),
+                }
+            ],
+        )
 
     async def test_stream_response_preserves_canonical_tool_ready_payload(
         self,
@@ -5171,6 +5356,17 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             channel=StreamChannel.ANSWER,
             text_delta="ignored",
         )
+        non_string_content = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=8,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="ignored",
+            data={"category": "stdout", "content": {"unexpected": "shape"}},
+        )
 
         self.assertEqual(await collect(malformed_correlation), [])
         self.assertEqual(await collect(no_data), [])
@@ -5180,6 +5376,10 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(await collect(empty_progress_content), [])
         self.assertEqual(
             mcp_router._canonical_tool_resource_content(answer), ""
+        )
+        self.assertEqual(
+            mcp_router._canonical_tool_resource_content(non_string_content),
+            "",
         )
 
         summaries: dict[str, dict[str, Any]] = {}
@@ -5340,6 +5540,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 resources=resources,
                 resource_store=store,
                 base_path="/m",
+                output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
             ):
                 notifications.append(notification)
 
@@ -7775,15 +7976,42 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_start_tool_streaming_response_sse_frames_stream_chunks(
         self,
     ) -> None:
-        async def stream(**_: Any) -> AsyncIterator[bytes]:
+        redaction_settings = ServerOutputRedactionSettings(
+            enabled=True,
+            protocols=frozenset({"mcp"}),
+        )
+        response_uuid = UUID(int=4)
+        timestamp = 11
+
+        async def stream(**kwargs: Any) -> AsyncIterator[bytes]:
+            self.assertEqual(kwargs["request_id"], "req-sse")
+            self.assertIs(kwargs["request_model"], chat_request)
+            self.assertIs(kwargs["response"], response_object)
+            self.assertEqual(kwargs["response_id"], response_uuid)
+            self.assertEqual(kwargs["timestamp"], timestamp)
+            self.assertEqual(kwargs["progress_token"], "progress")
+            self.assertIs(kwargs["orchestrator"], orchestrator)
+            self.assertIs(kwargs["logger"], logger)
+            self.assertIs(
+                kwargs["resource_store"],
+                request.app.state.mcp_resource_store,
+            )
+            self.assertEqual(kwargs["base_path"], "")
+            self.assertIsInstance(kwargs["cancel_event"], AsyncEvent)
+            self.assertIs(
+                kwargs["output_redaction_settings"],
+                redaction_settings,
+            )
             yield b'{"jsonrpc":"2.0","id":"req"}\n'
 
         request = DummyRequest(b"")
+        request.app.state.server_output_redaction_settings = redaction_settings
         tool_request = MCPToolRequest(input_string="hi")
         response_object = DummyResponse([])
         orchestrator = MagicMock()
         orchestrator.sync_messages = AsyncMock()
         logger = getLogger("test.stream.sse")
+        chat_request = self._chat_request(stream=True)
 
         async def no_messages():
             if False:
@@ -7794,12 +8022,14 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 mcp_router,
                 "orchestrate",
-                AsyncMock(return_value=(response_object, UUID(int=4), 11)),
+                AsyncMock(
+                    return_value=(response_object, response_uuid, timestamp)
+                ),
             ),
             patch.object(
                 mcp_router,
                 "_build_chat_request",
-                return_value=self._chat_request(stream=True),
+                return_value=chat_request,
             ),
             patch.object(
                 mcp_router, "_stream_mcp_response", side_effect=stream

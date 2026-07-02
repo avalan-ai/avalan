@@ -9,7 +9,11 @@ from .container_policy import (
     remote_container_policy_from_runtime_settings,
     server_runtime_envelope_status_from_runtime_settings,
 )
-from .entities import OrchestratorContext, server_skills_registry_metadata
+from .entities import (
+    OrchestratorContext,
+    ServerOutputRedactionSettings,
+    server_skills_registry_metadata,
+)
 from .routers import mcp as mcp_router
 
 from collections.abc import AsyncIterator, Callable
@@ -101,6 +105,7 @@ def _create_lifespan(
     selected_protocols: Mapping[str, set[str]],
     agent_id: UUID | None,
     participant_id: UUID | None,
+    output_redaction_settings: ServerOutputRedactionSettings | None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -122,16 +127,23 @@ def _create_lifespan(
             skills_registry_metadata = server_skills_registry_metadata(
                 skills_settings
             )
+            redaction_settings = (
+                output_redaction_settings
+                if output_redaction_settings is not None
+                else ServerOutputRedactionSettings()
+            )
             ctx = OrchestratorContext(
                 participant_id=pid,
                 specs_path=specs_path,
                 settings=settings,
                 tool_settings=tool_ctx,
                 tool_name_policy=tool_name_policy,
+                output_redaction_settings=redaction_settings,
                 skills_settings=skills_settings,
                 skills_registry_metadata=skills_registry_metadata,
             )
             app.state.ctx = ctx
+            app.state.server_output_redaction_settings = redaction_settings
             if skills_registry_metadata is None:
                 if hasattr(app.state, "skills_registry_metadata"):
                     delattr(app.state, "skills_registry_metadata")
@@ -317,6 +329,7 @@ def register_agent_endpoints(
     allow_credentials: bool = False,
     protocols: Mapping[str, set[str]] | None = None,
     tool_name_policy: ToolNamePolicySettings | None = None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> None:
     assert (specs_path is None) ^ (
         settings is None
@@ -339,6 +352,7 @@ def register_agent_endpoints(
         selected_protocols=selected_protocols,
         agent_id=agent_id,
         participant_id=participant_id,
+        output_redaction_settings=output_redaction_settings,
     )
 
     _attach_lifespan(app, lifespan)
@@ -390,6 +404,7 @@ def agents_server(
     allow_credentials: bool = False,
     protocols: Mapping[str, set[str]] | None = None,
     tool_name_policy: ToolNamePolicySettings | None = None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents."""
     assert (specs_path is None) ^ (
@@ -415,6 +430,7 @@ def agents_server(
         selected_protocols=selected_protocols,
         agent_id=agent_id,
         participant_id=participant_id,
+        output_redaction_settings=output_redaction_settings,
     )
     app = FastAPI(title=name, version=version, lifespan=lifespan)
 

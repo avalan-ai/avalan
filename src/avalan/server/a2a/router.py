@@ -26,8 +26,11 @@ from ..entities import (
     ContentImage,
     ContentText,
     ModelVisibleServerProtocolTextRedactor,
+    ServerOutputRedactionSettings,
+    coerce_server_output_redaction_settings,
     sanitize_server_protocol_text,
     sanitize_server_protocol_value,
+    server_output_redaction_settings_from_state,
 )
 from ..routers import orchestrate, resolve_model_id
 from ..routers.streaming import (
@@ -1067,7 +1070,14 @@ class AvalanA2AAgentExecutor:
             response, _response_uuid, _timestamp = await orchestrate(
                 request, logger, orchestrator
             )
-            translator = A2AResponseTranslator(updater)
+            translator = A2AResponseTranslator(
+                updater,
+                output_redaction_settings=(
+                    server_output_redaction_settings_from_state(
+                        self._app.state
+                    )
+                ),
+            )
             iterator = stream_consumer_iterator(
                 response,
                 stream_session_id="a2a-stream",
@@ -1141,13 +1151,30 @@ class AvalanA2AAgentExecutor:
 class A2AResponseTranslator:
     """Translate canonical Avalan stream items to A2A SDK events."""
 
-    def __init__(self, updater: Any) -> None:
+    def __init__(
+        self,
+        updater: Any,
+        *,
+        output_redaction_settings: ServerOutputRedactionSettings | None = None,
+    ) -> None:
         self._updater = updater
         self._a2a_pb2 = import_module("a2a.types.a2a_pb2")
         self._terminal_outcome: StreamTerminalOutcome | None = None
         self._open_artifacts: set[str] = set()
-        self._answer_redactor = ModelVisibleServerProtocolTextRedactor()
-        self._reasoning_redactor = ModelVisibleServerProtocolTextRedactor()
+        output_redaction_settings = coerce_server_output_redaction_settings(
+            output_redaction_settings
+        )
+        self._output_redaction_settings = output_redaction_settings
+        self._answer_redactor = ModelVisibleServerProtocolTextRedactor(
+            output_redaction_settings,
+            protocol="a2a",
+            channel="answer",
+        )
+        self._reasoning_redactor = ModelVisibleServerProtocolTextRedactor(
+            output_redaction_settings,
+            protocol="a2a",
+            channel="reasoning",
+        )
         self._pending_model_text_sequences: dict[str, int] = {}
 
     @property
@@ -1233,9 +1260,16 @@ class A2AResponseTranslator:
             sanitize_server_protocol_value(
                 metadata,
                 tool_name=tool_name_text,
+                output_redaction_settings=self._output_redaction_settings,
+                protocol="a2a",
             ),
         )
-        text = _a2a_tool_item_text(item, data, tool_name=tool_name_text)
+        text = _a2a_tool_item_text(
+            item,
+            data,
+            tool_name=tool_name_text,
+            output_redaction_settings=self._output_redaction_settings,
+        )
         if text:
             await self._add_text_artifact(
                 artifact_id=tool_call_id,
@@ -1334,24 +1368,38 @@ def _a2a_tool_item_text(
     data: Mapping[str, object],
     *,
     tool_name: str | None = None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> str:
     if item.text_delta:
-        return sanitize_server_protocol_text(item.text_delta)
+        return _a2a_protocol_text(
+            item.text_delta,
+            tool_name=tool_name,
+            output_redaction_settings=output_redaction_settings,
+        )
     if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
         content = data.get("content")
         if isinstance(content, str):
-            return _a2a_protocol_text(content, tool_name=tool_name)
+            return _a2a_protocol_text(
+                content,
+                tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+            )
         return ""
     if item.kind is StreamItemKind.TOOL_EXECUTION_PROGRESS:
         content = data.get("content")
         if isinstance(content, str):
-            return _a2a_protocol_text(content, tool_name=tool_name)
+            return _a2a_protocol_text(
+                content,
+                tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+            )
         progress = data.get("progress")
         if progress is None:
             return ""
         return _a2a_protocol_payload_text(
             {"progress": progress},
             tool_name=tool_name,
+            output_redaction_settings=output_redaction_settings,
         )
     if item.kind not in (
         StreamItemKind.TOOL_EXECUTION_COMPLETED,
@@ -1364,30 +1412,67 @@ def _a2a_tool_item_text(
         if payload is None:
             continue
         if isinstance(payload, str):
-            return _a2a_protocol_text(payload, tool_name=tool_name)
+            return _a2a_protocol_text(
+                payload,
+                tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+            )
         if isinstance(payload, bool | int | float | list | dict):
-            return _a2a_protocol_payload_text(payload, tool_name=tool_name)
-    return sanitize_server_protocol_text(
-        _a2a_public_diagnostic_text(data.get("diagnostic"))
+            return _a2a_protocol_payload_text(
+                payload,
+                tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+            )
+    return _a2a_protocol_text(
+        _a2a_public_diagnostic_text(data.get("diagnostic")),
+        tool_name=tool_name,
+        output_redaction_settings=output_redaction_settings,
     )
 
 
-def _a2a_protocol_text(value: str, *, tool_name: str | None) -> str:
-    if _a2a_is_skills_tool(tool_name):
+def _a2a_protocol_text(
+    value: str,
+    *,
+    tool_name: str | None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
+) -> str:
+    settings = coerce_server_output_redaction_settings(
+        output_redaction_settings
+    )
+    if _a2a_is_skills_tool(tool_name) and settings.should_redact(
+        "skills_tool_content",
+        protocol="a2a",
+    ):
         sanitized = sanitize_server_protocol_value(
             {"content": value},
             tool_name=tool_name,
+            output_redaction_settings=settings,
+            protocol="a2a",
         )
-        return _a2a_protocol_payload_text(sanitized, tool_name=None)
-    return sanitize_server_protocol_text(value)
+        return _a2a_protocol_payload_text(
+            sanitized,
+            tool_name=None,
+            output_redaction_settings=settings,
+        )
+    return sanitize_server_protocol_text(
+        value,
+        output_redaction_settings=settings,
+        protocol="a2a",
+    )
 
 
 def _a2a_protocol_payload_text(
     value: object,
     *,
     tool_name: str | None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> str:
-    sanitized = sanitize_server_protocol_value(value, tool_name=tool_name)
+    sanitized = sanitize_server_protocol_value(
+        value,
+        tool_name=tool_name,
+        output_redaction_settings=output_redaction_settings,
+        protocol="a2a",
+    )
     if isinstance(sanitized, str):
         return sanitized
     return dumps(sanitized, separators=(",", ":"))

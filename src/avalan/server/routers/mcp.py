@@ -26,9 +26,12 @@ from ...server.entities import (
     ContentText,
     MCPToolRequest,
     ModelVisibleServerProtocolTextRedactor,
+    ServerOutputRedactionSettings,
+    coerce_server_output_redaction_settings,
     sanitize_model_visible_server_protocol_text,
     sanitize_server_protocol_text,
     sanitize_server_protocol_value,
+    server_output_redaction_settings_from_state,
 )
 from ...types import JsonObject, JsonScalar, MutableJsonValue
 from ...utils import to_json
@@ -337,6 +340,9 @@ class _MCPStreamProjectionState:
     resources: dict[str, MCPResource]
     resource_store: MCPResourceStore
     base_path: str
+    output_redaction_settings: ServerOutputRedactionSettings = field(
+        default_factory=ServerOutputRedactionSettings
+    )
     answer_redactor: ModelVisibleServerProtocolTextRedactor = field(
         default_factory=ModelVisibleServerProtocolTextRedactor
     )
@@ -648,10 +654,18 @@ async def _start_tool_streaming_response(
     base_path = cast(
         str, getattr(request.app.state, "mcp_resource_base_path", "")
     )
+    output_redaction_settings = server_output_redaction_settings_from_state(
+        request.app.state
+    )
 
     if not chat_request.stream:
         try:
-            text = await response_typed.to_str()
+            text = sanitize_model_visible_server_protocol_text(
+                await response_typed.to_str(),
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
+                channel="answer",
+            )
         finally:
             watcher.cancel()
             with suppress(Exception):
@@ -698,6 +712,7 @@ async def _start_tool_streaming_response(
                 resource_store=resource_store,
                 base_path=base_path,
                 cancel_event=cancel_event,
+                output_redaction_settings=output_redaction_settings,
             ):
                 yield sse_bytes(chunk)
         finally:
@@ -924,6 +939,9 @@ async def _handle_direct_skills_tool_call_message(
         request_id=response_id,
         tool_name=canonical_name,
         outcome=outcome,
+        output_redaction_settings=(
+            server_output_redaction_settings_from_state(request.app.state)
+        ),
     )
     logger.debug(
         "Handled direct MCP skills tool call",
@@ -957,10 +975,12 @@ def _direct_tool_call_jsonrpc_result(
     request_id: str | int,
     tool_name: str,
     outcome: ToolCallResult | ToolCallError | ToolCallDiagnostic,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> JSONRPCResult:
     structured = _direct_tool_outcome_structured_content(
         outcome,
         tool_name=tool_name,
+        output_redaction_settings=output_redaction_settings,
     )
     content_text = dumps(structured, separators=(",", ":"), sort_keys=True)
     return {
@@ -977,6 +997,7 @@ def _direct_tool_outcome_structured_content(
     outcome: ToolCallResult | ToolCallError | ToolCallDiagnostic,
     *,
     tool_name: str,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> JSONObject:
     if isinstance(outcome, ToolCallResult):
         return {
@@ -988,6 +1009,8 @@ def _direct_tool_outcome_structured_content(
                 sanitize_server_protocol_value(
                     outcome.result,
                     tool_name=tool_name,
+                    output_redaction_settings=output_redaction_settings,
+                    protocol="mcp",
                 ),
             ),
         }
@@ -996,12 +1019,18 @@ def _direct_tool_outcome_structured_content(
             "type": "tool.error",
             "toolCallId": str(outcome.call.id or outcome.id),
             "name": outcome.name,
-            "message": sanitize_server_protocol_text(outcome.message),
+            "message": sanitize_server_protocol_text(
+                outcome.message,
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
+            ),
             "error": cast(
                 JSONValue,
                 sanitize_server_protocol_value(
                     outcome.error,
                     tool_name=tool_name,
+                    output_redaction_settings=output_redaction_settings,
+                    protocol="mcp",
                 ),
             ),
         }
@@ -1012,8 +1041,13 @@ def _direct_tool_outcome_structured_content(
         "diagnostic": cast(
             JSONValue,
             sanitize_server_protocol_value(
-                _tool_diagnostic_payload(outcome),
+                _tool_diagnostic_payload(
+                    outcome,
+                    output_redaction_settings=output_redaction_settings,
+                ),
                 tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
             ),
         ),
     }
@@ -1021,6 +1055,8 @@ def _direct_tool_outcome_structured_content(
 
 def _tool_diagnostic_payload(
     diagnostic: ToolCallDiagnostic,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> dict[str, JSONValue]:
     return {
         "id": str(diagnostic.id),
@@ -1032,13 +1068,19 @@ def _tool_diagnostic_payload(
         "status": diagnostic.status.value,
         "code": diagnostic.code.value,
         "stage": diagnostic.stage.value,
-        "message": sanitize_server_protocol_text(diagnostic.message),
+        "message": sanitize_server_protocol_text(
+            diagnostic.message,
+            output_redaction_settings=output_redaction_settings,
+            protocol="mcp",
+        ),
         "retryable": diagnostic.retryable,
         "details": cast(
             JSONValue,
             sanitize_server_protocol_value(
                 diagnostic.details,
                 tool_name=diagnostic.canonical_name,
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
             ),
         ),
     }
@@ -1104,13 +1146,28 @@ async def _stream_mcp_response(
     resource_store: MCPResourceStore,
     base_path: str,
     cancel_event: AsyncEvent,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> AsyncIterator[bytes]:
+    output_redaction_settings = coerce_server_output_redaction_settings(
+        output_redaction_settings
+    )
     state = _MCPStreamProjectionState(
         accumulator=ProtocolStreamAccumulator(),
         tool_summaries={},
         resources={},
         resource_store=resource_store,
         base_path=base_path,
+        output_redaction_settings=output_redaction_settings,
+        answer_redactor=ModelVisibleServerProtocolTextRedactor(
+            output_redaction_settings,
+            protocol="mcp",
+            channel="answer",
+        ),
+        reasoning_redactor=ModelVisibleServerProtocolTextRedactor(
+            output_redaction_settings,
+            protocol="mcp",
+            channel="reasoning",
+        ),
     )
     finished_normally = False
     response_iterator: AsyncIterator[StreamConsumerProjection] | None = None
@@ -1250,7 +1307,12 @@ async def _stream_mcp_response(
                 "id": request_id,
                 "error": {
                     "code": -32603,
-                    "message": _canonical_error_message(snapshot),
+                    "message": _canonical_error_message(
+                        snapshot,
+                        output_redaction_settings=(
+                            state.output_redaction_settings
+                        ),
+                    ),
                 },
             }
             terminal_messages = await _collect_terminal_mcp_messages(
@@ -1265,10 +1327,16 @@ async def _stream_mcp_response(
             return
 
         answer_text = sanitize_model_visible_server_protocol_text(
-            snapshot.answer_text
+            snapshot.answer_text,
+            output_redaction_settings=output_redaction_settings,
+            protocol="mcp",
+            channel="answer",
         )
         reasoning_text = sanitize_model_visible_server_protocol_text(
-            snapshot.reasoning_text
+            snapshot.reasoning_text,
+            output_redaction_settings=output_redaction_settings,
+            protocol="mcp",
+            channel="reasoning",
         )
         usage = snapshot.usage
 
@@ -1299,7 +1367,9 @@ async def _stream_mcp_response(
         if reasoning_text:
             summary["reasoning"] = reasoning_text
         _merge_canonical_tool_call_arguments(
-            state.tool_summaries, snapshot.tool_call_arguments
+            state.tool_summaries,
+            snapshot.tool_call_arguments,
+            output_redaction_settings=state.output_redaction_settings,
         )
         if state.tool_summaries:
             summary["toolCalls"] = list(state.tool_summaries.values())
@@ -1370,7 +1440,11 @@ async def _mcp_canonical_stream_item_notifications(
         notifications.append(_canonical_flow_notification(item))
         return notifications
     if item.kind is StreamItemKind.TOOL_CALL_READY:
-        _record_canonical_tool_call_ready(item, state.tool_summaries)
+        _record_canonical_tool_call_ready(
+            item,
+            state.tool_summaries,
+            output_redaction_settings=state.output_redaction_settings,
+        )
         return notifications
     if item.kind is StreamItemKind.REASONING_DELTA:
         reasoning_deltas = _canonical_reasoning_deltas(
@@ -1396,12 +1470,17 @@ async def _mcp_canonical_stream_item_notifications(
                 )
         return notifications
 
-    token_notification = _canonical_tool_notification(item)
+    token_notification = _canonical_tool_notification(
+        item,
+        output_redaction_settings=state.output_redaction_settings,
+    )
     if token_notification is not None:
         notifications.append(token_notification)
         return notifications
     tool_execution_notification = _canonical_tool_execution_notification(
-        item, state.tool_summaries
+        item,
+        state.tool_summaries,
+        output_redaction_settings=state.output_redaction_settings,
     )
     if tool_execution_notification is not None:
         notifications.append(tool_execution_notification)
@@ -1412,6 +1491,7 @@ async def _mcp_canonical_stream_item_notifications(
         resources=state.resources,
         resource_store=state.resource_store,
         base_path=state.base_path,
+        output_redaction_settings=state.output_redaction_settings,
     ):
         notifications.append(resource_notification)
     if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
@@ -1433,6 +1513,8 @@ async def _mcp_canonical_stream_item_notifications(
 def _record_canonical_tool_call_ready(
     item: CanonicalStreamItem,
     tool_summaries: dict[str, dict[str, JSONValue]],
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> None:
     assert item.kind is StreamItemKind.TOOL_CALL_READY
     tool_call_id = item.correlation.tool_call_id
@@ -1454,7 +1536,12 @@ def _record_canonical_tool_call_ready(
     if arguments is not None:
         tool_summary["arguments"] = cast(
             JSONValue,
-            sanitize_server_protocol_value(arguments, tool_name=tool_name),
+            sanitize_server_protocol_value(
+                arguments,
+                tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
+            ),
         )
 
 
@@ -1536,14 +1623,22 @@ def _mcp_model_text_flush_notifications(
     return notifications
 
 
-def _canonical_error_message(snapshot: ProtocolStreamSnapshot) -> str:
+def _canonical_error_message(
+    snapshot: ProtocolStreamSnapshot,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
+) -> str:
     terminal = snapshot.terminal_snapshot
     if terminal.outcome is StreamTerminalOutcome.ERRORED and isinstance(
         terminal.data, dict
     ):
         message = terminal.data.get("message")
         if isinstance(message, str) and message:
-            return sanitize_model_visible_server_protocol_text(message)
+            return sanitize_server_protocol_text(
+                message,
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
+            )
     return "Stream errored."
 
 
@@ -1589,19 +1684,34 @@ def _model_visible_stream_deltas(
 
 def _canonical_tool_notification(
     item: CanonicalStreamItem,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> JSONObject | None:
     if item.kind is not StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
         return None
-    delta = sanitize_server_protocol_text(item.text_delta or "")
+    delta = sanitize_server_protocol_text(
+        item.text_delta or "",
+        output_redaction_settings=output_redaction_settings,
+        protocol="mcp",
+    )
     tool_call_id = item.correlation.tool_call_id
     data = item.data if isinstance(item.data, dict) else {}
     tool_name = _protocol_tool_name(item, data)
-    name = cast(JSONValue, sanitize_server_protocol_value(data.get("name")))
+    name = cast(
+        JSONValue,
+        sanitize_server_protocol_value(
+            data.get("name"),
+            output_redaction_settings=output_redaction_settings,
+            protocol="mcp",
+        ),
+    )
     arguments = cast(
         JSONValue,
         sanitize_server_protocol_value(
             data.get("arguments"),
             tool_name=tool_name,
+            output_redaction_settings=output_redaction_settings,
+            protocol="mcp",
         ),
     )
     has_call_metadata = "name" in data or "arguments" in data
@@ -1666,6 +1776,8 @@ def _canonical_flow_notification(item: CanonicalStreamItem) -> JSONObject:
 def _canonical_tool_execution_notification(
     item: CanonicalStreamItem,
     tool_summaries: dict[str, dict[str, JSONValue]],
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> JSONObject | None:
     if item.kind not in (
         StreamItemKind.STREAM_DIAGNOSTIC,
@@ -1679,12 +1791,21 @@ def _canonical_tool_execution_notification(
     if not isinstance(tool_call_id, str):
         return None
     tool_name = _protocol_tool_name(item, data)
-    name = cast(JSONValue, sanitize_server_protocol_value(data.get("name")))
+    name = cast(
+        JSONValue,
+        sanitize_server_protocol_value(
+            data.get("name"),
+            output_redaction_settings=output_redaction_settings,
+            protocol="mcp",
+        ),
+    )
     arguments = cast(
         JSONValue,
         sanitize_server_protocol_value(
             data.get("arguments"),
             tool_name=tool_name,
+            output_redaction_settings=output_redaction_settings,
+            protocol="mcp",
         ),
     )
     tool_summary = tool_summaries.setdefault(
@@ -1699,7 +1820,11 @@ def _canonical_tool_execution_notification(
     if item.kind is StreamItemKind.TOOL_EXECUTION_STARTED:
         timings = cast(
             JSONValue,
-            sanitize_server_protocol_value(data.get("timings")),
+            sanitize_server_protocol_value(
+                data.get("timings"),
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
+            ),
         )
         if isinstance(timings, dict):
             tool_summary["started"] = timings.get("started")
@@ -1714,6 +1839,8 @@ def _canonical_tool_execution_notification(
             sanitize_server_protocol_value(
                 data.get("diagnostic"),
                 tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
             ),
         )
         tool_summary["diagnostic"] = diagnostic
@@ -1724,7 +1851,11 @@ def _canonical_tool_execution_notification(
             diagnostic=diagnostic,
             timings=cast(
                 JSONValue,
-                sanitize_server_protocol_value(data.get("timings")),
+                sanitize_server_protocol_value(
+                    data.get("timings"),
+                    output_redaction_settings=output_redaction_settings,
+                    protocol="mcp",
+                ),
             ),
         )
 
@@ -1738,6 +1869,8 @@ def _canonical_tool_execution_notification(
         sanitize_server_protocol_value(
             data.get(payload_key),
             tool_name=tool_name,
+            output_redaction_settings=output_redaction_settings,
+            protocol="mcp",
         ),
     )
     tool_summary[payload_key] = payload_value
@@ -1749,7 +1882,11 @@ def _canonical_tool_execution_notification(
         error=payload_value if payload_key == "error" else None,
         timings=cast(
             JSONValue,
-            sanitize_server_protocol_value(data.get("timings")),
+            sanitize_server_protocol_value(
+                data.get("timings"),
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
+            ),
         ),
     )
 
@@ -1837,6 +1974,7 @@ async def _canonical_tool_resource_notifications(
     resources: dict[str, MCPResource],
     resource_store: MCPResourceStore,
     base_path: str,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> AsyncIterator[JSONObject]:
     if item.kind not in (
         StreamItemKind.TOOL_EXECUTION_OUTPUT,
@@ -1852,7 +1990,11 @@ async def _canonical_tool_resource_notifications(
         return
     category = data.get("category")
     tool_name = _protocol_tool_name(item, data)
-    content = _canonical_tool_resource_content(item, tool_name=tool_name)
+    content = _canonical_tool_resource_content(
+        item,
+        tool_name=tool_name,
+        output_redaction_settings=output_redaction_settings,
+    )
     if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT and category not in {
         "stdout",
         "stderr",
@@ -1920,26 +2062,35 @@ def _canonical_tool_resource_content(
     item: CanonicalStreamItem,
     *,
     tool_name: str | None = None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> str:
     if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
         data = item.data if isinstance(item.data, dict) else {}
         content = data.get("content", item.text_delta)
-        return (
-            _mcp_protocol_resource_text(content, tool_name=tool_name)
-            if isinstance(content, str)
-            else ""
+        if not isinstance(content, str):
+            return ""
+        return _mcp_protocol_resource_text(
+            content,
+            tool_name=tool_name,
+            output_redaction_settings=output_redaction_settings,
         )
     if item.kind is StreamItemKind.TOOL_EXECUTION_PROGRESS:
         data = item.data if isinstance(item.data, dict) else {}
         content = data.get("content")
         if isinstance(content, str):
-            return _mcp_protocol_resource_text(content, tool_name=tool_name)
+            return _mcp_protocol_resource_text(
+                content,
+                tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+            )
         progress = data.get("progress")
         return (
             to_json(
                 sanitize_server_protocol_value(
                     {"progress": progress},
                     tool_name=tool_name,
+                    output_redaction_settings=output_redaction_settings,
+                    protocol="mcp",
                 )
             )
             if progress is not None
@@ -1952,15 +2103,22 @@ def _mcp_protocol_resource_text(
     value: str,
     *,
     tool_name: str | None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> str:
     if isinstance(tool_name, str) and tool_name.startswith("skills."):
         return to_json(
             sanitize_server_protocol_value(
                 {"content": value},
                 tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
             )
         )
-    return sanitize_server_protocol_text(value)
+    return sanitize_server_protocol_text(
+        value,
+        output_redaction_settings=output_redaction_settings,
+        protocol="mcp",
+    )
 
 
 def _usage_count(
@@ -1999,6 +2157,8 @@ def _protocol_tool_name(
 def _merge_canonical_tool_call_arguments(
     tool_summaries: dict[str, dict[str, JSONValue]],
     tool_call_arguments: Mapping[str, str],
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> None:
     for tool_call_id, arguments in tool_call_arguments.items():
         tool_summary = tool_summaries.setdefault(
@@ -2013,7 +2173,12 @@ def _merge_canonical_tool_call_arguments(
         tool_name = raw_tool_name if isinstance(raw_tool_name, str) else None
         tool_summary["arguments"] = cast(
             JSONValue,
-            sanitize_server_protocol_value(arguments, tool_name=tool_name),
+            sanitize_server_protocol_value(
+                arguments,
+                tool_name=tool_name,
+                output_redaction_settings=output_redaction_settings,
+                protocol="mcp",
+            ),
         )
 
 

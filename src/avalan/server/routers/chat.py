@@ -15,8 +15,11 @@ from ...server.entities import (
     ChatCompletionUsage,
     ChatMessage,
     ModelVisibleServerProtocolTextRedactor,
+    ServerOutputRedactionSettings,
+    coerce_server_output_redaction_settings,
     sanitize_model_visible_server_protocol_text,
     sanitize_server_protocol_value,
+    server_output_redaction_settings_from_state,
 )
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
@@ -37,7 +40,7 @@ from dataclasses import dataclass, field
 from json import dumps
 from logging import Logger
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 _JSON_SEPARATORS = (",", ":")
@@ -104,6 +107,12 @@ router = APIRouter(
 )
 
 
+def _server_output_redaction_settings(
+    request: Request,
+) -> ServerOutputRedactionSettings:
+    return server_output_redaction_settings_from_state(request.app.state)
+
+
 @router.post(
     "/completions",
     response_model=ChatCompletionResponse,
@@ -113,6 +122,9 @@ async def create_chat_completion(
     request: ChatCompletionRequest,
     logger: Logger = Depends(di_get_logger),
     orchestrator: Orchestrator = Depends(di_get_orchestrator),
+    output_redaction_settings: ServerOutputRedactionSettings = Depends(
+        _server_output_redaction_settings
+    ),
 ) -> ChatCompletionResponse | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
@@ -129,6 +141,9 @@ async def create_chat_completion(
 
     response, response_id, timestamp = await orchestrate(
         request, logger, orchestrator
+    )
+    output_redaction_settings = coerce_server_output_redaction_settings(
+        output_redaction_settings
     )
 
     logger.info(
@@ -158,7 +173,11 @@ async def create_chat_completion(
             cancelled = False
             final_usage: object | None = None
             terminal: StreamConsumerProjection | None = None
-            answer_redactor = ModelVisibleServerProtocolTextRedactor()
+            answer_redactor = ModelVisibleServerProtocolTextRedactor(
+                output_redaction_settings,
+                protocol="openai",
+                channel="answer",
+            )
             try:
                 while True:
                     try:
@@ -193,6 +212,7 @@ async def create_chat_completion(
                     timestamp,
                     model_id,
                     terminal,
+                    output_redaction_settings=output_redaction_settings,
                 )
                 usage = _chat_usage(final_usage)
                 if usage is not None:
@@ -231,7 +251,12 @@ async def create_chat_completion(
         )
 
     # Non streaming
-    text = sanitize_model_visible_server_protocol_text(await response.to_str())
+    text = sanitize_model_visible_server_protocol_text(
+        await response.to_str(),
+        output_redaction_settings=output_redaction_settings,
+        protocol="openai",
+        channel="answer",
+    )
     choices = [
         ChatCompletionChoice(
             index=i,
@@ -264,6 +289,8 @@ def _chat_terminal_event(
     timestamp: int,
     model_id: str,
     terminal: StreamConsumerProjection | StreamTerminalOutcome | None,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> str | None:
     terminal_snapshot = protocol_stream_terminal_snapshot(terminal)
     terminal_outcome = terminal_snapshot.outcome
@@ -293,18 +320,26 @@ def _chat_terminal_event(
             and terminal_snapshot.data is not None
         ):
             data["error"] = sanitize_server_protocol_value(
-                terminal_snapshot.data
+                terminal_snapshot.data,
+                output_redaction_settings=output_redaction_settings,
+                protocol="openai",
             )
     return sse_message(to_json(data), event=event)
 
 
 def _stream_text(
     token: StreamConsumerProjection,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> str | None:
     assert isinstance(token, StreamConsumerProjection)
     if token.kind is not StreamItemKind.ANSWER_DELTA:
         return None
-    return sanitize_model_visible_server_protocol_text(token.text_delta or "")
+    return sanitize_model_visible_server_protocol_text(
+        token.text_delta or "",
+        output_redaction_settings=output_redaction_settings,
+        protocol="openai",
+        channel="answer",
+    )
 
 
 def _stream_text_fragments(

@@ -59,11 +59,17 @@ async def set_engine(
             raise restore_error from error
         else:
             request.app.state.ctx = restore_ctx
+            request.app.state.server_output_redaction_settings = (
+                restore_ctx.output_redaction_settings
+            )
             request.app.state.agent_id = orchestrator.id
             di_set(request.app, logger=logger, orchestrator=orchestrator)
             raise error.with_traceback(error.__traceback__)
 
     request.app.state.ctx = new_ctx
+    request.app.state.server_output_redaction_settings = (
+        new_ctx.output_redaction_settings
+    )
     request.app.state.agent_id = orchestrator.id
     di_set(request.app, logger=logger, orchestrator=orchestrator)
     return {"uri": new_ctx.settings.uri if new_ctx.settings else engine.uri}
@@ -103,6 +109,7 @@ async def _load_orchestrator(
             settings=ctx.settings,
             tool_settings=tool_settings,
             tool_name_policy=ctx.tool_name_policy,
+            output_redaction_settings=ctx.output_redaction_settings,
         )
     else:
         assert ctx.settings
@@ -121,5 +128,6 @@ async def _load_orchestrator(
             settings=settings,
             tool_settings=tool_settings,
             tool_name_policy=ctx.tool_name_policy,
+            output_redaction_settings=ctx.output_redaction_settings,
         )
     return orchestrator_cm, new_ctx

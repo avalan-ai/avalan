@@ -9,9 +9,13 @@ from ...model.stream import (
 from ...server.entities import (
     ModelVisibleServerProtocolTextRedactor,
     ResponsesRequest,
+    ServerOutputRedactionChannel,
+    ServerOutputRedactionSettings,
+    coerce_server_output_redaction_settings,
     sanitize_model_visible_server_protocol_text,
     sanitize_server_protocol_text,
     sanitize_server_protocol_value,
+    server_output_redaction_settings_from_state,
 )
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
@@ -32,7 +36,7 @@ from logging import Logger
 from types import MappingProxyType
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 _MAX_COALESCED_DELTA_CHARS = 4096
@@ -393,6 +397,12 @@ def _adapter_model_text_flush_events(
 router = APIRouter(tags=["responses"])
 
 
+def _server_output_redaction_settings(
+    request: Request,
+) -> ServerOutputRedactionSettings:
+    return server_output_redaction_settings_from_state(request.app.state)
+
+
 @router.post(
     "/responses",
     response_model=None,
@@ -402,6 +412,9 @@ async def create_response(
     request: ResponsesRequest,
     logger: Logger = Depends(di_get_logger),
     orchestrator: Orchestrator = Depends(di_get_orchestrator),
+    output_redaction_settings: ServerOutputRedactionSettings = Depends(
+        _server_output_redaction_settings
+    ),
 ) -> dict[str, Any] | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
@@ -411,11 +424,30 @@ async def create_response(
     response, response_id, timestamp = await orchestrate(
         request, logger, orchestrator
     )
+    output_redaction_settings = coerce_server_output_redaction_settings(
+        output_redaction_settings
+    )
 
     if request.stream:
 
         async def generate() -> AsyncIterator[str]:
             adapter = _ResponsesSSEProjectionAdapter()
+            if hasattr(adapter, "answer_redactor"):
+                adapter.answer_redactor = (
+                    ModelVisibleServerProtocolTextRedactor(
+                        output_redaction_settings,
+                        protocol="openai",
+                        channel="answer",
+                    )
+                )
+            if hasattr(adapter, "reasoning_redactor"):
+                adapter.reasoning_redactor = (
+                    ModelVisibleServerProtocolTextRedactor(
+                        output_redaction_settings,
+                        protocol="openai",
+                        channel="reasoning",
+                    )
+                )
             stream_envelope = _ResponsesSSEStreamEnvelope(
                 response_id=str(response_id),
                 timestamp=timestamp,
@@ -495,6 +527,7 @@ async def create_response(
                         event_sequence,
                         adapter.active_tool_call_id,
                         model_text_redactor,
+                        output_redaction_settings=output_redaction_settings,
                     ):
                         for message in enqueue_event(ev):
                             yield message
@@ -526,7 +559,10 @@ async def create_response(
                 for event in events:
                     yield event
 
-                for ev in _terminal_response_events(terminal_projection):
+                for ev in _terminal_response_events(
+                    terminal_projection,
+                    output_redaction_settings=output_redaction_settings,
+                ):
                     yield ev.message()
 
                 if stream_terminal_succeeded(terminal_projection):
@@ -547,7 +583,12 @@ async def create_response(
             headers=sse_headers(),
         )
 
-    text = sanitize_model_visible_server_protocol_text(await response.to_str())
+    text = sanitize_model_visible_server_protocol_text(
+        await response.to_str(),
+        output_redaction_settings=output_redaction_settings,
+        protocol="openai",
+        channel="answer",
+    )
     body = {
         "id": str(response_id),
         "created": timestamp,
@@ -568,6 +609,8 @@ async def create_response(
 
 def _terminal_response_events(
     terminal: StreamConsumerProjection | StreamTerminalOutcome | None,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> list[_ResponsesSSEEvent]:
     terminal_snapshot = protocol_stream_terminal_snapshot(terminal)
     terminal_outcome = terminal_snapshot.outcome
@@ -599,7 +642,9 @@ def _terminal_response_events(
         data["sequence_number"] = terminal_snapshot.sequence
         if terminal_snapshot.data is not None:
             data["error"] = sanitize_server_protocol_value(
-                terminal_snapshot.data
+                terminal_snapshot.data,
+                output_redaction_settings=output_redaction_settings,
+                protocol="openai",
             )
     return [
         _ResponsesSSEEvent(
@@ -619,6 +664,8 @@ def _token_to_sse_events(
     seq: int,
     active_tool_call_id: str | None = None,
     model_text_redactor: ModelVisibleServerProtocolTextRedactor | None = None,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> list[_ResponsesSSEEvent]:
     assert isinstance(token, StreamConsumerProjection)
     if active_tool_call_id is not None:
@@ -629,6 +676,7 @@ def _token_to_sse_events(
         seq,
         active_tool_call_id,
         model_text_redactor,
+        output_redaction_settings=output_redaction_settings,
     )
 
 
@@ -643,10 +691,18 @@ def _stream_tool_call_protocol_id(
 def _model_visible_stream_deltas(
     value: str,
     redactor: ModelVisibleServerProtocolTextRedactor | None,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
+    channel: ServerOutputRedactionChannel = "answer",
 ) -> tuple[str, ...]:
     if redactor is not None:
         return redactor.push(value)
-    sanitized = sanitize_model_visible_server_protocol_text(value)
+    sanitized = sanitize_model_visible_server_protocol_text(
+        value,
+        output_redaction_settings=output_redaction_settings,
+        protocol="openai",
+        channel=channel,
+    )
     return (sanitized,) if sanitized else ()
 
 
@@ -680,6 +736,8 @@ def _canonical_item_to_sse_events(
     seq: int,
     active_tool_call_id: str | None = None,
     model_text_redactor: ModelVisibleServerProtocolTextRedactor | None = None,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> list[_ResponsesSSEEvent]:
     if active_tool_call_id is not None:
         assert isinstance(active_tool_call_id, str)
@@ -698,6 +756,8 @@ def _canonical_item_to_sse_events(
             for delta in _model_visible_stream_deltas(
                 item.text_delta or "",
                 model_text_redactor,
+                output_redaction_settings=output_redaction_settings,
+                channel="reasoning",
             )
         ]
     if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
@@ -706,6 +766,7 @@ def _canonical_item_to_sse_events(
             function_call = _sanitize_response_sse_payload(
                 function_call,
                 tool_name=_response_tool_name(item),
+                output_redaction_settings=output_redaction_settings,
             )
             return [
                 _ResponsesSSEEvent(
@@ -725,7 +786,11 @@ def _canonical_item_to_sse_events(
         )
         data = _response_sse_delta_data(
             "response.custom_tool_call_input.delta",
-            sanitize_server_protocol_text(item.text_delta or ""),
+            sanitize_server_protocol_text(
+                item.text_delta or "",
+                output_redaction_settings=output_redaction_settings,
+                protocol="openai",
+            ),
             seq,
         )
         if protocol_id is not None:
@@ -752,6 +817,8 @@ def _canonical_item_to_sse_events(
             for delta in _model_visible_stream_deltas(
                 item.text_delta or "",
                 model_text_redactor,
+                output_redaction_settings=output_redaction_settings,
+                channel="answer",
             )
         ]
     if item.kind in (
@@ -794,7 +861,13 @@ def _canonical_item_to_sse_events(
         StreamItemKind.TOOL_EXECUTION_ERROR,
         StreamItemKind.TOOL_EXECUTION_CANCELLED,
     }:
-        return [_tool_execution_sse_event(item, seq)]
+        return [
+            _tool_execution_sse_event(
+                item,
+                seq,
+                output_redaction_settings=output_redaction_settings,
+            )
+        ]
     if item.kind is StreamItemKind.STREAM_DIAGNOSTIC:
         return [
             _ResponsesSSEEvent(
@@ -802,13 +875,20 @@ def _canonical_item_to_sse_events(
                 data={
                     "type": "response.diagnostic",
                     "delta": (
-                        sanitize_server_protocol_text(item.text_delta)
+                        sanitize_server_protocol_text(
+                            item.text_delta,
+                            output_redaction_settings=(
+                                output_redaction_settings
+                            ),
+                            protocol="openai",
+                        )
                         if item.text_delta is not None
                         else None
                     ),
                     "data": _sanitize_response_sse_payload(
                         item.data,
                         tool_name=_response_tool_name(item),
+                        output_redaction_settings=output_redaction_settings,
                     ),
                     "sequence_number": seq,
                 },
@@ -819,7 +899,10 @@ def _canonical_item_to_sse_events(
 
 
 def _tool_execution_sse_event(
-    item: StreamConsumerProjection, seq: int
+    item: StreamConsumerProjection,
+    seq: int,
+    *,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> _ResponsesSSEEvent:
     event_names = {
         StreamItemKind.TOOL_EXECUTION_STARTED: (
@@ -838,18 +921,23 @@ def _tool_execution_sse_event(
         ),
     }
     event = event_names[item.kind]
+    tool_name = _response_tool_name(item)
     data: dict[str, Any] = {
         "type": event,
         "id": item.tool_call_id,
         "sequence_number": seq,
     }
-    tool_name = _response_tool_name(item)
     if item.text_delta is not None:
-        data["delta"] = sanitize_server_protocol_text(item.text_delta)
+        data["delta"] = _sanitize_response_tool_text_delta(
+            item.text_delta,
+            tool_name=tool_name,
+            output_redaction_settings=output_redaction_settings,
+        )
     if item.data is not None:
         data["data"] = _sanitize_response_sse_payload(
             item.data,
             tool_name=tool_name,
+            output_redaction_settings=output_redaction_settings,
         )
     return _ResponsesSSEEvent(
         event=event,
@@ -883,12 +971,49 @@ def _response_tool_name(item: StreamConsumerProjection) -> str | None:
     return metadata_name if isinstance(metadata_name, str) else None
 
 
+def _sanitize_response_tool_text_delta(
+    value: str,
+    *,
+    tool_name: str | None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
+) -> str:
+    settings = coerce_server_output_redaction_settings(
+        output_redaction_settings
+    )
+    if (
+        isinstance(tool_name, str)
+        and tool_name.startswith("skills.")
+        and settings.should_redact(
+            "skills_tool_content",
+            protocol="openai",
+        )
+    ):
+        return to_json(
+            _sanitize_response_sse_payload(
+                {"content": value},
+                tool_name=tool_name,
+                output_redaction_settings=settings,
+            )
+        )
+    return sanitize_server_protocol_text(
+        value,
+        output_redaction_settings=settings,
+        protocol="openai",
+    )
+
+
 def _sanitize_response_sse_payload(
     value: object,
     *,
     tool_name: str | None,
+    output_redaction_settings: ServerOutputRedactionSettings | None = None,
 ) -> dict[str, Any]:
-    sanitized = sanitize_server_protocol_value(value, tool_name=tool_name)
+    sanitized = sanitize_server_protocol_value(
+        value,
+        tool_name=tool_name,
+        output_redaction_settings=output_redaction_settings,
+        protocol="openai",
+    )
     return sanitized if isinstance(sanitized, dict) else {"value": sanitized}
 
 
