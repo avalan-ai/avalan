@@ -99,6 +99,70 @@ You'll need your Huggingface access token exported as `HF_TOKEN`.
 > script, created by [@AlexCheema](https://github.com/AlexCheema), which
 > empirically reduces the time to first token and the tokens per second ratio.
 
+## Skills Toolset
+
+Skills are trusted instruction resources exposed through the `skills`
+namespace. Agents think, tools act, skills teach, and registries disclose.
+The CLI can provide trusted skill sources for agent commands; model-facing
+tools can then discover or read those skills during the normal tool loop.
+
+Enable the namespace or individual tools with `--tool`:
+
+```bash
+echo "Use the PDF skill to decide the review workflow." \
+  | avalan agent run docs/examples/agent_skills_pdf.toml \
+      --tool skills.match \
+      --tool skills.read \
+      --tool-skills-source workspace-main=docs/examples/skills \
+      --tool-skills-source-authority workspace-main=workspace:docs \
+      --tool-skills-skill pdf \
+      --tool-skills-bootstrap auto \
+      --tool-skills-max-bytes-per-read 65536 \
+      --display-tools \
+      --display-events
+```
+
+Trusted skill source flags are available on `avalan agent message search`,
+`avalan agent run`, `avalan agent serve`, `avalan agent proxy`, and
+`avalan agent init`:
+
+| Flag | Effect |
+| --- | --- |
+| `--tool-skills-source LABEL=PATH` | Add a trusted filesystem source. |
+| `--tool-skills-source-authority LABEL=KIND[:ID]` | Assign `bundled`, `workspace`, `user_local`, `plugin_provided`, or `preinstalled_remote` authority. |
+| `--tool-skills-source-package LABEL=PATH` | Select a package directory under the source. |
+| `--tool-skills-source-allow-hidden LABEL` | Allow hidden paths inside that trusted source. |
+| `--tool-skills-authority-kind KIND` | Restrict trusted authority kinds. |
+| `--tool-skills-skill ID` | Allow only a logical skill ID. |
+| `--tool-skills-disable` | Disable trusted skills settings. |
+| `--tool-skills-bootstrap {auto,off}` | Control the compact bootstrap instruction. |
+| `--tool-skills-diagnostics {off,standard,verbose}` | Control diagnostic path/detail exposure. |
+| `--tool-skills-observability {off,standard,verbose}` | Control skill audit event verbosity. |
+| `--tool-skills-max-bytes-per-read N` | Bound bytes returned by one read. |
+| `--tool-skills-max-lines-per-read N` | Bound lines returned by one read. |
+| `--tool-skills-max-skills N` | Bound indexed skills. |
+| `--tool-skills-max-resources-per-skill N` | Bound resources declared by one skill. |
+| `--tool-skills-max-indexed-bytes N` | Bound indexed registry bytes. |
+| `--tool-skills-max-sources N` | Bound trusted source count. |
+| `--tool-skills-max-resources-per-source N` | Bound resources scanned per source. |
+| `--tool-skills-max-source-depth N` | Bound source directory depth. |
+| `--tool-skills-max-files-per-source N` | Bound files scanned per source. |
+| `--tool-skills-max-directory-entries-per-source N` | Bound directory entries scanned per source. |
+| `--tool-skills-max-active-cursors N` | Bound active read cursors. |
+| `--tool-skills-max-cursor-age-seconds N` | Bound cursor lifetime. |
+
+Operator inspection uses the existing runtime surfaces. Use
+`--display-tools` and `--display-events` to inspect `skills.list`,
+`skills.match`, `skills.read`, `skills.check`, response envelopes, statuses,
+and diagnostics in agent runs. For durable flows and tasks, use
+`avalan flow inspect`, `avalan flow trace`, `avalan task inspect`,
+`avalan task events`, `avalan task output`, and `avalan task artifacts`.
+
+Flow and task definitions can contain `[skills]` sections, but flow/task CLI
+input is not a source authority. Trusted settings for those surfaces come
+from SDK, host, registry, or worker configuration; queued workers revalidate
+the captured skills identity before execution.
+
 ## Shell Toolset
 
 Shell tools are opt-in policy-limited tools for inspecting files under a

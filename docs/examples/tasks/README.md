@@ -31,6 +31,12 @@ runtime configuration.
   backed by `shell.pipeline` when an SDK, host, or worker runtime provides a
   configured tool resolver and trusted shell settings, returning the formatted
   pipeline result text.
+- [skills_pdf.task.toml](skills_pdf.task.toml) runs an agent that narrows a
+  trusted skills registry to the hermetic PDF skill under
+  `docs/examples/skills`.
+- [skills_read.flow.toml](skills_read.flow.toml) reads the same PDF skill
+  through a strict `skills.read` tool node when a runtime provides a skills
+  registry and trusted settings.
 - [local_multimodal_media.task.toml](local_multimodal_media.task.toml) shows a
   local multimodal media contract without downloading a model in CI.
 - [queued_file_task.task.toml](queued_file_task.task.toml) shows a queued file
@@ -88,6 +94,13 @@ poetry run avalan flow run docs/examples/tasks/poc_extraction/flow.toml --pdf ./
 poetry run avalan task run docs/examples/tasks/pipeline_agent.task.toml \
   --ephemeral \
   --input "Count shell.pipeline mentions under src and summarize the result"
+```
+
+The skills examples are hermetic but require trusted skills settings from SDK
+or host code because task and flow definitions cannot authorize source roots:
+
+```bash
+poetry run pytest tests/docs/skills_examples_test.py -q
 ```
 
 The `pipeline_flow.task.toml` example is a flow-backed fixture for runtimes

@@ -1,0 +1,37 @@
+[flow]
+name = "skills_read"
+version = "1"
+description = "Read the hermetic PDF skill through a strict skills tool node."
+
+[[inputs]]
+name = "request"
+type = "string"
+
+[[outputs]]
+name = "skill"
+type = "object"
+
+[skills]
+source_labels = ["workspace-main"]
+skill_ids = ["pdf"]
+
+[entry]
+type = "node"
+node = "read_skill"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+skill = "read_skill.result"
+
+[nodes.read_skill]
+type = "tool"
+ref = "skills.read"
+
+[nodes.read_skill.skills]
+skill_ids = ["pdf"]
+
+[nodes.read_skill.config.arguments]
+skill = "pdf"
+resource_id = "main"
