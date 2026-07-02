@@ -53,6 +53,10 @@ class SkillsSettingsCliTestCase(TestCase):
                 "workspace-main=workspace:project",
                 "--tool-skills-bootstrap",
                 "off",
+                "--tool-skills-bootstrap-omit",
+                "read_guidance",
+                "--tool-skills-bootstrap-instruction",
+                "Prefer approved skill instructions.",
                 "--tool-skills-max-bytes-per-read",
                 "256",
             ]
@@ -64,6 +68,11 @@ class SkillsSettingsCliTestCase(TestCase):
         settings = context.skills
         assert isinstance(settings, TrustedSkillSettings)
         self.assertFalse(settings.bootstrap_enabled)
+        self.assertFalse(settings.bootstrap_prompt.include_read_guidance)
+        self.assertIn(
+            "Prefer approved skill instructions.",
+            settings.bootstrap_prompt.additional_instructions,
+        )
         self.assertEqual(settings.read_limits.max_bytes_per_read, 256)
         self.assertEqual(len(settings.sources), 1)
         source = settings.sources[0]

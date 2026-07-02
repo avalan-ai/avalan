@@ -15,6 +15,7 @@ from avalan.entities import (
     ToolNameResolutionStatus,
 )
 from avalan.skill import (
+    SkillBootstrapPromptSettings,
     SkillConfiguredSource,
     SkillIndexLimits,
     SkillObservabilitySettings,
@@ -900,6 +901,54 @@ class SkillsBootstrapPromptTestCase(TestCase):
         self.assertIn("skills.check", prompt)
         self.assertIn("Use skills.match or skills.list", prompt)
 
+    def test_bootstrap_prompt_uses_trusted_prompt_settings(self) -> None:
+        registry = _minimal_registry(
+            TrustedSkillSettings(
+                bootstrap_prompt=SkillBootstrapPromptSettings(
+                    include_read_guidance=False,
+                    include_behavior_guidance=False,
+                    additional_instructions=(
+                        "Prefer approved skill instructions.",
+                    ),
+                )
+            )
+        )
+        manager = ToolManager.create_instance(
+            available_toolsets=[SkillsToolSet(registry)],
+            enable_tools=["skills.read"],
+            settings=ToolManagerSettings(),
+        )
+
+        prompt = manager.bootstrap_prompt()
+
+        assert prompt is not None
+        self.assertIn("Prefer approved skill instructions.", prompt)
+        self.assertIn("skills.read", prompt)
+        self.assertNotIn("Use skills.read before", prompt)
+        self.assertNotIn("Do not infer full instructions", prompt)
+
+    def test_bootstrap_prompt_returns_none_when_all_sections_disabled(
+        self,
+    ) -> None:
+        registry = _minimal_registry(
+            TrustedSkillSettings(
+                bootstrap_prompt=SkillBootstrapPromptSettings(
+                    include_tool_summary=False,
+                    include_discovery_guidance=False,
+                    include_read_guidance=False,
+                    include_check_guidance=False,
+                    include_behavior_guidance=False,
+                )
+            )
+        )
+        manager = ToolManager.create_instance(
+            available_toolsets=[SkillsToolSet(registry)],
+            enable_tools=["skills.read"],
+            settings=ToolManagerSettings(),
+        )
+
+        self.assertIsNone(manager.bootstrap_prompt())
+
 
 async def _registry(
     root: Path,
@@ -924,13 +973,16 @@ def _result_dict(outcome: ToolCallResult) -> dict[str, Any]:
     return cast(dict[str, Any], outcome.result)
 
 
-def _minimal_registry() -> SkillRegistry:
+def _minimal_registry(
+    settings: TrustedSkillSettings | None = None,
+) -> SkillRegistry:
     return SkillRegistry(
         registry_version=SkillRegistryVersion(
             value="skills-registry:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ),
         read_limits=SkillReadLimits(),
         index_limits=SkillIndexLimits(),
+        settings=settings,
     )
 
 

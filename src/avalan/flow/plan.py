@@ -324,6 +324,7 @@ class FlowSkillsMetadata:
     policy_version: str
     enabled: bool
     bootstrap_enabled: bool
+    bootstrap_prompt: Mapping[str, SkillModelValue]
     read_limits: Mapping[str, SkillModelValue]
     index_limits: Mapping[str, SkillModelValue]
     source_limits: Mapping[str, SkillModelValue]
@@ -345,6 +346,11 @@ class FlowSkillsMetadata:
         _assert_string(self.policy_version, "policy_version")
         assert isinstance(self.enabled, bool)
         assert isinstance(self.bootstrap_enabled, bool)
+        object.__setattr__(
+            self,
+            "bootstrap_prompt",
+            _freeze_mapping(self.bootstrap_prompt),
+        )
         object.__setattr__(
             self,
             "read_limits",
@@ -391,6 +397,7 @@ class FlowSkillsMetadata:
             "policy_version": self.policy_version,
             "enabled": self.enabled,
             "bootstrap_enabled": self.bootstrap_enabled,
+            "bootstrap_prompt": self.bootstrap_prompt,
             "read_limits": self.read_limits,
             "index_limits": self.index_limits,
             "source_limits": self.source_limits,
@@ -772,6 +779,7 @@ def _skills_metadata(
         policy_version=SKILL_SETTINGS_POLICY_VERSION,
         enabled=settings.enabled,
         bootstrap_enabled=settings.bootstrap_enabled,
+        bootstrap_prompt=settings.bootstrap_prompt.as_model_dict(),
         read_limits=settings.read_limits.as_model_dict(),
         index_limits=settings.index_limits.as_model_dict(),
         source_limits=settings.source_limits.as_model_dict(),
@@ -1375,7 +1383,8 @@ def _trusted_settings_allow(
     ):
         return False
     return (
-        trusted.read_limits.allows(requested.read_limits)
+        trusted.bootstrap_prompt.allows(requested.bootstrap_prompt)
+        and trusted.read_limits.allows(requested.read_limits)
         and trusted.index_limits.allows(requested.index_limits)
         and trusted.source_limits.allows(requested.source_limits)
         and trusted.cursor_limits.allows(requested.cursor_limits)

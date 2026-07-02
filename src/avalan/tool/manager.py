@@ -28,6 +28,7 @@ from ..entities import (
     ToolTransformerResult,
 )
 from ..skill.bootstrap import skills_bootstrap_prompt
+from ..skill.settings import SkillBootstrapPromptSettings
 from . import Tool, ToolSet
 from .json_schema import get_json_schema
 from .name_policy import ToolNamePolicy
@@ -55,6 +56,7 @@ class ToolManager:
     _available_tool_names: set[str]
     _bootstrap_tool_names: set[str]
     _descriptors: dict[str, ToolDescriptor]
+    _skills_bootstrap_prompt_settings: SkillBootstrapPromptSettings | None
     _tool_name_policy: ToolNamePolicy
     _tools: dict[str, Callable[..., Any]] | None = None
     _toolsets: list[ToolSet] | None = None
@@ -167,7 +169,8 @@ class ToolManager:
                 tool_name
                 for tool_name in self._descriptors
                 if tool_name in self._bootstrap_tool_names
-            )
+            ),
+            settings=self._skills_bootstrap_prompt_settings,
         )
 
     def describe_tool(self, name: str) -> ToolDescriptor | None:
@@ -328,6 +331,7 @@ class ToolManager:
         self._available_aliases = {}
         self._available_tool_names = set()
         self._bootstrap_tool_names = set()
+        self._skills_bootstrap_prompt_settings = None
         self._descriptors = {}
 
         if available_toolsets:
@@ -356,6 +360,20 @@ class ToolManager:
                 self._bootstrap_tool_names.update(
                     name for name, _aliases in toolset_names
                 )
+                bootstrap_prompt_settings = getattr(
+                    toolset,
+                    "bootstrap_prompt_settings",
+                    None,
+                )
+                if bootstrap_prompt_settings is not None:
+                    assert isinstance(
+                        bootstrap_prompt_settings,
+                        SkillBootstrapPromptSettings,
+                    )
+                    if self._skills_bootstrap_prompt_settings is None:
+                        self._skills_bootstrap_prompt_settings = (
+                            bootstrap_prompt_settings
+                        )
         self._tool_name_policy = ToolNamePolicy(
             settings=self._settings.tool_name_policy
         ).bind(enabled_names)

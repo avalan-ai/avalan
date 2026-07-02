@@ -1,4 +1,4 @@
-from .types import LooseJsonValue
+from .types import LooseJsonValue, SkillRegistryProtocol
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -1224,11 +1224,18 @@ class ToolCallContext:
     session_id: UUID | None = None
     calls: list[ToolCall] | None = None
     cancellation_checker: Callable[[], Awaitable[None]] | None = None
-    skills_registry: object | None = None
+    skills_registry: SkillRegistryProtocol | None = None
     stream_event: (
         Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
     ) = None
     flow_tool_node: bool = False
+
+    def __post_init__(self) -> None:
+        if self.skills_registry is not None:
+            assert isinstance(
+                self.skills_registry,
+                SkillRegistryProtocol,
+            ), "skills_registry must be a skill registry"
 
 
 @final

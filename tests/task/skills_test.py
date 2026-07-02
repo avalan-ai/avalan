@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.skill import (
+    SkillBootstrapPromptSettings,
     SkillReadLimits,
     SkillSettingsSurface,
     SkillSourceAuthorityKind,
@@ -306,6 +307,26 @@ class TaskSkillsSettingsTest(TestCase):
             (
                 TrustedSkillSettings(bootstrap_enabled=False),
                 TrustedSkillSettings(bootstrap_enabled=True),
+            ),
+            (
+                TrustedSkillSettings(
+                    bootstrap_prompt=SkillBootstrapPromptSettings(
+                        include_read_guidance=False
+                    )
+                ),
+                TrustedSkillSettings(),
+            ),
+            (
+                TrustedSkillSettings(
+                    bootstrap_prompt=SkillBootstrapPromptSettings(
+                        additional_instructions=("Approved.",)
+                    )
+                ),
+                TrustedSkillSettings(
+                    bootstrap_prompt=SkillBootstrapPromptSettings(
+                        additional_instructions=("Unapproved.",)
+                    )
+                ),
             ),
             (
                 TrustedSkillSettings(

@@ -5,6 +5,7 @@ from unittest import TestCase, main
 
 from avalan.skill import (
     PluginProvidedSkillSourceAuthority,
+    SkillBootstrapPromptSettings,
     SkillCursorLimits,
     SkillIndexLimits,
     SkillObservabilitySettings,
@@ -19,6 +20,7 @@ from avalan.skill import (
     UntrustedSkillSettings,
     WorkspaceSkillSourceAuthority,
     merge_skill_settings,
+    parse_untrusted_skill_settings_config,
     trusted_skill_settings_identity_dict,
     trusted_skill_source_identity_dict,
     untrusted_skill_settings_config_dict,
@@ -111,6 +113,84 @@ class SkillSettingsTest(TestCase):
         self.assertEqual(unchanged.as_model_dict()["status"], "ok")
         self.assertFalse(disabled.settings.enabled)
         self.assertEqual(disabled.status, SkillStatus.OK)
+
+    def test_bootstrap_prompt_settings_are_redacted_and_policy_checked(
+        self,
+    ) -> None:
+        settings = TrustedSkillSettings(
+            bootstrap_prompt=SkillBootstrapPromptSettings(
+                include_read_guidance=False,
+                additional_instructions=("Prefer the approved skill source.",),
+            )
+        )
+
+        encoded = dumps(settings.as_model_dict(), sort_keys=True)
+        identity = trusted_skill_settings_identity_dict(settings)
+        bootstrap_prompt = identity["bootstrap_prompt"]
+        assert isinstance(bootstrap_prompt, dict)
+
+        self.assertIn("additional_instructions_sha256", bootstrap_prompt)
+        self.assertIn("additional_instruction_count", bootstrap_prompt)
+        self.assertNotIn("Prefer the approved skill source.", encoded)
+        self.assertTrue(
+            settings.bootstrap_prompt.allows(
+                SkillBootstrapPromptSettings(
+                    include_read_guidance=False,
+                    additional_instructions=(
+                        "Prefer the approved skill source.",
+                    ),
+                )
+            )
+        )
+        self.assertFalse(
+            settings.bootstrap_prompt.allows(
+                SkillBootstrapPromptSettings(include_read_guidance=True)
+            )
+        )
+        self.assertFalse(
+            settings.bootstrap_prompt.allows(
+                SkillBootstrapPromptSettings(
+                    include_read_guidance=False,
+                    additional_instructions=("Use an untrusted source.",),
+                )
+            )
+        )
+        ordered = SkillBootstrapPromptSettings(
+            additional_instructions=("First.", "Second.")
+        )
+        self.assertFalse(
+            ordered.allows(
+                SkillBootstrapPromptSettings(
+                    additional_instructions=("Second.", "First.")
+                )
+            )
+        )
+
+    def test_untrusted_toml_rejects_bootstrap_prompt_text(self) -> None:
+        trusted = TrustedSkillSettings()
+        surfaces = (
+            (SkillSettingsSurface.AGENT, "tool.skills"),
+            (SkillSettingsSurface.FLOW, "skills"),
+            (SkillSettingsSurface.TASK, "skills"),
+        )
+        configs = (
+            {"bootstrap_prompt": {"additional_instructions": ["Use me."]}},
+            {"bootstrap_instruction": "Use this arbitrary prompt text."},
+        )
+
+        for surface, section in surfaces:
+            for config in configs:
+                with self.subTest(surface=surface, config=config):
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "unknown keys",
+                    ):
+                        parse_untrusted_skill_settings_config(
+                            config,
+                            trusted=trusted,
+                            surface=surface,
+                            section=section,
+                        )
 
     def test_unrestricted_trusted_skill_ids_can_be_narrowed(self) -> None:
         trusted = TrustedSkillSettings()
@@ -441,6 +521,12 @@ class SkillSettingsTest(TestCase):
             ),
             lambda: SkillObservabilitySettings(
                 emit_events="yes"  # type: ignore[arg-type]
+            ),
+            lambda: SkillBootstrapPromptSettings(
+                additional_instructions=("/tmp/secret",)
+            ),
+            lambda: SkillBootstrapPromptSettings(
+                additional_instructions=("Repeat.", "Repeat.")
             ),
             lambda: TrustedSkillSettings(
                 authority_kinds=(SkillSourceAuthorityKind.USER_LOCAL,),

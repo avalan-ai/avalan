@@ -40,6 +40,11 @@ from avalan.tool.math import CalculatorTool
 from avalan.tool.parser import ToolCallParser
 
 
+class _SkillRegistryLike:
+    registry_version: object = "skills-registry:test"
+    settings: object | None = None
+
+
 class ToolManagerCreationTestCase(TestCase):
     def test_settings_default_to_legacy_compatibility(self):
         settings = ToolManagerSettings()
@@ -72,7 +77,7 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertEqual(settings.recovery_formats, [])
 
     def test_preserve_flow_context_carries_skills_registry(self) -> None:
-        skills_registry = object()
+        skills_registry = _SkillRegistryLike()
         current = ToolCallContext(
             flow_tool_node=True,
             skills_registry=skills_registry,
@@ -86,6 +91,10 @@ class ToolManagerCreationTestCase(TestCase):
         )
 
         self.assertIs(preserved.skills_registry, skills_registry)
+
+    def test_tool_call_context_rejects_plain_skills_registry(self) -> None:
+        with self.assertRaises(AssertionError):
+            ToolCallContext(skills_registry=object())  # type: ignore[arg-type]
 
     def test_settings_accept_outcome_compatibility_modes(self):
         settings = ToolManagerSettings(

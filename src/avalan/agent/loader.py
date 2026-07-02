@@ -204,6 +204,7 @@ async def _build_skills_toolset(
     return SkillsToolSet(
         registry,
         bootstrap_enabled=skills_settings.bootstrap_enabled,
+        bootstrap_prompt_settings=skills_settings.bootstrap_prompt,
         event_manager=event_manager,
         namespace="skills",
     )
