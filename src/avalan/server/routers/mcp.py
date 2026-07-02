@@ -839,17 +839,13 @@ def _skills_tool_description(
     descriptor: ToolDescriptor,
 ) -> dict[str, JSONValue] | None:
     assert isinstance(descriptor, ToolDescriptor)
-    if not descriptor.name.startswith("skills."):
+    name = descriptor.name
+    if not name.startswith("skills."):
         return None
-    schema = descriptor.provider_safe_schema or descriptor.schema or {}
+    schema = descriptor.schema or descriptor.provider_safe_schema or {}
     function = schema.get("function") if isinstance(schema, dict) else None
     if not isinstance(function, dict):
         function = {}
-    name = function.get("name")
-    if not isinstance(name, str) or not name:
-        name = descriptor.name
-    if not name.startswith("skills."):
-        return None
     description = function.get("description")
     if not isinstance(description, str):
         description = ""
@@ -1362,6 +1358,14 @@ async def _mcp_canonical_stream_item_notifications(
     notifications: list[JSONObject] = []
 
     state.accumulator.add(item)
+    if item.is_stream_terminal:
+        notifications.extend(
+            _mcp_model_text_flush_notifications(
+                state,
+                progress_token,
+                item.sequence,
+            )
+        )
     if item.kind is StreamItemKind.FLOW_EVENT:
         notifications.append(_canonical_flow_notification(item))
         return notifications
@@ -1487,6 +1491,49 @@ def _canonical_progress_notification(
             "message": dumps(message, separators=(",", ":")),
         },
     }
+
+
+def _mcp_model_text_flush_notifications(
+    state: _MCPStreamProjectionState,
+    progress_token: str | int,
+    progress: int,
+) -> list[JSONObject]:
+    assert isinstance(state, _MCPStreamProjectionState)
+    assert isinstance(progress, int) and not isinstance(progress, bool)
+    notifications: list[JSONObject] = []
+    for reasoning_delta in state.reasoning_redactor.flush():
+        if reasoning_delta:
+            notifications.append(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/message",
+                    "params": {
+                        "level": "debug",
+                        "data": {
+                            "type": "reasoning",
+                            "delta": reasoning_delta,
+                        },
+                    },
+                }
+            )
+    for answer_delta in state.answer_redactor.flush():
+        if answer_delta:
+            message: dict[str, JSONValue] = {
+                "type": "answer.delta",
+                "delta": answer_delta,
+            }
+            notifications.append(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/progress",
+                    "params": {
+                        "progressToken": progress_token,
+                        "progress": progress,
+                        "message": dumps(message, separators=(",", ":")),
+                    },
+                }
+            )
+    return notifications
 
 
 def _canonical_error_message(snapshot: ProtocolStreamSnapshot) -> str:

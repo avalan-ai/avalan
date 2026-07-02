@@ -760,6 +760,17 @@ class MCPUtilityTestCase(TestCase):
                     },
                 },
             },
+            provider_safe_schema={
+                "type": "function",
+                "function": {
+                    "name": "avl_c2tpbGxzLnJlYWQ",
+                    "description": "Provider safe read.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"encoded": {"type": "string"}},
+                    },
+                },
+            },
         )
         orchestrator = SimpleNamespace(
             tool=FakeMCPToolManager(
@@ -819,6 +830,21 @@ class MCPUtilityTestCase(TestCase):
                 schema={"function": {"name": "math.read"}},
             )
         )
+        provider_safe_only = mcp_router._skills_tool_description(
+            ToolDescriptor(
+                name="skills.search",
+                provider_safe_schema={
+                    "function": {
+                        "name": "avl_c2tpbGxzLnNlYXJjaA",
+                        "description": "Search skills.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                        },
+                    }
+                },
+            )
+        )
 
         self.assertEqual(
             fallback,
@@ -836,7 +862,25 @@ class MCPUtilityTestCase(TestCase):
                 "inputSchema": {"type": "object", "properties": {}},
             },
         )
-        self.assertIsNone(renamed)
+        self.assertEqual(
+            renamed,
+            {
+                "name": "skills.read",
+                "description": "",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+        )
+        self.assertEqual(
+            provider_safe_only,
+            {
+                "name": "skills.search",
+                "description": "Search skills.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                },
+            },
+        )
 
     def test_direct_skills_tool_call_detection(self) -> None:
         orchestrator = SimpleNamespace(
@@ -2087,6 +2131,65 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertNotIn("Secret answer skill body", projected)
         self.assertNotIn("/tmp/skills", projected)
         self.assertNotIn("C:/Users", projected)
+
+    async def test_stream_item_notifications_flush_pending_model_text(
+        self,
+    ) -> None:
+        state = legacy_fixture_mcp_projection_state()
+        start = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        terminal = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+
+        await mcp_router._mcp_canonical_stream_item_notifications(
+            start,
+            state,
+            "progress",
+        )
+        self.assertEqual(state.reasoning_redactor.push("# Reason\n"), ())
+        self.assertEqual(state.answer_redactor.push("# Answer\n"), ())
+
+        notifications = (
+            await mcp_router._mcp_canonical_stream_item_notifications(
+                terminal,
+                state,
+                "progress",
+            )
+        )
+        reasoning_notifications = [
+            item
+            for item in notifications
+            if item["method"] == "notifications/message"
+        ]
+        progress_messages = [
+            loads(item["params"]["message"])
+            for item in notifications
+            if item["method"] == "notifications/progress"
+        ]
+
+        self.assertEqual(
+            reasoning_notifications[0]["params"]["data"],
+            {"type": "reasoning", "delta": "# Reason\n"},
+        )
+        self.assertIn(
+            {"type": "answer.delta", "delta": "# Answer\n"},
+            progress_messages,
+        )
+        self.assertIn({"type": "answer.completed"}, progress_messages)
 
     async def test_stream_item_notifications_emit_flow_events(self) -> None:
         state = legacy_fixture_mcp_projection_state()

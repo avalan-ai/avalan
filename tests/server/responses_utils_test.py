@@ -850,6 +850,47 @@ class ResponsesUtilsTestCase(TestCase):
             ),
         )
 
+    def test_projection_adapter_flushes_pending_model_text_in_order(
+        self,
+    ) -> None:
+        adapter = _ResponsesSSEProjectionAdapter()
+        reasoning = _canonical_projection(
+            StreamItemKind.REASONING_DELTA,
+            2,
+            text_delta="# Reason\n",
+        )
+        answer = _canonical_projection(
+            StreamItemKind.ANSWER_DELTA,
+            5,
+            text_delta="# Answer\n",
+        )
+
+        self.assertEqual(adapter.reasoning_redactor.push("# Reason\n"), ())
+        adapter.record_model_text_pending(
+            reasoning,
+            adapter.reasoning_redactor,
+        )
+        self.assertEqual(adapter.answer_redactor.push("# Answer\n"), ())
+        adapter.record_model_text_pending(answer, adapter.answer_redactor)
+
+        events = adapter.flush_model_text_events(9)
+
+        self.assertEqual(
+            [event.event for event in events],
+            [
+                "response.reasoning_text.delta",
+                "response.output_text.delta",
+            ],
+        )
+        self.assertEqual(
+            [event.data["delta"] for event in events],
+            ["# Reason\n", "# Answer\n"],
+        )
+        self.assertEqual(
+            [event.data["sequence_number"] for event in events],
+            [2, 5],
+        )
+
     def test_switch_state_uses_function_call_framing(self) -> None:
         events = _switch_state(
             _ResponsesSSEItemState(

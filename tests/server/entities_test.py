@@ -565,6 +565,153 @@ class ChatEntitiesTestCase(TestCase):
         )
         self.assertEqual(embedded.push("later token"), ())
 
+    def test_model_visible_stream_redactor_allows_markdown_starts(
+        self,
+    ) -> None:
+        heading = server_entities.ModelVisibleServerProtocolTextRedactor()
+
+        self.assertEqual(
+            heading.push("# Summary\nThis is ordinary markdown.\n"),
+            ("# Summary\nThis is ordinary markdown.\n",),
+        )
+        self.assertEqual(heading.push("Next delta."), ("Next delta.",))
+
+        split = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(split.push("# Summary\n"), ())
+        self.assertEqual(
+            split.push("This is ordinary markdown.\n"),
+            ("# Summary\nThis is ordinary markdown.\n",),
+        )
+        self.assertEqual(split.push("Next delta."), ("Next delta.",))
+
+        frontmatter = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(
+            frontmatter.push("---\ntitle: Report\n---\nBody.\n"),
+            ("---\ntitle: Report\n---\nBody.\n",),
+        )
+        self.assertEqual(frontmatter.push("Next delta."), ("Next delta.",))
+
+        instructions = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(
+            instructions.push("# Summary\nInstructions for deployment.\n"),
+            ("# Summary\nInstructions for deployment.\n",),
+        )
+        self.assertEqual(instructions.push("Next delta."), ("Next delta.",))
+
+    def test_model_visible_stream_redactor_releases_safe_heading_prefixes(
+        self,
+    ) -> None:
+        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+
+        self.assertEqual(redactor.push("# Summary\n"), ())
+        self.assertEqual(redactor.push("Instruction"), ())
+        self.assertEqual(
+            redactor.push("al note for deployment.\n"),
+            ("# Summary\nInstructional note for deployment.\n",),
+        )
+        self.assertEqual(redactor.push("Next delta."), ("Next delta.",))
+
+        heading_only = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(heading_only.push("# Summary"), ())
+        self.assertEqual(heading_only.flush(), ("# Summary",))
+
+        description = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(description.push("description:"), ())
+        self.assertEqual(description.push(" Source"), ())
+        self.assertEqual(
+            description.push(" note for deployment.\n"),
+            ("description: Source note for deployment.\n",),
+        )
+
+    def test_model_visible_stream_redactor_redacts_split_host_paths(
+        self,
+    ) -> None:
+        normal = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(normal.push("a"), ("a",))
+        self.assertEqual(normal.push("b"), ("b",))
+
+        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+
+        self.assertEqual(redactor.push("See /Users/mar"), ("See ",))
+        self.assertEqual(
+            redactor.push("iano/secret.txt and continue."),
+            ("<host-path>/secret.txt and continue.",),
+        )
+        self.assertEqual(redactor.push(" Next delta."), (" Next delta.",))
+
+        windows = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(windows.push("Open C:/Users/mar"), ("Open ",))
+        self.assertEqual(
+            windows.push("iano/secret.txt now."),
+            ("<host-path>/secret.txt now.",),
+        )
+
+        drive = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(drive.push("Open C"), ("Open ",))
+        self.assertEqual(
+            drive.push(":/Users/mariano/secret.txt now."),
+            ("<host-path>/secret.txt now.",),
+        )
+
+        partial_drive = (
+            server_entities.ModelVisibleServerProtocolTextRedactor()
+        )
+        self.assertEqual(partial_drive.push("Open C:"), ("Open ",))
+        self.assertEqual(partial_drive.flush(), ("C:",))
+
+        invalid_windows = (
+            server_entities.ModelVisibleServerProtocolTextRedactor()
+        )
+        self.assertEqual(
+            invalid_windows.push("Open C:Users"),
+            ("Open C:Users",),
+        )
+
+        file_url = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(
+            file_url.push("Open file:///tmp/re"), ("Open file://",)
+        )
+        self.assertEqual(file_url.push("port.txt"), ())
+        self.assertEqual(file_url.flush(), ("<host-path>/report.txt",))
+
+        remote = server_entities.ModelVisibleServerProtocolTextRedactor()
+        self.assertEqual(
+            remote.push("See https://files.example/tmp/re"),
+            ("See https://files.example/tmp/re",),
+        )
+        self.assertEqual(remote.push("port.pdf"), ("port.pdf",))
+
+    def test_model_visible_stream_redactor_flushes_pending_safe_text(
+        self,
+    ) -> None:
+        redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
+
+        self.assertEqual(redactor.push("---\n"), ())
+        self.assertEqual(redactor.flush(), ("---\n",))
+        self.assertEqual(redactor.push("Next delta."), ("Next delta.",))
+
+        heading_redactor = (
+            server_entities.ModelVisibleServerProtocolTextRedactor()
+        )
+        self.assertEqual(heading_redactor.push("# Summary\n"), ())
+        self.assertEqual(
+            heading_redactor.push("Source: /tmp/report.txt"),
+            ("# Summary\nSource: ",),
+        )
+        self.assertEqual(
+            heading_redactor.flush(),
+            ("<host-path>/report.txt",),
+        )
+
+        path_redactor = (
+            server_entities.ModelVisibleServerProtocolTextRedactor()
+        )
+        self.assertEqual(path_redactor.push("# Summary\n"), ())
+        self.assertEqual(
+            path_redactor.push("See /tmp/report.txt\n"),
+            ("# Summary\nSee <host-path>/report.txt\n",),
+        )
+
     def test_mcp_tool_request_accepts_text_or_files(self) -> None:
         text_request = MCPToolRequest(input_string="hello")
         file_request = MCPToolRequest(files=[{"base64": "YWJj"}])
@@ -1131,15 +1278,13 @@ class ChatEntitiesTestCase(TestCase):
         redactor = server_entities.ModelVisibleServerProtocolTextRedactor()
 
         self.assertEqual(redactor.push("#"), ())
-        self.assertEqual(
-            redactor.push(" Demo Skill\n\n"),
-            (server_entities.SKILL_CONTENT_REDACTION,),
-        )
+        self.assertEqual(redactor.push(" Demo Skill\n\n"), ())
         self.assertEqual(
             redactor.push(
                 "Use when handling private operator tasks.\n"
                 "Secret skill body.\n"
                 "Source: /tmp/skills/demo/SKILL.md"
             ),
-            (),
+            (server_entities.SKILL_CONTENT_REDACTION,),
         )
+        self.assertEqual(redactor.flush(), ())

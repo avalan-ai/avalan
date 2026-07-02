@@ -1148,6 +1148,7 @@ class A2AResponseTranslator:
         self._open_artifacts: set[str] = set()
         self._answer_redactor = ModelVisibleServerProtocolTextRedactor()
         self._reasoning_redactor = ModelVisibleServerProtocolTextRedactor()
+        self._pending_model_text_sequences: dict[str, int] = {}
 
     @property
     def succeeded(self) -> bool:
@@ -1163,6 +1164,7 @@ class A2AResponseTranslator:
         await self._process_canonical_item(canonical_item)
 
     async def finish(self) -> None:
+        await self._flush_model_text()
         for artifact_id in tuple(self._open_artifacts):
             await self._finish_artifact(artifact_id)
         if self._terminal_outcome is StreamTerminalOutcome.CANCELLED:
@@ -1184,6 +1186,11 @@ class A2AResponseTranslator:
                     metadata={"kind": "answer", "channel": "output"},
                     name="Answer",
                 )
+            self._record_model_text_pending(
+                "answer",
+                item.sequence,
+                self._answer_redactor,
+            )
             return
         if item.kind is StreamItemKind.REASONING_DELTA:
             for text in self._reasoning_redactor.push(item.text_delta or ""):
@@ -1193,6 +1200,11 @@ class A2AResponseTranslator:
                     metadata={"kind": "reasoning", "channel": "reasoning"},
                     name="Reasoning",
                 )
+            self._record_model_text_pending(
+                "reasoning",
+                item.sequence,
+                self._reasoning_redactor,
+            )
             return
         if item.channel in (
             StreamChannel.TOOL_CALL,
@@ -1241,6 +1253,43 @@ class A2AResponseTranslator:
             StreamItemKind.TOOL_EXECUTION_CANCELLED,
         ):
             await self._finish_artifact(tool_call_id)
+
+    async def _flush_model_text(self) -> None:
+        for channel, _sequence in sorted(
+            self._pending_model_text_sequences.items(),
+            key=lambda item: item[1],
+        ):
+            if channel == "answer":
+                for text in self._answer_redactor.flush():
+                    await self._add_text_artifact(
+                        artifact_id="answer",
+                        text=text,
+                        metadata={"kind": "answer", "channel": "output"},
+                        name="Answer",
+                    )
+            elif channel == "reasoning":
+                for text in self._reasoning_redactor.flush():
+                    await self._add_text_artifact(
+                        artifact_id="reasoning",
+                        text=text,
+                        metadata={
+                            "kind": "reasoning",
+                            "channel": "reasoning",
+                        },
+                        name="Reasoning",
+                    )
+        self._pending_model_text_sequences.clear()
+
+    def _record_model_text_pending(
+        self,
+        channel: str,
+        sequence: int,
+        redactor: ModelVisibleServerProtocolTextRedactor,
+    ) -> None:
+        if redactor.has_pending:
+            self._pending_model_text_sequences.setdefault(channel, sequence)
+        else:
+            self._pending_model_text_sequences.pop(channel, None)
 
     async def _add_text_artifact(
         self,

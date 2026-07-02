@@ -51,6 +51,18 @@ MCP_BASE64_SOURCE_PATTERN = (
 NON_WHITESPACE_PATTERN = r".*\S.*"
 SKILL_CONTENT_REDACTION = "<redacted-skill-content>"
 HOST_PATH_REDACTION = "<host-path>"
+_STREAM_HOST_PATH_POSIX_ROOTS = (
+    "/Users",
+    "/home",
+    "/private",
+    "/secret",
+    "/var",
+    "/etc",
+    "/root",
+    "/tmp",
+    "/opt",
+    "/Volumes",
+)
 _HOST_PATH_PATTERN = compile_pattern(
     r"(?P<path>"
     r"(?:/Users|/home|/private|/secret|/var|/etc|/root|/tmp|/opt|/Volumes)"
@@ -62,8 +74,9 @@ _HOST_PATH_PATTERN = compile_pattern(
     r"(?=$|[\s,;:\"'\\\]}])"
 )
 _SKILL_BODY_HEADING_PATTERN = compile_pattern(
-    r"(?is)(?:^|\n)\s*#\s+[^\n]{1,160}\n"
-    r".{0,12000}\b(?:use when|trigger rules|how to use|instructions?)\b"
+    r"(?is)(?:^|\n)\s*#\s+[^\n]{1,160}\n\s*\n"
+    r".{0,12000}\b"
+    r"(?:use when|trigger rules|how to use|instructions\s*:)"
 )
 _SKILL_BODY_RESOURCE_PATTERN = compile_pattern(
     r"(?is)(?:^|\n)\s*(?:#\s+[^\n]{1,160}|---\s*\n|description\s*:)"
@@ -276,6 +289,10 @@ class ModelVisibleServerProtocolTextRedactor:
         self._pending = ""
         self._redacted = False
 
+    @property
+    def has_pending(self) -> bool:
+        return bool(self._pending)
+
     def push(self, value: str) -> tuple[str, ...]:
         """Return safe text chunks for a streaming delta."""
         assert isinstance(value, str)
@@ -286,13 +303,28 @@ class ModelVisibleServerProtocolTextRedactor:
         if _could_be_echoed_skill_body_start_prefix(candidate):
             self._pending = candidate
             return ()
-        sanitized = sanitize_model_visible_server_protocol_text(candidate)
-        if sanitized == SKILL_CONTENT_REDACTION:
-            self._redacted = True
-            return (sanitized,)
-        if _could_start_echoed_skill_body(candidate):
+        if _has_echoed_skill_body_signal(candidate):
             self._redacted = True
             return (SKILL_CONTENT_REDACTION,)
+        safe_text, pending_tail = _split_streaming_host_path_tail(candidate)
+        if pending_tail:
+            self._pending = pending_tail
+            sanitized = sanitize_model_visible_server_protocol_text(safe_text)
+            return (sanitized,) if sanitized else ()
+        if _should_buffer_echoed_skill_body_candidate(candidate):
+            self._pending = candidate
+            return ()
+        sanitized = sanitize_model_visible_server_protocol_text(candidate)
+        return (sanitized,) if sanitized else ()
+
+    def flush(self) -> tuple[str, ...]:
+        """Return any pending safe text at stream completion."""
+        if self._redacted or not self._pending:
+            self._pending = ""
+            return ()
+        candidate = self._pending
+        self._pending = ""
+        sanitized = sanitize_server_protocol_text(candidate)
         return (sanitized,) if sanitized else ()
 
 
@@ -341,6 +373,90 @@ def _redact_host_paths(value: str) -> str:
     return _HOST_PATH_PATTERN.sub(_redact_host_path_match, value)
 
 
+def _split_streaming_host_path_tail(value: str) -> tuple[str, str]:
+    start = _streaming_host_path_tail_start(value)
+    if start is None:
+        return value, ""
+    return value[:start], value[start:]
+
+
+def _streaming_host_path_tail_start(value: str) -> int | None:
+    for index, char in enumerate(value):
+        if char not in {"/", "\\"} and not (
+            (index + 1 < len(value) and value[index + 1] == ":")
+            or _could_be_streaming_windows_drive_prefix(value, index)
+        ):
+            continue
+        tail = value[index:]
+        if not _could_be_streaming_host_path_tail(tail):
+            continue
+        if _tail_inside_remote_url(value, index):
+            continue
+        return index
+    return None
+
+
+def _could_be_streaming_windows_drive_prefix(
+    value: str,
+    index: int,
+) -> bool:
+    if index != len(value) - 1:
+        return False
+    if index == 0 or not value[index - 1].isspace():
+        return False
+    return value[index].isupper() and value[index].isascii()
+
+
+def _could_be_streaming_host_path_tail(value: str) -> bool:
+    if not value or any(char.isspace() for char in value):
+        return False
+    return _could_be_streaming_posix_host_path_tail(
+        value
+    ) or _could_be_streaming_windows_host_path_tail(value)
+
+
+def _could_be_streaming_posix_host_path_tail(value: str) -> bool:
+    if not value.startswith("/"):
+        return False
+    return any(
+        root.startswith(value) or value == root or value.startswith(f"{root}/")
+        for root in _STREAM_HOST_PATH_POSIX_ROOTS
+    )
+
+
+def _could_be_streaming_windows_host_path_tail(value: str) -> bool:
+    if len(value) == 1:
+        return value.isupper() and value.isascii()
+    if len(value) < 2 or value[1] != ":":
+        return False
+    if len(value) == 2:
+        return True
+    separator = value[2]
+    if separator not in {"/", "\\"}:
+        return False
+    users_prefix = f"{separator}Users"
+    suffix = value[2:]
+    return (
+        users_prefix.startswith(suffix)
+        or suffix == users_prefix
+        or suffix.startswith(f"{users_prefix}{separator}")
+    )
+
+
+def _tail_inside_remote_url(value: str, start: int) -> bool:
+    token_start = start
+    while token_start > 0 and not value[token_start - 1].isspace():
+        token_start -= 1
+    token_prefix = value[token_start:start]
+    scheme_matches = tuple(_URL_SCHEME_PATTERN.finditer(token_prefix))
+    if not scheme_matches:
+        return False
+    scheme_match = scheme_matches[-1]
+    if scheme_match.group(0).lower() == "file:":
+        return False
+    return token_prefix[scheme_match.end() :].startswith("//")
+
+
 def _path_match_inside_url(match: Match[str]) -> bool:
     start = match.start("path")
     token_start = start
@@ -358,23 +474,78 @@ def _path_match_inside_url(match: Match[str]) -> bool:
 
 def _looks_like_echoed_skill_body(value: str) -> bool:
     stripped = value.strip()
+    if _SKILL_BODY_RESOURCE_PATTERN.search(stripped):
+        return True
     if len(stripped) < 40:
         return False
-    return bool(
-        _SKILL_BODY_HEADING_PATTERN.search(stripped)
-        or _SKILL_BODY_RESOURCE_PATTERN.search(stripped)
-    )
+    return bool(_SKILL_BODY_HEADING_PATTERN.search(stripped))
 
 
-def _could_start_echoed_skill_body(value: str) -> bool:
-    return bool(_SKILL_BODY_STREAM_START_PATTERN.search(value))
+def _has_echoed_skill_body_signal(value: str) -> bool:
+    return _looks_like_echoed_skill_body(value)
 
 
 def _could_be_echoed_skill_body_start_prefix(value: str) -> bool:
     tail = value.rsplit("\n", 1)[-1].lstrip()
     if not tail:
         return False
-    return "#".startswith(tail) or "---".startswith(tail)
+    lowered = tail.lower()
+    return (
+        "#".startswith(tail)
+        or "---".startswith(tail)
+        or "description:".startswith(lowered)
+    )
+
+
+def _should_buffer_echoed_skill_body_candidate(value: str) -> bool:
+    matches = tuple(_SKILL_BODY_STREAM_START_PATTERN.finditer(value))
+    if not matches:
+        return False
+    candidate = value[matches[-1].start() :].lstrip()
+    lowered = candidate.lower()
+    if candidate.startswith("#"):
+        return _should_buffer_heading_skill_body_candidate(candidate)
+    if lowered.startswith("description:"):
+        return _should_buffer_skill_body_followup(candidate.split(":", 1)[1])
+    after_marker = candidate[3:]
+    return _should_buffer_skill_body_followup(after_marker)
+
+
+def _should_buffer_heading_skill_body_candidate(value: str) -> bool:
+    lines = value.split("\n", 1)
+    if len(lines) == 1:
+        return True
+    return _should_buffer_skill_body_followup(lines[1])
+
+
+def _should_buffer_skill_body_followup(value: str) -> bool:
+    candidate = value.lstrip()
+    if not candidate:
+        return True
+    lowered = candidate.lower()
+    signals = (
+        "use when",
+        "trigger rules",
+        "how to use",
+        "instructions:",
+        "source:",
+        "path:",
+        "file:",
+        "skill.md",
+        ".codex",
+        "/skills/",
+        "\\skills\\",
+        "/users",
+        "/home",
+        "/private",
+        "/tmp",
+        "c:\\users",
+        "c:/users",
+    )
+    return any(
+        signal.startswith(lowered) or lowered.startswith(signal)
+        for signal in signals
+    )
 
 
 def _redact_host_path_match(match: Match[str]) -> str:

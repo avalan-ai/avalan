@@ -525,7 +525,7 @@ class PgsqlFlowStateStore:
 
 def flow_trace_to_snapshot(trace: FlowExecutionTrace) -> FlowSnapshotMetadata:
     assert isinstance(trace, FlowExecutionTrace)
-    return freeze_snapshot_metadata(trace.as_public_dict())
+    return freeze_snapshot_metadata(trace.as_snapshot_dict())
 
 
 def flow_trace_from_snapshot(value: object) -> FlowExecutionTrace:

@@ -557,6 +557,35 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
         orch.assert_awaited_once()
 
+    async def test_create_chat_completion_stream_flushes_pending_heading(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: _canonical_answer_gen("# Summary\n"),
+            logger=getLogger(),
+            use_async_generator=True,
+            provider_family="transformers",
+        )
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(req, logger, orch)
+        chunks = [chunk async for chunk in resp.body_iterator]
+        first_payload = loads(chunks[0][6:])
+
+        self.assertEqual(
+            first_payload["choices"][0]["delta"]["content"],
+            "# Summary\n",
+        )
+        self.assertEqual(chunks[-1], "data: [DONE]\n\n")
+        orch.assert_awaited_once()
+
     async def test_chat_empty_stream_rejects_missing_terminal(
         self,
     ) -> None:

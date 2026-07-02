@@ -24,6 +24,8 @@ from avalan.flow import (
     compile_flow_definition,
     execute_flow_plan,
     flow_resume_skills_metadata,
+    flow_trace_from_snapshot,
+    flow_trace_to_snapshot,
     tool_flow_node_registry,
 )
 from avalan.flow import (
@@ -268,6 +270,8 @@ class FlowSkillsRuntimeTestCase(IsolatedAsyncioTestCase):
             trace = FlowExecutionTrace.from_plan(result.plan)
             private = str(trace.metadata)
             public = trace.as_public_dict()
+            snapshot = flow_trace_to_snapshot(trace)
+            restored = flow_trace_from_snapshot(snapshot)
             public_metadata = cast(Mapping[str, object], public["metadata"])
             skills = cast(Mapping[str, object], public_metadata["skills"])
             flow = cast(Mapping[str, object], skills["flow"])
@@ -276,6 +280,9 @@ class FlowSkillsRuntimeTestCase(IsolatedAsyncioTestCase):
 
         self.assertIn("source_labels", private)
         self.assertIn("authority_kinds", private)
+        self.assertIn("workspace-main", str(snapshot))
+        self.assertIn("source_labels", str(restored.metadata))
+        self.assertIn("authority_kinds", str(restored.metadata))
         self.assertNotIn("source_labels", flow)
         self.assertNotIn("authority_kinds", flow)
         self.assertNotIn("source_labels", agent)
