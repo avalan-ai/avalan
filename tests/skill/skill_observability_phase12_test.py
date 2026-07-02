@@ -36,6 +36,7 @@ from avalan.skill.observability import (
     SkillEventPublisher,
     _compact_value,
     _force_payload_bound,
+    assert_skill_event_publisher,
     skill_audit_authority_value,
     skill_audit_context_fields,
     skill_audit_events_enabled,
@@ -48,6 +49,7 @@ from avalan.task import (
     PrivacySanitizer,
     TaskClient,
     TaskDefinition,
+    TaskDirectTarget,
     TaskExecutionRequest,
     TaskExecutionTarget,
     TaskIdempotencyIdentity,
@@ -145,11 +147,12 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
             )
             hash_prefix = registered_payload["hash_prefix"]
             self.assertIsInstance(hash_prefix, str)
-            self.assertEqual(len(hash_prefix), 16)
+            hash_prefix_text = cast(str, hash_prefix)
+            self.assertEqual(len(hash_prefix_text), 16)
             self.assertTrue(
                 all(
                     character in "0123456789abcdef"
-                    for character in hash_prefix
+                    for character in hash_prefix_text
                 )
             )
             self.assertEqual(registered_payload["source_label"], "workspace")
@@ -167,6 +170,41 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
             self.assertNotIn(_BODY_MARKER, snapshot_text)
             self.assertNotIn(_HOST_PATH_MARKER, snapshot_text)
             self.assertNotIn(str(root), snapshot_text)
+
+    async def test_event_publisher_accepts_dynamic_duck_trigger(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_skill(
+                root / "pdf" / "SKILL.md",
+                name="pdf",
+                description="PDF rendering guidance.",
+            )
+            publisher = _DynamicSkillEventPublisher()
+            typed_publisher = cast(SkillEventPublisher, publisher)
+
+            assert_skill_event_publisher(typed_publisher)
+            resolution = await resolve_skill_sources(
+                (_config(root),),
+                settings=_settings(root),
+                event_manager=typed_publisher,
+            )
+            registry = await build_skill_registry(
+                resolution,
+                settings=_settings(root),
+                event_manager=typed_publisher,
+            )
+
+            self.assertEqual(registry.usable_metadata[0].skill_id, "pdf")
+            self.assertIn(
+                EventType.SKILL_SOURCE_ACCEPTED,
+                publisher.event_types,
+            )
+            self.assertIn(
+                EventType.SKILL_REGISTRY_BUILD_COMPLETED,
+                publisher.event_types,
+            )
 
     async def test_registry_emits_disabled_malformed_duplicate_and_shadowed(
         self,
@@ -285,7 +323,7 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
         )["operation_id"]
         self.assertIsInstance(operation_id, str)
         self.assertRegex(
-            operation_id,
+            cast(str, operation_id),
             r"^(skill-source-resolve:[a-f0-9]{16}|id-[a-f0-9]{16})$",
         )
 
@@ -828,7 +866,7 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
             ),
         )
         event_manager = EventManager(mode=EventManagerMode.TEST)
-        self.assertIsInstance(event_manager, SkillEventPublisher)
+        assert_skill_event_publisher(event_manager)
         await event_manager.trigger(event)
         self.assertEqual(event_manager.history[0].type, event.type)
         self.assertTrue(skill_audit_events_enabled(None))
@@ -893,11 +931,10 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
         self.assertNotIn(_HOST_PATH_MARKER, hidden_text)
         self.assertIn("redacted", hidden_text)
         self.assertIn(str(audit_uuid), hidden_text)
-        self.assertEqual(hidden_payload["skill_ids"][0], "pdf")
+        skill_ids = cast(list[object], hidden_payload["skill_ids"])
+        self.assertEqual(skill_ids[0], "pdf")
         self.assertTrue(str(hidden_payload["skill_id"]).startswith("skill-"))
-        self.assertTrue(
-            str(hidden_payload["skill_ids"][1]).startswith("skill-")
-        )
+        self.assertTrue(str(skill_ids[1]).startswith("skill-"))
 
         identifier_payload = skill_audit_payload_data(
             EventType.SKILL_MATCH_QUERY_EVALUATED,
@@ -978,7 +1015,7 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
             SKILL_AUDIT_MAX_PAYLOAD_BYTES,
         )
 
-        compact_list = [oversized] * 32
+        compact_list: list[object] = [oversized] * 32
         forced_payload = _force_payload_bound(
             {
                 "schema": "skills.audit.v1",
@@ -1070,9 +1107,10 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
                 ),
             )
             observed: list[object] = []
+            target = cast(TaskDirectTarget, _noop_task_target)
             client = TaskClient(
                 InMemoryTaskStore(),
-                target=_noop_task_target,
+                target=target,
                 event_observer=observed.append,
             )
 
@@ -1091,7 +1129,7 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
 
             failing_client = TaskClient(
                 InMemoryTaskStore(),
-                target=_noop_task_target,
+                target=target,
                 event_observer=fail,
             )
             with self.assertRaises(SkillAuditDeliveryError) as client_error:
@@ -1100,7 +1138,7 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
 
             runner = DirectTaskRunner(
                 InMemoryTaskStore(),
-                target=_noop_task_target,
+                target=target,
                 event_observer=fail,
             )
             with self.assertRaises(SkillAuditDeliveryError) as runner_error:
@@ -1109,7 +1147,7 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
 
             queued_client = TaskClient(
                 InMemoryTaskStore(),
-                target=_noop_task_target,
+                target=target,
                 queue=cast(TaskQueue, object()),
                 event_observer=fail,
             )
@@ -1197,7 +1235,7 @@ def _task_definition(
     )
 
 
-async def _noop_task_target(_: object) -> str:
+async def _noop_task_target(_: TaskTargetContext) -> object:
     return "ok"
 
 
@@ -1252,6 +1290,23 @@ class _TaskAuditSink:
             name="task-audit-test",
             event_count=len(self.events),
         )
+
+
+class _DynamicSkillEventPublisher:
+    def __init__(self) -> None:
+        self.events: list[Event] = []
+
+    def __getattr__(self, name: str) -> object:
+        if name == "trigger":
+            return self._trigger
+        raise AttributeError(name)
+
+    async def _trigger(self, event: Event) -> None:
+        self.events.append(event)
+
+    @property
+    def event_types(self) -> list[EventType]:
+        return [event.type for event in self.events]
 
 
 class _RecordingQueue:

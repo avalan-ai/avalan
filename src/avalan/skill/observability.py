@@ -21,6 +21,7 @@ from .settings import SKILL_SETTINGS_POLICY_VERSION, TrustedSkillSettings
 from collections.abc import Awaitable, Mapping
 from enum import StrEnum
 from hashlib import sha256
+from inspect import isawaitable
 from json import dumps
 from re import fullmatch, split
 from secrets import token_hex
@@ -51,6 +52,16 @@ class SkillAuditDeliveryError(RuntimeError):
     """Signal critical skill audit delivery failure."""
 
 
+def assert_skill_event_publisher(
+    publisher: object | None,
+) -> None:
+    """Assert a publisher exposes the skill audit trigger shape."""
+    if publisher is None:
+        return
+    trigger = getattr(publisher, "trigger", None)
+    assert callable(trigger)
+
+
 def skill_audit_correlation_id(prefix: str) -> str:
     assert isinstance(prefix, str)
     assert fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", prefix)
@@ -63,7 +74,7 @@ async def emit_skill_audit_event(
     event_type: EventType,
     fields: Mapping[str, object],
 ) -> None:
-    assert publisher is None or isinstance(publisher, SkillEventPublisher)
+    assert_skill_event_publisher(publisher)
     assert settings is None or isinstance(settings, TrustedSkillSettings)
     assert isinstance(event_type, EventType)
     assert isinstance(fields, Mapping)
@@ -78,7 +89,9 @@ async def emit_skill_audit_event(
         observability_payload=EventObservabilityPayload.canonical_stream(data),
     )
     try:
-        await publisher.trigger(event)
+        result = publisher.trigger(event)
+        assert isawaitable(result)
+        await result
     except Exception:
         if skill_audit_fail_closed(settings):
             raise SkillAuditDeliveryError(

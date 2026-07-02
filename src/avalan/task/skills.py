@@ -23,6 +23,7 @@ from ..skill import (
 )
 from ..skill.observability import (
     SkillEventPublisher,
+    assert_skill_event_publisher,
     skill_audit_correlation_id,
 )
 from ..tool.names import matches_tool_namespace
@@ -113,8 +114,7 @@ class TaskSkillAuditEventPublisher:
     async def trigger(self, event: object) -> None:
         if self.raw_event_observer is not None:
             result = self.raw_event_observer(event)
-            if isawaitable(result):
-                await result
+            await _await_task_skill_result(result)
             return
         observed = sanitize_raw_task_event_closed(event, self.sanitizer)
         await gather(
@@ -181,8 +181,12 @@ async def _notify_task_skill_observer(
     if observer is None:
         return
     result = observer(event)
+    await _await_task_skill_result(result)
+
+
+async def _await_task_skill_result(result: object) -> None:
     if isawaitable(result):
-        await result
+        await gather(result)
 
 
 async def _record_task_skill_observability_event(
@@ -205,9 +209,7 @@ async def task_definition_with_skills_identity(
     schema_base_path: str | Path | None = None,
 ) -> TaskDefinition:
     assert isinstance(definition, TaskDefinition)
-    assert event_manager is None or isinstance(
-        event_manager, SkillEventPublisher
-    )
+    assert_skill_event_publisher(event_manager)
     settings = task_effective_skills_settings(
         definition,
         trusted_settings=trusted_settings,
@@ -250,9 +252,7 @@ async def revalidate_task_skills_for_worker(
     schema_base_path: str | Path | None = None,
 ) -> TaskDefinition:
     assert isinstance(definition, TaskDefinition)
-    assert event_manager is None or isinstance(
-        event_manager, SkillEventPublisher
-    )
+    assert_skill_event_publisher(event_manager)
     expected = (
         expected_identity
         if expected_identity is not None
@@ -345,9 +345,7 @@ async def build_task_skill_registry(
     audit_operation_id: str | None = None,
 ) -> SkillRegistry:
     assert isinstance(settings, TrustedSkillSettings)
-    assert event_manager is None or isinstance(
-        event_manager, SkillEventPublisher
-    )
+    assert_skill_event_publisher(event_manager)
     assert audit_operation_id is None or isinstance(audit_operation_id, str)
     if event_manager is not None and audit_operation_id is None:
         audit_operation_id = skill_audit_correlation_id(

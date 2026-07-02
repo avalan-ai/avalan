@@ -17,6 +17,7 @@ from ..skill import (
 from ..skill.entities import model_dict
 from ..skill.observability import (
     SkillEventPublisher,
+    assert_skill_event_publisher,
     emit_skill_audit_event,
     skill_audit_content_fields,
     skill_audit_context_fields,
@@ -79,9 +80,7 @@ class ListSkillsTool(Tool):
     ) -> None:
         super().__init__()
         assert isinstance(registry, SkillRegistry)
-        assert event_manager is None or isinstance(
-            event_manager, SkillEventPublisher
-        )
+        assert_skill_event_publisher(event_manager)
         self.__name__ = "list"
         self._registry = registry
         self._event_manager = event_manager
@@ -173,9 +172,7 @@ class MatchSkillsTool(Tool):
     ) -> None:
         super().__init__()
         assert isinstance(registry, SkillRegistry)
-        assert event_manager is None or isinstance(
-            event_manager, SkillEventPublisher
-        )
+        assert_skill_event_publisher(event_manager)
         self.__name__ = "match"
         self._registry = registry
         self._event_manager = event_manager
@@ -298,9 +295,7 @@ class ReadSkillTool(Tool):
         super().__init__()
         assert isinstance(registry, SkillRegistry)
         assert isinstance(reader, SkillResourceReader)
-        assert event_manager is None or isinstance(
-            event_manager, SkillEventPublisher
-        )
+        assert_skill_event_publisher(event_manager)
         self.__name__ = "read"
         self._registry = registry
         self._reader = reader
@@ -382,9 +377,7 @@ class CheckSkillTool(Tool):
         super().__init__()
         assert isinstance(registry, SkillRegistry)
         assert isinstance(reader, SkillResourceReader)
-        assert event_manager is None or isinstance(
-            event_manager, SkillEventPublisher
-        )
+        assert_skill_event_publisher(event_manager)
         self.__name__ = "check"
         self._registry = registry
         self._reader = reader
@@ -457,9 +450,7 @@ class SkillsToolSet(ToolSet):
         namespace: str | None = "skills",
     ) -> None:
         assert isinstance(bootstrap_enabled, bool)
-        assert event_manager is None or isinstance(
-            event_manager, SkillEventPublisher
-        )
+        assert_skill_event_publisher(event_manager)
         self.registry = registry
         self.bootstrap_enabled = bootstrap_enabled
         reader = SkillResourceReader()
