@@ -34,8 +34,10 @@ from asyncio import Semaphore, to_thread
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
+from hashlib import sha256
 from os import stat_result
 from pathlib import Path, PurePosixPath
+from re import fullmatch
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Protocol, TypeAlias, TypeVar
 
@@ -189,6 +191,7 @@ class SkillAuthorizedResource:
     path: Path
     size_bytes: int
     line_count: int
+    content_sha256: str | None = None
 
     def __post_init__(self) -> None:
         assert isinstance(self.source_label, str)
@@ -200,6 +203,10 @@ class SkillAuthorizedResource:
         assert isinstance(self.path, Path)
         _assert_non_negative_int(self.size_bytes, "size_bytes")
         _assert_non_negative_int(self.line_count, "line_count")
+        if self.content_sha256 is not None:
+            assert (
+                fullmatch(r"[a-f0-9]{64}", self.content_sha256) is not None
+            ), "content_sha256 must be a SHA-256 hex digest"
 
     def as_model_dict(self) -> dict[str, SkillModelValue]:
         return model_dict(
@@ -217,6 +224,7 @@ class SkillAuthorizedSourceRoot:
     label: str
     authority: SkillSourceAuthority
     root: Path
+    identity_root: Path | None = None
     allow_hidden_paths: bool = False
     resources: tuple[SkillAuthorizedResource, ...] = ()
     diagnostics: tuple[SkillDiagnosticInfo, ...] = ()
@@ -226,6 +234,8 @@ class SkillAuthorizedSourceRoot:
         assert self.label == sanitize_skill_source_label(self.label)
         assert isinstance(self.authority, SkillSourceAuthority)
         assert isinstance(self.root, Path)
+        if self.identity_root is not None:
+            assert isinstance(self.identity_root, Path)
         assert isinstance(self.allow_hidden_paths, bool)
         _assert_resource_tuple(self.resources)
         for resource in self.resources:
@@ -870,6 +880,7 @@ class SkillSourceResolver:
                 path=resolved,
                 size_bytes=size_bytes,
                 line_count=line_count,
+                content_sha256=sha256(content).hexdigest(),
             ),
             None,
         )
