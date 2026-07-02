@@ -1,4 +1,5 @@
-from asyncio import create_task, sleep, wait_for
+from asyncio import CancelledError, create_task, sleep, wait_for
+from contextlib import suppress
 from json import dumps
 from os import stat_result
 from pathlib import Path
@@ -228,6 +229,61 @@ class SkillPerformancePhase14Test(IsolatedAsyncioTestCase):
         finally:
             release_worker.set()
 
+    async def test_cancelled_filesystem_worker_keeps_slot_until_exit(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            resolved_path = root / "resolved.txt"
+            resolved_path.write_text("ready", encoding="utf-8")
+            file_system = SkillAsyncFileSystem(
+                max_concurrency=1,
+                max_operation_seconds=0.2,
+            )
+            release_worker = ThreadEvent()
+            first_started = ThreadEvent()
+            blocking_path = BlockingResolvePath(
+                str(root / "blocked.txt"),
+                started=first_started,
+                release=release_worker,
+                target=resolved_path,
+            )
+            first = create_task(file_system.resolve_path(blocking_path))
+
+            try:
+                await wait_for(
+                    _wait_for_thread_event(first_started),
+                    timeout=0.5,
+                )
+                first.cancel()
+
+                with self.assertRaises(CancelledError):
+                    await first
+
+                self.assertFalse(release_worker.is_set())
+                start_time = perf_counter()
+                with self.assertRaises(TimeoutError):
+                    await wait_for(
+                        file_system.resolve_path(resolved_path),
+                        timeout=0.5,
+                    )
+                self.assertLess(perf_counter() - start_time, 0.4)
+
+                release_worker.set()
+                self.assertEqual(
+                    await wait_for(
+                        file_system.resolve_path(resolved_path),
+                        timeout=1.0,
+                    ),
+                    resolved_path.resolve(strict=True),
+                )
+            finally:
+                release_worker.set()
+                if not first.done():
+                    first.cancel()
+                    with suppress(CancelledError):
+                        await first
+
     async def test_filesystem_semaphore_acquire_timeout_is_bounded(
         self,
     ) -> None:
@@ -346,6 +402,31 @@ class ExplodingFileSystem:
         raise AssertionError("policy denial should not touch the filesystem")
 
 
+class BlockingResolvePath(type(Path())):
+    _release: ThreadEvent
+    _started: ThreadEvent
+    _target: Path
+
+    def __new__(
+        cls,
+        path: str,
+        *,
+        started: ThreadEvent,
+        release: ThreadEvent,
+        target: Path,
+    ) -> "BlockingResolvePath":
+        instance = super().__new__(cls, path)
+        instance._started = started
+        instance._release = release
+        instance._target = target
+        return instance
+
+    def resolve(self, strict: bool = False) -> Path:
+        self._started.set()
+        self._release.wait(timeout=1.0)
+        return self._target.resolve(strict=strict)
+
+
 async def _registry(
     root: Path,
     *,
@@ -365,6 +446,11 @@ async def _registry(
         read_limits=read_limits,
         index_limits=index_limits,
     )
+
+
+async def _wait_for_thread_event(event: ThreadEvent) -> None:
+    while not event.is_set():
+        await sleep(0.001)
 
 
 def _config(root: Path) -> SkillConfiguredSource:
