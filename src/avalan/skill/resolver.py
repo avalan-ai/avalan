@@ -44,6 +44,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
+from logging import getLogger
 from os import stat_result
 from pathlib import Path, PurePosixPath
 from re import fullmatch
@@ -51,6 +52,7 @@ from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Protocol, TypeAlias, TypeVar
 
 _T = TypeVar("_T")
+_LOGGER = getLogger(__name__)
 
 
 class SkillSourceFileSystem(Protocol):
@@ -134,10 +136,18 @@ class SkillAsyncFileSystem:
         def release_worker_slot(future: Future[_T]) -> None:
             self._pending_workers.discard(future)
             self._semaphore.release()
-            try:
-                future.result()
-            except BaseException:
-                pass
+            if not future.cancelled():
+                exception = future.exception()
+                if exception is not None:
+                    _LOGGER.debug(
+                        "Skill filesystem worker failed after caller stopped "
+                        "waiting.",
+                        exc_info=(
+                            type(exception),
+                            exception,
+                            exception.__traceback__,
+                        ),
+                    )
 
         try:
             if self._max_operation_seconds is None:

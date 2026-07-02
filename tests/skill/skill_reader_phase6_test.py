@@ -1,4 +1,4 @@
-from asyncio import CancelledError, create_task, gather, sleep
+from asyncio import CancelledError, Event, create_task, gather, sleep, wait_for
 from dataclasses import replace
 from json import dumps
 from os import stat_result
@@ -1532,14 +1532,15 @@ class SkillReaderPhase6Test(IsolatedAsyncioTestCase):
             )
             registry = await _registry(root)
             reader = SkillResourceReader()
+            file_system = SlowReadFileSystem()
             task = create_task(
                 reader.read(
                     registry,
                     "pdf",
-                    file_system=SlowReadFileSystem(),
+                    file_system=file_system,
                 )
             )
-            await sleep(0.01)
+            await wait_for(file_system.wait_until_reading(), timeout=1.0)
             task.cancel()
 
             with self.assertRaises(CancelledError):
@@ -1575,7 +1576,15 @@ class MutatingReadFileSystem(SkillAsyncFileSystem):
 
 
 class SlowReadFileSystem(SkillAsyncFileSystem):
+    def __init__(self) -> None:
+        super().__init__()
+        self._read_started = Event()
+
+    async def wait_until_reading(self) -> None:
+        await self._read_started.wait()
+
     async def read_bytes(self, path: Path, limit: int) -> bytes:
+        self._read_started.set()
         await sleep(10)
         return await super().read_bytes(path, limit)
 
