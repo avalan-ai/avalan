@@ -565,6 +565,30 @@ class ChatEntitiesTestCase(TestCase):
         )
         self.assertEqual(embedded.push("later token"), ())
 
+    def test_model_visible_redactor_redacts_skill_source_path_references(
+        self,
+    ) -> None:
+        skill_bodies = (
+            "# Demo Skill\n\nSource: ~/.codex/skills/demo/README.md\n",
+            "# Demo Skill\n\nSource: /tmp/demo/SKILL.md\n",
+            "# Demo Skill\n\nSource: /skills/demo/README.md\n",
+            "# Demo Skill\n\nSource: /skills\n",
+            "# Demo Skill\n\nSource: \\skills\\demo\\README.md\n",
+            "# Demo Skill\n\nSource: \\skills\n",
+            "# Demo Skill\n\nSource: C:/skills/demo/README.md\n",
+            "# Demo Skill\n\nSource: C:/skills\n",
+            "# Demo Skill\n\nSource: C:\\skills\n",
+        )
+
+        for text in skill_bodies:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    server_entities.sanitize_model_visible_server_protocol_text(
+                        text
+                    ),
+                    server_entities.SKILL_CONTENT_REDACTION,
+                )
+
     def test_model_visible_stream_redactor_allows_markdown_starts(
         self,
     ) -> None:
@@ -598,6 +622,85 @@ class ChatEntitiesTestCase(TestCase):
         )
         self.assertEqual(instructions.push("Next delta."), ("Next delta.",))
 
+        release_notes = (
+            "# Release Notes\n\n"
+            "Use when evaluating rollout options for the July train.\n"
+        )
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(
+                release_notes
+            ),
+            release_notes,
+        )
+        api_guide = "# API Guide\n\nSee docs/skills/demo for details.\n"
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(
+                api_guide
+            ),
+            api_guide,
+        )
+        remote_skill_resource = (
+            "# API Guide\n\n"
+            "See https://docs.example.com/skills/demo/SKILL.md\n"
+        )
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(
+                remote_skill_resource
+            ),
+            remote_skill_resource,
+        )
+        relative_skill_resource = "description: docs/skills/demo/SKILL.md"
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(
+                relative_skill_resource
+            ),
+            relative_skill_resource,
+        )
+        skills_matrix = (
+            "# Skills Matrix\n\n"
+            "Use when assigning people to delivery rotations.\n"
+        )
+        self.assertEqual(
+            server_entities.sanitize_model_visible_server_protocol_text(
+                skills_matrix
+            ),
+            skills_matrix,
+        )
+
+        for skill_body in (
+            "# imagegen\n\nUse when creating bitmap assets.\n",
+            "# Presentations\n\nUse when building slide decks.\n",
+            "# Imagegen\n\nUse when creating bitmap assets.\n",
+            "# PDF\n\nUse when extracting document layouts.\n",
+            "# PDF Basic\n\nUse when handling simple PDF tasks.\n",
+            (
+                "# browser:control-in-app-browser\n\n"
+                "Use when controlling browser.\n"
+            ),
+        ):
+            with self.subTest(skill_body=skill_body):
+                self.assertEqual(
+                    server_entities.sanitize_model_visible_server_protocol_text(
+                        skill_body
+                    ),
+                    server_entities.SKILL_CONTENT_REDACTION,
+                )
+
+        for ordinary_markdown in (
+            "# ``\n\nUse when writing placeholder sections during drafting.\n",
+            (
+                "# Quarterly Planning Notes\n\n"
+                "Use when evaluating staffing and release tradeoffs.\n"
+            ),
+        ):
+            with self.subTest(ordinary_markdown=ordinary_markdown):
+                self.assertEqual(
+                    server_entities.sanitize_model_visible_server_protocol_text(
+                        ordinary_markdown
+                    ),
+                    ordinary_markdown,
+                )
+
     def test_model_visible_stream_redactor_releases_safe_heading_prefixes(
         self,
     ) -> None:
@@ -622,6 +725,45 @@ class ChatEntitiesTestCase(TestCase):
             description.push(" note for deployment.\n"),
             ("description: Source note for deployment.\n",),
         )
+
+        private_source = (
+            server_entities.ModelVisibleServerProtocolTextRedactor()
+        )
+        self.assertEqual(private_source.push("description: ~/.c"), ())
+        self.assertEqual(private_source.push("odex"), ())
+        self.assertEqual(
+            private_source.push("/skills/demo/README.md"),
+            (server_entities.SKILL_CONTENT_REDACTION,),
+        )
+
+        for chunks in (
+            (
+                "description: ",
+                "~/",
+                ".codex/skills/demo/README.md",
+            ),
+            ("description: ", "/", "skills/demo/README.md"),
+            ("description: ", "C:/", "skills/demo/README.md"),
+            ("description: ", "C:\\", "skills\\demo\\README.md"),
+        ):
+            with self.subTest(chunks=chunks):
+                split_source = (
+                    server_entities.ModelVisibleServerProtocolTextRedactor()
+                )
+                self.assertEqual(split_source.push(chunks[0]), ())
+                self.assertEqual(split_source.push(chunks[1]), ())
+                self.assertEqual(
+                    split_source.push(chunks[2]),
+                    (server_entities.SKILL_CONTENT_REDACTION,),
+                )
+
+        for prefix in ("description: ~", "description: C:"):
+            with self.subTest(prefix=prefix):
+                split_prefix = (
+                    server_entities.ModelVisibleServerProtocolTextRedactor()
+                )
+                self.assertEqual(split_prefix.push(prefix), ())
+                self.assertTrue(split_prefix.has_pending)
 
     def test_model_visible_stream_redactor_redacts_split_host_paths(
         self,

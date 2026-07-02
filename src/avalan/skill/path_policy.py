@@ -6,6 +6,8 @@ _LOGICAL_ID_PATTERN = r"[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*"
 _URL_LIKE_PATTERN = r"[a-zA-Z][a-zA-Z0-9+.-]*://"
 _URI_SCHEME_PATTERN = r"[a-zA-Z][a-zA-Z0-9+.-]*:"
 _WINDOWS_ABSOLUTE_PATTERN = r"[a-zA-Z]:[\\/]"
+_SKILL_SOURCE_DIRECTORY = "skills"
+_PRIVATE_SKILL_SOURCE_PARENT_DIRECTORY = ".codex"
 _SENSITIVE_PARTS = frozenset(
     {
         ".aws",
@@ -119,6 +121,45 @@ def sanitize_source_label(value: str) -> str:
     return sanitize_skill_source_label(value)
 
 
+def contains_skill_source_path_reference(value: str) -> bool:
+    assert isinstance(value, str), "text must be a string"
+    return any(
+        _is_skill_source_path_reference_candidate(candidate)
+        for candidate in _skill_source_path_reference_candidates(value)
+    )
+
+
+def contains_skill_source_resource_reference(
+    value: str,
+    main_resource_filename: str,
+) -> bool:
+    assert isinstance(value, str), "text must be a string"
+    assert isinstance(
+        main_resource_filename, str
+    ), "main resource filename must be a string"
+    filename = _normalize_skill_source_path_reference(main_resource_filename)
+    if not filename:
+        return False
+    return any(
+        _is_skill_source_path_reference_candidate(candidate)
+        or _is_local_skill_main_resource_candidate(candidate, filename)
+        for candidate in _skill_source_path_reference_candidates(value)
+    )
+
+
+def could_contain_skill_source_path_reference_prefix(value: str) -> bool:
+    assert isinstance(value, str), "text must be a string"
+    normalized = _normalize_skill_source_path_reference(value)
+    if not normalized:
+        return False
+    if contains_skill_source_path_reference(normalized):
+        return True
+    return any(
+        _could_be_skill_source_path_reference_candidate_prefix(candidate)
+        for candidate in _skill_source_path_reference_candidates(normalized)
+    )
+
+
 class SkillPathPolicy:
     def __init__(self, *, allow_hidden_paths: bool = False) -> None:
         assert isinstance(allow_hidden_paths, bool)
@@ -223,6 +264,114 @@ def _is_sensitive_part(part: str) -> bool:
 
 def _has_empty_model_segment(value: str) -> bool:
     return any(part in {"", "."} for part in value.split("/"))
+
+
+def _normalize_skill_source_path_reference(value: str) -> str:
+    return value.strip().lower().replace("\\", "/")
+
+
+def _skill_source_path_reference_candidates(
+    value: str,
+) -> tuple[str, ...]:
+    candidates: list[str] = []
+    for token in _skill_source_path_reference_tokens(value):
+        candidates.append(token)
+        if token.startswith("file://"):
+            candidates.append(token.removeprefix("file://"))
+        if token.startswith("~/"):
+            candidates.append(token[2:])
+        if ":" in token and not _is_remote_skill_source_url(token):
+            candidates.append(token.split(":", 1)[1])
+    return tuple(
+        dict.fromkeys(candidate for candidate in candidates if candidate)
+    )
+
+
+def _skill_source_path_reference_tokens(value: str) -> tuple[str, ...]:
+    normalized = _normalize_skill_source_path_reference(value)
+    for separator in " \t\r\n,;\"'()[]{}<>":
+        normalized = normalized.replace(separator, " ")
+    return tuple(token.strip() for token in normalized.split() if token)
+
+
+def _is_skill_source_path_reference_candidate(value: str) -> bool:
+    path, anchored = _skill_source_path_reference_path(value)
+    if not path:
+        return False
+    parts = tuple(part for part in path.split("/") if part)
+    if _has_private_skill_source_parts(parts):
+        return True
+    return anchored and _SKILL_SOURCE_DIRECTORY in parts
+
+
+def _is_local_skill_main_resource_candidate(
+    value: str,
+    filename: str,
+) -> bool:
+    path, anchored = _skill_source_path_reference_path(value)
+    if not path or not anchored:
+        return False
+    return PurePosixPath(path).name == filename
+
+
+def _could_be_skill_source_path_reference_candidate_prefix(
+    value: str,
+) -> bool:
+    path, anchored = _skill_source_path_reference_path(value)
+    if not path:
+        return False
+    if fullmatch(r"[a-z]:", path) is not None:
+        return True
+    if path in {"~", "~/"}:
+        return True
+    if path.startswith("."):
+        return _private_skill_source_path_prefix().startswith(path)
+    if not anchored:
+        return False
+    first_part = path.lstrip("/").split("/", 1)[0]
+    if not first_part:
+        return True
+    return _SKILL_SOURCE_DIRECTORY.startswith(first_part)
+
+
+def _skill_source_path_reference_path(value: str) -> tuple[str, bool]:
+    path = _normalize_skill_source_path_reference(value).rstrip(".")
+    if not path:
+        return "", False
+    if _is_remote_skill_source_url(path):
+        return "", False
+    if path.startswith("file://"):
+        return path.removeprefix("file://"), True
+    if path == "~/":
+        return path, True
+    if path.startswith("~/"):
+        return path[2:], True
+    if path.startswith("/"):
+        return path, True
+    if match(_WINDOWS_ABSOLUTE_PATTERN, path) is not None:
+        return path[2:].lstrip("/") or "/", True
+    return path, False
+
+
+def _is_remote_skill_source_url(value: str) -> bool:
+    return match(
+        _URL_LIKE_PATTERN, value
+    ) is not None and not value.startswith("file://")
+
+
+def _has_private_skill_source_parts(parts: tuple[str, ...]) -> bool:
+    return any(
+        part == _PRIVATE_SKILL_SOURCE_PARENT_DIRECTORY
+        and index + 1 < len(parts)
+        and parts[index + 1] == _SKILL_SOURCE_DIRECTORY
+        for index, part in enumerate(parts)
+    )
+
+
+def _private_skill_source_path_prefix() -> str:
+    return (
+        f"{_PRIVATE_SKILL_SOURCE_PARENT_DIRECTORY}/{_SKILL_SOURCE_DIRECTORY}"
+    )
 
 
 def _digest(value: str) -> str:

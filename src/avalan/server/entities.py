@@ -5,8 +5,11 @@ from ..entities import (
     ToolNamePolicySettings,
 )
 from ..skill import (
+    SKILL_MAIN_RESOURCE_FILENAME,
     SkillModelValue,
     TrustedSkillSettings,
+    contains_skill_source_resource_reference,
+    could_contain_skill_source_path_reference_prefix,
     trusted_skill_settings_fingerprint,
     trusted_skill_source_fingerprint,
     trusted_skill_source_identity_dict,
@@ -73,14 +76,34 @@ _HOST_PATH_PATTERN = compile_pattern(
     r")"
     r"(?=$|[\s,;:\"'\\\]}])"
 )
+_SKILL_BODY_PHRASE_MARKERS = (
+    "use when",
+    "trigger rules",
+    "how to use",
+    "instructions:",
+)
+_SKILL_BODY_RESOURCE_FIELD_MARKERS = ("source:", "path:", "file:")
+_SKILL_BODY_HOST_PATH_PREFIX_MARKERS = (
+    "/users",
+    "/home",
+    "/private",
+    "/tmp",
+    "c:\\users",
+    "c:/users",
+)
+_SKILL_BODY_TEXT_FOLLOWUP_MARKERS = (
+    *_SKILL_BODY_PHRASE_MARKERS,
+    *_SKILL_BODY_RESOURCE_FIELD_MARKERS,
+    SKILL_MAIN_RESOURCE_FILENAME.lower(),
+    *_SKILL_BODY_HOST_PATH_PREFIX_MARKERS,
+)
 _SKILL_BODY_HEADING_PATTERN = compile_pattern(
-    r"(?is)(?:^|\n)\s*#\s+[^\n]{1,160}\n\s*\n"
+    r"(?is)(?:^|\n)\s*#\s+(?P<title>[^\n]{1,160})\n\s*\n"
     r".{0,12000}\b"
     r"(?:use when|trigger rules|how to use|instructions\s*:)"
 )
-_SKILL_BODY_RESOURCE_PATTERN = compile_pattern(
+_SKILL_BODY_RESOURCE_START_PATTERN = compile_pattern(
     r"(?is)(?:^|\n)\s*(?:#\s+[^\n]{1,160}|---\s*\n|description\s*:)"
-    r".{0,12000}\b(?:SKILL\.md|\.codex[/\\]skills|[/\\]skills[/\\])\b"
 )
 _SKILL_BODY_STREAM_START_PATTERN = compile_pattern(
     r"(?is)(?:^|\n)\s*(?:#\s+|---\s*(?:\n|$)|description\s*:)"
@@ -303,9 +326,12 @@ class ModelVisibleServerProtocolTextRedactor:
         if _could_be_echoed_skill_body_start_prefix(candidate):
             self._pending = candidate
             return ()
-        if _has_echoed_skill_body_signal(candidate):
+        if _has_echoed_skill_body_marker(candidate):
             self._redacted = True
             return (SKILL_CONTENT_REDACTION,)
+        if _should_buffer_skill_source_path_reference_candidate(candidate):
+            self._pending = candidate
+            return ()
         safe_text, pending_tail = _split_streaming_host_path_tail(candidate)
         if pending_tail:
             self._pending = pending_tail
@@ -474,14 +500,54 @@ def _path_match_inside_url(match: Match[str]) -> bool:
 
 def _looks_like_echoed_skill_body(value: str) -> bool:
     stripped = value.strip()
-    if _SKILL_BODY_RESOURCE_PATTERN.search(stripped):
+    if _looks_like_skill_body_resource_reference(stripped):
         return True
     if len(stripped) < 40:
         return False
-    return bool(_SKILL_BODY_HEADING_PATTERN.search(stripped))
+    return _looks_like_skill_body_phrase_heading(stripped)
 
 
-def _has_echoed_skill_body_signal(value: str) -> bool:
+def _looks_like_skill_body_phrase_heading(value: str) -> bool:
+    return any(
+        _looks_like_skill_body_heading_title(match.group("title"))
+        for match in _SKILL_BODY_HEADING_PATTERN.finditer(value)
+    )
+
+
+def _looks_like_skill_body_heading_title(value: str) -> bool:
+    title = value.strip().strip("`")
+    if not title:
+        return False
+    words = title.split()
+    lowered_words = title.lower().split()
+    if len(lowered_words) == 1:
+        token = lowered_words[0]
+        return (
+            token == title
+            or title.isupper()
+            or title.istitle()
+            or any(separator in token for separator in ":._-")
+        ) and fullmatch(r"[a-z0-9][a-z0-9:._-]{0,63}", token) is not None
+    if len(lowered_words) != 2:
+        return False
+    first, second = lowered_words
+    return second == "skill" or (
+        second == "basic"
+        and words[0].isupper()
+        and fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", first.lower()) is not None
+    )
+
+
+def _looks_like_skill_body_resource_reference(value: str) -> bool:
+    return _SKILL_BODY_RESOURCE_START_PATTERN.search(
+        value
+    ) is not None and contains_skill_source_resource_reference(
+        value,
+        SKILL_MAIN_RESOURCE_FILENAME,
+    )
+
+
+def _has_echoed_skill_body_marker(value: str) -> bool:
     return _looks_like_echoed_skill_body(value)
 
 
@@ -511,6 +577,44 @@ def _should_buffer_echoed_skill_body_candidate(value: str) -> bool:
     return _should_buffer_skill_body_followup(after_marker)
 
 
+def _should_buffer_skill_source_path_reference_candidate(
+    value: str,
+) -> bool:
+    matches = tuple(_SKILL_BODY_STREAM_START_PATTERN.finditer(value))
+    if not matches:
+        return False
+    candidate = value[matches[-1].start() :].lstrip()
+    lowered = candidate.lower()
+    if candidate.startswith("#"):
+        lines = candidate.split("\n", 1)
+        if len(lines) == 1:
+            return False
+        return _should_buffer_skill_source_path_reference_followup(lines[1])
+    if lowered.startswith("description:"):
+        return _should_buffer_skill_source_path_reference_followup(
+            candidate.split(":", 1)[1]
+        )
+    after_marker = candidate[3:]
+    return _should_buffer_skill_source_path_reference_followup(after_marker)
+
+
+def _should_buffer_skill_source_path_reference_followup(
+    value: str,
+) -> bool:
+    candidate = value.lstrip()
+    if not candidate:
+        return False
+    lowered = candidate.lower()
+    for marker in _SKILL_BODY_RESOURCE_FIELD_MARKERS:
+        if marker.startswith(lowered):
+            return True
+        if lowered.startswith(marker):
+            return could_contain_skill_source_path_reference_prefix(
+                candidate.split(":", 1)[1]
+            )
+    return could_contain_skill_source_path_reference_prefix(candidate)
+
+
 def _should_buffer_heading_skill_body_candidate(value: str) -> bool:
     lines = value.split("\n", 1)
     if len(lines) == 1:
@@ -523,29 +627,10 @@ def _should_buffer_skill_body_followup(value: str) -> bool:
     if not candidate:
         return True
     lowered = candidate.lower()
-    signals = (
-        "use when",
-        "trigger rules",
-        "how to use",
-        "instructions:",
-        "source:",
-        "path:",
-        "file:",
-        "skill.md",
-        ".codex",
-        "/skills/",
-        "\\skills\\",
-        "/users",
-        "/home",
-        "/private",
-        "/tmp",
-        "c:\\users",
-        "c:/users",
-    )
     return any(
-        signal.startswith(lowered) or lowered.startswith(signal)
-        for signal in signals
-    )
+        marker.startswith(lowered) or lowered.startswith(marker)
+        for marker in _SKILL_BODY_TEXT_FOLLOWUP_MARKERS
+    ) or could_contain_skill_source_path_reference_prefix(candidate)
 
 
 def _redact_host_path_match(match: Match[str]) -> str:
