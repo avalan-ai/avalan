@@ -248,6 +248,15 @@ from .path_policy import (
     SkillPathPolicy as SkillPathPolicy,
 )
 from .path_policy import (
+    contains_skill_source_path_reference as contains_skill_source_path_reference,  # noqa: E501
+)
+from .path_policy import (
+    contains_skill_source_resource_reference as contains_skill_source_resource_reference,  # noqa: E501
+)
+from .path_policy import (
+    could_contain_skill_source_path_reference_prefix as could_contain_skill_source_path_reference_prefix,  # noqa: E501
+)
+from .path_policy import (
     redact_host_path as redact_host_path,
 )
 from .path_policy import (

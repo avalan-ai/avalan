@@ -11,6 +11,9 @@ from avalan.skill import (
     SkillStatus,
     WorkspaceSkillSourceAuthority,
     authorize_skill_resource,
+    contains_skill_source_path_reference,
+    contains_skill_source_resource_reference,
+    could_contain_skill_source_path_reference_prefix,
     redact_host_path,
     resolve_skill_sources,
     sanitize_skill_resource_id,
@@ -319,6 +322,110 @@ class SkillPathPolicyPhase2Test(IsolatedAsyncioTestCase):
             )
             self.assertEqual(redact_host_path("bad\x00path"), "<host-path>")
             self.assertEqual(redact_host_path("/root/.ssh"), "<host-path>")
+
+            for source_path in (
+                "Source: ~/.codex/skills/demo/README.md",
+                "Source: file:///skills/demo",
+                "Source: /skills/demo/README.md",
+                "Source: /skills",
+                "Source: \\skills\\demo\\README.md",
+                "Source: \\skills",
+                "Source: C:/skills/demo/README.md",
+                "Source: C:/skills",
+                "Source: C:\\skills",
+            ):
+                with self.subTest(source_path=source_path):
+                    self.assertTrue(
+                        contains_skill_source_path_reference(source_path)
+                    )
+
+            for prefix in (
+                "",
+                "/skills/demo",
+            ):
+                with self.subTest(prefix=prefix):
+                    self.assertEqual(
+                        could_contain_skill_source_path_reference_prefix(
+                            prefix
+                        ),
+                        bool(prefix),
+                    )
+
+            for prefix in (
+                "~",
+                "~/",
+                "~/.c",
+                ".codex",
+                "/",
+                "/ski",
+                "\\",
+                "\\ski",
+                "C:",
+                "C:/",
+                "C:/ski",
+                "C:\\",
+                "C:\\ski",
+            ):
+                with self.subTest(prefix=prefix):
+                    self.assertTrue(
+                        could_contain_skill_source_path_reference_prefix(
+                            prefix
+                        )
+                    )
+            self.assertFalse(
+                contains_skill_source_path_reference(
+                    "Source note for deployment."
+                )
+            )
+            self.assertFalse(contains_skill_source_path_reference("   "))
+            self.assertFalse(contains_skill_source_path_reference("."))
+            self.assertFalse(
+                contains_skill_source_resource_reference("   ", "SKILL.md")
+            )
+            self.assertFalse(
+                contains_skill_source_resource_reference(
+                    "Source: /tmp/SKILL.md",
+                    "",
+                )
+            )
+            for private_resource in (
+                "Source: file:///tmp/demo/SKILL.md",
+                "Source: /tmp/demo/SKILL.md",
+                "Source: C:/tmp/demo/SKILL.md",
+            ):
+                with self.subTest(private_resource=private_resource):
+                    self.assertTrue(
+                        contains_skill_source_resource_reference(
+                            private_resource,
+                            "SKILL.md",
+                        )
+                    )
+            self.assertFalse(
+                could_contain_skill_source_path_reference_prefix(
+                    "Source note for deployment."
+                )
+            )
+            for public_reference in (
+                "https://docs.example.com/skills/demo",
+                "https://docs.example.com/skills/demo/SKILL.md",
+                "docs/skills/demo",
+                "docs/skills/demo/SKILL.md",
+            ):
+                with self.subTest(public_reference=public_reference):
+                    self.assertFalse(
+                        contains_skill_source_path_reference(public_reference)
+                    )
+                    self.assertFalse(
+                        could_contain_skill_source_path_reference_prefix(
+                            public_reference
+                        )
+                    )
+                    self.assertFalse(
+                        contains_skill_source_resource_reference(
+                            public_reference,
+                            "SKILL.md",
+                        )
+                    )
 
 
 def _config(label: str, root: Path) -> SkillSourceRootConfig:
