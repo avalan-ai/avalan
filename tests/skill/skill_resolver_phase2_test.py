@@ -1067,9 +1067,30 @@ class SkillResolverPhase2Test(IsolatedAsyncioTestCase):
             Path("/tmp"),
             manifest_path=Path("/tmp/SKILL.md"),
         )
+        root_only = resolver_module._trusted_resolved_source_diagnostic(
+            config,
+            TrustedSkillSettings(
+                sources=(
+                    SkillSourceConfig(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        root_path="/tmp/skills",
+                    ),
+                )
+            ),
+            Path("/tmp/skills"),
+            manifest_path=Path("/tmp/SKILL.md"),
+        )
 
         self.assertIsNone(missing_label)
         self.assertIsNone(label_only)
+        self.assertIsNotNone(root_only)
+        assert root_only is not None
+        self.assertEqual(root_only.path, "source.identity")
+        self.assertEqual(
+            root_only.details.get("reason"),
+            "untrusted_source_identity",
+        )
 
     async def test_trusted_source_authority_identity_must_match(self) -> None:
         with TemporaryDirectory() as directory:

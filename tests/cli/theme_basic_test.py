@@ -30,6 +30,7 @@ from avalan.cli.theme.basic import (
     _basic_active_model_renderable,
     _basic_active_tool_line,
     _basic_active_tool_renderable,
+    _basic_completed_model_line,
     _basic_completed_tool_line,
     _basic_has_executed_tool_frame,
     _basic_json_tool_answer,
@@ -41,6 +42,7 @@ from avalan.cli.theme.basic import (
     _basic_visible_answer_text,
     _BasicActiveModelSpinner,
     _BasicAnswerPresenter,
+    _BasicToolLineEntry,
 )
 from avalan.cli.theme.fancy import FancyTheme
 from avalan.cli.theme.stream_presenter import (
@@ -1314,6 +1316,104 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[bold]2 rows[/bold]", completed_float_rows)
         self.assertNotIn("True rows", completed_bool_rows)
 
+    def test_database_projection_lines_cover_fallback_edges(self) -> None:
+        tables_projection = ToolDisplayProjection(
+            action="list",
+            label="database.tables",
+            target="tables",
+            scope="database",
+            details=(ToolDisplayDetail(label="operation", value="tables"),),
+        )
+        identity_projection = ToolDisplayProjection(
+            action="list",
+            label="database.tables",
+            target="tables",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="tables"),
+                ToolDisplayDetail(label="database", value=" \n "),
+                ToolDisplayDetail(label="db_name", value="analytics"),
+            ),
+        )
+        rows_projection = ToolDisplayProjection(
+            action="query",
+            label="database.run",
+            target="SQL statement",
+            scope="database",
+            status="completed",
+            details=(
+                ToolDisplayDetail(label="operation", value="run"),
+                ToolDisplayDetail(label="database", value="claims"),
+                ToolDisplayDetail(label="sql", value="UPDATE users SET x = 1"),
+                ToolDisplayDetail(label="rows", value="two"),
+                ToolDisplayDetail(label="rows", value=2),
+            ),
+        )
+        subject_projection = ToolDisplayProjection(
+            action="inspect",
+            scope="workspace",
+        )
+
+        active_without_started_at = _basic_active_tool_line(
+            "database.tables",
+            started_at=None,
+            updated_at=3.0,
+            display_projection=tables_projection,
+        )
+        with patch(
+            "avalan.cli.theme.basic._basic_tool_elapsed_text",
+            return_value=None,
+        ):
+            active_without_elapsed_text = _basic_active_tool_line(
+                "database.tables",
+                started_at=1.0,
+                updated_at=3.0,
+                display_projection=tables_projection,
+            )
+            active_tool_without_elapsed_text = _basic_active_tool_line(
+                "calc",
+                started_at=1.0,
+                updated_at=3.0,
+            )
+        completed_identity = _basic_completed_tool_line(
+            "database.tables",
+            "completed",
+            None,
+            display_projection=identity_projection,
+        )
+        completed_rows = _basic_completed_tool_line(
+            "database.run",
+            "completed",
+            None,
+            display_projection=rows_projection,
+        )
+        active_subject = _basic_active_tool_line(
+            "workspace.inspect",
+            started_at=None,
+            updated_at=None,
+            display_projection=subject_projection,
+        )
+
+        self.assertIn(
+            "Listing tables in database.",
+            _render_text(active_without_started_at),
+        )
+        self.assertIn(
+            "Listing tables in database.",
+            _render_text(active_without_elapsed_text),
+        )
+        self.assertIn(
+            "Running tool calc.",
+            _render_text(active_tool_without_elapsed_text),
+        )
+        self.assertIn("analytics", _render_text(completed_identity))
+        self.assertIn("2 rows", _render_text(completed_rows))
+        self.assertIn(
+            "Starting tool inspect in workspace.",
+            _render_text(active_subject),
+        )
+
     def test_zero_count_database_inspect_does_not_show_table_list(
         self,
     ) -> None:
@@ -2017,6 +2117,20 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Executed tool pdfinfo", second_answer_text)
         self.assertEqual(_frames(second_answer), [])
 
+    def test_live_tool_history_frame_handles_no_entries_or_notices(
+        self,
+    ) -> None:
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        empty_frame = presenter._live_tool_history_frame(())
+        notice_frame = presenter._live_tool_history_frame(
+            (_BasicToolLineEntry(key="terminal:notice", line="Notice."),)
+        )
+
+        self.assertIsNone(empty_frame)
+        self.assertEqual(notice_frame, "Notice.")
+        self.assertFalse(presenter._executed_tool_frame_seen)
+
     async def test_display_tools_events_zero_keeps_active_and_clears_stale(
         self,
     ) -> None:
@@ -2096,6 +2210,10 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             started_at=None,
             updated_at=None,
         )
+        completed_model_line = _basic_completed_model_line(
+            started_at=None,
+            updated_at=None,
+        )
 
         self.assertIn("Thinking for 1s...", str(model_renderable))
         self.assertIn(
@@ -2104,6 +2222,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(spinner._current_updated_at(), 2.0)
         self.assertIsNone(unknown_start_spinner._current_updated_at())
+        self.assertEqual(completed_model_line, "[cyan]Thought.[/cyan]")
 
     async def test_stderr_tool_history_emits_only_new_lines(self) -> None:
         config = _stream_config(
@@ -2585,6 +2704,35 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(_answer_chunks(first), ['Visible\n{"name": "calc"'])
         self.assertEqual(_answer_chunks(second), ["Visible\nFinal"])
+
+    async def test_visible_answer_can_be_replaced_by_empty_protocol(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = _BasicAnswerPresenter()
+
+        builder.append_answer_text('{"x": 1')
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        first = [
+            item
+            async for item in presenter.present(
+                _stream_request(config, builder.snapshot(), mode="answer")
+            )
+        ]
+        builder.append_answer_text(', "name": "calc", "arguments": {}}')
+        second = [
+            item
+            async for item in presenter.present(
+                _stream_request(config, builder.snapshot(), mode="answer")
+            )
+        ]
+
+        self.assertEqual(_answer_chunks(first), ['{"x": 1'])
+        self.assertEqual(_answer_chunks(second), [])
 
     def test_basic_filter_helper_edge_cases(self) -> None:
         self.assertEqual(

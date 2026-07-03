@@ -15,6 +15,7 @@ from avalan.skill import (
     SkillObservabilitySettings,
     SkillPrivacySettings,
     SkillReadLimits,
+    SkillSourceAuthority,
     SkillSourceAuthorityKind,
     SkillSourceConfig,
     SkillSourceLimits,
@@ -398,6 +399,11 @@ class SkillsSettingsCliTestCase(TestCase):
                     ),
                     expected,
                 )
+
+        with self.assertRaisesRegex(AssertionError, "unsupported"):
+            agent_cmds._skills_source_authority_template_value(
+                SkillSourceAuthority(kind=SkillSourceAuthorityKind.WORKSPACE)
+            )
 
     def test_agent_tool_settings_rejects_unknown_source_label(self) -> None:
         args = Namespace(

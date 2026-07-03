@@ -199,6 +199,27 @@ class SkillsLoaderTestCase(IsolatedAsyncioTestCase):
                 "preinstalled_remote"
             )
 
+        class UnsupportedAuthorityKind:
+            BUNDLED = object()
+            PLUGIN_PROVIDED = object()
+            PREINSTALLED_REMOTE = object()
+            USER_LOCAL = object()
+            WORKSPACE = object()
+
+            def __call__(self, value: str) -> object:
+                assert isinstance(value, str)
+                return object()
+
+        with patch.object(
+            loader_module,
+            "SkillSourceAuthorityKind",
+            UnsupportedAuthorityKind(),
+        ):
+            with self.assertRaisesRegex(AssertionError, "unsupported"):
+                OrchestratorLoader._skill_source_authority_from_config(
+                    "unsupported"
+                )
+
     async def test_from_settings_exposes_enabled_skills_toolset(
         self,
     ) -> None:
