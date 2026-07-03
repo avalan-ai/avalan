@@ -19,6 +19,7 @@ from avalan.skill import (
     SkillRegistryVersion,
     SkillResourceFingerprint,
     SkillResourceHandle,
+    SkillResourceReader,
     SkillStatus,
     TrustedSkillSettings,
     WorkspaceSkillSourceAuthority,
@@ -168,6 +169,55 @@ class SkillRegistryPhase4Test(IsolatedAsyncioTestCase):
                 setattr(
                     registry.resource_handles[0], "status", SkillStatus.STALE
                 )
+
+    async def test_direct_manifest_reads_declared_resources_only(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "SKILL.md"
+            _write_skill(
+                manifest,
+                name="pdf",
+                description="PDF guidance.",
+                resources='["references/rendering.md"]',
+            )
+            _write_text(
+                root / "references" / "rendering.md",
+                "Render pages.\n",
+            )
+            _write_skill(
+                root / "SKILL-other.md",
+                name="other",
+                description="Other guidance.",
+            )
+            source_result = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="pdf",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=manifest,
+                    ),
+                )
+            )
+
+            registry = await build_skill_registry(source_result)
+            read = await SkillResourceReader().read(
+                registry,
+                "pdf",
+                resource_id="references/rendering.md",
+            )
+
+        self.assertEqual(registry.status, SkillStatus.OK)
+        self.assertEqual(tuple(registry.skills_by_id), ("pdf",))
+        self.assertEqual(read.status, SkillStatus.OK)
+        self.assertIsNotNone(read.content)
+        assert read.content is not None
+        self.assertEqual(read.content.text, "Render pages.\n")
+        self.assertEqual(
+            tuple(handle.resource_id for handle in registry.resource_handles),
+            ("main", "references/rendering.md"),
+        )
 
     async def test_disabled_malformed_and_duplicate_skills_are_structured(
         self,
@@ -377,6 +427,56 @@ class SkillRegistryPhase4Test(IsolatedAsyncioTestCase):
                 baseline.registry_version.as_model_value(),
                 content_changed.registry_version.as_model_value(),
             )
+
+    async def test_registry_version_changes_for_manifest_file_sources(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            pdf_path = root / "SKILL-pdf.md"
+            docx_path = root / "SKILL-docx.md"
+            _write_skill(
+                pdf_path,
+                name="PDF",
+                description="PDF guidance.",
+            )
+            _write_skill(
+                docx_path,
+                name="PDF",
+                description="PDF guidance.",
+            )
+
+            pdf_registry = await build_skill_registry(
+                await resolve_skill_sources(
+                    (
+                        SkillConfiguredSource(
+                            label="workspace-main",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            manifest_path=pdf_path,
+                        ),
+                    )
+                )
+            )
+            docx_registry = await build_skill_registry(
+                await resolve_skill_sources(
+                    (
+                        SkillConfiguredSource(
+                            label="workspace-main",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            manifest_path=docx_path,
+                        ),
+                    )
+                )
+            )
+
+        self.assertNotEqual(
+            pdf_registry.registry_version.as_model_value(),
+            docx_registry.registry_version.as_model_value(),
+        )
+        self.assertEqual(
+            pdf_registry.skills[0].manifest_resource_id,
+            "SKILL-pdf.md",
+        )
 
     async def test_resource_check_detects_stale_deleted_and_unavailable(
         self,

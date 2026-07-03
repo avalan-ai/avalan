@@ -11,6 +11,7 @@ from avalan.skill import (
     PreinstalledRemoteSkillSourceAuthority,
     SkillAsyncFileSystem,
     SkillAuthorizedResource,
+    SkillAuthorizedSourceRoot,
     SkillConfiguredSource,
     SkillDiagnosticCode,
     SkillDiagnosticInfo,
@@ -21,7 +22,9 @@ from avalan.skill import (
     SkillSourceConfig,
     SkillSourceFileSystem,
     SkillSourceLimits,
+    SkillSourceManifestConfig,
     SkillSourceResolutionResult,
+    SkillSourceResolver,
     SkillSourceRootConfig,
     SkillStatus,
     TrustedSkillSettings,
@@ -30,6 +33,7 @@ from avalan.skill import (
     authorize_skill_resource,
     resolve_skill_sources,
 )
+from avalan.skill import resolver as resolver_module
 
 
 class SkillResolverPhase2Test(IsolatedAsyncioTestCase):
@@ -168,6 +172,321 @@ class SkillResolverPhase2Test(IsolatedAsyncioTestCase):
             )
             self.assertEqual(not_directory.status, SkillStatus.UNAVAILABLE)
             self.assertIn("not_directory", _reasons(not_directory))
+
+    async def test_manifest_source_authorizes_only_direct_manifest(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_path = root / "SKILL-pdf.md"
+            _write_text(manifest_path, "manifest\n")
+            _write_text(root / "notes.md", "notes\n")
+            _write_text(root / "SKILL-other.md", "other\n")
+
+            result = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=manifest_path,
+                    ),
+                )
+            )
+
+            self.assertEqual(result.status, SkillStatus.OK)
+            self.assertEqual(len(result.sources), 1)
+            source = result.sources[0]
+            self.assertEqual(source.root, manifest_path.parent.resolve())
+            self.assertEqual(source.identity_root, manifest_path.resolve())
+            self.assertEqual(source.manifest_resource_id, "SKILL-pdf.md")
+            self.assertEqual(
+                tuple(resource.resource_id for resource in result.resources),
+                ("SKILL-pdf.md",),
+            )
+            self.assertEqual(
+                source.as_model_dict()["source_type"],
+                "manifest",
+            )
+            self.assertNotIn(str(root), dumps(source.as_model_dict()))
+
+            manifest = await authorize_skill_resource(
+                source,
+                "SKILL-pdf.md",
+            )
+            sibling = await authorize_skill_resource(source, "notes.md")
+
+            self.assertEqual(manifest.status, SkillStatus.OK)
+            self.assertEqual(sibling.status, SkillStatus.POLICY_DENIED)
+            self.assertIn("manifest_source_resource", _reasons(sibling))
+
+    async def test_manifest_source_respects_index_byte_limit(self) -> None:
+        with TemporaryDirectory() as directory:
+            manifest_path = Path(directory) / "SKILL.md"
+            manifest_text = "manifest\n"
+            _write_text(manifest_path, manifest_text)
+            max_read_bytes = len(manifest_text)
+
+            allowed = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=manifest_path,
+                    ),
+                ),
+                index_limits=SkillIndexLimits(
+                    max_indexed_bytes=max_read_bytes
+                ),
+                read_limits=SkillReadLimits(max_bytes_per_read=max_read_bytes),
+            )
+            limited = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=manifest_path,
+                    ),
+                ),
+                index_limits=SkillIndexLimits(
+                    max_indexed_bytes=max_read_bytes - 1
+                ),
+                read_limits=SkillReadLimits(max_bytes_per_read=max_read_bytes),
+            )
+
+            self.assertEqual(
+                tuple(resource.resource_id for resource in allowed.resources),
+                ("SKILL.md",),
+            )
+            self.assertEqual(limited.resources, ())
+            self.assertIn("indexed_bytes", _reasons(limited))
+
+    async def test_manifest_source_model_dicts_and_authorization_diagnostics(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_path = root / "SKILL.md"
+            _write_text(manifest_path, "manifest\n")
+            diagnostic = SkillDiagnosticInfo(
+                code=SkillDiagnosticCode.POLICY_DENIED,
+                status=SkillStatus.POLICY_DENIED,
+                message="Denied.",
+                path="resource.policy",
+                hint="Use a safe resource.",
+                details={"resource_id": "notes.md"},
+            )
+            source = SkillAuthorizedSourceRoot(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root=root,
+                manifest_resource_id="SKILL.md",
+                diagnostics=(diagnostic,),
+            )
+            resolver = SkillSourceResolver()
+
+            configured_model = SkillConfiguredSource(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                manifest_path=manifest_path,
+            ).as_model_dict()
+            manifest_model = SkillSourceManifestConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                manifest_path=manifest_path,
+            ).as_model_dict()
+            existing_diagnostic = await resolver.authorize_resource(
+                source,
+                "notes.md",
+            )
+            policy_diagnostic = (
+                await resolver.authorize_manifest_declared_resource(
+                    source,
+                    "../secret.md",
+                )
+            )
+            missing_diagnostic = (
+                await resolver.authorize_manifest_declared_resource(
+                    source,
+                    "missing.md",
+                )
+            )
+
+        self.assertEqual(configured_model["source_type"], "manifest")
+        self.assertEqual(manifest_model["source_type"], "manifest")
+        self.assertEqual(existing_diagnostic.diagnostics, (diagnostic,))
+        self.assertIn("traversal", _reasons(policy_diagnostic))
+        self.assertEqual(policy_diagnostic.status, SkillStatus.POLICY_DENIED)
+        self.assertEqual(missing_diagnostic.status, SkillStatus.NOT_FOUND)
+
+    async def test_manifest_source_rejects_non_manifest_paths(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            notes_path = root / "notes.md"
+            _write_text(notes_path, "notes\n")
+            skill_directory = root / "SKILL.md"
+            skill_directory.mkdir()
+
+            non_manifest = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=notes_path,
+                    ),
+                )
+            )
+            directory = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=skill_directory,
+                    ),
+                )
+            )
+
+            self.assertEqual(non_manifest.status, SkillStatus.UNAVAILABLE)
+            self.assertIn("not_manifest", _reasons(non_manifest))
+            self.assertEqual(directory.status, SkillStatus.UNAVAILABLE)
+            self.assertIn("not_file", _reasons(directory))
+
+    async def test_manifest_source_rejects_symlinked_manifest(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            notes_path = root / "notes.md"
+            _write_text(notes_path, "notes\n")
+            symlink_path = root / "SKILL.md"
+            try:
+                symlink_path.symlink_to(notes_path)
+            except OSError as error:
+                self.skipTest(f"symlinks unavailable: {error}")
+
+            result = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=symlink_path,
+                    ),
+                )
+            )
+
+            self.assertEqual(result.status, SkillStatus.UNAVAILABLE)
+            self.assertIn("manifest_symlink", _reasons(result))
+            self.assertEqual(result.resources, ())
+
+    async def test_manifest_source_rejects_outside_symlinked_manifest(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            target_path = outside / "SKILL.md"
+            _write_text(target_path, "manifest\n")
+            symlink_path = root / "trusted" / "SKILL.md"
+            symlink_path.parent.mkdir()
+            try:
+                symlink_path.symlink_to(target_path)
+            except OSError as error:
+                self.skipTest(f"symlinks unavailable: {error}")
+
+            result = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=symlink_path,
+                    ),
+                )
+            )
+
+            self.assertEqual(result.status, SkillStatus.UNAVAILABLE)
+            self.assertIn("manifest_symlink", _reasons(result))
+            self.assertEqual(result.resources, ())
+
+    async def test_manifest_source_reports_resolution_defensive_diagnostics(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid_path = root / "valid" / "SKILL.md"
+            mismatch_config = root / "mismatch" / "SKILL.md"
+            mismatch_target = root / "mismatch" / "SKILL-other.md"
+            hidden_config = root / "hidden" / "SKILL.md"
+            hidden_target = root / ".hidden" / "SKILL.md"
+            binary_path = root / "binary" / "SKILL.md"
+            _write_text(valid_path, "valid\n")
+            _write_text(mismatch_config, "configured\n")
+            _write_text(mismatch_target, "target\n")
+            _write_text(hidden_config, "configured\n")
+            _write_text(hidden_target, "target\n")
+            binary_path.parent.mkdir(parents=True)
+            binary_path.write_bytes(b"bad\x00content")
+
+            nul_label = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="bad\x00label",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=valid_path,
+                    ),
+                )
+            )
+            missing = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=root / "missing" / "SKILL.md",
+                    ),
+                )
+            )
+            mismatch = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=mismatch_config,
+                    ),
+                ),
+                file_system=RedirectResolveFileSystem(
+                    mismatch_config,
+                    mismatch_target,
+                ),
+            )
+            hidden = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=hidden_config,
+                    ),
+                ),
+                file_system=RedirectResolveFileSystem(
+                    hidden_config,
+                    hidden_target,
+                ),
+            )
+            binary = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=binary_path,
+                    ),
+                )
+            )
+
+        self.assertIn("nul_byte", _reasons(nul_label))
+        self.assertIn("unavailable", _reasons(missing))
+        self.assertIn("manifest_resource_mismatch", _reasons(mismatch))
+        self.assertIn("hidden_path", _reasons(hidden))
+        self.assertIn("nul_byte", _reasons(binary))
+        self.assertIsNone(
+            resolver_module._manifest_resource_id_from_path("SKILL-secret.md")
+        )
 
     async def test_duplicate_sanitized_source_labels_are_blocked(self) -> None:
         with TemporaryDirectory() as directory:
@@ -546,6 +865,212 @@ class SkillResolverPhase2Test(IsolatedAsyncioTestCase):
         self.assertNotIn(str(trusted_root), str(result.as_model_dict()))
         self.assertNotIn(str(configured_root), str(result.as_model_dict()))
 
+    async def test_manifest_only_trust_rejects_directory_source(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            trusted_manifest = base / "trusted" / "SKILL.md"
+            configured_root = base / "configured"
+            _write_text(trusted_manifest, "trusted\n")
+            _write_text(configured_root / "SKILL.md", "configured\n")
+            _write_text(configured_root / "notes.md", "notes\n")
+            denied_file_system = CountingFileSystem()
+
+            denied = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="pdf",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        root_path=configured_root,
+                    ),
+                ),
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="pdf",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            manifest_path=trusted_manifest,
+                        ),
+                    ),
+                ),
+                file_system=denied_file_system,
+            )
+            label_only = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="pdf",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        root_path=configured_root,
+                    ),
+                ),
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="pdf",
+                            authority=WorkspaceSkillSourceAuthority(),
+                        ),
+                    ),
+                ),
+            )
+            exact_root = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="pdf",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        root_path=configured_root,
+                    ),
+                ),
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="pdf",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            root_path=configured_root,
+                        ),
+                    ),
+                ),
+            )
+            manifest_allowed = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="pdf",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=trusted_manifest,
+                    ),
+                ),
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="pdf",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            manifest_path=trusted_manifest,
+                        ),
+                    ),
+                ),
+            )
+
+        self.assertEqual(denied.status, SkillStatus.POLICY_DENIED)
+        self.assertEqual(denied.diagnostics[0].path, "source.identity")
+        self.assertIn("untrusted_source_identity", _reasons(denied))
+        self.assertEqual(denied.resources, ())
+        self.assertEqual(denied_file_system.read_names, [])
+        self.assertEqual(label_only.status, SkillStatus.OK)
+        self.assertEqual(exact_root.status, SkillStatus.OK)
+        self.assertEqual(manifest_allowed.status, SkillStatus.OK)
+
+    async def test_resolved_manifest_source_must_match_trusted_identity(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            trusted_path = base / "trusted" / "SKILL.md"
+            configured_path = base / "configured" / "SKILL.md"
+            _write_text(trusted_path, "trusted\n")
+            _write_text(configured_path, "configured\n")
+
+            allowed = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=trusted_path,
+                    ),
+                ),
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="workspace-main",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            manifest_path=trusted_path,
+                        ),
+                    ),
+                ),
+            )
+            denied_file_system = CountingFileSystem()
+            denied = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=configured_path,
+                    ),
+                ),
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="workspace-main",
+                            authority=WorkspaceSkillSourceAuthority(),
+                            manifest_path=trusted_path,
+                        ),
+                    ),
+                ),
+                file_system=denied_file_system,
+            )
+            label_only = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=configured_path,
+                    ),
+                ),
+                settings=TrustedSkillSettings(
+                    sources=(
+                        SkillSourceConfig(
+                            label="workspace-main",
+                            authority=WorkspaceSkillSourceAuthority(),
+                        ),
+                    ),
+                ),
+            )
+
+        self.assertEqual(allowed.status, SkillStatus.OK)
+        self.assertEqual(denied.status, SkillStatus.POLICY_DENIED)
+        self.assertIn("untrusted_source_identity", _reasons(denied))
+        self.assertEqual(denied_file_system.read_names, [])
+        self.assertEqual(label_only.status, SkillStatus.OK)
+
+    async def test_trusted_manifest_identity_helper_handles_label_only(
+        self,
+    ) -> None:
+        config = SkillSourceManifestConfig(
+            label="workspace-main",
+            authority=WorkspaceSkillSourceAuthority(),
+            manifest_path="/tmp/SKILL.md",
+        )
+
+        missing_label = resolver_module._trusted_resolved_source_diagnostic(
+            config,
+            TrustedSkillSettings(
+                sources=(
+                    SkillSourceConfig(
+                        label="other",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path="/tmp/SKILL.md",
+                    ),
+                )
+            ),
+            Path("/tmp"),
+            manifest_path=Path("/tmp/SKILL.md"),
+        )
+        label_only = resolver_module._trusted_resolved_source_diagnostic(
+            config,
+            TrustedSkillSettings(
+                sources=(
+                    SkillSourceConfig(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                    ),
+                )
+            ),
+            Path("/tmp"),
+            manifest_path=Path("/tmp/SKILL.md"),
+        )
+
+        self.assertIsNone(missing_label)
+        self.assertIsNone(label_only)
+
     async def test_trusted_source_authority_identity_must_match(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -747,6 +1272,54 @@ class SkillResolverPhase2Test(IsolatedAsyncioTestCase):
             self.assertIn("unavailable_package", _reasons(missing))
             self.assertIn("package_not_directory", _reasons(not_directory))
             self.assertIn("package_escape", _reasons(escaped))
+
+    async def test_resolved_roots_recheck_hidden_and_sensitive_policy(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            hidden_root = base / ".hidden"
+            _write(hidden_root, "SKILL.md", "hidden\n")
+            root_link = base / "visible-root"
+            try:
+                root_link.symlink_to(
+                    hidden_root,
+                    target_is_directory=True,
+                )
+            except OSError as error:
+                self.skipTest(f"directory symlinks unavailable: {error}")
+
+            package_parent = base / "source"
+            sensitive_package = package_parent / "secrets"
+            _write(sensitive_package, "SKILL.md", "secret\n")
+            package_link = package_parent / "pkg"
+            package_link.symlink_to(
+                sensitive_package,
+                target_is_directory=True,
+            )
+
+            hidden_result = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="hidden-root",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        root_path=root_link,
+                    ),
+                )
+            )
+            sensitive_package_result = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="sensitive-package",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        root_path=package_parent,
+                        package_path="pkg",
+                    ),
+                )
+            )
+
+        self.assertIn("hidden_path", _reasons(hidden_result))
+        self.assertIn("sensitive_path", _reasons(sensitive_package_result))
 
     async def test_content_and_filesystem_failures_are_structured(
         self,
@@ -1016,6 +1589,18 @@ class ResolveEscapeFileSystem(SkillAsyncFileSystem):
     async def resolve_path(self, path: Path) -> Path:
         if path.name == "SKILL.md":
             return self._root.parent / "escaped.md"
+        return await super().resolve_path(path)
+
+
+class RedirectResolveFileSystem(SkillAsyncFileSystem):
+    def __init__(self, source: Path, target: Path) -> None:
+        super().__init__()
+        self._source = source
+        self._target = target
+
+    async def resolve_path(self, path: Path) -> Path:
+        if path == self._source:
+            return self._target.resolve(strict=True)
         return await super().resolve_path(path)
 
 

@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.skill import (
+    CANONICAL_SKILLS_TOOL_NAMES,
     SkillBootstrapPromptSettings,
     SkillReadLimits,
     SkillSettingsSurface,
@@ -195,6 +196,36 @@ class TaskSkillsIdentityTest(IsolatedAsyncioTestCase):
             registry.status,
             {SkillStatus.EMPTY, SkillStatus.NOT_FOUND, SkillStatus.OK},
         )
+
+    def test_identity_auto_includes_direct_manifest_skills_tools(
+        self,
+    ) -> None:
+        source = SkillSourceConfig(
+            label="pdf",
+            authority=WorkspaceSkillSourceAuthority(),
+            manifest_path="/tmp/SKILL.md",
+        )
+        settings = TrustedSkillSettings(sources=(source,))
+        opt_out = TrustedSkillSettings(
+            sources=(source,),
+            manifest_auto_enable=False,
+        )
+
+        identity = task_skills_identity(
+            settings,
+            registry=None,
+            enabled_tools=(),
+            target_type=TaskExecutionTarget.agent("agent.toml").type,
+        )
+        disabled_identity = task_skills_identity(
+            opt_out,
+            registry=None,
+            enabled_tools=(),
+            target_type=TaskExecutionTarget.agent("agent.toml").type,
+        )
+
+        self.assertEqual(identity["enabled_tools"], _canonical_skills_tools())
+        self.assertEqual(disabled_identity["enabled_tools"], ())
 
 
 class TaskSkillsSettingsTest(TestCase):
@@ -392,6 +423,197 @@ class TaskSkillsSettingsTest(TestCase):
 
 
 class TaskSkillsToolsDiscoveryTest(IsolatedAsyncioTestCase):
+    async def test_agent_manifest_files_auto_enable_skills_tools(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "agents" / "assistant.toml"
+            agent.parent.mkdir()
+            agent.write_text(
+                """
+                [tool.skills.files]
+                pdf = "skills/SKILL.md"
+                """,
+                encoding="utf-8",
+            )
+
+            tools = await task_enabled_skills_tools(
+                replace(
+                    _definition(),
+                    execution=TaskExecutionTarget.agent(
+                        "agents/assistant.toml"
+                    ),
+                ),
+                schema_base_path=root / "task.toml",
+            )
+            agent.write_text(
+                """
+                [tool.skills]
+                manifest_auto_enable = false
+
+                [tool.skills.files]
+                pdf = "skills/SKILL.md"
+                """,
+                encoding="utf-8",
+            )
+            opt_out_tools = await task_enabled_skills_tools(
+                replace(
+                    _definition(),
+                    execution=TaskExecutionTarget.agent(
+                        "agents/assistant.toml"
+                    ),
+                ),
+                schema_base_path=root / "task.toml",
+            )
+
+        self.assertEqual(tools, _canonical_skills_tools())
+        self.assertEqual(opt_out_tools, ())
+
+    async def test_agent_manifest_auto_enable_requires_files_mapping(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "missing",
+                """
+                [tool.skills]
+                manifest_auto_enable = true
+                """,
+            ),
+            (
+                "non_mapping",
+                """
+                [tool.skills]
+                files = "skills/SKILL.md"
+                """,
+            ),
+            (
+                "empty_mapping",
+                """
+                [tool.skills.files]
+                """,
+            ),
+        )
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "agents" / "assistant.toml"
+            agent.parent.mkdir()
+            definition = replace(
+                _definition(),
+                execution=TaskExecutionTarget.agent("agents/assistant.toml"),
+            )
+
+            for name, toml in cases:
+                with self.subTest(name=name):
+                    agent.write_text(toml, encoding="utf-8")
+
+                    tools = await task_enabled_skills_tools(
+                        definition,
+                        schema_base_path=root / "task.toml",
+                    )
+
+                    self.assertEqual(tools, ())
+
+    async def test_agent_manifest_auto_enable_rejects_conflicting_keys(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "agents" / "assistant.toml"
+            agent.parent.mkdir()
+            agent.write_text(
+                """
+                [tool.skills]
+                manifest_auto_enable = true
+                file_auto_enable = true
+
+                [tool.skills.files]
+                pdf = "skills/SKILL.md"
+                """,
+                encoding="utf-8",
+            )
+
+            tools = await task_enabled_skills_tools(
+                replace(
+                    _definition(),
+                    execution=TaskExecutionTarget.agent(
+                        "agents/assistant.toml"
+                    ),
+                ),
+                schema_base_path=root / "task.toml",
+            )
+
+        self.assertEqual(tools, ())
+
+    async def test_agent_manifest_auto_enable_uses_file_auto_enable(
+        self,
+    ) -> None:
+        cases = (
+            ("disabled", False, ()),
+            ("enabled", True, _canonical_skills_tools()),
+        )
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "agents" / "assistant.toml"
+            agent.parent.mkdir()
+            definition = replace(
+                _definition(),
+                execution=TaskExecutionTarget.agent("agents/assistant.toml"),
+            )
+
+            for name, enabled, expected_tools in cases:
+                with self.subTest(name=name):
+                    agent.write_text(
+                        f"""
+                        [tool.skills]
+                        file_auto_enable = {str(enabled).lower()}
+
+                        [tool.skills.files]
+                        pdf = "skills/SKILL.md"
+                        """,
+                        encoding="utf-8",
+                    )
+
+                    tools = await task_enabled_skills_tools(
+                        definition,
+                        schema_base_path=root / "task.toml",
+                    )
+
+                    self.assertEqual(tools, expected_tools)
+
+    async def test_flow_agent_manifest_files_auto_enable_skills_tools(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "agents" / "assistant.toml"
+            flow = root / "flows" / "main.toml"
+            agent.parent.mkdir()
+            flow.parent.mkdir()
+            agent.write_text(
+                """
+                [tool.skills.files]
+                pdf = "skills/SKILL.md"
+                """,
+                encoding="utf-8",
+            )
+            flow.write_text(
+                """
+                [nodes.reader]
+                type = "agent"
+                ref = "agents/assistant.toml"
+                """,
+                encoding="utf-8",
+            )
+
+            tools = await task_enabled_skills_tools(
+                _flow_definition("flows/main.toml"),
+                schema_base_path=root / "task.toml",
+            )
+
+        self.assertEqual(tools, _canonical_skills_tools())
+
     async def test_agent_tool_discovery_handles_string_and_invalid_values(
         self,
     ) -> None:
@@ -613,6 +835,10 @@ def _trusted_skills(
         + extra_sources,
         allowed_skill_ids=allowed_skill_ids,
     )
+
+
+def _canonical_skills_tools() -> tuple[str, ...]:
+    return tuple(sorted(CANONICAL_SKILLS_TOOL_NAMES))
 
 
 def _write_skill(path: Path) -> None:

@@ -559,15 +559,26 @@ def _skills_tool_template_settings(
         rendered["enabled"] = settings.enabled
     if settings.bootstrap_enabled != default_settings.bootstrap_enabled:
         rendered["bootstrap"] = "auto" if settings.bootstrap_enabled else "off"
+    if settings.manifest_auto_enable != (
+        default_settings.manifest_auto_enable
+    ):
+        rendered["manifest_auto_enable"] = settings.manifest_auto_enable
     if settings.authority_kinds != default_settings.authority_kinds:
         rendered["authority_kinds"] = tuple(
             authority_kind.value for authority_kind in settings.authority_kinds
         )
+    manifest_sources = {
+        source.label: _skills_manifest_source_template_value(source)
+        for source in settings.sources
+        if source.manifest_path is not None
+    }
+    if manifest_sources:
+        rendered["files"] = manifest_sources
     if settings.sources:
         rendered["source_labels"] = tuple(
             source.label for source in settings.sources
         )
-    if settings.allowed_skill_ids:
+    if settings.allowed_skill_ids and settings.allowed_skill_ids_explicit:
         rendered["skill_ids"] = settings.allowed_skill_ids
 
     for name, value, default_value in (
@@ -595,6 +606,43 @@ def _skills_tool_template_settings(
             rendered[name] = nested
 
     return rendered or None
+
+
+def _skills_manifest_source_template_value(
+    source: SkillSourceConfig,
+) -> str | dict[str, object]:
+    assert isinstance(source, SkillSourceConfig)
+    assert source.manifest_path is not None
+    path = str(source.manifest_path)
+    authority = _skills_source_authority_template_value(source.authority)
+    default_authority = _skills_source_authority_template_value(
+        WorkspaceSkillSourceAuthority(),
+    )
+    if authority == default_authority and not source.allow_hidden_paths:
+        return path
+    value: dict[str, object] = {"path": path}
+    if authority != default_authority:
+        value["authority"] = authority
+    if source.allow_hidden_paths:
+        value["allow_hidden"] = True
+    return value
+
+
+def _skills_source_authority_template_value(
+    authority: SkillSourceAuthority,
+) -> str:
+    assert isinstance(authority, SkillSourceAuthority)
+    if isinstance(authority, BundledSkillSourceAuthority):
+        return f"bundled:{authority.bundle_id}"
+    if isinstance(authority, WorkspaceSkillSourceAuthority):
+        return f"workspace:{authority.workspace_id}"
+    if isinstance(authority, UserLocalSkillSourceAuthority):
+        return f"user_local:{authority.profile_id}"
+    if isinstance(authority, PluginProvidedSkillSourceAuthority):
+        return f"plugin_provided:{authority.plugin_id}"
+    if isinstance(authority, PreinstalledRemoteSkillSourceAuthority):
+        return f"preinstalled_remote:{authority.registry_id}"
+    raise AssertionError("unsupported skills source authority")
 
 
 def _skills_dataclass_template_settings(
@@ -1386,6 +1434,14 @@ def _agent_skills_settings(args: Namespace) -> TrustedSkillSettings | None:
         getattr(args, "tool_skills_source", None),
         "--tool-skills-source",
     )
+    manifest_paths = _skills_assignment_map(
+        getattr(args, "tool_skills_file", None),
+        "--tool-skills-file",
+    )
+    duplicate_source_labels = set(source_roots) & set(manifest_paths)
+    assert (
+        not duplicate_source_labels
+    ), "skills source and file labels must be unique"
     source_authorities = _skills_source_authority_map(
         getattr(args, "tool_skills_source_authority", None),
     )
@@ -1397,12 +1453,15 @@ def _agent_skills_settings(args: Namespace) -> TrustedSkillSettings | None:
         getattr(args, "tool_skills_source_allow_hidden", None),
         "--tool-skills-source-allow-hidden",
     )
+    known_source_labels = set(source_roots) | set(manifest_paths)
     unknown_labels = (
-        set(source_authorities)
-        | set(source_packages)
-        | set(allow_hidden_labels)
-    ) - set(source_roots)
+        set(source_authorities) | set(allow_hidden_labels)
+    ) - known_source_labels
     assert not unknown_labels, "skills source options reference unknown labels"
+    unknown_package_labels = set(source_packages) - set(source_roots)
+    assert (
+        not unknown_package_labels
+    ), "skills source package options reference unknown labels"
 
     sources = tuple(
         SkillSourceConfig(
@@ -1416,6 +1475,17 @@ def _agent_skills_settings(args: Namespace) -> TrustedSkillSettings | None:
             allow_hidden_paths=label in allow_hidden_labels,
         )
         for label, root_path in source_roots.items()
+    ) + tuple(
+        SkillSourceConfig(
+            label=label,
+            authority=source_authorities.get(
+                label,
+                WorkspaceSkillSourceAuthority(),
+            ),
+            manifest_path=manifest_path,
+            allow_hidden_paths=label in allow_hidden_labels,
+        )
+        for label, manifest_path in manifest_paths.items()
     )
 
     values: dict[str, object] = {
@@ -1424,6 +1494,9 @@ def _agent_skills_settings(args: Namespace) -> TrustedSkillSettings | None:
             getattr(args, "tool_skills_bootstrap", None) != "off"
         ),
         "bootstrap_prompt": _skills_bootstrap_prompt_settings(args),
+        "manifest_auto_enable": not bool(
+            getattr(args, "tool_skills_file_no_auto_enable", False)
+        ),
         "sources": sources,
         "read_limits": _skills_read_limits(args),
         "index_limits": _skills_index_limits(args),
@@ -1440,12 +1513,15 @@ def _agent_skills_settings(args: Namespace) -> TrustedSkillSettings | None:
     skill_ids = tuple(getattr(args, "tool_skills_skill", None) or ())
     if skill_ids:
         values["allowed_skill_ids"] = skill_ids
+        values["allowed_skill_ids_explicit"] = True
     return TrustedSkillSettings(**cast(Any, values))
 
 
 def _has_agent_skills_args(args: Namespace) -> bool:
     for name in (
         "tool_skills_source",
+        "tool_skills_file",
+        "tool_skills_file_no_auto_enable",
         "tool_skills_source_authority",
         "tool_skills_source_package",
         "tool_skills_source_allow_hidden",

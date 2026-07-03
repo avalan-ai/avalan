@@ -415,7 +415,10 @@ def task_skills_identity(
         "privacy": settings.privacy.as_model_dict(),
         "observability": settings.observability.as_model_dict(),
         "registry_identity": registry_identity,
-        "enabled_tools": tuple(_enabled_skills_tools(enabled_tools)),
+        "enabled_tools": _identity_enabled_skills_tools(
+            settings,
+            enabled_tools,
+        ),
         "authority_kinds": tuple(
             authority.value for authority in settings.authority_kinds
         ),
@@ -524,16 +527,47 @@ def _agent_enabled_skills_tools(raw: Mapping[str, object]) -> tuple[str, ...]:
     tool = raw.get("tool")
     if not isinstance(tool, Mapping):
         return ()
+    requested: set[str] = set()
     enabled = tool.get("enable")
     if isinstance(enabled, str):
-        return tuple(_enabled_skills_tools((enabled,)))
-    if not isinstance(enabled, list | tuple):
-        return ()
-    return tuple(
-        _enabled_skills_tools(
-            item for item in enabled if isinstance(item, str)
+        requested.update(_enabled_skills_tools((enabled,)))
+    elif isinstance(enabled, list | tuple):
+        requested.update(
+            _enabled_skills_tools(
+                item for item in enabled if isinstance(item, str)
+            )
         )
-    )
+    if _agent_manifest_skills_tools_auto_enabled(tool):
+        requested.update(_enabled_skills_tools(("skills",)))
+    return tuple(sorted(requested))
+
+
+def _agent_manifest_skills_tools_auto_enabled(
+    tool: Mapping[object, object],
+) -> bool:
+    skills = tool.get("skills")
+    if not isinstance(skills, Mapping):
+        return False
+    files = skills.get("files")
+    if not isinstance(files, Mapping) or not files:
+        return False
+    return _manifest_auto_enable_from_config(skills)
+
+
+def _manifest_auto_enable_from_config(
+    skills_config: Mapping[object, object],
+) -> bool:
+    has_manifest_key = "manifest_auto_enable" in skills_config
+    has_file_key = "file_auto_enable" in skills_config
+    if has_manifest_key and has_file_key:
+        return False
+    if has_manifest_key:
+        value = skills_config["manifest_auto_enable"]
+    elif has_file_key:
+        value = skills_config["file_auto_enable"]
+    else:
+        return True
+    return value if isinstance(value, bool) else False
 
 
 async def _flow_enabled_skills_tools(
@@ -725,13 +759,14 @@ def _skill_configured_sources(
     sources: list[SkillConfiguredSource] = []
     for source in settings.sources:
         assert isinstance(source, SkillSourceConfig)
-        if source.root_path is None:
+        if source.root_path is None and source.manifest_path is None:
             continue
         sources.append(
             SkillConfiguredSource(
                 label=source.label,
                 authority=source.authority,
                 root_path=source.root_path,
+                manifest_path=source.manifest_path,
                 package_path=source.package_path,
                 enabled=source.enabled,
                 allow_hidden_paths=source.allow_hidden_paths,
@@ -767,6 +802,29 @@ def _enabled_skills_tools(enabled_tools: Iterable[str]) -> tuple[str, ...]:
             if matches_tool_namespace(tool_name, enabled):
                 requested.add(tool_name)
     return tuple(sorted(requested))
+
+
+def _identity_enabled_skills_tools(
+    settings: TrustedSkillSettings,
+    enabled_tools: Iterable[str],
+) -> tuple[str, ...]:
+    requested = set(_enabled_skills_tools(enabled_tools))
+    if _skills_manifest_tools_auto_enabled(settings):
+        requested.update(_enabled_skills_tools(("skills",)))
+    return tuple(sorted(requested))
+
+
+def _skills_manifest_tools_auto_enabled(
+    settings: TrustedSkillSettings,
+) -> bool:
+    return (
+        settings.enabled
+        and settings.manifest_auto_enable
+        and any(
+            source.enabled and source.manifest_path is not None
+            for source in settings.sources
+        )
+    )
 
 
 def _string_items(value: object) -> tuple[str, ...]:

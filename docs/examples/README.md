@@ -4,7 +4,7 @@ This directory showcases configuration files and small programs that demonstrate
 
 ## Agent configurations
 - [agent_tool.toml](agent_tool.toml) – Agent with a calculator tool. Modify `engine.uri` to use another model, extend the `tool.enable` list, or change `run.max_new_tokens` to control response length.
-- [agent_skills_pdf.toml](agent_skills_pdf.toml) – Agent that uses the read-only `skills` namespace with a trusted PDF skill source supplied at runtime. Adjust `tool.skills.skill_ids`, read limits, or the CLI `--tool-skills-source` flags.
+- [agent_skills_pdf.toml](agent_skills_pdf.toml) – Agent that uses the read-only `skills` namespace with a trusted PDF skill source supplied at runtime. Adjust `tool.skills.skill_ids`, read limits, or the CLI `--tool-skills-source` / `--tool-skills-file` flags.
 - [agent_shell.toml](agent_shell.toml) – Agent with opt-in read-only shell tools for workspace inspection. Adjust `tool.enable`, `tool.shell.workspace_root`, or output caps to fit the workspace.
 - [agent_shell_pipeline.toml](agent_shell_pipeline.toml) – Agent with explicit `shell.pipeline` opt-in and structured pipeline arguments. Adjust `tool.shell.max_pipeline_*` caps or allowed commands to fit the workspace.
 - [agent_gettext_translator.toml](agent_gettext_translator.toml) – Template-driven gettext translator. Adjust `source_language`, `destination_language`, or switch `engine.uri` to a different model.
@@ -22,7 +22,7 @@ This directory showcases configuration files and small programs that demonstrate
 - [tasks](tasks/) – Task definition examples for scalar input, structured JSON, large direct files, provider file ids, hosted URLs, object-store URIs, conversion, retrieval and map-reduce fallback, local text conversion, local multimodal media, queued file tasks, artifact outputs, SDK construction, and intentionally invalid diagnostics.
 
 ## Skills
-- [skills](skills/) – Hermetic skill packages for documentation tests. The PDF package teaches a tracked PDF workflow example and is trusted only when an operator or SDK config points a skills source at this directory.
+- [skills](skills/) – Hermetic skill packages for documentation tests. The PDF package teaches a tracked PDF workflow example and is trusted only when an operator or SDK config points a skills source at this directory or directly at `skills/pdf/SKILL.md`.
 
 ## Text generation
 - [text_generation.py](text_generation.py) – Streams canonical answer deltas from a Llama 3 model. Adjust `model` id, `temperature`, or `max_new_tokens`.

@@ -37,6 +37,7 @@ from .resolver import (
 from .settings import (
     SkillIndexLimits,
     SkillReadLimits,
+    SkillSourceLimits,
     TrustedSkillSettings,
     skill_source_identity_dict,
 )
@@ -416,6 +417,7 @@ async def build_skill_registry(
     settings: TrustedSkillSettings | None = None,
     read_limits: SkillReadLimits | None = None,
     index_limits: SkillIndexLimits | None = None,
+    source_limits: SkillSourceLimits | None = None,
     file_system: SkillSourceFileSystem | None = None,
     event_manager: SkillEventPublisher | None = None,
     audit_operation_id: str | None = None,
@@ -439,10 +441,17 @@ async def build_skill_registry(
             if settings is not None
             else (SkillIndexLimits())
         )
+    if source_limits is None:
+        source_limits = (
+            settings.source_limits
+            if settings is not None
+            else (SkillSourceLimits())
+        )
     if file_system is None:
         file_system = SkillAsyncFileSystem()
     assert isinstance(read_limits, SkillReadLimits)
     assert isinstance(index_limits, SkillIndexLimits)
+    assert isinstance(source_limits, SkillSourceLimits)
     await skill_cancellation_checkpoint()
 
     await emit_skill_audit_event(
@@ -461,7 +470,9 @@ async def build_skill_registry(
             file_system=file_system,
             read_limits=read_limits,
             index_limits=index_limits,
+            source_limits=source_limits,
         )
+        sources = manifests.sources
         source_by_label = {source.label: source for source in sources}
         source_resources = _source_resources_by_key(sources)
         await skill_cancellation_checkpoint()
@@ -755,7 +766,16 @@ def _registry_source(source: SkillAuthorizedSourceRoot) -> SkillRegistrySource:
         source_identity=skill_source_identity_dict(
             label=source.label,
             authority=source.authority,
-            root_path=identity_root,
+            manifest_path=(
+                identity_root
+                if source.manifest_resource_id is not None
+                else None
+            ),
+            root_path=(
+                None
+                if source.manifest_resource_id is not None
+                else identity_root
+            ),
             allow_hidden_paths=source.allow_hidden_paths,
             status=_status_for_source(source),
         ),

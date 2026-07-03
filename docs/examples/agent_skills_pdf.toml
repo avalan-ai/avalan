@@ -7,6 +7,14 @@
 #       --tool-skills-source-authority workspace-main=workspace:docs \
 #       --display-tools
 #
+# Or trust only the PDF skill manifest file:
+#
+# echo "Use the PDF skill to plan a review." \
+#   | avalan agent run docs/examples/agent_skills_pdf.toml \
+#       --tool-skills-file pdf=docs/examples/skills/pdf/SKILL.md \
+#       --tool-skills-source-authority pdf=workspace:docs \
+#       --display-tools
+#
 
 [engine]
 uri = "ai://env:OPENAI_API_KEY@openai/gpt-4.1-mini"
@@ -18,7 +26,6 @@ enable = [
 ]
 
 [tool.skills]
-source_labels = ["workspace-main"]
 skill_ids = ["pdf"]
 bootstrap = "auto"
 

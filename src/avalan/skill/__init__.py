@@ -341,6 +341,9 @@ from .resolver import (
     SkillSourceFilesystem as SkillSourceFilesystem,
 )
 from .resolver import (
+    SkillSourceManifestConfig as SkillSourceManifestConfig,
+)
+from .resolver import (
     SkillSourceResolution as SkillSourceResolution,
 )
 from .resolver import (
@@ -432,6 +435,9 @@ from .settings import (
 )
 from .settings import (
     parse_untrusted_skill_settings_config as parse_untrusted_skill_settings_config,  # noqa: E501
+)
+from .settings import (
+    replace_trusted_skill_settings as replace_trusted_skill_settings,
 )
 from .settings import (
     trusted_skill_settings_fingerprint as trusted_skill_settings_fingerprint,

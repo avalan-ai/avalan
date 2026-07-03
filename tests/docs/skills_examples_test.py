@@ -31,6 +31,8 @@ SKILLS_ROOT = EXAMPLES / "skills"
 
 SKILLS_FLAGS = (
     "--tool-skills-source",
+    "--tool-skills-file",
+    "--tool-skills-file-no-auto-enable",
     "--tool-skills-source-authority",
     "--tool-skills-source-package",
     "--tool-skills-source-allow-hidden",
@@ -79,6 +81,15 @@ class SkillsDocumentationExamplesTest(IsolatedAsyncioTestCase):
         self.assertNotIn("specs/SKILL-pdf.md", examples_readme)
         self.assertNotIn("specs/SKILL-pdf.md", skills_readme)
 
+        cli_docs = (DOCS / "CLI.md").read_text(encoding="utf-8")
+        direct_file_section = cli_docs.split(
+            "For one tracked skill file",
+            1,
+        )[
+            1
+        ].split("Operator inspection", 1)[0]
+        self.assertNotIn("--tool skills.", direct_file_section)
+
     async def test_docs_skills_registry_lists_and_reads_pdf_skill(
         self,
     ) -> None:
@@ -110,6 +121,63 @@ class SkillsDocumentationExamplesTest(IsolatedAsyncioTestCase):
         content = cast(dict[str, object], read_result["content"])
         self.assertIn("PDF Skill", content["text"])
 
+    async def test_docs_pdf_direct_manifest_reads_reference(
+        self,
+    ) -> None:
+        manifest = SKILLS_ROOT / "pdf" / "SKILL.md"
+        settings = TrustedSkillSettings(
+            sources=(
+                SkillSourceConfig(
+                    label="pdf",
+                    authority=WorkspaceSkillSourceAuthority(
+                        workspace_id="docs"
+                    ),
+                    manifest_path=manifest,
+                ),
+            ),
+            read_limits=SkillReadLimits(
+                max_bytes_per_read=65536,
+                max_lines_per_read=2000,
+            ),
+        )
+        source_result = await resolve_skill_sources(
+            (
+                SkillConfiguredSource(
+                    label="pdf",
+                    authority=WorkspaceSkillSourceAuthority(
+                        workspace_id="docs"
+                    ),
+                    manifest_path=manifest,
+                ),
+            ),
+            settings=settings,
+        )
+        registry = await build_skill_registry(source_result, settings=settings)
+        manager = ToolManager.create_instance(
+            available_toolsets=[SkillsToolSet(registry)],
+            enable_tools=["skills.read"],
+        )
+
+        read = await manager(
+            ToolCall(
+                id="read",
+                name="skills.read",
+                arguments={
+                    "skill": "pdf",
+                    "resource_id": "references/rendering.md",
+                },
+            ),
+            ToolCallContext(),
+        )
+
+        read_result = _result_dict(read)
+        self.assertEqual(read_result["status"], SkillStatus.OK.value)
+        content = cast(dict[str, object], read_result["content"])
+        self.assertIn(
+            "Render pages before final delivery.",
+            content["text"],
+        )
+
     async def test_agent_example_skills_section_is_valid_narrowing(
         self,
     ) -> None:
@@ -129,7 +197,7 @@ class SkillsDocumentationExamplesTest(IsolatedAsyncioTestCase):
             section="tool.skills",
         )
 
-        self.assertEqual(override.source_labels, ("workspace-main",))
+        self.assertEqual(override.source_labels, ())
         self.assertEqual(override.skill_ids, ("pdf",))
         self.assertEqual(
             override.read_limits,
