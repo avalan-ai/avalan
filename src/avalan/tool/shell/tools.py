@@ -317,11 +317,12 @@ class PipelineTool(Tool):
 
 
 class RgTool(_ShellCommandTool):
-    """Search workspace text with ripgrep.
+    """Search workspace text or list workspace files with ripgrep.
 
     Args:
         pattern: Search pattern to pass as a literal tool argument.
-        paths: Workspace-relative files or directories to search.
+            Required in search mode.
+        paths: Workspace-relative files or directories to search or list.
         cwd: Workspace-relative working directory for the command.
         case: Case-sensitivity mode.
         fixed_strings: Treat the pattern as a fixed string.
@@ -335,6 +336,7 @@ class RgTool(_ShellCommandTool):
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
+        mode: Ripgrep operation mode.
 
     Returns:
         Formatted shell execution result.
@@ -356,9 +358,61 @@ class RgTool(_ShellCommandTool):
             formatter=formatter,
         )
 
+    def json_schema(self, prefix: str | None = None) -> dict[str, Any]:
+        schema = super().json_schema(prefix)
+        parameters = schema["function"]["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters["properties"]
+        assert isinstance(properties, dict)
+        search_properties = _copied_json_schema_properties(properties)
+        files_properties = {
+            name: schema_property
+            for name, schema_property in _copied_json_schema_properties(
+                properties
+            ).items()
+            if name
+            in {
+                "mode",
+                "paths",
+                "cwd",
+                "max_depth",
+                "max_filesize_bytes",
+                "globs",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            }
+        }
+        pattern_schema = search_properties["pattern"]
+        assert isinstance(pattern_schema, dict)
+        pattern_schema["type"] = "string"
+        pattern_schema["minLength"] = 1
+        search_mode_schema = search_properties["mode"]
+        assert isinstance(search_mode_schema, dict)
+        search_mode_schema["enum"] = ["search"]
+        files_mode_schema = files_properties["mode"]
+        assert isinstance(files_mode_schema, dict)
+        files_mode_schema["enum"] = ["files"]
+        files_mode_schema.pop("default", None)
+        parameters["anyOf"] = [
+            {
+                "type": "object",
+                "properties": search_properties,
+                "required": ["pattern"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": files_properties,
+                "required": ["mode"],
+                "additionalProperties": False,
+            },
+        ]
+        return schema
+
     def _build_request(
         self,
-        pattern: str,
+        pattern: str | None = None,
         paths: Sequence[str] = (),
         cwd: str | None = None,
         case: Literal["sensitive", "insensitive", "smart"] = "sensitive",
@@ -373,22 +427,46 @@ class RgTool(_ShellCommandTool):
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
+        mode: Literal["search", "files"] = "search",
     ) -> ShellCommandRequest:
+        assert mode != "search" or pattern is not None
+        options: dict[str, object] = {
+            "max_depth": max_depth,
+            "max_filesize_bytes": max_filesize_bytes,
+            "globs": _string_tuple(globs, "globs"),
+        }
+        if mode == "search":
+            options.update(
+                {
+                    "pattern": pattern,
+                    "case": case,
+                    "fixed_strings": fixed_strings,
+                    "context_lines": context_lines,
+                    "before_context": before_context,
+                    "after_context": after_context,
+                    "max_matches_per_file": max_matches_per_file,
+                }
+            )
+        else:
+            options["mode"] = mode
+            if pattern is not None:
+                options["pattern"] = pattern
+            if case != "sensitive":
+                options["case"] = case
+            if fixed_strings:
+                options["fixed_strings"] = fixed_strings
+            if context_lines:
+                options["context_lines"] = context_lines
+            if before_context is not None:
+                options["before_context"] = before_context
+            if after_context is not None:
+                options["after_context"] = after_context
+            if max_matches_per_file is not None:
+                options["max_matches_per_file"] = max_matches_per_file
         return ShellCommandRequest(
             tool_name="shell.rg",
             command="rg",
-            options={
-                "pattern": pattern,
-                "case": case,
-                "fixed_strings": fixed_strings,
-                "context_lines": context_lines,
-                "before_context": before_context,
-                "after_context": after_context,
-                "max_matches_per_file": max_matches_per_file,
-                "max_depth": max_depth,
-                "max_filesize_bytes": max_filesize_bytes,
-                "globs": _string_tuple(globs, "globs"),
-            },
+            options=options,
             paths=_path_operands(paths, kind="any"),
             cwd=_optional_cwd(cwd),
             timeout_seconds=timeout_seconds,
@@ -398,7 +476,7 @@ class RgTool(_ShellCommandTool):
 
     async def __call__(
         self,
-        pattern: str,
+        pattern: str | None = None,
         paths: Sequence[str] = (),
         cwd: str | None = None,
         case: Literal["sensitive", "insensitive", "smart"] = "sensitive",
@@ -413,6 +491,7 @@ class RgTool(_ShellCommandTool):
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
+        mode: Literal["search", "files"] = "search",
         *,
         context: ToolCallContext,
     ) -> str:
@@ -433,6 +512,7 @@ class RgTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
+                mode=mode,
             ),
             context=context,
         )
@@ -2227,6 +2307,19 @@ def _path_operands(
 def _string_tuple(value: Sequence[str], name: str) -> tuple[str, ...]:
     _assert_string_sequence(value, name)
     return tuple(value)
+
+
+def _copied_json_schema_properties(
+    properties: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        name: (
+            dict(schema_property)
+            if isinstance(schema_property, Mapping)
+            else schema_property
+        )
+        for name, schema_property in properties.items()
+    }
 
 
 def _optional_int_tuple(

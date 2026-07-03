@@ -1187,13 +1187,21 @@ class ToolManager:
         if "anyOf" in schema:
             any_of = schema["anyOf"]
             assert isinstance(any_of, list)
-            if any(
-                isinstance(candidate, dict)
-                and cls._schema_validation_error(value, candidate, path)
-                is None
-                for candidate in any_of
-            ):
-                return None
+            candidate_errors: list[tuple[dict[str, Any], str]] = []
+            for candidate in any_of:
+                if not isinstance(candidate, dict):
+                    continue
+                error = cls._schema_validation_error(value, candidate, path)
+                if error is None:
+                    return None
+                candidate_errors.append((candidate, error))
+            if isinstance(value, dict):
+                for candidate, error in candidate_errors:
+                    if _schema_enum_properties_match(value, candidate):
+                        return error
+                for candidate, error in candidate_errors:
+                    if _schema_required_keys_present(value, candidate):
+                        return error
             return f"{path} does not match any allowed schema."
 
         expected_type = schema.get("type")
@@ -1599,3 +1607,31 @@ class ToolManager:
 async def _check_cancelled(context: ToolCallContext) -> None:
     if context.cancellation_checker is not None:
         await context.cancellation_checker()
+
+
+def _schema_required_keys_present(
+    value: dict[str, Any],
+    schema: dict[str, Any],
+) -> bool:
+    required = schema.get("required", [])
+    assert isinstance(required, list)
+    return all(isinstance(key, str) and key in value for key in required)
+
+
+def _schema_enum_properties_match(
+    value: dict[str, Any],
+    schema: dict[str, Any],
+) -> bool:
+    properties = schema.get("properties", {})
+    assert isinstance(properties, dict)
+    matched = False
+    for name, field_value in value.items():
+        field_schema = properties.get(name)
+        if not isinstance(field_schema, dict) or "enum" not in field_schema:
+            continue
+        enum_values = field_schema["enum"]
+        assert isinstance(enum_values, list)
+        if field_value not in enum_values:
+            return False
+        matched = True
+    return matched

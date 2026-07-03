@@ -1,3 +1,4 @@
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.entities import ToolCallContext, ToolExecutionStreamEvent
@@ -114,6 +115,102 @@ class ShellToolWrapperTest(IsolatedAsyncioTestCase):
         self.assertEqual(request.timeout_seconds, 1.5)
         self.assertEqual(request.max_stdout_bytes, 100)
         self.assertEqual(request.max_stderr_bytes, 50)
+
+    async def test_rg_files_mode_builds_request_without_pattern(
+        self,
+    ) -> None:
+        spec = _spec("rg")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("rg", stdout="src/app.py\n"))
+        tool = RgTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=_RecordingFormatter(),
+        )
+
+        output = await cast(Any, tool)(
+            paths=("src", "tests"),
+            mode="files",
+            max_depth=3,
+            max_filesize_bytes=4096,
+            globs=("*.py",),
+            cwd=".",
+            context=ToolCallContext(),
+        )
+
+        self.assertEqual(output, "formatted:shell.rg:completed")
+        self.assertEqual(executor.specs, [spec])
+        self.assertEqual(len(policy.requests), 1)
+        request = policy.requests[0]
+        self.assertEqual(request.tool_name, "shell.rg")
+        self.assertEqual(request.command, "rg")
+        self.assertEqual(request.options["mode"], "files")
+        self.assertIsNone(request.options.get("pattern"))
+        self.assertEqual(request.options["max_depth"], 3)
+        self.assertEqual(request.options["max_filesize_bytes"], 4096)
+        self.assertEqual(request.options["globs"], ("*.py",))
+        self.assertEqual(
+            request.paths,
+            (
+                PathOperand(
+                    name="path_0",
+                    path="src",
+                    kind="any",
+                    access="read",
+                ),
+                PathOperand(
+                    name="path_1",
+                    path="tests",
+                    kind="any",
+                    access="read",
+                ),
+            ),
+        )
+        self.assertEqual(request.cwd, ".")
+
+    async def test_rg_files_mode_forwards_search_options_for_policy_denial(
+        self,
+    ) -> None:
+        spec = _spec("rg")
+        policy = _FakePolicy(spec)
+        executor = _FakeExecutor(_result("rg", stdout=""))
+        tool = RgTool(
+            settings=ShellToolSettings(),
+            policy=policy,  # type: ignore[arg-type]
+            executor=executor,
+            formatter=_RecordingFormatter(),
+        )
+
+        await cast(Any, tool)(
+            pattern="needle",
+            case="smart",
+            fixed_strings=True,
+            context_lines=1,
+            before_context=2,
+            after_context=3,
+            max_matches_per_file=4,
+            mode="files",
+            context=ToolCallContext(),
+        )
+
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(
+            policy.requests[0].options,
+            {
+                "max_depth": None,
+                "max_filesize_bytes": None,
+                "globs": (),
+                "mode": "files",
+                "pattern": "needle",
+                "case": "smart",
+                "fixed_strings": True,
+                "context_lines": 1,
+                "before_context": 2,
+                "after_context": 3,
+                "max_matches_per_file": 4,
+            },
+        )
 
     async def test_shell_tool_forwards_stream_callback_to_executor(
         self,
@@ -2178,11 +2275,12 @@ class ShellToolSchemaTest(TestCase):
             "context",
             parameters["shell.tesseract"]["properties"],
         )
-        self.assertEqual(parameters["shell.rg"]["required"], ["pattern"])
+        self.assertEqual(parameters["shell.rg"]["required"], [])
         self.assertEqual(
             set(parameters["shell.rg"]["properties"]),
             {
                 "pattern",
+                "mode",
                 "paths",
                 "cwd",
                 "case",
@@ -2199,6 +2297,41 @@ class ShellToolSchemaTest(TestCase):
                 "max_stderr_bytes",
             },
         )
+        self.assertEqual(
+            parameters["shell.rg"]["properties"]["pattern"]["type"],
+            ["string", "null"],
+        )
+        self.assertEqual(
+            parameters["shell.rg"]["properties"]["mode"]["enum"],
+            ["search", "files"],
+        )
+        self.assertEqual(
+            parameters["shell.rg"]["properties"]["mode"]["default"],
+            "search",
+        )
+        rg_any_of = parameters["shell.rg"]["anyOf"]
+        self.assertEqual(len(rg_any_of), 2)
+        search_schema = rg_any_of[0]
+        files_schema = rg_any_of[1]
+        search_properties = search_schema["properties"]
+        files_properties = files_schema["properties"]
+        self.assertEqual(search_schema["required"], ["pattern"])
+        self.assertEqual(
+            search_properties["pattern"]["type"],
+            "string",
+        )
+        self.assertEqual(search_properties["pattern"]["minLength"], 1)
+        self.assertEqual(search_properties["mode"]["enum"], ["search"])
+        self.assertEqual(files_schema["required"], ["mode"])
+        self.assertEqual(files_properties["mode"]["enum"], ["files"])
+        self.assertNotIn("default", files_properties["mode"])
+        self.assertNotIn("pattern", files_properties)
+        self.assertNotIn("case", files_properties)
+        self.assertNotIn("fixed_strings", files_properties)
+        self.assertNotIn("context_lines", files_properties)
+        self.assertNotIn("before_context", files_properties)
+        self.assertNotIn("after_context", files_properties)
+        self.assertNotIn("max_matches_per_file", files_properties)
         self.assertEqual(parameters["shell.head"]["required"], ["path"])
         self.assertEqual(parameters["shell.tail"]["required"], ["path"])
         self.assertEqual(
