@@ -359,6 +359,26 @@ class ShellGitToolManagerPhase1Test(TestCase):
             status_schema.parameter_schema["properties"]["mode"]["enum"],
             ["porcelain_v2", "short"],
         )
+        required_path_schemas = (
+            "shell.git_diff",
+            "shell.git_blame",
+            "shell.git_grep",
+            "shell.git_stash_show",
+        )
+        for tool_name in required_path_schemas:
+            with self.subTest(required_paths=tool_name):
+                tool_schema = manager.describe_tool(tool_name)
+                assert tool_schema is not None
+                assert tool_schema.parameter_schema is not None
+                self.assertIn(
+                    "paths" if tool_name != "shell.git_blame" else "path",
+                    tool_schema.parameter_schema["required"],
+                )
+
+        show_schema = manager.describe_tool("shell.git_show")
+        assert show_schema is not None
+        assert show_schema.parameter_schema is not None
+        self.assertNotIn("paths", show_schema.parameter_schema["required"])
 
     def test_worktree_reset_schema_excludes_history_modes(self) -> None:
         settings = ShellToolSettings(
@@ -584,7 +604,11 @@ _GIT_TOOL_ARGUMENTS: dict[str, dict[str, object]] = {
         head_revision="HEAD",
         paths=("src",),
     ),
-    "git_show": _git_kwargs(revision="HEAD", mode="patch"),
+    "git_show": _git_kwargs(
+        revision="HEAD",
+        mode="patch",
+        paths=("src/app.py",),
+    ),
     "git_blame": _git_kwargs(
         path="src/app.py",
         start_line=1,
@@ -597,7 +621,11 @@ _GIT_TOOL_ARGUMENTS: dict[str, dict[str, object]] = {
         max_matches=3,
     ),
     "git_stash_list": _git_kwargs(max_count=2),
-    "git_stash_show": _git_kwargs(stash="stash@{1}", mode="patch"),
+    "git_stash_show": _git_kwargs(
+        stash="stash@{1}",
+        mode="patch",
+        paths=("src/app.py",),
+    ),
     "git_add": _git_kwargs(paths=("src/app.py",), mode="intent_to_add"),
     "git_restore": _git_kwargs(
         paths=("src/app.py",),

@@ -192,13 +192,24 @@ class GitExecutionPolicyPhase2Test(IsolatedAsyncioTestCase):
     ) -> None:
         with TemporaryDirectory() as workspace:
             _write_minimal_git_repo(Path(workspace) / "repo")
-            policy = _policy(workspace, cwd="repo")
+            policy = GitExecutionPolicy(
+                settings=ShellToolSettings(
+                    git=ShellGitToolSettings(
+                        workspace_root=workspace,
+                        cwd="repo",
+                        capabilities=("worktree",),
+                        allowed_commands=("add",),
+                    )
+                ),
+                executable_lookup=_fake_executable,
+            )
 
             with self.assertRaises(ShellGitPolicyDenied) as raised:
                 await policy.normalize(
                     _request(
-                        command=ShellGitCommandName.SHOW,
-                        options={"revision": "HEAD"},
+                        command=ShellGitCommandName.ADD,
+                        options={"mode": "normal"},
+                        pathspecs=("README.md",),
                     )
                 )
 

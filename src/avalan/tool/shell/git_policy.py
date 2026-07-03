@@ -1,6 +1,12 @@
 from ...filesystem import which_executable as _which_executable
 from ...types import assert_non_empty_string as _assert_non_empty_string
-from .entities import ExecutionSpec, ShellExecutionModeValue, ShellOutputKind
+from .commands.helpers import path_matches_sensitive_denylist
+from .entities import (
+    ExecutionSpec,
+    ShellExecutionModeValue,
+    ShellExecutionStatus,
+    ShellOutputKind,
+)
 from .filesystem import list_directory as _list_directory
 from .filesystem import read_bytes as _read_bytes
 from .git import (
@@ -48,55 +54,53 @@ _SAFE_GIT_ENVIRONMENT = {
     "XDG_CONFIG_HOME": "/nonexistent",
     "XDG_CACHE_HOME": "/nonexistent",
 }
-_UNSAFE_GLOBAL_OPTIONS = frozenset(
-    {
-        "-c",
-        "--config",
-        "--config-env",
-        "--git-dir",
-        "--work-tree",
-        "-C",
-        "--exec-path",
-        "--namespace",
-        "--paginate",
-        "--literal-pathspecs",
-        "--glob-pathspecs",
-        "--noglob-pathspecs",
-        "--icase-pathspecs",
-    }
+_UNSAFE_GLOBAL_OPTION_VALUES = (
+    "-c",
+    "--config",
+    "--config-env",
+    "--git-dir",
+    "--work-tree",
+    "-C",
+    "--exec-path",
+    "--namespace",
+    "--paginate",
+    "--literal-pathspecs",
+    "--glob-pathspecs",
+    "--noglob-pathspecs",
+    "--icase-pathspecs",
 )
-_UNSAFE_OPTION_NAMES = frozenset(
-    {
-        "alias",
-        "askpass",
-        "config",
-        "config-env",
-        "credential",
-        "editor",
-        "exec-path",
-        "external-diff",
-        "filter",
-        "fsmonitor",
-        "git-dir",
-        "gpg-sign",
-        "gpgsign",
-        "hook",
-        "hooks-path",
-        "namespace",
-        "pager",
-        "paginate",
-        "prompt",
-        "recurse-submodules",
-        "sign",
-        "signing",
-        "ssh",
-        "ssh-command",
-        "submodule",
-        "submodules",
-        "textconv",
-        "work-tree",
-    }
+_UNSAFE_GLOBAL_OPTIONS = frozenset(_UNSAFE_GLOBAL_OPTION_VALUES)
+_UNSAFE_OPTION_NAME_VALUES = (
+    "alias",
+    "askpass",
+    "config",
+    "config-env",
+    "credential",
+    "editor",
+    "exec-path",
+    "external-diff",
+    "filter",
+    "fsmonitor",
+    "git-dir",
+    "gpg-sign",
+    "gpgsign",
+    "hook",
+    "hooks-path",
+    "namespace",
+    "pager",
+    "paginate",
+    "prompt",
+    "recurse-submodules",
+    "sign",
+    "signing",
+    "ssh",
+    "ssh-command",
+    "submodule",
+    "submodules",
+    "textconv",
+    "work-tree",
 )
+_UNSAFE_OPTION_NAMES = frozenset(_UNSAFE_OPTION_NAME_VALUES)
 _UNSAFE_VALUE_MARKERS = (
     "alias.",
     "askpass",
@@ -115,6 +119,11 @@ _UNSAFE_VALUE_MARKERS = (
 )
 _REVISION_PATTERN = compile_pattern(r"^[A-Za-z0-9][A-Za-z0-9._\-]*$")
 _HEX_REVISION_PATTERN = compile_pattern(r"^[0-9a-fA-F]{7,64}$")
+_ANCESTRY_REVISION_PATTERN = compile_pattern(
+    r"^(?:HEAD|[0-9a-fA-F]{7,64}|[A-Za-z0-9][A-Za-z0-9._\-]*)"
+    r"(?:(?:~[0-9]+)|(?:\^[0-9]*))*$"
+)
+_STASH_REF_PATTERN = compile_pattern(r"^stash@\{(?P<index>[0-9]+)\}$")
 _REMOTE_URL_PATTERN = compile_pattern(
     r"^(?P<protocol>[A-Za-z][A-Za-z0-9+.-]*)://"
     r"(?:(?P<userinfo>[^/@\s]+)@)?(?P<host>[^/@:\s]+)"
@@ -138,6 +147,8 @@ _DANGEROUS_CONFIG_MARKERS = (
     "textconv",
     "gpg",
     "gpgsign",
+    "showsignature",
+    "ignorerevsfile",
     "signing",
     "worktree",
 )
@@ -146,20 +157,22 @@ _DANGEROUS_ATTRIBUTES_MARKERS = (
     "textconv",
     "diff=",
 )
+_DESCRIBE_OPTION_KEYS = frozenset(("target", "mode", "max_candidates"))
+_DIFF_OPTION_KEYS = frozenset(("mode", "base_revision", "head_revision"))
 _ALLOWED_GIT_OPTION_KEYS = {
     ShellGitCommandName.STATUS: frozenset({"mode", "include_branch"}),
     ShellGitCommandName.REV_PARSE: frozenset({"fact"}),
     ShellGitCommandName.BRANCH: frozenset({"mode", "contains"}),
     ShellGitCommandName.TAG: frozenset({"mode", "name", "max_count"}),
-    ShellGitCommandName.DESCRIBE: frozenset(
-        {
-            "target",
-            "mode",
-            "max_candidates",
-        }
-    ),
+    ShellGitCommandName.DESCRIBE: _DESCRIBE_OPTION_KEYS,
     ShellGitCommandName.LS_FILES: frozenset({"mode"}),
     ShellGitCommandName.LOG: frozenset({"max_count", "revision", "format"}),
+    ShellGitCommandName.DIFF: _DIFF_OPTION_KEYS,
+    ShellGitCommandName.SHOW: frozenset({"mode", "revision"}),
+    ShellGitCommandName.BLAME: frozenset({"start_line", "end_line"}),
+    ShellGitCommandName.GREP: frozenset({"pattern", "case", "max_matches"}),
+    ShellGitCommandName.STASH_LIST: frozenset({"max_count"}),
+    ShellGitCommandName.STASH_SHOW: frozenset({"stash", "mode"}),
 }
 
 
@@ -209,10 +222,12 @@ class GitExecutionPolicy:
             request.pathspecs,
             repo_root=repo_root,
             settings=git_settings,
+            allow_hidden=self._settings.allow_hidden,
         )
         _validate_git_option_keys(request)
         _validate_revisions(request, git_settings)
         _validate_git_option_values(request.options)
+        _validate_content_pathspec_scope(request, pathspecs, repo_root)
         argv = _argv_for_request(request, pathspecs, git_settings)
         _validate_argv_budgets(argv, self._settings)
         timeout_seconds = _bounded_float(
@@ -220,10 +235,7 @@ class GitExecutionPolicy:
             default_value=git_settings.default_timeout_seconds,
             max_value=git_settings.max_timeout_seconds,
         )
-        max_stdout_bytes = _bounded_int(
-            request.max_stdout_bytes,
-            git_settings.max_stdout_bytes,
-        )
+        max_stdout_bytes = _bounded_stdout_bytes(request, git_settings)
         max_stderr_bytes = _bounded_int(
             request.max_stderr_bytes,
             git_settings.max_stderr_bytes,
@@ -539,6 +551,7 @@ def _validated_pathspecs(
     *,
     repo_root: Path,
     settings: ShellGitToolSettings,
+    allow_hidden: bool,
 ) -> tuple[str, ...]:
     if len(values) > settings.max_pathspecs:
         raise ShellGitPolicyDenied(
@@ -548,7 +561,11 @@ def _validated_pathspecs(
     pathspecs: list[str] = []
     total_bytes = 0
     for value in values:
-        _validate_pathspec(value, repo_root=repo_root)
+        _validate_pathspec(
+            value,
+            repo_root=repo_root,
+            allow_hidden=allow_hidden,
+        )
         total_bytes += len(value.encode("utf-8"))
         if total_bytes > settings.max_pathspec_bytes:
             raise ShellGitPolicyDenied(
@@ -559,7 +576,12 @@ def _validated_pathspecs(
     return tuple(pathspecs)
 
 
-def _validate_pathspec(value: str, *, repo_root: Path) -> None:
+def _validate_pathspec(
+    value: str,
+    *,
+    repo_root: Path,
+    allow_hidden: bool,
+) -> None:
     if _contains_unsafe_path_text(value):
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.PATHSPEC_DENIED,
@@ -587,12 +609,30 @@ def _validate_pathspec(value: str, *, repo_root: Path) -> None:
             ShellGitExecutionErrorCode.PATHSPEC_DENIED,
             "Git metadata pathspecs are unsupported",
         )
+    display_path = path.as_posix()
+    if not allow_hidden and _has_hidden_pathspec_component(display_path):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "hidden Git pathspecs are unsupported",
+        )
+    if path_matches_sensitive_denylist(display_path):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "sensitive Git pathspecs are unsupported",
+        )
     resolved = (repo_root / Path(*path.parts)).resolve()
     if not _is_relative_to(resolved, repo_root):
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.PATHSPEC_DENIED,
             "Git pathspec escapes repository root",
         )
+
+
+def _has_hidden_pathspec_component(display_path: str) -> bool:
+    return any(
+        part not in ("", ".", "..") and part.startswith(".")
+        for part in PurePosixPath(display_path).parts
+    )
 
 
 def _validate_git_option_keys(request: ShellGitCommandRequest) -> None:
@@ -612,6 +652,11 @@ def _validate_git_option_values(options: Mapping[str, object]) -> None:
 
 
 def _validate_git_option_name(name: str) -> None:
+    if not isinstance(name, str) or not name:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            "Git option name is unsupported",
+        )
     normalized = name.lower().replace("_", "-")
     if normalized in _UNSAFE_OPTION_NAMES:
         raise ShellGitPolicyDenied(
@@ -639,6 +684,44 @@ def _validate_git_option_string(value: str) -> None:
             ShellGitExecutionErrorCode.INVALID_OPTION,
             "Git option surface is unsupported",
         )
+
+
+def _validate_content_pathspec_scope(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    repo_root: Path,
+) -> None:
+    if not pathspecs or not _needs_file_scoped_content_pathspecs(request):
+        return
+    for value in pathspecs:
+        path = PurePosixPath(value)
+        if path.as_posix() == ".":
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                "Git content pathspec must name a file path",
+            )
+        resolved = (repo_root / Path(*path.parts)).resolve()
+        if not resolved.exists() or not resolved.is_file():
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                "Git content pathspec must name an existing file",
+            )
+
+
+def _needs_file_scoped_content_pathspecs(
+    request: ShellGitCommandRequest,
+) -> bool:
+    if request.command in (
+        ShellGitCommandName.BLAME,
+        ShellGitCommandName.DIFF,
+        ShellGitCommandName.GREP,
+        ShellGitCommandName.STASH_SHOW,
+    ):
+        return True
+    if request.command is ShellGitCommandName.SHOW:
+        mode = request.options.get("mode", "summary")
+        return mode in ("stat", "patch")
+    return False
 
 
 def _is_unsafe_global_option(value: str) -> bool:
@@ -703,6 +786,7 @@ def _validate_revision(
             not _HEX_REVISION_PATTERN.match(value)
             and value != "HEAD"
             and not _REVISION_PATTERN.match(value)
+            and not _ANCESTRY_REVISION_PATTERN.match(value)
         )
     ):
         raise ShellGitPolicyDenied(
@@ -730,9 +814,21 @@ def _argv_for_request(
         return _ls_files_argv(request, pathspecs)
     if request.command is ShellGitCommandName.LOG:
         return _log_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.DIFF:
+        return _diff_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.SHOW:
+        return _show_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.BLAME:
+        return _blame_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.GREP:
+        return _grep_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.STASH_LIST:
+        return _stash_list_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.STASH_SHOW:
+        return _stash_show_argv(request, pathspecs, settings)
     raise ShellGitPolicyDenied(
         ShellGitExecutionErrorCode.COMMAND_DISABLED,
-        "shell Git command is not executable in Phase 3",
+        "shell Git command is not executable in this phase",
     )
 
 
@@ -969,23 +1065,321 @@ def _log_argv(
         if format_name == "summary"
         else "%h %s"
     )
-    argv = _base_argv("log")
-    argv.extend(
-        (
-            f"--max-count={max_count}",
-            "--no-decorate",
-            "--no-color",
-            "--no-ext-diff",
-            "--date=iso-strict",
-            f"--format={format_value}",
-        )
+    log_args = (
+        f"--max-count={max_count}",
+        "--no-decorate",
+        "--no-color",
+        "--no-ext-diff",
+        "--date=iso-strict",
+        f"--format={format_value}",
     )
+    argv = _base_argv("log")
+    argv.extend(log_args)
     if revision is not None:
         argv.append(revision)
     if pathspecs:
         argv.append("--")
         argv.extend(pathspecs)
     return tuple(argv)
+
+
+def _diff_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="worktree",
+        allowed_values=("worktree", "staged", "range", "stat", "name_only"),
+        message="git diff mode is unsupported",
+    )
+    base_revision = _optional_string_option(
+        request.options,
+        "base_revision",
+        message="git diff base revision must be a string",
+    )
+    head_revision = _optional_string_option(
+        request.options,
+        "head_revision",
+        message="git diff head revision must be a string",
+    )
+    diff_args = (
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--no-renames",
+    )
+    argv = _base_argv("diff")
+    argv.extend(diff_args)
+    match mode:
+        case "worktree":
+            _reject_revisions_for_mode(base_revision, head_revision, mode)
+            argv.append("--patch")
+        case "staged":
+            _reject_revisions_for_mode(base_revision, head_revision, mode)
+            argv.extend(("--cached", "--patch"))
+        case "range":
+            if base_revision is None or head_revision is None:
+                raise ShellGitPolicyDenied(
+                    ShellGitExecutionErrorCode.INVALID_OPTION,
+                    "git diff range mode requires base and head revisions",
+                )
+            range_args = (
+                "--patch",
+                _commit_revision(base_revision),
+                _commit_revision(head_revision),
+            )
+            argv.extend(range_args)
+        case "stat":
+            _reject_revisions_for_mode(base_revision, head_revision, mode)
+            argv.append("--stat")
+        case "name_only":
+            _reject_revisions_for_mode(base_revision, head_revision, mode)
+            argv.append("--name-only")
+    _require_pathspecs_for_content(pathspecs, "git diff")
+    if pathspecs:
+        argv.append("--")
+        argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _show_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    revision = _required_string_option(
+        request.options,
+        "revision",
+        message="git show revision must be a string",
+    )
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="summary",
+        allowed_values=("summary", "stat", "patch"),
+        message="git show mode is unsupported",
+    )
+    show_args = (
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--no-decorate",
+        "--no-show-signature",
+        "--no-renames",
+        "--date=iso-strict",
+        "--format=%H%x09%an%x09%ae%x09%ad%x09%s",
+    )
+    argv = _base_argv("show")
+    argv.extend(show_args)
+    match mode:
+        case "summary":
+            argv.append("--no-patch")
+        case "stat":
+            _require_pathspecs_for_content(pathspecs, "git show stat")
+            argv.append("--stat")
+        case "patch":
+            _require_pathspecs_for_content(pathspecs, "git show patch")
+            argv.append("--patch")
+    argv.append(_commit_revision(revision))
+    if pathspecs:
+        argv.append("--")
+        argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _blame_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    if len(pathspecs) != 1:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git blame requires exactly one repo-relative file path",
+        )
+    start_line = _optional_positive_int_option(
+        request.options,
+        "start_line",
+        message="git blame start line must be a positive integer",
+    )
+    end_line = _optional_positive_int_option(
+        request.options,
+        "end_line",
+        message="git blame end line must be a positive integer",
+    )
+    blame_args = (
+        "--no-textconv",
+        "--date=iso-strict",
+        "--line-porcelain",
+        "--no-progress",
+        "--no-ignore-revs-file",
+        "--no-color-lines",
+        "--no-color-by-age",
+    )
+    argv = _base_argv("blame")
+    argv.extend(blame_args)
+    if start_line is None and end_line is not None:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            "git blame end line requires a start line",
+        )
+    if start_line is not None:
+        final_line = start_line if end_line is None else end_line
+        if final_line < start_line:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.INVALID_OPTION,
+                "git blame line range is invalid",
+            )
+        if final_line - start_line + 1 > settings.max_grep_matches:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.INVALID_OPTION,
+                "git blame line range exceeds the allowed limit",
+            )
+        argv.extend(("-L", f"{start_line},{final_line}"))
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _grep_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    pattern = _required_string_option(
+        request.options,
+        "pattern",
+        message="git grep pattern must be a non-empty string",
+    )
+    case_mode = _string_option(
+        request.options,
+        "case",
+        default_value="sensitive",
+        allowed_values=("sensitive", "insensitive"),
+        message="git grep case mode is unsupported",
+    )
+    max_matches = _bounded_count(
+        request.options.get("max_matches"),
+        default_value=settings.max_grep_matches,
+        max_value=settings.max_grep_matches,
+        option_name="max_matches",
+    )
+    _require_pathspecs_for_content(pathspecs, "git grep")
+    grep_args = (
+        "--index",
+        "--no-recurse-submodules",
+        "--no-textconv",
+        "--fixed-strings",
+        "--line-number",
+        "--full-name",
+        "--no-color",
+        f"--max-count={max_matches}",
+    )
+    argv = _base_argv("grep")
+    argv.extend(grep_args)
+    if case_mode == "insensitive":
+        argv.append("--ignore-case")
+    argv.extend(("-e", pattern))
+    if pathspecs:
+        argv.append("--")
+        argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _stash_list_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git stash list")
+    max_count = _bounded_count(
+        request.options.get("max_count"),
+        default_value=10,
+        max_value=settings.max_log_count,
+        option_name="max_count",
+    )
+    stash_list_args = (
+        "list",
+        "--format=%gd%x09%gs",
+        f"--max-count={max_count}",
+    )
+    argv = _base_argv("stash")
+    argv.extend(stash_list_args)
+    return tuple(argv)
+
+
+def _stash_show_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    stash = _required_string_option(
+        request.options,
+        "stash",
+        message="git stash show stash reference must be a string",
+    )
+    _validate_stash_ref(stash, settings)
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="stat",
+        allowed_values=("stat", "patch"),
+        message="git stash show mode is unsupported",
+    )
+    _require_pathspecs_for_content(pathspecs, "git stash show")
+    diff_args = (
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--no-renames",
+    )
+    argv = _base_argv("diff")
+    argv.extend(diff_args)
+    argv.append("--stat" if mode == "stat" else "--patch")
+    argv.append(f"{stash}^1")
+    argv.append(stash)
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _reject_revisions_for_mode(
+    base_revision: str | None,
+    head_revision: str | None,
+    mode: str,
+) -> None:
+    if base_revision is None and head_revision is None:
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.INVALID_OPTION,
+        f"git diff {mode} mode does not accept revisions",
+    )
+
+
+def _reject_pathspecs(pathspecs: tuple[str, ...], command: str) -> None:
+    if not pathspecs:
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        f"{command} does not accept pathspecs",
+    )
+
+
+def _require_pathspecs_for_content(
+    pathspecs: tuple[str, ...],
+    command: str,
+) -> None:
+    if pathspecs:
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        f"{command} requires explicit safe pathspecs",
+    )
+
+
+def _commit_revision(revision: str) -> str:
+    return f"{revision}^{{commit}}"
 
 
 def _string_option(
@@ -1005,6 +1399,21 @@ def _string_option(
     return value
 
 
+def _required_string_option(
+    options: Mapping[str, object],
+    name: str,
+    *,
+    message: str,
+) -> str:
+    value = options.get(name)
+    if not isinstance(value, str) or not value:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            message,
+        )
+    return value
+
+
 def _optional_string_option(
     options: Mapping[str, object],
     name: str,
@@ -1015,6 +1424,23 @@ def _optional_string_option(
     if value is None:
         return None
     if not isinstance(value, str):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            message,
+        )
+    return value
+
+
+def _optional_positive_int_option(
+    options: Mapping[str, object],
+    name: str,
+    *,
+    message: str,
+) -> int | None:
+    value = options.get(name)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.INVALID_OPTION,
             message,
@@ -1089,6 +1515,24 @@ def _validate_ref_name(
         )
 
 
+def _validate_stash_ref(
+    value: str,
+    settings: ShellGitToolSettings,
+) -> None:
+    match = _STASH_REF_PATTERN.match(value)
+    if not match:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REVISION_DENIED,
+            "Git stash reference form is unsupported",
+        )
+    index = int(match.group("index"))
+    if index >= settings.max_log_count:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REVISION_DENIED,
+            "Git stash reference exceeds the allowed range",
+        )
+
+
 def _validate_argv_budgets(
     argv: tuple[str, ...],
     settings: ShellToolSettings,
@@ -1136,6 +1580,20 @@ def _bounded_int(value: int | None, max_value: int) -> int:
     return min(max_value if value is None else value, max_value)
 
 
+def _bounded_stdout_bytes(
+    request: ShellGitCommandRequest,
+    settings: ShellGitToolSettings,
+) -> int:
+    max_value = settings.max_stdout_bytes
+    if request.command in (
+        ShellGitCommandName.DIFF,
+        ShellGitCommandName.SHOW,
+        ShellGitCommandName.STASH_SHOW,
+    ):
+        max_value = min(max_value, settings.max_diff_bytes)
+    return _bounded_int(request.max_stdout_bytes, max_value)
+
+
 def _metadata(
     request: ShellGitCommandRequest,
     *,
@@ -1145,7 +1603,7 @@ def _metadata(
     display_argv: tuple[str, ...],
     settings: ShellGitToolSettings,
 ) -> dict[str, object]:
-    return {
+    metadata: dict[str, object] = {
         "git_tool_name": request.tool_name,
         "git_command": request.command.value,
         "git_capability_required": request.capability_required.value,
@@ -1160,6 +1618,11 @@ def _metadata(
             settings,
         ),
     }
+    if request.command is ShellGitCommandName.GREP:
+        metadata["exit_code_statuses"] = {
+            1: ShellExecutionStatus.NO_MATCHES.value,
+        }
+    return metadata
 
 
 def _redacted_argv(

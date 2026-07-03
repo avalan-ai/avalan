@@ -898,14 +898,14 @@ class GitDiffTool(_ShellGitCommandTool):
         mode: Diff mode to request.
         base_revision: Optional base revision for range mode.
         head_revision: Optional head revision for range mode.
-        paths: Repo-relative pathspecs to diff.
+        paths: Explicit repo-relative file pathspecs to diff.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -918,7 +918,8 @@ class GitDiffTool(_ShellGitCommandTool):
         ] = "worktree",
         base_revision: str | None = None,
         head_revision: str | None = None,
-        paths: Sequence[str] = (),
+        *,
+        paths: Sequence[str],
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -944,12 +945,12 @@ class GitDiffTool(_ShellGitCommandTool):
         ] = "worktree",
         base_revision: str | None = None,
         head_revision: str | None = None,
-        paths: Sequence[str] = (),
+        *,
+        paths: Sequence[str],
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
-        *,
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
@@ -973,13 +974,14 @@ class GitShowTool(_ShellGitCommandTool):
     Args:
         revision: Revision or tag to inspect.
         mode: Fixed show mode to request.
+        paths: Repo-relative file pathspecs for stat and patch modes.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -989,6 +991,7 @@ class GitShowTool(_ShellGitCommandTool):
         self,
         revision: str,
         mode: Literal["summary", "stat", "patch"] = "summary",
+        paths: Sequence[str] = (),
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -996,6 +999,7 @@ class GitShowTool(_ShellGitCommandTool):
     ) -> ShellGitCommandRequest:
         return self._request(
             options={"revision": revision, "mode": mode},
+            pathspecs=paths,
             cwd=cwd,
             timeout_seconds=timeout_seconds,
             max_stdout_bytes=max_stdout_bytes,
@@ -1006,6 +1010,7 @@ class GitShowTool(_ShellGitCommandTool):
         self,
         revision: str,
         mode: Literal["summary", "stat", "patch"] = "summary",
+        paths: Sequence[str] = (),
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -1017,6 +1022,7 @@ class GitShowTool(_ShellGitCommandTool):
             self._build_request(
                 revision=revision,
                 mode=mode,
+                paths=paths,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -1039,7 +1045,7 @@ class GitBlameTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -1095,16 +1101,16 @@ class GitGrepTool(_ShellGitCommandTool):
 
     Args:
         pattern: Search pattern to request.
-        paths: Repo-relative pathspecs to search.
+        paths: Explicit repo-relative file pathspecs to search.
         case: Case-sensitivity mode.
-        max_matches: Maximum total matches to return.
+        max_matches: Maximum matches per file to return.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -1113,7 +1119,7 @@ class GitGrepTool(_ShellGitCommandTool):
     def _build_request(
         self,
         pattern: str,
-        paths: Sequence[str] = (),
+        paths: Sequence[str],
         case: Literal["sensitive", "insensitive"] = "sensitive",
         max_matches: int | None = None,
         cwd: str | None = None,
@@ -1137,7 +1143,7 @@ class GitGrepTool(_ShellGitCommandTool):
     async def __call__(
         self,
         pattern: str,
-        paths: Sequence[str] = (),
+        paths: Sequence[str],
         case: Literal["sensitive", "insensitive"] = "sensitive",
         max_matches: int | None = None,
         cwd: str | None = None,
@@ -1173,7 +1179,7 @@ class GitStashListTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -1226,13 +1232,14 @@ class GitStashShowTool(_ShellGitCommandTool):
     Args:
         stash: Stash reference to inspect.
         mode: Fixed stash show mode to request.
+        paths: Explicit repo-relative file pathspecs to inspect.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -1245,6 +1252,8 @@ class GitStashShowTool(_ShellGitCommandTool):
         self,
         stash: str = "stash@{0}",
         mode: Literal["stat", "patch"] = "stat",
+        *,
+        paths: Sequence[str],
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -1252,6 +1261,7 @@ class GitStashShowTool(_ShellGitCommandTool):
     ) -> ShellGitCommandRequest:
         return self._request(
             options={"stash": stash, "mode": mode},
+            pathspecs=paths,
             cwd=cwd,
             timeout_seconds=timeout_seconds,
             max_stdout_bytes=max_stdout_bytes,
@@ -1262,17 +1272,19 @@ class GitStashShowTool(_ShellGitCommandTool):
         self,
         stash: str = "stash@{0}",
         mode: Literal["stat", "patch"] = "stat",
+        *,
+        paths: Sequence[str],
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
-        *,
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
             self._build_request(
                 stash=stash,
                 mode=mode,
+                paths=paths,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -3389,17 +3401,13 @@ class RgTool(_ShellCommandTool):
             "globs": _string_tuple(globs, "globs"),
         }
         if mode == "search":
-            options.update(
-                {
-                    "pattern": pattern,
-                    "case": case,
-                    "fixed_strings": fixed_strings,
-                    "context_lines": context_lines,
-                    "before_context": before_context,
-                    "after_context": after_context,
-                    "max_matches_per_file": max_matches_per_file,
-                }
-            )
+            options["pattern"] = pattern
+            options["case"] = case
+            options["fixed_strings"] = fixed_strings
+            options["context_lines"] = context_lines
+            options["before_context"] = before_context
+            options["after_context"] = after_context
+            options["max_matches_per_file"] = max_matches_per_file
         else:
             options["mode"] = mode
             if pattern is not None:
@@ -5223,9 +5231,8 @@ def _step_stdin_from(
         step_id,
         str,
     ), f"steps[{index}].stdin_from.step_id must be a string"
-    assert (
-        stream == "stdout"
-    ), f"steps[{index}].stdin_from.stream must be stdout"
+    message = f"steps[{index}].stdin_from.stream must be stdout"
+    assert stream == "stdout", message
     return ShellStreamRef(step_id=step_id, stream="stdout")
 
 
@@ -5404,7 +5411,7 @@ def _git_execution_result(
     *,
     settings: ShellGitToolSettings,
 ) -> ShellGitCommandResult:
-    status, error_code = _git_status_and_error(execution_result)
+    status, error_code = _git_status_and_error(request, execution_result)
     stdout = redact_git_text(execution_result.stdout, settings)
     stderr = redact_git_text(execution_result.stderr, settings)
     error_message = _git_error_message(
@@ -5462,6 +5469,7 @@ def _git_execution_result(
 
 
 def _git_status_and_error(
+    request: ShellGitCommandRequest,
     result: ExecutionResult,
 ) -> tuple[ShellGitExecutionStatus, ShellGitExecutionErrorCode | None]:
     if result.status is ShellExecutionStatus.COMPLETED:
@@ -5483,6 +5491,16 @@ def _git_status_and_error(
         )
     if result.status is ShellExecutionStatus.CANCELLED:
         return ShellGitExecutionStatus.CANCELLED, None
+    if result.status is ShellExecutionStatus.NO_MATCHES:
+        if (
+            request.command is ShellGitCommandName.GREP
+            and result.exit_code == 1
+        ):
+            return ShellGitExecutionStatus.SUCCESS, None
+        return (
+            ShellGitExecutionStatus.FAILED,
+            ShellGitExecutionErrorCode.NONZERO_EXIT,
+        )
     if result.status is ShellExecutionStatus.TOO_LARGE:
         return (
             ShellGitExecutionStatus.FAILED,
@@ -5640,35 +5658,34 @@ def _format_shell_git_result(result: ShellGitCommandResult) -> str:
     capability_used = (
         result.capability_used.value if result.capability_used else None
     )
-    return "\n".join(
-        [
-            f"tool: {result.tool_name}",
-            f"status: {result.status.value}",
-            f"git_command: {result.command.value}",
-            f"command: {' '.join(result.display_argv)}",
-            f"cwd: {result.effective_cwd}",
-            f"repo_root: {_scalar_text(result.resolved_repo_root)}",
-            f"capability_required: {result.capability_required.value}",
-            f"capability_used: {_scalar_text(capability_used)}",
-            f"execution_mode: {result.execution_mode}",
-            f"exit_code: {_scalar_text(result.exit_code)}",
-            f"error_code: {_scalar_text(error_code)}",
-            f"error_message: {_scalar_text(result.error_message)}",
-            f"timed_out: {_bool_text(result.timed_out)}",
-            f"cancelled: {_bool_text(result.cancelled)}",
-            f"duration_ms: {result.duration_ms}",
-            f"stdout_bytes: {result.stdout_bytes}",
-            f"stderr_bytes: {result.stderr_bytes}",
-            f"stdout_truncated: {_bool_text(result.stdout_truncated)}",
-            f"stderr_truncated: {_bool_text(result.stderr_truncated)}",
-            "",
-            "stdout:",
-            result.stdout_snippet,
-            "",
-            "stderr:",
-            result.stderr_snippet,
-        ]
-    )
+    lines = [
+        f"tool: {result.tool_name}",
+        f"status: {result.status.value}",
+        f"git_command: {result.command.value}",
+        f"command: {' '.join(result.display_argv)}",
+        f"cwd: {result.effective_cwd}",
+        f"repo_root: {_scalar_text(result.resolved_repo_root)}",
+        f"capability_required: {result.capability_required.value}",
+        f"capability_used: {_scalar_text(capability_used)}",
+        f"execution_mode: {result.execution_mode}",
+        f"exit_code: {_scalar_text(result.exit_code)}",
+        f"error_code: {_scalar_text(error_code)}",
+        f"error_message: {_scalar_text(result.error_message)}",
+        f"timed_out: {_bool_text(result.timed_out)}",
+        f"cancelled: {_bool_text(result.cancelled)}",
+        f"duration_ms: {result.duration_ms}",
+        f"stdout_bytes: {result.stdout_bytes}",
+        f"stderr_bytes: {result.stderr_bytes}",
+        f"stdout_truncated: {_bool_text(result.stdout_truncated)}",
+        f"stderr_truncated: {_bool_text(result.stderr_truncated)}",
+        "",
+        "stdout:",
+        result.stdout_snippet,
+        "",
+        "stderr:",
+        result.stderr_snippet,
+    ]
+    return "\n".join(lines)
 
 
 def _scalar_text(value: object) -> str:
