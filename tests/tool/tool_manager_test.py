@@ -1299,6 +1299,14 @@ class ToolManagerCreationTestCase(TestCase):
             ),
             "$ does not match any allowed schema.",
         )
+        self.assertEqual(
+            ToolManager._schema_validation_error(
+                7,
+                {"anyOf": [False, {"type": "string"}]},
+                "$",
+            ),
+            "$ does not match any allowed schema.",
+        )
         mode_schema = {
             "anyOf": [
                 {
