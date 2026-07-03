@@ -29,6 +29,7 @@ from .git import (
     ShellGitCapability,
     ShellGitCommandName,
 )
+from .git_policy import GitExecutionPolicy
 from .opt_in import (
     SHELL_TOOL_NAMESPACE,
     SHELL_TOOL_WILDCARD,
@@ -114,6 +115,8 @@ from typing import Literal, cast
 
 class ShellToolSet(ToolSet):
     _pipeline_tool: PipelineTool
+    _git_executor: CommandExecutor
+    _git_policy: GitExecutionPolicy
     _settings: ShellToolSettings
     _process_runtime: ShellProcessRuntime
 
@@ -242,6 +245,8 @@ class ShellToolSet(ToolSet):
                 )
             else:
                 executor = local_executor
+        self._git_executor = executor
+        self._git_policy = GitExecutionPolicy(settings=self._settings)
         formatter = formatter or (
             lambda result: format_shell_result(
                 result,
@@ -412,7 +417,12 @@ class ShellToolSet(ToolSet):
         tools = self.available_tools
         _append_missing_tools(
             tools,
-            _available_git_tools_for_selection(self._settings, enable_tools),
+            _available_git_tools_for_selection(
+                self._settings,
+                enable_tools,
+                self._git_policy,
+                self._git_executor,
+            ),
         )
         return tools
 
@@ -424,7 +434,11 @@ class ShellToolSet(ToolSet):
         if _enables_shell_git_tools(enable_tools):
             _append_missing_tools(
                 self.tools,
-                _authorized_git_tools(self._settings),
+                _authorized_git_tools(
+                    self._settings,
+                    self._git_policy,
+                    self._git_executor,
+                ),
             )
         return cast(ShellToolSet, super().with_enabled_tools(enable_tools))
 
@@ -484,9 +498,11 @@ def _enables_shell_git_tools(enable_tools: Sequence[str]) -> bool:
 def _available_git_tools_for_selection(
     settings: ShellToolSettings,
     enable_tools: Sequence[str],
+    git_policy: GitExecutionPolicy,
+    executor: CommandExecutor,
 ) -> list[Tool]:
     if _enables_shell_namespace(enable_tools):
-        return _authorized_git_tools(settings)
+        return _authorized_git_tools(settings, git_policy, executor)
 
     explicit_tool_names = {
         enabled
@@ -498,7 +514,7 @@ def _available_git_tools_for_selection(
 
     return [
         tool
-        for tool in _all_git_tools(settings)
+        for tool in _all_git_tools(settings, git_policy, executor)
         if f"{SHELL_TOOL_NAMESPACE}.{getattr(tool, '__name__', '')}"
         in explicit_tool_names
     ]
@@ -511,7 +527,11 @@ def _enables_shell_namespace(enable_tools: Sequence[str]) -> bool:
     )
 
 
-def _authorized_git_tools(settings: ShellToolSettings) -> list[Tool]:
+def _authorized_git_tools(
+    settings: ShellToolSettings,
+    git_policy: GitExecutionPolicy,
+    executor: CommandExecutor,
+) -> list[Tool]:
     git_settings = settings.git
     assert isinstance(
         git_settings,
@@ -519,7 +539,7 @@ def _authorized_git_tools(settings: ShellToolSettings) -> list[Tool]:
     ), "git must be shell Git tool settings"
     return [
         tool
-        for tool in _all_git_tools(settings)
+        for tool in _all_git_tools(settings, git_policy, executor)
         if _git_tool_allowed(tool, git_settings)
     ]
 
@@ -565,53 +585,192 @@ def _git_tool_command(tool: Tool) -> ShellGitCommandName:
     return command
 
 
-def _all_git_tools(settings: ShellToolSettings) -> list[Tool]:
+def _all_git_tools(
+    settings: ShellToolSettings,
+    git_policy: GitExecutionPolicy,
+    executor: CommandExecutor,
+) -> list[Tool]:
     return [
-        GitStatusTool(settings=settings),
-        GitRevParseTool(settings=settings),
-        GitBranchTool(settings=settings),
-        GitTagTool(settings=settings),
-        GitDescribeTool(settings=settings),
-        GitLsFilesTool(settings=settings),
-        GitLogTool(settings=settings),
-        GitDiffTool(settings=settings),
-        GitShowTool(settings=settings),
-        GitBlameTool(settings=settings),
-        GitGrepTool(settings=settings),
-        GitStashListTool(settings=settings),
-        GitStashShowTool(settings=settings),
-        GitAddTool(settings=settings),
-        GitRestoreTool(settings=settings),
-        GitCheckoutTool(settings=settings),
-        GitSwitchTool(settings=settings),
-        GitResetTool(settings=settings),
-        GitRmTool(settings=settings),
-        GitMvTool(settings=settings),
-        GitStashPushTool(settings=settings),
-        GitStashApplyTool(settings=settings),
-        GitCommitTool(settings=settings),
-        GitBranchCreateTool(settings=settings),
-        GitBranchDeleteTool(settings=settings),
-        GitBranchRenameTool(settings=settings),
-        GitTagCreateTool(settings=settings),
-        GitTagDeleteTool(settings=settings),
-        GitMergeTool(settings=settings),
-        GitRebaseTool(settings=settings),
-        GitCherryPickTool(settings=settings),
-        GitRevertTool(settings=settings),
-        GitCleanTool(settings=settings),
-        GitStashPopTool(settings=settings),
-        GitStashDropTool(settings=settings),
-        GitFetchTool(settings=settings),
-        GitPullTool(settings=settings),
-        GitPushTool(settings=settings),
-        GitCloneTool(settings=settings),
-        GitRemoteListTool(settings=settings),
-        GitRemoteAddTool(settings=settings),
-        GitRemoteSetUrlTool(settings=settings),
-        GitRemoteRemoveTool(settings=settings),
-        GitRemoteRenameTool(settings=settings),
-        GitSubmoduleUpdateTool(settings=settings),
+        GitStatusTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRevParseTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitBranchTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitTagTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitDescribeTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitLsFilesTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitLogTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitDiffTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitShowTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitBlameTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitGrepTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitStashListTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitStashShowTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitAddTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRestoreTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitCheckoutTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitSwitchTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitResetTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRmTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitMvTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitStashPushTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitStashApplyTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitCommitTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitBranchCreateTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitBranchDeleteTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitBranchRenameTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitTagCreateTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitTagDeleteTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitMergeTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRebaseTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitCherryPickTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRevertTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitCleanTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitStashPopTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitStashDropTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitFetchTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitPullTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitPushTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitCloneTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRemoteListTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRemoteAddTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRemoteSetUrlTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRemoteRemoveTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitRemoteRenameTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
+        GitSubmoduleUpdateTool(settings=settings).bind_execution(
+            git_policy=git_policy,
+            executor=executor,
+        ),
     ]
 
 

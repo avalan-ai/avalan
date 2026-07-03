@@ -107,6 +107,9 @@ from .git import ShellGitCommandResult as ShellGitCommandResult
 from .git import ShellGitExecutionErrorCode as ShellGitExecutionErrorCode
 from .git import ShellGitExecutionStatus as ShellGitExecutionStatus
 from .git import ShellGitFormattedResult as ShellGitFormattedResult
+from .git import ShellGitPolicyDenied as ShellGitPolicyDenied
+from .git_policy import GitExecutionPolicy as GitExecutionPolicy
+from .git_policy import redact_git_text as redact_git_text
 from .opt_in import SHELL_TOOL_NAMESPACE as SHELL_TOOL_NAMESPACE
 from .opt_in import SHELL_TOOL_WILDCARD as SHELL_TOOL_WILDCARD
 from .opt_in import enables_shell_tools as enables_shell_tools

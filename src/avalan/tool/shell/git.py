@@ -119,6 +119,23 @@ class ShellGitExecutionErrorCode(StrEnum):
     COMMAND_UNAVAILABLE = "command_unavailable"
 
 
+class ShellGitPolicyDenied(Exception):
+    error_code: ShellGitExecutionErrorCode
+
+    def __init__(
+        self,
+        error_code: ShellGitExecutionErrorCode,
+        message: str,
+    ) -> None:
+        assert isinstance(
+            error_code,
+            ShellGitExecutionErrorCode,
+        ), "error_code must be a shell Git execution error code"
+        _assert_non_empty_string(message, "message")
+        super().__init__(message)
+        self.error_code = error_code
+
+
 SHELL_GIT_READ_COMMANDS: tuple[ShellGitCommandName, ...] = (
     ShellGitCommandName.STATUS,
     ShellGitCommandName.REV_PARSE,
