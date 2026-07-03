@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from os import devnull, environ
 from pathlib import Path
 from shutil import which
 from subprocess import run
@@ -522,6 +523,89 @@ class GitMetadataPolicyPhase3Test(IsolatedAsyncioTestCase):
                         ShellGitExecutionErrorCode.INVALID_OPTION,
                     )
 
+    async def test_metadata_pathspec_caps_are_enforced_for_log(self) -> None:
+        cases = (
+            (
+                {"max_pathspecs": 1},
+                ("src", "README.md"),
+            ),
+            (
+                {"max_pathspec_bytes": 3},
+                ("README.md",),
+            ),
+        )
+
+        for policy_kwargs, pathspecs in cases:
+            with self.subTest(policy_kwargs=policy_kwargs):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    _write_minimal_git_repo(root / "repo")
+                    error = await _policy_error(
+                        _policy(root, **policy_kwargs),
+                        _request(
+                            command=ShellGitCommandName.LOG,
+                            options={"max_count": 1, "format": "summary"},
+                            pathspecs=pathspecs,
+                        ),
+                    )
+                    self.assertEqual(
+                        error.error_code,
+                        ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                    )
+
+    async def test_metadata_execution_caps_are_clamped(self) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            _write_minimal_git_repo(root / "repo")
+            spec = await _policy(
+                root,
+                default_timeout_seconds=5,
+                max_timeout_seconds=7,
+                max_stdout_bytes=11,
+                max_stderr_bytes=13,
+            ).normalize(
+                _request(
+                    command=ShellGitCommandName.TAG,
+                    options={"mode": "list"},
+                    timeout_seconds=99,
+                    max_stdout_bytes=99,
+                    max_stderr_bytes=99,
+                )
+            )
+
+        self.assertEqual(spec.timeout_seconds, 7)
+        self.assertEqual(spec.max_stdout_bytes, 11)
+        self.assertEqual(spec.max_stderr_bytes, 13)
+
+    async def test_metadata_network_and_blob_commands_are_disabled(
+        self,
+    ) -> None:
+        cases = (
+            _request(
+                command=ShellGitCommandName.FETCH,
+                options={"url": "https://github.com/acme/repo.git"},
+            ),
+            _request(
+                command=ShellGitCommandName.CLONE,
+                options={"url": "https://github.com/acme/repo.git"},
+            ),
+            _request(
+                command=ShellGitCommandName.SHOW,
+                options={"revision": "HEAD:README.md"},
+            ),
+        )
+
+        for request in cases:
+            with self.subTest(command=request.command.value):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    _write_minimal_git_repo(root / "repo")
+                    error = await _policy_error(_policy(root), request)
+                    self.assertEqual(
+                        error.error_code,
+                        ShellGitExecutionErrorCode.COMMAND_DISABLED,
+                    )
+
 
 class GitMetadataResultPhase3Test(IsolatedAsyncioTestCase):
     async def test_ambiguous_revision_result_is_stable(self) -> None:
@@ -623,6 +707,148 @@ class GitMetadataResultPhase3Test(IsolatedAsyncioTestCase):
         )
         self.assertIn("error_code: nonzero_exit", result)
 
+    async def test_blob_and_network_like_options_denied_before_execution(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            _write_minimal_git_repo(root / "repo")
+            executor = _FakeGitExecutor()
+            toolset = ShellToolSet(
+                settings=ShellToolSettings(
+                    git=ShellGitToolSettings(
+                        workspace_root=str(root),
+                        cwd="repo",
+                        allowed_commands=_PHASE3_COMMANDS,
+                    ),
+                ),
+                executor=executor,
+            ).with_enabled_tools(_PHASE3_TOOL_NAMES)
+
+            cases: tuple[
+                tuple[
+                    str,
+                    dict[str, object],
+                    ShellGitExecutionErrorCode,
+                ],
+                ...,
+            ] = (
+                (
+                    "git_log",
+                    {"max_count": 1, "revision": "HEAD:README.md"},
+                    ShellGitExecutionErrorCode.REVISION_DENIED,
+                ),
+                (
+                    "git_log",
+                    {
+                        "max_count": 1,
+                        "revision": "https://github.com/acme/repo",
+                    },
+                    ShellGitExecutionErrorCode.REVISION_DENIED,
+                ),
+                (
+                    "git_describe",
+                    {"target": "HEAD:README.md"},
+                    ShellGitExecutionErrorCode.REVISION_DENIED,
+                ),
+                (
+                    "git_branch",
+                    {"mode": "list", "contains": "origin/main"},
+                    ShellGitExecutionErrorCode.REVISION_DENIED,
+                ),
+                (
+                    "git_tag",
+                    {"mode": "show", "name": "HEAD:README.md"},
+                    ShellGitExecutionErrorCode.REVISION_DENIED,
+                ),
+                (
+                    "git_rev_parse",
+                    {"fact": "git_dir"},
+                    ShellGitExecutionErrorCode.INVALID_OPTION,
+                ),
+            )
+
+            for command_id, kwargs, error_code in cases:
+                with self.subTest(command_id=command_id, kwargs=kwargs):
+                    result = await _call_tool(toolset, command_id, **kwargs)
+                    self.assertEqual(
+                        result.git_result.status,
+                        ShellGitExecutionStatus.POLICY_DENIED,
+                    )
+                    self.assertEqual(result.git_result.error_code, error_code)
+                    self.assertIn("status: policy_denied", result)
+                    self.assertEqual(executor.calls, 0)
+
+    async def test_metadata_timeout_result_is_stable(self) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            _write_minimal_git_repo(root / "repo")
+            executor = _FakeGitExecutor(
+                status=ShellExecutionStatus.TIMEOUT,
+                exit_code=None,
+                timed_out=True,
+                error_message="process timed out",
+            )
+            toolset = ShellToolSet(
+                settings=ShellToolSettings(
+                    git=ShellGitToolSettings(
+                        workspace_root=str(root),
+                        cwd="repo",
+                        allowed_commands=_PHASE3_COMMANDS,
+                    ),
+                ),
+                executor=executor,
+            ).with_enabled_tools(["shell.git_tag"])
+
+            result = await _call_tool(toolset, "git_tag", mode="list")
+
+        self.assertEqual(executor.calls, 1)
+        self.assertEqual(
+            result.git_result.status,
+            ShellGitExecutionStatus.TIMEOUT,
+        )
+        self.assertEqual(
+            result.git_result.error_code,
+            ShellGitExecutionErrorCode.TIMEOUT,
+        )
+        self.assertTrue(result.git_result.timed_out)
+        self.assertIn("error_code: timeout", result)
+
+    async def test_metadata_output_truncated_result_is_stable(self) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            _write_minimal_git_repo(root / "repo")
+            executor = _FakeGitExecutor(
+                stdout="v1.0\n",
+                status=ShellExecutionStatus.COMPLETED,
+                exit_code=0,
+                stdout_truncated=True,
+            )
+            toolset = ShellToolSet(
+                settings=ShellToolSettings(
+                    git=ShellGitToolSettings(
+                        workspace_root=str(root),
+                        cwd="repo",
+                        allowed_commands=_PHASE3_COMMANDS,
+                    ),
+                ),
+                executor=executor,
+            ).with_enabled_tools(["shell.git_tag"])
+
+            result = await _call_tool(toolset, "git_tag", mode="list")
+
+        self.assertEqual(executor.calls, 1)
+        self.assertEqual(
+            result.git_result.status,
+            ShellGitExecutionStatus.FAILED,
+        )
+        self.assertEqual(
+            result.git_result.error_code,
+            ShellGitExecutionErrorCode.OUTPUT_TRUNCATED,
+        )
+        self.assertTrue(result.git_result.stdout_truncated)
+        self.assertIn("error_code: output_truncated", result)
+
 
 @skipIf(_GIT_BINARY is None, "git executable is not available")
 class GitMetadataSmokePhase3Test(IsolatedAsyncioTestCase):
@@ -631,16 +857,7 @@ class GitMetadataSmokePhase3Test(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as workspace:
             root = Path(workspace)
             repo = _write_real_git_repo(root, _GIT_BINARY)
-            toolset = ShellToolSet(
-                settings=ShellToolSettings(
-                    executable_search_paths=(str(Path(_GIT_BINARY).parent),),
-                    git=ShellGitToolSettings(
-                        workspace_root=str(root),
-                        cwd=repo.name,
-                        allowed_commands=_PHASE3_COMMANDS,
-                    ),
-                )
-            ).with_enabled_tools(_PHASE3_TOOL_NAMES)
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
 
             status = await _call_tool(toolset, "git_status")
             rev_parse = await _call_tool(
@@ -709,6 +926,153 @@ class GitMetadataSmokePhase3Test(IsolatedAsyncioTestCase):
         self.assertIn("status: failed", bad_ref)
         self.assertIn("error_code: revision_not_found", bad_ref)
 
+    async def test_rev_parse_facts_execute_against_temporary_repo(
+        self,
+    ) -> None:
+        assert _GIT_BINARY is not None
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_real_git_repo(root, _GIT_BINARY)
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
+
+            head = await _call_tool(toolset, "git_rev_parse", fact="head")
+            short_head = await _call_tool(
+                toolset,
+                "git_rev_parse",
+                fact="short_head",
+            )
+            repo_root = await _call_tool(
+                toolset,
+                "git_rev_parse",
+                fact="repo_root",
+            )
+
+        for result in (head, short_head, repo_root):
+            self.assertEqual(
+                result.git_result.status,
+                ShellGitExecutionStatus.SUCCESS,
+            )
+
+        head_text = head.git_result.stdout_snippet.strip()
+        short_head_text = short_head.git_result.stdout_snippet.strip()
+        repo_root_text = repo_root.git_result.stdout_snippet.strip()
+        self.assertRegex(head_text, r"^[0-9a-fA-F]{40,64}$")
+        self.assertRegex(short_head_text, r"^[0-9a-fA-F]{12}$")
+        self.assertTrue(head_text.lower().startswith(short_head_text.lower()))
+        self.assertEqual(Path(repo_root_text).resolve(), repo.resolve())
+
+    async def test_tag_show_executes_against_temporary_repo(self) -> None:
+        assert _GIT_BINARY is not None
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_real_git_repo(root, _GIT_BINARY)
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
+
+            tag = await _call_tool(
+                toolset,
+                "git_tag",
+                mode="show",
+                name="v1.0",
+                max_count=1,
+            )
+
+        self.assertEqual(
+            tag.git_result.status,
+            ShellGitExecutionStatus.SUCCESS,
+        )
+        self.assertIn("v1.0\t", tag.git_result.stdout_snippet)
+        self.assertIn("initial", tag.git_result.stdout_snippet)
+
+    async def test_branch_contains_executes_against_temporary_repo(
+        self,
+    ) -> None:
+        assert _GIT_BINARY is not None
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_real_git_repo(root, _GIT_BINARY)
+            _git(repo, _GIT_BINARY, "branch", "topic")
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
+
+            branches = await _call_tool(
+                toolset,
+                "git_branch",
+                mode="list",
+                contains="HEAD",
+            )
+
+        self.assertEqual(
+            branches.git_result.status,
+            ShellGitExecutionStatus.SUCCESS,
+        )
+        branch_names = set(
+            branches.git_result.stdout_snippet.strip().splitlines()
+        )
+        self.assertIn("main", branch_names)
+        self.assertIn("topic", branch_names)
+
+    async def test_ls_files_modes_execute_against_worktree_states(
+        self,
+    ) -> None:
+        assert _GIT_BINARY is not None
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_real_git_repo(root, _GIT_BINARY)
+            (repo / "src" / "app.py").write_text("print('changed')\n")
+            (repo / "README.md").unlink()
+            (repo / "scratch.txt").write_text("draft\n")
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
+
+            tracked = await _call_tool(
+                toolset,
+                "git_ls_files",
+                mode="tracked",
+            )
+            modified = await _call_tool(
+                toolset,
+                "git_ls_files",
+                mode="modified",
+            )
+            deleted = await _call_tool(
+                toolset,
+                "git_ls_files",
+                mode="deleted",
+            )
+            others = await _call_tool(
+                toolset,
+                "git_ls_files",
+                mode="others",
+            )
+
+        for result in (tracked, modified, deleted, others):
+            self.assertEqual(
+                result.git_result.status,
+                ShellGitExecutionStatus.SUCCESS,
+            )
+
+        self.assertIn("README.md", tracked.git_result.stdout_snippet)
+        self.assertIn("src/app.py", tracked.git_result.stdout_snippet)
+        self.assertIn("src/app.py", modified.git_result.stdout_snippet)
+        self.assertIn("README.md", deleted.git_result.stdout_snippet)
+        self.assertIn("scratch.txt", others.git_result.stdout_snippet)
+        self.assertNotIn("README.md", others.git_result.stdout_snippet)
+
+
+def _real_git_toolset(
+    root: Path,
+    repo: Path,
+    git_binary: str,
+) -> ShellToolSet:
+    return ShellToolSet(
+        settings=ShellToolSettings(
+            executable_search_paths=(str(Path(git_binary).parent),),
+            git=ShellGitToolSettings(
+                workspace_root=str(root),
+                cwd=repo.name,
+                allowed_commands=_PHASE3_COMMANDS,
+            ),
+        )
+    ).with_enabled_tools(_PHASE3_TOOL_NAMES)
+
 
 def _git_prefix() -> tuple[str, str, str]:
     return ("git", "--no-pager", "--no-optional-locks")
@@ -719,6 +1083,9 @@ def _request(
     command: ShellGitCommandName,
     options: dict[str, object] | None = None,
     pathspecs: tuple[str, ...] = (),
+    timeout_seconds: float | None = None,
+    max_stdout_bytes: int | None = None,
+    max_stderr_bytes: int | None = None,
 ) -> ShellGitCommandRequest:
     return ShellGitCommandRequest(
         tool_name=f"shell.git_{command.value.replace('-', '_')}",
@@ -726,13 +1093,22 @@ def _request(
         capability_required=ShellGitCapability.READ,
         options={} if options is None else options,
         pathspecs=pathspecs,
+        timeout_seconds=timeout_seconds,
+        max_stdout_bytes=max_stdout_bytes,
+        max_stderr_bytes=max_stderr_bytes,
     )
 
 
 def _policy(
     workspace_root: Path,
     *,
+    default_timeout_seconds: float = 10.0,
     max_log_count: int = 50,
+    max_pathspecs: int = 64,
+    max_pathspec_bytes: int = 4096,
+    max_timeout_seconds: float = 60.0,
+    max_stdout_bytes: int = 65536,
+    max_stderr_bytes: int = 32768,
 ) -> GitExecutionPolicy:
     return GitExecutionPolicy(
         settings=ShellToolSettings(
@@ -740,7 +1116,13 @@ def _policy(
                 workspace_root=str(workspace_root),
                 cwd="repo",
                 allowed_commands=_PHASE3_COMMANDS,
+                default_timeout_seconds=default_timeout_seconds,
                 max_log_count=max_log_count,
+                max_pathspecs=max_pathspecs,
+                max_pathspec_bytes=max_pathspec_bytes,
+                max_timeout_seconds=max_timeout_seconds,
+                max_stdout_bytes=max_stdout_bytes,
+                max_stderr_bytes=max_stderr_bytes,
             )
         ),
         executable_lookup=_fake_executable,
@@ -792,24 +1174,102 @@ def _write_real_git_repo(root: Path, git_binary: str) -> Path:
 
 
 def _git(cwd: Path, git_binary: str, *args: str) -> None:
+    isolation_root = _git_isolation_root(cwd)
+    env = _git_env(isolation_root)
     run(
-        (git_binary, *args),
+        (
+            git_binary,
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "tag.gpgsign=false",
+            "-c",
+            "credential.helper=",
+            "-c",
+            f"core.hooksPath={isolation_root / 'hooks'}",
+            "-c",
+            f"init.templateDir={isolation_root / 'templates'}",
+            *args,
+        ),
         cwd=cwd,
+        env=env,
         check=True,
         capture_output=True,
         text=True,
     )
 
 
+def _git_isolation_root(cwd: Path) -> Path:
+    if (cwd / ".git").exists():
+        return cwd.parent / ".git-test-env"
+    return cwd / ".git-test-env"
+
+
+def _git_env(isolation_root: Path) -> dict[str, str]:
+    home = isolation_root / "home"
+    paths = (
+        home,
+        isolation_root / "hooks",
+        isolation_root / "templates",
+        isolation_root / "tmp",
+        isolation_root / "xdg-cache",
+        isolation_root / "xdg-config",
+        isolation_root / "xdg-data",
+    )
+    for path in paths:
+        path.mkdir(parents=True, exist_ok=True)
+
+    env = {
+        "GIT_ASKPASS": "",
+        "GIT_CONFIG_GLOBAL": devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_EDITOR": "true",
+        "GIT_PAGER": "cat",
+        "GIT_TEMPLATE_DIR": str(isolation_root / "templates"),
+        "GIT_TERMINAL_PROMPT": "0",
+        "HOME": str(home),
+        "SSH_ASKPASS": "",
+        "TEMP": str(isolation_root / "tmp"),
+        "TMP": str(isolation_root / "tmp"),
+        "TMPDIR": str(isolation_root / "tmp"),
+        "XDG_CACHE_HOME": str(isolation_root / "xdg-cache"),
+        "XDG_CONFIG_HOME": str(isolation_root / "xdg-config"),
+        "XDG_DATA_HOME": str(isolation_root / "xdg-data"),
+    }
+    current_path = environ.get("PATH")
+    if current_path is not None:
+        env["PATH"] = current_path
+
+    for key in ("LANG", "LC_ALL", "LC_CTYPE"):
+        value = environ.get(key)
+        if value is not None:
+            env[key] = value
+
+    return env
+
+
 class _FakeGitExecutor:
     def __init__(
         self,
-        stderr: str,
+        stderr: str = "",
         *,
+        stdout: str = "",
         status: ShellExecutionStatus = ShellExecutionStatus.NONZERO_EXIT,
+        exit_code: int | None = 128,
+        stdout_truncated: bool = False,
+        stderr_truncated: bool = False,
+        timed_out: bool = False,
+        error_message: str | None = None,
     ) -> None:
         self._stderr = stderr
+        self._stdout = stdout
         self._status = status
+        self._exit_code = exit_code
+        self._stdout_truncated = stdout_truncated
+        self._stderr_truncated = stderr_truncated
+        self._timed_out = timed_out
+        self._error_message = error_message
+        self.calls = 0
 
     async def execute(
         self,
@@ -820,10 +1280,17 @@ class _FakeGitExecutor:
         ) = None,
     ) -> ExecutionResult:
         assert stream is None
+        self.calls += 1
         return _execution_result(
             spec,
             status=self._status,
+            stdout=self._stdout,
             stderr=self._stderr,
+            exit_code=self._exit_code,
+            stdout_truncated=self._stdout_truncated,
+            stderr_truncated=self._stderr_truncated,
+            timed_out=self._timed_out,
+            error_message=self._error_message,
         )
 
 
@@ -831,7 +1298,13 @@ def _execution_result(
     spec: ExecutionSpec,
     *,
     status: ShellExecutionStatus,
-    stderr: str,
+    stdout: str = "",
+    stderr: str = "",
+    exit_code: int | None = 128,
+    stdout_truncated: bool = False,
+    stderr_truncated: bool = False,
+    timed_out: bool = False,
+    error_message: str | None = None,
 ) -> ExecutionResult:
     return ExecutionResult(
         backend=spec.backend,
@@ -842,14 +1315,18 @@ def _execution_result(
         cwd=spec.cwd,
         display_cwd=spec.display_cwd,
         status=status,
-        exit_code=128,
-        stdout="",
+        exit_code=exit_code,
+        stdout=stdout,
         stderr=stderr,
         stdout_media_type="text/plain",
         output_kind=ShellOutputKind.TEXT,
-        stdout_bytes=0,
+        stdout_bytes=len(stdout.encode("utf-8")),
         stderr_bytes=len(stderr.encode("utf-8")),
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
+        timed_out=timed_out,
         duration_ms=3,
+        error_message=error_message,
         metadata=spec.metadata,
     )
 
