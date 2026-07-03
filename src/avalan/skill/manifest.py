@@ -30,8 +30,9 @@ from .resolver import (
     SkillAuthorizedResource,
     SkillAuthorizedSourceRoot,
     SkillSourceFileSystem,
+    authorize_skill_manifest_declared_resource,
 )
-from .settings import SkillIndexLimits, SkillReadLimits
+from .settings import SkillIndexLimits, SkillReadLimits, SkillSourceLimits
 
 from ast import literal_eval
 from collections import Counter
@@ -192,6 +193,7 @@ class SkillManifestDocument:
 class SkillManifestLoadResult:
     manifests: tuple[SkillManifestDocument, ...] = ()
     diagnostics: tuple[SkillDiagnosticInfo, ...] = ()
+    sources: tuple[SkillAuthorizedSourceRoot, ...] = ()
 
     def __post_init__(self) -> None:
         assert isinstance(self.manifests, tuple)
@@ -200,6 +202,9 @@ class SkillManifestLoadResult:
         assert isinstance(self.diagnostics, tuple)
         for diagnostic in self.diagnostics:
             assert isinstance(diagnostic, SkillDiagnosticInfo)
+        assert isinstance(self.sources, tuple)
+        for source in self.sources:
+            assert isinstance(source, SkillAuthorizedSourceRoot)
 
     @property
     def status(self) -> SkillStatus:
@@ -239,6 +244,7 @@ async def parse_skill_manifests(
     file_system: SkillSourceFileSystem | None = None,
     read_limits: SkillReadLimits | None = None,
     index_limits: SkillIndexLimits | None = None,
+    source_limits: SkillSourceLimits | None = None,
 ) -> SkillManifestLoadResult:
     """Parse manifests from authorized Phase 2 source roots."""
     assert isinstance(sources, tuple), "sources must be a tuple"
@@ -250,16 +256,13 @@ async def parse_skill_manifests(
         read_limits = SkillReadLimits()
     if index_limits is None:
         index_limits = SkillIndexLimits()
+    if source_limits is None:
+        source_limits = SkillSourceLimits()
     await skill_cancellation_checkpoint()
 
     manifests: list[SkillManifestDocument] = []
     diagnostics: list[SkillDiagnosticInfo] = []
-    manifest_resources = tuple(
-        resource
-        for source in sources
-        for resource in source.resources
-        if _is_manifest_resource_id(resource.resource_id)
-    )
+    manifest_resources = _manifest_resource_items(sources)
     projected_documents = _manifest_diagnostic_documents(sources)
     if (
         len(manifest_resources) + len(projected_documents)
@@ -271,24 +274,41 @@ async def parse_skill_manifests(
                     path="manifest.count",
                     reason="max_skills",
                 ),
-            )
+            ),
+            sources=sources,
         )
 
-    source_by_label = {source.label: source for source in sources}
-    for resource in manifest_resources:
+    expanded_resources_by_source: dict[
+        str,
+        tuple[SkillAuthorizedResource, ...],
+    ] = {}
+    for source, resource in manifest_resources:
         await skill_cancellation_checkpoint()
-        source = source_by_label[resource.source_label]
-        document = await _parse_manifest_resource(
+        document, expanded_resources = await _parse_manifest_resource(
             source=source,
             resource=resource,
             file_system=file_system,
             read_limits=read_limits,
             index_limits=index_limits,
+            source_limits=source_limits,
         )
         manifests.append(document)
+        if expanded_resources is not None:
+            expanded_resources_by_source[source.label] = expanded_resources
     manifests.extend(projected_documents)
     await skill_cancellation_checkpoint()
 
+    expanded_sources = tuple(
+        (
+            replace(
+                source,
+                resources=expanded_resources_by_source[source.label],
+            )
+            if source.label in expanded_resources_by_source
+            else source
+        )
+        for source in sources
+    )
     normalized_manifests, duplicate_diagnostics = normalize_manifest_documents(
         tuple(manifests)
     )
@@ -296,6 +316,7 @@ async def parse_skill_manifests(
     return SkillManifestLoadResult(
         manifests=normalized_manifests,
         diagnostics=tuple(diagnostics),
+        sources=expanded_sources,
     )
 
 
@@ -405,6 +426,94 @@ def normalize_skill_manifests(
     )
 
 
+def _manifest_resource_items(
+    sources: tuple[SkillAuthorizedSourceRoot, ...],
+) -> tuple[tuple[SkillAuthorizedSourceRoot, SkillAuthorizedResource], ...]:
+    return tuple(
+        (source, resource)
+        for source in sources
+        for resource in source.resources
+        if _should_parse_manifest_resource(source, resource)
+    )
+
+
+def _should_parse_manifest_resource(
+    source: SkillAuthorizedSourceRoot,
+    resource: SkillAuthorizedResource,
+) -> bool:
+    if source.manifest_resource_id is not None:
+        return resource.resource_id == source.manifest_resource_id
+    return _is_manifest_resource_id(resource.resource_id)
+
+
+async def _manifest_resource_authorized_resources(
+    *,
+    source: SkillAuthorizedSourceRoot,
+    resource: SkillAuthorizedResource,
+    content: str,
+    file_system: SkillSourceFileSystem,
+    read_limits: SkillReadLimits,
+    index_limits: SkillIndexLimits,
+    source_limits: SkillSourceLimits,
+) -> tuple[SkillAuthorizedResource, ...]:
+    if (
+        source.manifest_resource_id is None
+        or resource.resource_id != source.manifest_resource_id
+    ):
+        return source.resources
+    parsed, diagnostic = _parse_front_matter(content)
+    if diagnostic is not None:
+        return source.resources
+    raw_resources = cast(
+        tuple[str, ...],
+        parsed.get(SkillManifestField.RESOURCES.value, ()),
+    )
+    if len(raw_resources) + 1 > index_limits.max_resources_per_skill:
+        return source.resources
+
+    package_resource_id = _package_resource_id(
+        _safe_manifest_resource_id(resource.resource_id)
+    )
+    resources = list(source.resources)
+    resources_by_id = {
+        authorized.resource_id: authorized for authorized in resources
+    }
+    indexed_bytes = sum(authorized.size_bytes for authorized in resources)
+    for raw_resource in raw_resources:
+        resource_id = normalize_skill_resource_id(raw_resource)
+        if resource_id is None:
+            continue
+        source_resource_id = _source_resource_id(
+            package_resource_id,
+            resource_id,
+        )
+        if source_resource_id in resources_by_id:
+            continue
+        if len(resources) >= source_limits.max_resources_per_source:
+            break
+        if len(resources) >= source_limits.max_files_per_source:
+            break
+        result = await authorize_skill_manifest_declared_resource(
+            source,
+            source_resource_id,
+            source_limits=source_limits,
+            read_limits=read_limits,
+            index_limits=index_limits,
+            file_system=file_system,
+        )
+        if result.resource is None:
+            continue
+        if (
+            indexed_bytes + result.resource.size_bytes
+            > index_limits.max_indexed_bytes
+        ):
+            break
+        resources_by_id[source_resource_id] = result.resource
+        resources.append(result.resource)
+        indexed_bytes += result.resource.size_bytes
+    return tuple(resources)
+
+
 async def _parse_manifest_resource(
     *,
     source: SkillAuthorizedSourceRoot,
@@ -412,7 +521,11 @@ async def _parse_manifest_resource(
     file_system: SkillSourceFileSystem,
     read_limits: SkillReadLimits,
     index_limits: SkillIndexLimits,
-) -> SkillManifestDocument:
+    source_limits: SkillSourceLimits,
+) -> tuple[
+    SkillManifestDocument,
+    tuple[SkillAuthorizedResource, ...] | None,
+]:
     await skill_cancellation_checkpoint()
     try:
         content = await file_system.read_bytes(
@@ -420,46 +533,73 @@ async def _parse_manifest_resource(
             read_limits.max_bytes_per_read + 1,
         )
     except OSError:
-        return _resource_diagnostic_document(
-            source_label=source.label,
-            manifest_resource_id=resource.resource_id,
-            diagnostic=diagnostic_from_failure(
-                SkillFailureMode.SOURCE_UNAVAILABLE,
-                path="source",
+        return (
+            _resource_diagnostic_document(
+                source_label=source.label,
+                manifest_resource_id=resource.resource_id,
+                diagnostic=diagnostic_from_failure(
+                    SkillFailureMode.SOURCE_UNAVAILABLE,
+                    path="source",
+                ),
             ),
+            None,
         )
     if len(content) > read_limits.max_bytes_per_read:
-        return _resource_diagnostic_document(
-            source_label=source.label,
-            manifest_resource_id=resource.resource_id,
-            diagnostic=_resource_oversized_diagnostic(
-                path="resource.main",
-                reason="max_bytes_per_read",
+        return (
+            _resource_diagnostic_document(
+                source_label=source.label,
+                manifest_resource_id=resource.resource_id,
+                diagnostic=_resource_oversized_diagnostic(
+                    path="resource.main",
+                    reason="max_bytes_per_read",
+                ),
             ),
+            None,
         )
     if b"\x00" in content:
-        return _resource_diagnostic_document(
-            source_label=source.label,
-            manifest_resource_id=resource.resource_id,
-            diagnostic=_binary_resource_diagnostic(reason="nul_byte"),
+        return (
+            _resource_diagnostic_document(
+                source_label=source.label,
+                manifest_resource_id=resource.resource_id,
+                diagnostic=_binary_resource_diagnostic(reason="nul_byte"),
+            ),
+            None,
         )
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
-        return _resource_diagnostic_document(
-            source_label=source.label,
-            manifest_resource_id=resource.resource_id,
-            diagnostic=_binary_resource_diagnostic(reason="non_utf8"),
+        return (
+            _resource_diagnostic_document(
+                source_label=source.label,
+                manifest_resource_id=resource.resource_id,
+                diagnostic=_binary_resource_diagnostic(reason="non_utf8"),
+            ),
+            None,
         )
     await skill_cancellation_checkpoint()
-    return parse_skill_manifest_markdown(
+    authorized_resources = await _manifest_resource_authorized_resources(
+        source=source,
+        resource=resource,
+        content=text,
+        file_system=file_system,
+        read_limits=read_limits,
+        index_limits=index_limits,
+        source_limits=source_limits,
+    )
+    document = parse_skill_manifest_markdown(
         text,
         source_label=source.label,
         manifest_resource_id=resource.resource_id,
         manifest_size_bytes=resource.size_bytes,
-        authorized_resources=source.resources,
+        authorized_resources=authorized_resources,
         index_limits=index_limits,
     )
+    expanded_resources = (
+        authorized_resources
+        if authorized_resources != source.resources
+        else None
+    )
+    return document, expanded_resources
 
 
 def _normalize_front_matter(

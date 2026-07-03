@@ -6,12 +6,14 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 from avalan.skill import (
     SkillAsyncFileSystem,
     SkillAuthorizedResource,
+    SkillAuthorizedSourceRoot,
     SkillConfiguredSource,
     SkillDiagnosticCode,
     SkillIndexLimits,
     SkillManifestDocument,
     SkillManifestLoadResult,
     SkillReadLimits,
+    SkillSourceLimits,
     SkillStatus,
     WorkspaceSkillSourceAuthority,
     normalize_skill_manifest_resource,
@@ -20,6 +22,7 @@ from avalan.skill import (
     parse_skill_manifests,
     resolve_skill_sources,
 )
+from avalan.skill import manifest as manifest_module
 
 FIXTURE_DIR = Path(__file__).with_name("fixtures") / "phase3"
 
@@ -110,6 +113,66 @@ class SkillManifestPhase3AsyncTest(IsolatedAsyncioTestCase):
             ),
             ("SKILL-pdf.md", "references/rendering.md"),
         )
+
+    async def test_loads_direct_manifest_file_source(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            standalone_path = root / "SKILL-pdf.md"
+            package_path = root / "package" / "SKILL.md"
+            _write_skill(
+                standalone_path,
+                name="PDF",
+                description="PDF guidance.",
+            )
+            _write_skill(
+                package_path,
+                name="Package PDF",
+                description="Package guidance.",
+            )
+            _write_text(root / "SKILL-other.md", "not loaded\n")
+            file_system = CountingReadFileSystem()
+
+            standalone_source = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="standalone",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=standalone_path,
+                    ),
+                )
+            )
+            package_source = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="package",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=package_path,
+                    ),
+                )
+            )
+            result = await parse_skill_manifests(
+                (*standalone_source.sources, *package_source.sources),
+                file_system=file_system,
+            )
+
+        self.assertEqual(result.status, SkillStatus.OK)
+        self.assertEqual(
+            tuple(manifest.skill_id for manifest in result.manifests),
+            ("pdf", "package-pdf"),
+        )
+        self.assertEqual(
+            tuple(
+                manifest.manifest_resource_id for manifest in result.manifests
+            ),
+            ("SKILL-pdf.md", "SKILL.md"),
+        )
+        self.assertEqual(
+            tuple(
+                manifest.package_resource_id for manifest in result.manifests
+            ),
+            (".", "."),
+        )
+        self.assertEqual(file_system.read_names, ("SKILL-pdf.md", "SKILL.md"))
 
     async def test_invalid_skill_dash_manifest_names_are_not_loaded(
         self,
@@ -356,6 +419,167 @@ class SkillManifestPhase3AsyncTest(IsolatedAsyncioTestCase):
                 SkillDiagnosticCode.RESOURCE_OVERSIZED,
             )
             self.assertEqual(result.manifests, ())
+
+    async def test_direct_manifest_declared_resource_authorization_edges(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            manifest_path = root / "SKILL.md"
+            keep_path = root / "references" / "keep.md"
+            huge_path = root / "references" / "huge.md"
+            _write_text(manifest_path, "---\nname: pdf\n---\n")
+            _write_text(keep_path, "keep\n")
+            _write_text(huge_path, "0123456789\n")
+            manifest_resource = SkillAuthorizedResource(
+                source_label="workspace-main",
+                resource_id="SKILL.md",
+                path=manifest_path,
+                size_bytes=16,
+                line_count=3,
+            )
+            keep_resource = SkillAuthorizedResource(
+                source_label="workspace-main",
+                resource_id="references/keep.md",
+                path=keep_path,
+                size_bytes=5,
+                line_count=1,
+            )
+            source = SkillAuthorizedSourceRoot(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root=root,
+                manifest_resource_id="SKILL.md",
+                resources=(manifest_resource,),
+            )
+            source_with_existing = SkillAuthorizedSourceRoot(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root=root,
+                manifest_resource_id="SKILL.md",
+                resources=(manifest_resource, keep_resource),
+            )
+            file_system = SkillAsyncFileSystem()
+            kwargs = {
+                "source": source,
+                "resource": manifest_resource,
+                "file_system": file_system,
+                "read_limits": SkillReadLimits(),
+                "index_limits": SkillIndexLimits(),
+                "source_limits": SkillSourceLimits(),
+            }
+
+            malformed = (
+                await (
+                    manifest_module._manifest_resource_authorized_resources(
+                        content="not front matter",
+                        **kwargs,
+                    )
+                )
+            )
+            skill_bound = (
+                await (
+                    manifest_module._manifest_resource_authorized_resources(
+                        content=_content_with_resources(
+                            '"references/keep.md", "references/huge.md"'
+                        ),
+                        **{
+                            **kwargs,
+                            "index_limits": (
+                                SkillIndexLimits(max_resources_per_skill=2)
+                            ),
+                        },
+                    )
+                )
+            )
+            invalid_then_valid = (
+                await (
+                    manifest_module._manifest_resource_authorized_resources(
+                        content=_content_with_resources(
+                            '"bad*name.md", "references/keep.md"'
+                        ),
+                        **kwargs,
+                    )
+                )
+            )
+            duplicate = (
+                await (
+                    manifest_module._manifest_resource_authorized_resources(
+                        content=_content_with_resources(
+                            '"references/keep.md"'
+                        ),
+                        **{
+                            **kwargs,
+                            "source": source_with_existing,
+                        },
+                    )
+                )
+            )
+            source_bound = (
+                await (
+                    manifest_module._manifest_resource_authorized_resources(
+                        content=_content_with_resources(
+                            '"references/keep.md"'
+                        ),
+                        **{
+                            **kwargs,
+                            "source_limits": (
+                                SkillSourceLimits(max_resources_per_source=1)
+                            ),
+                        },
+                    )
+                )
+            )
+            file_bound = (
+                await (
+                    manifest_module._manifest_resource_authorized_resources(
+                        content=_content_with_resources(
+                            '"references/keep.md"'
+                        ),
+                        **{
+                            **kwargs,
+                            "source_limits": (
+                                SkillSourceLimits(max_files_per_source=1)
+                            ),
+                        },
+                    )
+                )
+            )
+            missing = (
+                await (
+                    manifest_module._manifest_resource_authorized_resources(
+                        content=_content_with_resources(
+                            '"references/missing.md"'
+                        ),
+                        **kwargs,
+                    )
+                )
+            )
+            indexed_bound = (
+                await manifest_module._manifest_resource_authorized_resources(
+                    content=_content_with_resources('"references/huge.md"'),
+                    **{
+                        **kwargs,
+                        "index_limits": (
+                            SkillIndexLimits(
+                                max_indexed_bytes=manifest_resource.size_bytes
+                            )
+                        ),
+                    },
+                )
+            )
+
+        self.assertEqual(malformed, (manifest_resource,))
+        self.assertEqual(skill_bound, (manifest_resource,))
+        self.assertEqual(
+            tuple(resource.resource_id for resource in invalid_then_valid),
+            ("SKILL.md", "references/keep.md"),
+        )
+        self.assertEqual(duplicate, (manifest_resource, keep_resource))
+        self.assertEqual(source_bound, (manifest_resource,))
+        self.assertEqual(file_bound, (manifest_resource,))
+        self.assertEqual(missing, (manifest_resource,))
+        self.assertEqual(indexed_bound, (manifest_resource,))
 
 
 class SkillManifestPhase3Test(TestCase):
@@ -782,6 +1006,17 @@ def _parse(
         content,
         source_label="workspace-main",
         index_limits=index_limits,
+    )
+
+
+def _content_with_resources(resources: str) -> str:
+    return (
+        "---\n"
+        "name: pdf\n"
+        "description: PDF guidance.\n"
+        f"resources: [{resources}]\n"
+        "---\n"
+        "# Body\n"
     )
 
 

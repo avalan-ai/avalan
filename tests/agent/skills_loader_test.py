@@ -9,6 +9,7 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from avalan.agent import loader as loader_module
 from avalan.agent.loader import OrchestratorLoader
 from avalan.cli.commands import agent as agent_cmds
 from avalan.entities import (
@@ -22,11 +23,15 @@ from avalan.entities import (
 from avalan.event.manager import EventManagerMode
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.skill import (
+    BundledSkillSourceAuthority,
+    PluginProvidedSkillSourceAuthority,
+    PreinstalledRemoteSkillSourceAuthority,
     SkillObservabilitySettings,
     SkillPrivacySettings,
     SkillReadLimits,
     SkillSourceConfig,
     TrustedSkillSettings,
+    UserLocalSkillSourceAuthority,
     WorkspaceSkillSourceAuthority,
 )
 from avalan.tool.context import ToolSettingsContext
@@ -34,6 +39,166 @@ from avalan.tool.manager import ToolManager
 
 
 class SkillsLoaderTestCase(IsolatedAsyncioTestCase):
+    def test_effective_skills_enabled_tools_adds_manifest_filter(
+        self,
+    ) -> None:
+        settings = TrustedSkillSettings(
+            sources=(
+                SkillSourceConfig(
+                    label="pdf",
+                    authority=WorkspaceSkillSourceAuthority(),
+                    manifest_path="/tmp/SKILL.md",
+                ),
+            ),
+        )
+
+        self.assertEqual(
+            loader_module.effective_skills_enabled_tools(
+                settings,
+                ["shell.pdfinfo"],
+            ),
+            ["shell.pdfinfo", "skills"],
+        )
+        self.assertIsNone(
+            loader_module.effective_skills_enabled_tools(settings, None)
+        )
+        self.assertEqual(
+            loader_module.effective_skills_enabled_tools(
+                settings,
+                ["skills.read"],
+            ),
+            ["skills.read"],
+        )
+
+    def test_manifest_skills_config_merges_with_trusted_settings(
+        self,
+    ) -> None:
+        trusted = TrustedSkillSettings(
+            sources=(
+                SkillSourceConfig(
+                    label="workspace-main",
+                    authority=WorkspaceSkillSourceAuthority(),
+                    root_path="/tmp/skills",
+                ),
+            ),
+        )
+
+        merged, narrowing = (
+            OrchestratorLoader._trusted_manifest_skills_settings_from_config(
+                {
+                    "file_auto_enable": False,
+                    "files": {
+                        "pdf": {
+                            "path": "/tmp/SKILL.md",
+                            "authority": "plugin_provided:pdf-plugin",
+                            "allow_hidden": True,
+                        }
+                    },
+                },
+                trusted=trusted,
+            )
+        )
+
+        assert isinstance(merged, TrustedSkillSettings)
+        self.assertFalse(merged.manifest_auto_enable)
+        self.assertEqual(narrowing, {})
+        self.assertEqual(
+            tuple(source.label for source in merged.sources),
+            ("workspace-main", "pdf"),
+        )
+        manifest_source = merged.sources[1]
+        self.assertEqual(manifest_source.manifest_path, "/tmp/SKILL.md")
+        self.assertTrue(manifest_source.allow_hidden_paths)
+        self.assertIsInstance(
+            manifest_source.authority,
+            PluginProvidedSkillSourceAuthority,
+        )
+
+        with self.assertRaisesRegex(AssertionError, "labels must be unique"):
+            OrchestratorLoader._trusted_manifest_skills_settings_from_config(
+                {"files": {"workspace-main": "/tmp/SKILL.md"}},
+                trusted=trusted,
+            )
+
+    def test_manifest_source_config_rejects_invalid_shapes(self) -> None:
+        with self.assertRaisesRegex(AssertionError, "strings or mappings"):
+            OrchestratorLoader._manifest_skill_source_from_config("pdf", 123)
+        with self.assertRaisesRegex(AssertionError, "unknown keys"):
+            OrchestratorLoader._manifest_skill_source_from_config(
+                "pdf",
+                {"path": "/tmp/SKILL.md", "unknown": True},
+            )
+        with self.assertRaisesRegex(AssertionError, "path must be"):
+            OrchestratorLoader._manifest_skill_source_from_config(
+                "pdf",
+                {"path": 123},
+            )
+        with self.assertRaisesRegex(AssertionError, "authority must be"):
+            OrchestratorLoader._manifest_skill_source_from_config(
+                "pdf",
+                {"path": "/tmp/SKILL.md", "authority": 123},
+            )
+        with self.assertRaisesRegex(AssertionError, "allow_hidden"):
+            OrchestratorLoader._manifest_skill_source_from_config(
+                "pdf",
+                {"path": "/tmp/SKILL.md", "allow_hidden": "yes"},
+            )
+
+    def test_skill_source_authority_from_config_variants(self) -> None:
+        cases = (
+            (
+                "bundled:core",
+                BundledSkillSourceAuthority,
+                "bundle_id",
+                "core",
+            ),
+            (
+                "workspace:docs",
+                WorkspaceSkillSourceAuthority,
+                "workspace_id",
+                "docs",
+            ),
+            (
+                "user_local:profile",
+                UserLocalSkillSourceAuthority,
+                "profile_id",
+                "profile",
+            ),
+            (
+                "plugin_provided:pdf-plugin",
+                PluginProvidedSkillSourceAuthority,
+                "plugin_id",
+                "pdf-plugin",
+            ),
+            (
+                "preinstalled_remote:registry",
+                PreinstalledRemoteSkillSourceAuthority,
+                "registry_id",
+                "registry",
+            ),
+        )
+
+        for value, cls, attribute, expected in cases:
+            with self.subTest(value=value):
+                authority = (
+                    OrchestratorLoader._skill_source_authority_from_config(
+                        value
+                    )
+                )
+                self.assertIsInstance(authority, cls)
+                self.assertEqual(getattr(authority, attribute), expected)
+
+        with self.assertRaisesRegex(AssertionError, "unsupported"):
+            OrchestratorLoader._skill_source_authority_from_config("network")
+        with self.assertRaisesRegex(AssertionError, "requires plugin id"):
+            OrchestratorLoader._skill_source_authority_from_config(
+                "plugin_provided"
+            )
+        with self.assertRaisesRegex(AssertionError, "requires registry id"):
+            OrchestratorLoader._skill_source_authority_from_config(
+                "preinstalled_remote"
+            )
+
     async def test_from_settings_exposes_enabled_skills_toolset(
         self,
     ) -> None:
@@ -59,6 +224,42 @@ class SkillsLoaderTestCase(IsolatedAsyncioTestCase):
             )
             self.assertIsNotNone(manager.bootstrap_prompt())
 
+    async def test_cli_manifest_file_settings_auto_expose_skills_toolset(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "pdf" / "SKILL.md"
+            _write_skill(
+                manifest,
+                body="# PDF Body\nFOLLOW_THE_PDF_STEPS\n",
+            )
+            tool_settings = agent_cmds._agent_tool_settings(
+                Namespace(tool_skills_file=[f"pdf={manifest}"])
+            )
+
+            manager = await _loaded_tool_manager(
+                _settings(tools=None),
+                tool_settings=tool_settings,
+            )
+            read = await manager(
+                ToolCall(
+                    id="read",
+                    name="skills.read",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+
+        self.assertIn(
+            "skills.read",
+            [descriptor.name for descriptor in manager.list_tools()],
+        )
+        self.assertIsInstance(read, ToolCallResult)
+        assert isinstance(read, ToolCallResult)
+        content = cast(dict[str, Any], _result_dict(read)["content"])
+        self.assertIn("FOLLOW_THE_PDF_STEPS", content["text"])
+
     async def test_from_settings_fake_loop_matches_then_reads(
         self,
     ) -> None:
@@ -81,6 +282,45 @@ class SkillsLoaderTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(loop.calls, ["skills.match", "skills.read"])
         self.assertEqual(answer, "answered after read")
+
+    async def test_from_settings_reads_manifest_file_source(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "pdf" / "SKILL.md"
+            _write_skill(
+                manifest,
+                body="# PDF Body\nFOLLOW_THE_PDF_STEPS\n",
+            )
+
+            manager = await _loaded_tool_manager(
+                _settings(tools=["skills.read"]),
+                tool_settings=ToolSettingsContext(
+                    skills=TrustedSkillSettings(
+                        sources=(
+                            SkillSourceConfig(
+                                label="pdf",
+                                authority=WorkspaceSkillSourceAuthority(),
+                                manifest_path=manifest,
+                            ),
+                        ),
+                    )
+                ),
+            )
+            read = await manager(
+                ToolCall(
+                    id="read",
+                    name="skills.read",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+
+        self.assertIsInstance(read, ToolCallResult)
+        assert isinstance(read, ToolCallResult)
+        content = cast(dict[str, Any], _result_dict(read)["content"])
+        self.assertIn("FOLLOW_THE_PDF_STEPS", content["text"])
 
     async def test_configured_skills_without_enablement_are_not_exposed(
         self,
@@ -215,6 +455,178 @@ authority_kinds = ["workspace"]
 
         self.assertIsInstance(read, ToolCallResult)
         self.assertIsNone(manager.bootstrap_prompt())
+
+    async def test_toml_skills_files_define_trusted_manifest_source(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "pdf" / "SKILL.md"
+            _write_skill(
+                manifest,
+                body="# PDF Body\nFOLLOW_THE_PDF_STEPS\n",
+            )
+
+            manager = await _loaded_tool_manager_from_file(
+                _agent_toml(f"""
+[tool]
+enable = ["skills.read"]
+
+[tool.skills.files]
+pdf = {dumps(str(manifest))}
+"""),
+            )
+            read = await manager(
+                ToolCall(
+                    id="read",
+                    name="skills.read",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+
+        self.assertIsInstance(read, ToolCallResult)
+        assert isinstance(read, ToolCallResult)
+        content = cast(dict[str, Any], _result_dict(read)["content"])
+        self.assertIn("FOLLOW_THE_PDF_STEPS", content["text"])
+
+    async def test_toml_skills_files_auto_expose_without_tool_enable(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "pdf" / "SKILL.md"
+            _write_skill(
+                manifest,
+                body="# PDF Body\nFOLLOW_THE_PDF_STEPS\n",
+            )
+
+            manager = await _loaded_tool_manager_from_file(
+                _agent_toml(f"""
+[tool.skills.files]
+pdf = {dumps(str(manifest))}
+"""),
+            )
+            read = await manager(
+                ToolCall(
+                    id="read",
+                    name="skills.read",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+
+        self.assertIn(
+            "skills.read",
+            [descriptor.name for descriptor in manager.list_tools()],
+        )
+        self.assertIsInstance(read, ToolCallResult)
+        assert isinstance(read, ToolCallResult)
+        content = cast(dict[str, Any], _result_dict(read)["content"])
+        self.assertIn("FOLLOW_THE_PDF_STEPS", content["text"])
+
+    async def test_toml_skills_files_auto_enable_opt_out_hides_tools(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "pdf" / "SKILL.md"
+            _write_skill(manifest)
+
+            manager = await _loaded_tool_manager_from_file(
+                _agent_toml(f"""
+[tool.skills]
+manifest_auto_enable = false
+
+[tool.skills.files]
+pdf = {dumps(str(manifest))}
+"""),
+            )
+
+        self.assertNotIn(
+            "skills.read",
+            [descriptor.name for descriptor in manager.list_tools()],
+        )
+        self.assertIsNone(manager.describe_tool("skills.read"))
+
+    async def test_toml_skills_files_explicit_skill_ids_are_authoritative(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "pdf" / "SKILL.md"
+            _write_skill(
+                manifest,
+                body="# PDF Body\nFOLLOW_THE_PDF_STEPS\n",
+            )
+
+            manager = await _loaded_tool_manager_from_file(
+                _agent_toml(f"""
+[tool.skills]
+skill_ids = ["ocr"]
+
+[tool.skills.files]
+pdf = {dumps(str(manifest))}
+"""),
+            )
+            read = await manager(
+                ToolCall(
+                    id="read",
+                    name="skills.read",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+
+        self.assertIn(
+            "skills.read",
+            [descriptor.name for descriptor in manager.list_tools()],
+        )
+        self.assertIsInstance(read, ToolCallResult)
+        assert isinstance(read, ToolCallResult)
+        encoded = dumps(_result_dict(read), sort_keys=True)
+        self.assertIn("skill_not_allowed", encoded)
+        self.assertNotIn("FOLLOW_THE_PDF_STEPS", encoded)
+
+    async def test_cli_manifest_auto_label_does_not_block_toml_skill_ids(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "pdf" / "SKILL.md"
+            _write_skill(
+                manifest,
+                body="# PDF Body\nFOLLOW_THE_PDF_STEPS\n",
+            )
+            tool_settings = agent_cmds._agent_tool_settings(
+                Namespace(tool_skills_file=[f"pdf={manifest}"])
+            )
+
+            manager = await _loaded_tool_manager_from_file(
+                _agent_toml("""
+[tool.skills]
+skill_ids = ["ocr"]
+"""),
+                tool_settings=tool_settings,
+            )
+            read = await manager(
+                ToolCall(
+                    id="read",
+                    name="skills.read",
+                    arguments={"skill": "pdf"},
+                ),
+                ToolCallContext(),
+            )
+
+        self.assertIn(
+            "skills.read",
+            [descriptor.name for descriptor in manager.list_tools()],
+        )
+        self.assertIsInstance(read, ToolCallResult)
+        assert isinstance(read, ToolCallResult)
+        encoded = dumps(_result_dict(read), sort_keys=True)
+        self.assertIn("skill_not_allowed", encoded)
+        self.assertNotIn("FOLLOW_THE_PDF_STEPS", encoded)
 
     async def test_toml_partial_read_limits_inherit_trusted_values(
         self,

@@ -268,6 +268,18 @@ class SkillEntitiesTest(TestCase):
                 enabled=False,
                 status=SkillStatus.OK,
             ),
+            lambda: SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                root_path="/tmp/skills",
+                manifest_path="/tmp/skills/SKILL.md",
+            ),
+            lambda: SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                manifest_path="/tmp/skills/SKILL.md",
+                package_path="package",
+            ),
             lambda: SkillResourceHandle(
                 source_label=source.label,
                 skill_id="",

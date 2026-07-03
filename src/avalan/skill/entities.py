@@ -219,6 +219,7 @@ class SkillSourceConfig:
     label: str
     authority: SkillSourceAuthority
     root_path: str | Path | None = None
+    manifest_path: str | Path | None = None
     package_path: str | None = None
     enabled: bool = True
     allow_hidden_paths: bool = False
@@ -233,6 +234,16 @@ class SkillSourceConfig:
             assert isinstance(
                 self.root_path, str | Path
             ), "root_path must be a path"
+        if self.manifest_path is not None:
+            assert isinstance(
+                self.manifest_path, str | Path
+            ), "manifest_path must be a path"
+            assert (
+                self.root_path is None
+            ), "manifest_path cannot be combined with root_path"
+            assert (
+                self.package_path is None
+            ), "manifest_path cannot be combined with package_path"
         if self.package_path is not None:
             assert isinstance(
                 self.package_path, str
@@ -258,6 +269,8 @@ class SkillSourceConfig:
         }
         if self.package_path is not None:
             value["package_path"] = _model_safe_package_path(self.package_path)
+        if self.manifest_path is not None:
+            value["source_type"] = "manifest"
         if self.tags:
             value["tags"] = self.tags
         if self.diagnostics:

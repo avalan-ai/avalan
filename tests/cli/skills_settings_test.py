@@ -152,6 +152,65 @@ class SkillsSettingsCliTestCase(TestCase):
         self.assertEqual(authority.workspace_id, "project")
         self.assertNotIn(root, str(settings.as_model_dict()))
 
+    def test_agent_tool_settings_maps_manifest_file_and_auto_enables(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            path = str(Path(directory) / "SKILL.md")
+            args = Namespace(
+                tool_skills_file=[f"pdf={path}"],
+                tool_skills_source_authority=["pdf=workspace:project"],
+                tool_skills_source_allow_hidden=["pdf"],
+            )
+
+            context = agent_cmds._agent_tool_settings(args)
+
+        settings = context.skills
+        assert isinstance(settings, TrustedSkillSettings)
+        self.assertTrue(settings.manifest_auto_enable)
+        self.assertEqual(settings.allowed_skill_ids, ("pdf",))
+        self.assertFalse(settings.allowed_skill_ids_explicit)
+        self.assertEqual(len(settings.sources), 1)
+        source = settings.sources[0]
+        self.assertEqual(source.label, "pdf")
+        self.assertIsNone(source.root_path)
+        self.assertEqual(source.manifest_path, path)
+        self.assertTrue(source.allow_hidden_paths)
+        authority = source.authority
+        assert isinstance(authority, WorkspaceSkillSourceAuthority)
+        self.assertEqual(authority.workspace_id, "project")
+
+    def test_agent_tool_settings_manifest_file_auto_enable_opt_out(
+        self,
+    ) -> None:
+        args = Namespace(
+            tool_skills_file=["pdf=/tmp/SKILL.md"],
+            tool_skills_file_no_auto_enable=True,
+        )
+
+        context = agent_cmds._agent_tool_settings(args)
+
+        settings = context.skills
+        assert isinstance(settings, TrustedSkillSettings)
+        self.assertFalse(settings.manifest_auto_enable)
+        self.assertEqual(settings.allowed_skill_ids, ())
+
+    def test_agent_tool_settings_manifest_file_explicit_skill_ids_win(
+        self,
+    ) -> None:
+        args = Namespace(
+            tool_skills_file=["pdf=/tmp/SKILL.md"],
+            tool_skills_skill=["ocr"],
+        )
+
+        context = agent_cmds._agent_tool_settings(args)
+
+        settings = context.skills
+        assert isinstance(settings, TrustedSkillSettings)
+        self.assertTrue(settings.manifest_auto_enable)
+        self.assertTrue(settings.allowed_skill_ids_explicit)
+        self.assertEqual(settings.allowed_skill_ids, ("ocr",))
+
     def test_agent_tool_settings_without_skills_flags_is_none(self) -> None:
         context = agent_cmds._agent_tool_settings(Namespace())
 
@@ -256,6 +315,90 @@ class SkillsSettingsCliTestCase(TestCase):
         assert isinstance(observability, dict)
         self.assertTrue(observability["include_byte_counts"])
 
+    def test_skills_template_settings_serialize_manifest_sources(
+        self,
+    ) -> None:
+        settings = TrustedSkillSettings(
+            manifest_auto_enable=False,
+            sources=(
+                SkillSourceConfig(
+                    label="pdf",
+                    authority=WorkspaceSkillSourceAuthority(),
+                    manifest_path="/tmp/SKILL.md",
+                ),
+            ),
+        )
+
+        rendered = agent_cmds._skills_tool_template_settings(settings)
+
+        assert rendered is not None
+        self.assertFalse(rendered["manifest_auto_enable"])
+        files = rendered["files"]
+        assert isinstance(files, dict)
+        self.assertEqual(files["pdf"], "/tmp/SKILL.md")
+        self.assertEqual(rendered["source_labels"], ("pdf",))
+        self.assertNotIn("skill_ids", rendered)
+
+    def test_skills_template_settings_serialize_manifest_mapping_values(
+        self,
+    ) -> None:
+        settings = TrustedSkillSettings(
+            sources=(
+                SkillSourceConfig(
+                    label="pdf",
+                    authority=PluginProvidedSkillSourceAuthority(
+                        plugin_id="pdf-plugin"
+                    ),
+                    manifest_path="/tmp/SKILL.md",
+                    allow_hidden_paths=True,
+                ),
+            ),
+        )
+
+        rendered = agent_cmds._skills_tool_template_settings(settings)
+
+        assert rendered is not None
+        files = rendered["files"]
+        assert isinstance(files, dict)
+        file_config = files["pdf"]
+        assert isinstance(file_config, dict)
+        self.assertEqual(file_config["path"], "/tmp/SKILL.md")
+        self.assertEqual(
+            file_config["authority"],
+            "plugin_provided:pdf-plugin",
+        )
+        self.assertTrue(file_config["allow_hidden"])
+
+    def test_skills_authority_template_values_cover_all_kinds(self) -> None:
+        cases = (
+            (BundledSkillSourceAuthority(bundle_id="core"), "bundled:core"),
+            (
+                WorkspaceSkillSourceAuthority(workspace_id="docs"),
+                "workspace:docs",
+            ),
+            (
+                UserLocalSkillSourceAuthority(profile_id="profile"),
+                "user_local:profile",
+            ),
+            (
+                PluginProvidedSkillSourceAuthority(plugin_id="plugin"),
+                "plugin_provided:plugin",
+            ),
+            (
+                PreinstalledRemoteSkillSourceAuthority(registry_id="remote"),
+                "preinstalled_remote:remote",
+            ),
+        )
+
+        for authority, expected in cases:
+            with self.subTest(authority=authority):
+                self.assertEqual(
+                    agent_cmds._skills_source_authority_template_value(
+                        authority
+                    ),
+                    expected,
+                )
+
     def test_agent_tool_settings_rejects_unknown_source_label(self) -> None:
         args = Namespace(
             tool_skills_source=["workspace-main=/tmp/skills"],
@@ -273,6 +416,17 @@ class SkillsSettingsCliTestCase(TestCase):
                 "workspace-main=/tmp/one",
                 "workspace-main=/tmp/two",
             ],
+        )
+
+        with self.assertRaisesRegex(AssertionError, "labels must be unique"):
+            agent_cmds._agent_tool_settings(args)
+
+    def test_agent_tool_settings_rejects_duplicate_source_and_file_label(
+        self,
+    ) -> None:
+        args = Namespace(
+            tool_skills_source=["pdf=/tmp/skills"],
+            tool_skills_file=["pdf=/tmp/SKILL.md"],
         )
 
         with self.assertRaisesRegex(AssertionError, "labels must be unique"):
@@ -335,6 +489,9 @@ class SkillsSettingsCliTestCase(TestCase):
             [
                 "--tool-skills-source",
                 "workspace-main=/tmp/skills",
+                "--tool-skills-file",
+                "pdf=/tmp/SKILL.md",
+                "--tool-skills-file-no-auto-enable",
                 "--tool-skills-authority-kind",
                 "workspace",
                 "--tool-skills-bootstrap",
@@ -346,6 +503,8 @@ class SkillsSettingsCliTestCase(TestCase):
             args.tool_skills_source,
             ["workspace-main=/tmp/skills"],
         )
+        self.assertEqual(args.tool_skills_file, ["pdf=/tmp/SKILL.md"])
+        self.assertTrue(args.tool_skills_file_no_auto_enable)
         self.assertEqual(args.tool_skills_authority_kind, ["workspace"])
         self.assertEqual(args.tool_skills_bootstrap, "off")
 

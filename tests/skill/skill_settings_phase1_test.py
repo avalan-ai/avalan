@@ -205,6 +205,49 @@ class SkillSettingsTest(TestCase):
         self.assertEqual(result.status, SkillStatus.OK)
         self.assertEqual(result.settings.allowed_skill_ids, ("pdf",))
 
+    def test_manifest_auto_enable_preserves_explicit_skill_ids(self) -> None:
+        settings = TrustedSkillSettings(
+            sources=(
+                SkillSourceConfig(
+                    label="pdf",
+                    authority=WorkspaceSkillSourceAuthority(),
+                    manifest_path="/tmp/SKILL.md",
+                ),
+            ),
+            allowed_skill_ids=("ocr",),
+        )
+
+        self.assertTrue(settings.allowed_skill_ids_explicit)
+        self.assertEqual(settings.allowed_skill_ids, ("ocr",))
+
+    def test_manifest_auto_labels_do_not_constrain_skill_id_override(
+        self,
+    ) -> None:
+        trusted = TrustedSkillSettings(
+            sources=(
+                SkillSourceConfig(
+                    label="pdf",
+                    authority=WorkspaceSkillSourceAuthority(),
+                    manifest_path="/tmp/SKILL.md",
+                ),
+            )
+        )
+
+        result = merge_skill_settings(
+            trusted,
+            UntrustedSkillSettings(
+                surface=SkillSettingsSurface.AGENT,
+                source_labels=("pdf",),
+                skill_ids=("ocr",),
+            ),
+        )
+
+        self.assertEqual(trusted.allowed_skill_ids, ("pdf",))
+        self.assertFalse(trusted.allowed_skill_ids_explicit)
+        self.assertEqual(result.status, SkillStatus.OK)
+        self.assertEqual(result.settings.allowed_skill_ids, ("ocr",))
+        self.assertTrue(result.settings.allowed_skill_ids_explicit)
+
     def test_untrusted_widening_returns_policy_diagnostics(self) -> None:
         workspace_source = SkillSourceConfig(
             label="workspace-main",
@@ -379,6 +422,32 @@ class SkillSettingsTest(TestCase):
         self.assertIn("effective_root_sha256", nested_identity)
         self.assertIn("package_path_sha256", windows_package_identity)
         encoded = dumps(nested_identity, sort_keys=True)
+        self.assertNotIn(str(root), encoded)
+
+    def test_source_identity_hashes_manifest_paths(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            pdf_source = SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                manifest_path=root / "SKILL-pdf.md",
+            )
+            docx_source = SkillSourceConfig(
+                label="workspace-main",
+                authority=WorkspaceSkillSourceAuthority(),
+                manifest_path=root / "SKILL-docx.md",
+            )
+
+            pdf_identity = trusted_skill_source_identity_dict(pdf_source)
+            docx_identity = trusted_skill_source_identity_dict(docx_source)
+            settings_identity = trusted_skill_settings_identity_dict(
+                TrustedSkillSettings(sources=(pdf_source,))
+            )
+
+        self.assertNotEqual(pdf_identity, docx_identity)
+        self.assertIn("manifest_path_sha256", pdf_identity)
+        self.assertEqual(pdf_source.as_model_dict()["source_type"], "manifest")
+        encoded = dumps(settings_identity, sort_keys=True)
         self.assertNotIn(str(root), encoded)
 
     def test_untrusted_config_dict_serializes_complete_manual_override(

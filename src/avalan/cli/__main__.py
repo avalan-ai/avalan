@@ -4211,6 +4211,22 @@ class CLI:
             help="Add a trusted filesystem skills source.",
         )
         group.add_argument(
+            "--tool-skills-file",
+            dest="tool_skills_file",
+            action="append",
+            type=str,
+            default=None,
+            metavar="LABEL=PATH",
+            help="Add a trusted skills manifest file source.",
+        )
+        group.add_argument(
+            "--tool-skills-file-no-auto-enable",
+            dest="tool_skills_file_no_auto_enable",
+            action="store_true",
+            default=None,
+            help="Do not allow manifest file labels as skill IDs by default.",
+        )
+        group.add_argument(
             "--tool-skills-source-authority",
             dest="tool_skills_source_authority",
             action="append",

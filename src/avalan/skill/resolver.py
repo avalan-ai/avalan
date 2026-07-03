@@ -1,6 +1,10 @@
 from ..event import EventType
 from ._async import skill_cancellation_checkpoint
-from .contract import SkillDiagnosticCode, SkillStatus
+from .contract import (
+    SKILL_MAIN_RESOURCE_FILENAME,
+    SkillDiagnosticCode,
+    SkillStatus,
+)
 from .entities import (
     SkillDiagnosticInfo,
     SkillModelValue,
@@ -53,6 +57,9 @@ from typing import Any, Protocol, TypeAlias, TypeVar
 
 _T = TypeVar("_T")
 _LOGGER = getLogger(__name__)
+_SKILL_DASH_MANIFEST_BASENAME_PATTERN = (
+    r"SKILL-([a-z][a-z0-9]*(?:[._-][a-z0-9]+)*)\.md"
+)
 
 
 class SkillSourceFileSystem(Protocol):
@@ -181,7 +188,8 @@ class SkillAsyncFileSystem:
 class SkillConfiguredSource:
     label: str
     authority: SkillSourceAuthority
-    root_path: str | Path
+    root_path: str | Path | None = None
+    manifest_path: str | Path | None = None
     package_path: str | None = None
     enabled: bool = True
     allow_hidden_paths: bool = False
@@ -190,7 +198,20 @@ class SkillConfiguredSource:
         assert isinstance(self.label, str), "label must be a string"
         assert self.label.strip(), "label must be non-empty"
         assert isinstance(self.authority, SkillSourceAuthority)
-        assert isinstance(self.root_path, str | Path)
+        if self.root_path is not None:
+            assert isinstance(self.root_path, str | Path)
+        if self.manifest_path is not None:
+            assert isinstance(self.manifest_path, str | Path)
+            assert (
+                self.root_path is None
+            ), "manifest_path cannot be combined with root_path"
+            assert (
+                self.package_path is None
+            ), "manifest_path cannot be combined with package_path"
+        else:
+            assert (
+                self.root_path is not None
+            ), "root_path is required when manifest_path is not set"
         if self.package_path is not None:
             assert isinstance(self.package_path, str)
             assert self.package_path.strip(), "package_path must be non-empty"
@@ -210,6 +231,8 @@ class SkillConfiguredSource:
         }
         if self.package_path is not None:
             value["package"] = _model_package_path(self.package_path)
+        if self.manifest_path is not None:
+            value["source_type"] = "manifest"
         return model_dict(value)
 
 
@@ -250,8 +273,45 @@ class SkillSourceRootConfig:
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SkillSourceManifestConfig:
+    label: str
+    authority: SkillSourceAuthority
+    manifest_path: str | Path
+    enabled: bool = True
+    allow_hidden_paths: bool = False
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.label, str), "label must be a string"
+        assert self.label.strip(), "label must be non-empty"
+        assert isinstance(self.authority, SkillSourceAuthority)
+        assert isinstance(
+            self.manifest_path, str | Path
+        ), "manifest_path must be a path"
+        assert isinstance(self.enabled, bool)
+        assert isinstance(self.allow_hidden_paths, bool)
+
+    @property
+    def source_label(self) -> str:
+        return sanitize_skill_source_label(self.label)
+
+    def as_model_dict(self) -> dict[str, SkillModelValue]:
+        return model_dict(
+            {
+                "label": self.source_label,
+                "authority": self.authority.as_model_dict(),
+                "enabled": self.enabled,
+                "allow_hidden_paths": self.allow_hidden_paths,
+                "source_type": "manifest",
+            }
+        )
+
+
 SkillResolverSourceConfig: TypeAlias = (
-    SkillConfiguredSource | SkillSourceRootConfig
+    SkillConfiguredSource | SkillSourceRootConfig | SkillSourceManifestConfig
+)
+_NormalizedSkillSourceConfig: TypeAlias = (
+    SkillSourceRootConfig | SkillSourceManifestConfig
 )
 
 
@@ -296,6 +356,7 @@ class SkillAuthorizedSourceRoot:
     authority: SkillSourceAuthority
     root: Path
     identity_root: Path | None = None
+    manifest_resource_id: str | None = None
     allow_hidden_paths: bool = False
     resources: tuple[SkillAuthorizedResource, ...] = ()
     diagnostics: tuple[SkillDiagnosticInfo, ...] = ()
@@ -307,10 +368,20 @@ class SkillAuthorizedSourceRoot:
         assert isinstance(self.root, Path)
         if self.identity_root is not None:
             assert isinstance(self.identity_root, Path)
+        if self.manifest_resource_id is not None:
+            assert isinstance(self.manifest_resource_id, str)
+            assert self.manifest_resource_id == sanitize_skill_resource_id(
+                self.manifest_resource_id
+            )
         assert isinstance(self.allow_hidden_paths, bool)
         _assert_resource_tuple(self.resources)
         for resource in self.resources:
             assert resource.source_label == self.label
+        if self.manifest_resource_id is not None and self.resources:
+            assert any(
+                resource.resource_id == self.manifest_resource_id
+                for resource in self.resources
+            )
         _assert_diagnostic_tuple(self.diagnostics)
 
     @property
@@ -318,23 +389,24 @@ class SkillAuthorizedSourceRoot:
         return SkillStatus.OK
 
     def as_model_dict(self) -> dict[str, SkillModelValue]:
-        return model_dict(
-            {
-                "label": self.label,
-                "source_id": f"source:{self.label}",
-                "authority": self.authority.as_model_dict(),
-                "status": self.status.value,
-                "allow_hidden_paths": self.allow_hidden_paths,
-                "resource_count": len(self.resources),
-                "resources": tuple(
-                    resource.as_model_dict() for resource in self.resources
-                ),
-                "diagnostics": tuple(
-                    diagnostic.as_model_dict()
-                    for diagnostic in self.diagnostics
-                ),
-            }
-        )
+        value: dict[str, object] = {
+            "label": self.label,
+            "source_id": f"source:{self.label}",
+            "authority": self.authority.as_model_dict(),
+            "status": self.status.value,
+            "allow_hidden_paths": self.allow_hidden_paths,
+            "resource_count": len(self.resources),
+            "resources": tuple(
+                resource.as_model_dict() for resource in self.resources
+            ),
+            "diagnostics": tuple(
+                diagnostic.as_model_dict() for diagnostic in self.diagnostics
+            ),
+        }
+        if self.manifest_resource_id is not None:
+            value["manifest_resource_id"] = self.manifest_resource_id
+            value["source_type"] = "manifest"
+        return model_dict(value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -504,7 +576,7 @@ class SkillSourceResolver:
                 diagnostic=diagnostics[0],
             )
             return SkillSourceResolutionResult(diagnostics=tuple(diagnostics))
-        configured: list[SkillSourceRootConfig] = []
+        configured: list[_NormalizedSkillSourceConfig] = []
         for config in configs[: self._source_limits.max_sources]:
             await skill_cancellation_checkpoint()
             normalized, diagnostic = _normalize_config(config)
@@ -568,6 +640,38 @@ class SkillSourceResolver:
                     status=SkillStatus.DISABLED,
                 )
                 continue
+            if isinstance(config, SkillSourceManifestConfig):
+                source, diagnostic = await self._resolve_manifest_source(
+                    config,
+                    settings=settings,
+                )
+                if diagnostic is not None:
+                    diagnostics.append(diagnostic)
+                    await _emit_source_event(
+                        event_manager,
+                        settings,
+                        _source_diagnostic_event_type(diagnostic),
+                        operation_id=audit_operation_id,
+                        source_label=source_label,
+                        authority=config.authority,
+                        diagnostic=diagnostic,
+                    )
+                    continue
+                assert source is not None
+                sources.append(source)
+                await _emit_source_event(
+                    event_manager,
+                    settings,
+                    EventType.SKILL_SOURCE_ACCEPTED,
+                    operation_id=audit_operation_id,
+                    source_label=source_label,
+                    authority=config.authority,
+                    status=SkillStatus.OK,
+                    resource_count=len(source.resources),
+                    diagnostic_count=len(source.diagnostics),
+                )
+                continue
+
             root, diagnostic = await self._resolve_root(config)
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
@@ -586,6 +690,7 @@ class SkillSourceResolver:
                 config,
                 settings,
                 root,
+                manifest_path=None,
             )
             if trust_diagnostic is not None:
                 diagnostics.append(trust_diagnostic)
@@ -636,6 +741,82 @@ class SkillSourceResolver:
         model_handle: str,
     ) -> SkillResourceAuthorizationResult:
         assert isinstance(source, SkillAuthorizedSourceRoot)
+        assert isinstance(model_handle, str)
+        await skill_cancellation_checkpoint()
+        reason = skill_model_handle_denial_reason(
+            model_handle,
+            allow_hidden_paths=source.allow_hidden_paths,
+        )
+        resource_id = sanitize_skill_resource_id(model_handle)
+        if reason is not None:
+            return SkillResourceAuthorizationResult(
+                source_label=source.label,
+                diagnostics=(
+                    _resource_policy_diagnostic(
+                        reason=reason,
+                        resource_id=resource_id,
+                    ),
+                ),
+            )
+        if source.manifest_resource_id is not None:
+            existing = next(
+                (
+                    resource
+                    for resource in source.resources
+                    if resource.resource_id == resource_id
+                ),
+                None,
+            )
+            if existing is not None:
+                return SkillResourceAuthorizationResult(
+                    source_label=source.label,
+                    resource=existing,
+                )
+            diagnostics = tuple(
+                diagnostic
+                for diagnostic in source.diagnostics
+                if diagnostic.details.get("resource_id") == resource_id
+            )
+            if diagnostics:
+                return SkillResourceAuthorizationResult(
+                    source_label=source.label,
+                    diagnostics=diagnostics,
+                )
+            return SkillResourceAuthorizationResult(
+                source_label=source.label,
+                diagnostics=(
+                    _resource_policy_diagnostic(
+                        reason="manifest_source_resource",
+                        resource_id=resource_id,
+                    ),
+                ),
+            )
+        candidate = source.root.joinpath(*PurePosixPath(model_handle).parts)
+        resource, diagnostic = await self._authorize_path(
+            source_label=source.label,
+            root=source.root,
+            resource_path=candidate,
+            resource_id=resource_id,
+            allow_hidden_paths=source.allow_hidden_paths,
+        )
+        if diagnostic is not None:
+            return SkillResourceAuthorizationResult(
+                source_label=source.label,
+                diagnostics=(diagnostic,),
+            )
+        assert resource is not None
+        return SkillResourceAuthorizationResult(
+            source_label=source.label,
+            resource=resource,
+        )
+
+    async def authorize_manifest_declared_resource(
+        self,
+        source: SkillAuthorizedSourceRoot,
+        model_handle: str,
+    ) -> SkillResourceAuthorizationResult:
+        assert isinstance(source, SkillAuthorizedSourceRoot)
+        assert source.manifest_resource_id is not None
         assert isinstance(model_handle, str)
         await skill_cancellation_checkpoint()
         reason = skill_model_handle_denial_reason(
@@ -707,6 +888,15 @@ class SkillSourceResolver:
                 reason="unavailable",
                 root_path=root_text,
             )
+        resolved_reason = skill_source_root_denial_reason(
+            str(root),
+            allow_hidden_paths=config.allow_hidden_paths,
+        )
+        if resolved_reason is not None:
+            return None, _source_unavailable_diagnostic(
+                reason=resolved_reason,
+                root_path=str(root),
+            )
         if not S_ISDIR(stat.st_mode):
             return None, _source_unavailable_diagnostic(
                 reason="not_directory",
@@ -726,6 +916,15 @@ class SkillSourceResolver:
                 reason="unavailable_package",
                 root_path=str(package_root),
             )
+        resolved_package_reason = skill_source_root_denial_reason(
+            str(resolved_package),
+            allow_hidden_paths=config.allow_hidden_paths,
+        )
+        if resolved_package_reason is not None:
+            return None, _source_unavailable_diagnostic(
+                reason=resolved_package_reason,
+                root_path=str(resolved_package),
+            )
         if not _path_is_relative_to(resolved_package, root):
             return None, _outside_root_diagnostic(reason="package_escape")
         if not S_ISDIR(package_stat.st_mode):
@@ -734,6 +933,108 @@ class SkillSourceResolver:
                 root_path=str(package_root),
             )
         return resolved_package, None
+
+    async def _resolve_manifest_source(
+        self,
+        config: SkillSourceManifestConfig,
+        *,
+        settings: TrustedSkillSettings | None,
+    ) -> tuple[SkillAuthorizedSourceRoot | None, SkillDiagnosticInfo | None]:
+        await skill_cancellation_checkpoint()
+        manifest_text = str(config.manifest_path)
+        if "\x00" in config.label:
+            return None, _policy_diagnostic(
+                path="source.label",
+                message="The configured skill source label is unsafe.",
+                hint="Use logical source labels without control bytes.",
+                reason="nul_byte",
+            )
+        reason = _manifest_path_denial_reason(
+            manifest_text,
+            allow_hidden_paths=config.allow_hidden_paths,
+        )
+        if reason is not None:
+            return None, _source_unavailable_diagnostic(
+                reason=reason,
+                root_path=manifest_text,
+            )
+        manifest_resource_id = _manifest_resource_id_from_path(manifest_text)
+        assert manifest_resource_id is not None
+        try:
+            link_stat = await self._file_system.lstat_path(Path(manifest_text))
+            if S_ISLNK(link_stat.st_mode):
+                return None, _source_unavailable_diagnostic(
+                    reason="manifest_symlink",
+                    root_path=manifest_text,
+                )
+            manifest_path = await self._file_system.resolve_path(
+                Path(manifest_text)
+            )
+            stat = await self._file_system.stat_path(manifest_path)
+        except (OSError, RuntimeError, ValueError):
+            return None, _source_unavailable_diagnostic(
+                reason="unavailable",
+                root_path=manifest_text,
+            )
+        resolved_reason = _manifest_path_denial_reason(
+            str(manifest_path),
+            allow_hidden_paths=config.allow_hidden_paths,
+        )
+        if resolved_reason is not None:
+            return None, _source_unavailable_diagnostic(
+                reason=resolved_reason,
+                root_path=str(manifest_path),
+            )
+        resolved_manifest_resource_id = _manifest_resource_id_from_path(
+            str(manifest_path)
+        )
+        assert resolved_manifest_resource_id is not None
+        if resolved_manifest_resource_id != manifest_resource_id:
+            return None, _source_unavailable_diagnostic(
+                reason="manifest_resource_mismatch",
+                root_path=str(manifest_path),
+            )
+        if not S_ISREG(stat.st_mode):
+            return None, _source_unavailable_diagnostic(
+                reason="not_file",
+                root_path=manifest_text,
+            )
+        root = manifest_path.parent
+        trust_diagnostic = _trusted_resolved_source_diagnostic(
+            config,
+            settings,
+            root,
+            manifest_path=manifest_path,
+        )
+        if trust_diagnostic is not None:
+            return None, trust_diagnostic
+        resource, diagnostic = await self._authorize_path(
+            source_label=config.source_label,
+            root=root,
+            resource_path=manifest_path,
+            resource_id=manifest_resource_id,
+            allow_hidden_paths=config.allow_hidden_paths,
+        )
+        resources: tuple[SkillAuthorizedResource, ...] = ()
+        diagnostics: tuple[SkillDiagnosticInfo, ...] = ()
+        if diagnostic is not None:
+            diagnostics = (diagnostic,)
+        else:
+            assert resource is not None
+            resources = (resource,)
+        return (
+            SkillAuthorizedSourceRoot(
+                label=config.source_label,
+                authority=config.authority,
+                root=root,
+                identity_root=manifest_path,
+                manifest_resource_id=manifest_resource_id,
+                allow_hidden_paths=config.allow_hidden_paths,
+                resources=resources,
+                diagnostics=diagnostics,
+            ),
+            None,
+        )
 
     async def _scan_source(
         self,
@@ -1020,6 +1321,27 @@ async def authorize_skill_resource(
     return await resolver.authorize_resource(source, model_handle)
 
 
+async def authorize_skill_manifest_declared_resource(
+    source: SkillAuthorizedSourceRoot,
+    model_handle: str,
+    *,
+    source_limits: SkillSourceLimits | None = None,
+    index_limits: SkillIndexLimits | None = None,
+    read_limits: SkillReadLimits | None = None,
+    file_system: SkillSourceFileSystem | None = None,
+) -> SkillResourceAuthorizationResult:
+    resolver = SkillSourceResolver(
+        source_limits=source_limits,
+        index_limits=index_limits,
+        read_limits=read_limits,
+        file_system=file_system,
+    )
+    return await resolver.authorize_manifest_declared_resource(
+        source,
+        model_handle,
+    )
+
+
 AuthorizedSkillResource: TypeAlias = SkillAuthorizedResource
 AuthorizedSkillSource: TypeAlias = SkillAuthorizedSourceRoot
 LocalSkillSourceFilesystem: TypeAlias = SkillAsyncFileSystem
@@ -1108,6 +1430,34 @@ def _package_path_denial_reason(
     )
 
 
+def _manifest_path_denial_reason(
+    value: str,
+    *,
+    allow_hidden_paths: bool,
+) -> str | None:
+    reason = skill_source_root_denial_reason(
+        value,
+        allow_hidden_paths=allow_hidden_paths,
+    )
+    if reason is not None:
+        return reason
+    if _manifest_resource_id_from_path(value) is None:
+        return "not_manifest"
+    return None
+
+
+def _manifest_resource_id_from_path(value: str) -> str | None:
+    name = PurePosixPath(value.replace("\\", "/")).name
+    if name == SKILL_MAIN_RESOURCE_FILENAME:
+        return name
+    matched = fullmatch(_SKILL_DASH_MANIFEST_BASENAME_PATTERN, name)
+    if matched is None:
+        return None
+    if skill_model_handle_denial_reason(matched.group(1)) is not None:
+        return None
+    return name
+
+
 def _line_count(content: bytes) -> int:
     if not content:
         return 0
@@ -1118,7 +1468,7 @@ def _line_count(content: bytes) -> int:
 
 
 def _duplicate_labels(
-    configs: tuple[SkillSourceRootConfig, ...],
+    configs: tuple[_NormalizedSkillSourceConfig, ...],
 ) -> tuple[str, ...]:
     counts = Counter(config.source_label for config in configs)
     return tuple(sorted(label for label, count in counts.items() if count > 1))
@@ -1126,10 +1476,22 @@ def _duplicate_labels(
 
 def _normalize_config(
     config: SkillResolverSourceConfig,
-) -> tuple[SkillSourceRootConfig | None, SkillDiagnosticInfo | None]:
-    if isinstance(config, SkillSourceRootConfig):
+) -> tuple[_NormalizedSkillSourceConfig | None, SkillDiagnosticInfo | None]:
+    if isinstance(config, SkillSourceRootConfig | SkillSourceManifestConfig):
         return config, None
     assert isinstance(config, SkillConfiguredSource)
+    if config.manifest_path is not None:
+        return (
+            SkillSourceManifestConfig(
+                label=config.label,
+                authority=config.authority,
+                manifest_path=config.manifest_path,
+                enabled=config.enabled,
+                allow_hidden_paths=config.allow_hidden_paths,
+            ),
+            None,
+        )
+    assert config.root_path is not None
     return (
         SkillSourceRootConfig(
             label=config.label,
@@ -1144,7 +1506,7 @@ def _normalize_config(
 
 
 def _trusted_settings_diagnostic(
-    config: SkillSourceRootConfig,
+    config: _NormalizedSkillSourceConfig,
     settings: TrustedSkillSettings | None,
 ) -> SkillDiagnosticInfo | None:
     if settings is None:
@@ -1201,24 +1563,48 @@ def _trusted_settings_diagnostic(
 
 
 def _trusted_resolved_source_diagnostic(
-    config: SkillSourceRootConfig,
+    config: _NormalizedSkillSourceConfig,
     settings: TrustedSkillSettings | None,
     root: Path,
+    *,
+    manifest_path: Path | None,
 ) -> SkillDiagnosticInfo | None:
     if settings is None or not settings.sources_explicit:
         return None
     source_by_label = {source.label: source for source in settings.sources}
     trusted_source = source_by_label.get(config.source_label)
-    if trusted_source is None or trusted_source.root_path is None:
+    if trusted_source is None:
         return None
+    if isinstance(config, SkillSourceManifestConfig):
+        if trusted_source.manifest_path is None:
+            if trusted_source.root_path is None:
+                return None
+            return _policy_diagnostic(
+                path="source.identity",
+                message="The resolved skill source identity is not trusted.",
+                hint="Use the trusted source root and package configuration.",
+                reason="untrusted_source_identity",
+            )
+        assert manifest_path is not None
+        resolved_identity = skill_source_identity_dict(
+            label=config.source_label,
+            authority=config.authority,
+            manifest_path=manifest_path,
+            enabled=config.enabled,
+            allow_hidden_paths=config.allow_hidden_paths,
+        )
+    else:
+        if trusted_source.root_path is None:
+            if trusted_source.manifest_path is None:
+                return None
+        resolved_identity = skill_source_identity_dict(
+            label=config.source_label,
+            authority=config.authority,
+            root_path=root,
+            enabled=config.enabled,
+            allow_hidden_paths=config.allow_hidden_paths,
+        )
     trusted_identity = trusted_skill_source_identity_dict(trusted_source)
-    resolved_identity = skill_source_identity_dict(
-        label=config.source_label,
-        authority=config.authority,
-        root_path=root,
-        enabled=config.enabled,
-        allow_hidden_paths=config.allow_hidden_paths,
-    )
     if resolved_identity == trusted_identity:
         return None
     return _policy_diagnostic(
@@ -1342,7 +1728,12 @@ def _assert_config_tuple(
 ) -> None:
     assert isinstance(values, tuple), "configs must be a tuple"
     for value in values:
-        assert isinstance(value, SkillSourceRootConfig | SkillConfiguredSource)
+        assert isinstance(
+            value,
+            SkillConfiguredSource
+            | SkillSourceRootConfig
+            | SkillSourceManifestConfig,
+        )
 
 
 def _assert_source_tuple(

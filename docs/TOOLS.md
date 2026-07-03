@@ -140,7 +140,19 @@ max_lines_per_read = 2000
 turn bootstrap instructions off, filter trusted authority kinds, filter source
 labels, filter skill IDs, and reduce read, index, source, cursor, privacy, or
 observability settings. It cannot define `source` or `sources`; trusted roots
-come from the SDK, CLI, or host process.
+come from the SDK, CLI, or host process. Agent TOML may define trusted direct
+manifest file sources with `[tool.skills.files]` when the file itself is the
+operator-approved source:
+
+```toml
+[tool.skills.files]
+pdf = "docs/examples/skills/pdf/SKILL.md"
+```
+
+Manifest file labels are added to `skill_ids` by default, so the label should
+match the manifest's normalized `name`/skill ID for the default allowlist to
+make that skill usable. Set `manifest_auto_enable = false` under
+`[tool.skills]` to opt out and provide `skill_ids` explicitly.
 
 Agent CLI commands accept trusted source flags:
 
@@ -156,6 +168,13 @@ echo "Use the PDF skill to plan the inspection workflow." \
       --display-tools \
       --display-events
 ```
+
+Use `--tool-skills-file pdf=docs/examples/skills/pdf/SKILL.md` to trust only
+one manifest file. Choose a label such as `pdf` that matches the manifest's
+normalized `name`/skill ID when relying on default auto-enable.
+`--tool-skills-source-authority` and
+`--tool-skills-source-allow-hidden` accept the file label; source packages are
+only for directory sources.
 
 For SDK construction, pass trusted settings through the tool context:
 
@@ -173,12 +192,11 @@ from avalan.tool.context import ToolSettingsContext
 skills = TrustedSkillSettings(
     sources=(
         SkillSourceConfig(
-            label="workspace-main",
+            label="pdf",
             authority=WorkspaceSkillSourceAuthority(workspace_id="docs"),
-            root_path=Path("docs/examples/skills"),
+            manifest_path=Path("docs/examples/skills/pdf/SKILL.md"),
         ),
     ),
-    allowed_skill_ids=("pdf",),
     read_limits=SkillReadLimits(max_bytes_per_read=65536),
 )
 tool_settings = ToolSettingsContext(skills=skills)

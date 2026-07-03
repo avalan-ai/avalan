@@ -27,7 +27,7 @@ from json import dumps
 from pathlib import Path, PurePosixPath
 from re import fullmatch
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 SKILL_SETTINGS_POLICY_VERSION = "skills.settings.phase9"
 _ROOT_EXPLICIT_FIELDS = "__root__"
@@ -348,7 +348,9 @@ class TrustedSkillSettings:
     )
     sources: tuple[SkillSourceConfig, ...] = ()
     sources_explicit: bool = False
+    manifest_auto_enable: bool = True
     allowed_skill_ids: tuple[str, ...] = ()
+    allowed_skill_ids_explicit: bool = False
     read_limits: SkillReadLimits = field(default_factory=SkillReadLimits)
     index_limits: SkillIndexLimits = field(default_factory=SkillIndexLimits)
     source_limits: SkillSourceLimits = field(default_factory=SkillSourceLimits)
@@ -365,16 +367,35 @@ class TrustedSkillSettings:
         _assert_authority_kind_tuple(self.authority_kinds)
         _assert_source_tuple(self.sources)
         _assert_bool(self.sources_explicit, "sources_explicit")
+        _assert_bool(self.manifest_auto_enable, "manifest_auto_enable")
+        _assert_bool(
+            self.allowed_skill_ids_explicit,
+            "allowed_skill_ids_explicit",
+        )
         object.__setattr__(
             self,
             "sources_explicit",
             bool(self.sources_explicit or self.sources),
+        )
+        object.__setattr__(
+            self,
+            "allowed_skill_ids_explicit",
+            bool(self.allowed_skill_ids_explicit or self.allowed_skill_ids),
         )
         _assert_unique_source_labels(self.sources)
         for source in self.sources:
             assert (
                 source.authority.kind in self.authority_kinds
             ), "source authority must be trusted"
+        if self.manifest_auto_enable and not self.allowed_skill_ids_explicit:
+            object.__setattr__(
+                self,
+                "allowed_skill_ids",
+                _auto_enabled_manifest_skill_ids(
+                    self.sources,
+                    self.allowed_skill_ids,
+                ),
+            )
         _assert_logical_id_tuple(self.allowed_skill_ids, "allowed_skill_ids")
         assert isinstance(self.read_limits, SkillReadLimits)
         assert isinstance(self.index_limits, SkillIndexLimits)
@@ -395,6 +416,7 @@ class TrustedSkillSettings:
             "sources": tuple(
                 source.as_model_dict() for source in self.sources
             ),
+            "manifest_auto_enable": self.manifest_auto_enable,
             "read_limits": self.read_limits.as_model_dict(),
             "index_limits": self.index_limits.as_model_dict(),
             "source_limits": self.source_limits.as_model_dict(),
@@ -404,6 +426,10 @@ class TrustedSkillSettings:
         }
         if self.allowed_skill_ids:
             value["allowed_skill_ids"] = self.allowed_skill_ids
+        if self.allowed_skill_ids_explicit:
+            value["allowed_skill_ids_explicit"] = (
+                self.allowed_skill_ids_explicit
+            )
         return model_dict(value)
 
 
@@ -495,12 +521,15 @@ def merge_skill_settings(
     diagnostics: list[SkillDiagnosticInfo] = []
 
     if override.enabled is False:
-        settings = replace(settings, enabled=False)
+        settings = replace_trusted_skill_settings(settings, enabled=False)
     elif override.enabled is True and not trusted.enabled:
         diagnostics.append(_policy_diagnostic("settings.enabled"))
 
     if override.bootstrap_enabled is False:
-        settings = replace(settings, bootstrap_enabled=False)
+        settings = replace_trusted_skill_settings(
+            settings,
+            bootstrap_enabled=False,
+        )
     elif override.bootstrap_enabled is True and not trusted.bootstrap_enabled:
         diagnostics.append(_policy_diagnostic("settings.bootstrap_enabled"))
 
@@ -511,7 +540,7 @@ def merge_skill_settings(
         if _authority_kinds_allowed(
             settings.authority_kinds, override.authority_kinds
         ):
-            settings = replace(
+            settings = replace_trusted_skill_settings(
                 settings,
                 authority_kinds=override.authority_kinds,
                 sources=tuple(
@@ -528,25 +557,41 @@ def merge_skill_settings(
             settings.sources, override.source_labels
         )
         if diagnostic is None:
-            settings = replace(settings, sources=filtered_sources)
+            settings = replace_trusted_skill_settings(
+                settings,
+                sources=filtered_sources,
+            )
         else:
             diagnostics.append(diagnostic)
 
     if override.skill_ids:
-        if _skill_ids_allowed(settings.allowed_skill_ids, override.skill_ids):
-            settings = replace(settings, allowed_skill_ids=override.skill_ids)
+        if _skill_ids_allowed(
+            _explicit_allowed_skill_ids(settings),
+            override.skill_ids,
+        ):
+            settings = replace_trusted_skill_settings(
+                settings,
+                allowed_skill_ids=override.skill_ids,
+                allowed_skill_ids_explicit=True,
+            )
         else:
             diagnostics.append(_policy_diagnostic("settings.skill_ids"))
 
     if override.read_limits is not None:
         if settings.read_limits.allows(override.read_limits):
-            settings = replace(settings, read_limits=override.read_limits)
+            settings = replace_trusted_skill_settings(
+                settings,
+                read_limits=override.read_limits,
+            )
         else:
             diagnostics.append(_policy_diagnostic("settings.read_limits"))
 
     if override.index_limits is not None:
         if settings.index_limits.allows(override.index_limits):
-            settings = replace(settings, index_limits=override.index_limits)
+            settings = replace_trusted_skill_settings(
+                settings,
+                index_limits=override.index_limits,
+            )
         else:
             diagnostics.append(_policy_diagnostic("settings.index_limits"))
 
@@ -555,25 +600,37 @@ def merge_skill_settings(
             settings.source_limits.allows(override.source_limits)
             and len(settings.sources) <= override.source_limits.max_sources
         ):
-            settings = replace(settings, source_limits=override.source_limits)
+            settings = replace_trusted_skill_settings(
+                settings,
+                source_limits=override.source_limits,
+            )
         else:
             diagnostics.append(_policy_diagnostic("settings.source_limits"))
 
     if override.cursor_limits is not None:
         if settings.cursor_limits.allows(override.cursor_limits):
-            settings = replace(settings, cursor_limits=override.cursor_limits)
+            settings = replace_trusted_skill_settings(
+                settings,
+                cursor_limits=override.cursor_limits,
+            )
         else:
             diagnostics.append(_policy_diagnostic("settings.cursor_limits"))
 
     if override.privacy is not None:
         if settings.privacy.allows(override.privacy):
-            settings = replace(settings, privacy=override.privacy)
+            settings = replace_trusted_skill_settings(
+                settings,
+                privacy=override.privacy,
+            )
         else:
             diagnostics.append(_policy_diagnostic("settings.privacy"))
 
     if override.observability is not None:
         if settings.observability.allows(override.observability):
-            settings = replace(settings, observability=override.observability)
+            settings = replace_trusted_skill_settings(
+                settings,
+                observability=override.observability,
+            )
         else:
             diagnostics.append(_policy_diagnostic("settings.observability"))
 
@@ -581,6 +638,22 @@ def merge_skill_settings(
         settings=settings,
         diagnostics=tuple(diagnostics),
     )
+
+
+def replace_trusted_skill_settings(
+    settings: TrustedSkillSettings,
+    **changes: object,
+) -> TrustedSkillSettings:
+    assert isinstance(settings, TrustedSkillSettings)
+    if (
+        not settings.allowed_skill_ids_explicit
+        and "allowed_skill_ids" not in changes
+        and "allowed_skill_ids_explicit" not in changes
+    ):
+        changes["allowed_skill_ids"] = ()
+        changes["allowed_skill_ids_explicit"] = False
+    typed_changes = cast(dict[str, Any], changes)
+    return replace(settings, **typed_changes)
 
 
 def parse_untrusted_skill_settings_config(
@@ -816,7 +889,9 @@ def trusted_skill_settings_identity_dict(
                 for source in settings.sources
             ),
             "sources_explicit": settings.sources_explicit,
+            "manifest_auto_enable": settings.manifest_auto_enable,
             "allowed_skill_ids": settings.allowed_skill_ids,
+            "allowed_skill_ids_explicit": settings.allowed_skill_ids_explicit,
             "read_limits": settings.read_limits.as_model_dict(),
             "index_limits": settings.index_limits.as_model_dict(),
             "source_limits": settings.source_limits.as_model_dict(),
@@ -851,7 +926,11 @@ def trusted_skill_source_fingerprint(
                     for source in settings.sources
                 ),
                 "sources_explicit": settings.sources_explicit,
+                "manifest_auto_enable": settings.manifest_auto_enable,
                 "allowed_skill_ids": settings.allowed_skill_ids,
+                "allowed_skill_ids_explicit": (
+                    settings.allowed_skill_ids_explicit
+                ),
                 "source_limits": settings.source_limits.as_model_dict(),
             }
         )
@@ -866,6 +945,7 @@ def trusted_skill_source_identity_dict(
         label=source.label,
         authority=source.authority,
         root_path=source.root_path,
+        manifest_path=source.manifest_path,
         package_path=source.package_path,
         enabled=source.enabled,
         allow_hidden_paths=source.allow_hidden_paths,
@@ -878,6 +958,7 @@ def skill_source_identity_dict(
     label: str,
     authority: SkillSourceAuthority,
     root_path: str | Path | None = None,
+    manifest_path: str | Path | None = None,
     package_path: str | None = None,
     enabled: bool = True,
     allow_hidden_paths: bool = False,
@@ -885,6 +966,13 @@ def skill_source_identity_dict(
 ) -> dict[str, SkillModelValue]:
     assert isinstance(label, str) and label.strip()
     assert isinstance(authority, SkillSourceAuthority)
+    if manifest_path is not None:
+        assert (
+            root_path is None
+        ), "manifest_path cannot be combined with root_path"
+        assert (
+            package_path is None
+        ), "manifest_path cannot be combined with package_path"
     assert isinstance(enabled, bool)
     assert isinstance(allow_hidden_paths, bool)
     assert isinstance(status, SkillStatus)
@@ -898,6 +986,10 @@ def skill_source_identity_dict(
     if root_path is not None:
         value["effective_root_sha256"] = _identity_digest(
             _normalized_effective_root_path(root_path, package_path)
+        )
+    elif manifest_path is not None:
+        value["manifest_path_sha256"] = _identity_digest(
+            _normalized_root_path(manifest_path)
         )
     elif package_path is not None:
         value["package_path_sha256"] = _identity_digest(
@@ -1101,6 +1193,26 @@ def _skill_ids_allowed(
     if not trusted_skill_ids:
         return True
     return set(requested_skill_ids).issubset(set(trusted_skill_ids))
+
+
+def _explicit_allowed_skill_ids(
+    settings: TrustedSkillSettings,
+) -> tuple[str, ...]:
+    if settings.allowed_skill_ids_explicit:
+        return settings.allowed_skill_ids
+    return ()
+
+
+def _auto_enabled_manifest_skill_ids(
+    sources: tuple[SkillSourceConfig, ...],
+    allowed_skill_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    values = list(allowed_skill_ids)
+    for source in sources:
+        if source.manifest_path is None or source.label in values:
+            continue
+        values.append(source.label)
+    return tuple(values)
 
 
 def _authority_kinds_allowed(

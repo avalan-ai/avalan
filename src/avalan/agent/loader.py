@@ -49,14 +49,22 @@ from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..skill import (
     CANONICAL_SKILLS_TOOL_NAMES,
+    BundledSkillSourceAuthority,
+    PluginProvidedSkillSourceAuthority,
+    PreinstalledRemoteSkillSourceAuthority,
     SkillConfiguredSource,
     SkillSettingsSurface,
+    SkillSourceAuthority,
+    SkillSourceAuthorityKind,
     SkillSourceConfig,
     TrustedSkillSettings,
     UntrustedSkillSettings,
+    UserLocalSkillSourceAuthority,
+    WorkspaceSkillSourceAuthority,
     build_skill_registry,
     merge_skill_settings,
     parse_untrusted_skill_settings_config,
+    replace_trusted_skill_settings,
     resolve_skill_sources,
 )
 from ..skill.observability import skill_audit_correlation_id
@@ -142,8 +150,25 @@ def should_append_skills_toolset(
     return (
         skills_settings is not None
         and skills_settings.enabled
-        and _skills_tools_requested(enabled_tools)
+        and (
+            _skills_tools_requested(enabled_tools)
+            or _skills_manifest_tools_auto_enabled(skills_settings)
+        )
     )
+
+
+def effective_skills_enabled_tools(
+    skills_settings: TrustedSkillSettings | None,
+    enabled_tools: list[str] | None,
+) -> list[str] | None:
+    """Return tool filters with auto-enabled skills tools included."""
+    if not _skills_manifest_tools_auto_enabled(skills_settings):
+        return enabled_tools
+    if enabled_tools is None:
+        return None
+    if _skills_tools_requested(enabled_tools):
+        return enabled_tools
+    return [*enabled_tools, "skills"]
 
 
 def _skills_tools_requested(enabled_tools: list[str] | None) -> bool:
@@ -157,6 +182,21 @@ def _skills_tools_requested(enabled_tools: list[str] | None) -> bool:
     )
 
 
+def _skills_manifest_tools_auto_enabled(
+    skills_settings: TrustedSkillSettings | None,
+) -> bool:
+    """Return whether manifest file sources should expose skills tools."""
+    return (
+        skills_settings is not None
+        and skills_settings.enabled
+        and skills_settings.manifest_auto_enable
+        and any(
+            source.enabled and source.manifest_path is not None
+            for source in skills_settings.sources
+        )
+    )
+
+
 def _skill_configured_sources(
     skills_settings: TrustedSkillSettings,
 ) -> tuple[SkillConfiguredSource, ...]:
@@ -165,13 +205,14 @@ def _skill_configured_sources(
     sources: list[SkillConfiguredSource] = []
     for source in skills_settings.sources:
         assert isinstance(source, SkillSourceConfig)
-        if source.root_path is None:
+        if source.root_path is None and source.manifest_path is None:
             continue
         sources.append(
             SkillConfiguredSource(
                 label=source.label,
                 authority=source.authority,
                 root_path=source.root_path,
+                manifest_path=source.manifest_path,
                 package_path=source.package_path,
                 enabled=source.enabled,
                 allow_hidden_paths=source.allow_hidden_paths,
@@ -1349,23 +1390,31 @@ class OrchestratorLoader:
             extra = None
 
         if skills_config is not None:
-            assert (
-                skills_settings is not None
-            ), "tool.skills requires trusted skills settings"
-            skills_override = self._untrusted_skills_settings_from_config(
+            (
+                skills_settings,
+                skills_narrowing_config,
+            ) = self._trusted_manifest_skills_settings_from_config(
                 skills_config,
                 trusted=skills_settings,
             )
-            skills_merge = merge_skill_settings(
-                skills_settings,
-                skills_override,
-            )
-            assert not skills_merge.diagnostics, (
-                skills_merge.diagnostics[0].message
-                if skills_merge.diagnostics
-                else "Invalid tool.skills settings"
-            )
-            skills_settings = skills_merge.settings
+            if skills_narrowing_config:
+                assert (
+                    skills_settings is not None
+                ), "tool.skills requires trusted skills settings"
+                skills_override = self._untrusted_skills_settings_from_config(
+                    skills_narrowing_config,
+                    trusted=skills_settings,
+                )
+                skills_merge = merge_skill_settings(
+                    skills_settings,
+                    skills_override,
+                )
+                assert not skills_merge.diagnostics, (
+                    skills_merge.diagnostics[0].message
+                    if skills_merge.diagnostics
+                    else "Invalid tool.skills settings"
+                )
+                skills_settings = skills_merge.settings
 
         tool_settings = ToolSettingsContext(
             browser=browser_settings,
@@ -1476,6 +1525,160 @@ class OrchestratorLoader:
         return skills_config
 
     @classmethod
+    def _trusted_manifest_skills_settings_from_config(
+        cls,
+        skills_config: Mapping[str, object],
+        *,
+        trusted: TrustedSkillSettings | None,
+    ) -> tuple[TrustedSkillSettings | None, Mapping[str, object]]:
+        manifest_sources = cls._manifest_skill_sources_from_config(
+            skills_config.get("files"),
+        )
+        manifest_auto_enable = cls._manifest_auto_enable_from_config(
+            skills_config,
+            default=(
+                trusted.manifest_auto_enable if trusted is not None else True
+            ),
+        )
+        narrowing_config = {
+            key: value
+            for key, value in skills_config.items()
+            if key
+            not in {
+                "files",
+                "file_auto_enable",
+                "manifest_auto_enable",
+            }
+        }
+        if not manifest_sources:
+            if trusted is None:
+                return None, narrowing_config
+            return (
+                replace_trusted_skill_settings(
+                    trusted,
+                    manifest_auto_enable=manifest_auto_enable,
+                ),
+                narrowing_config,
+            )
+
+        if trusted is None:
+            return (
+                TrustedSkillSettings(
+                    sources=manifest_sources,
+                    manifest_auto_enable=manifest_auto_enable,
+                ),
+                narrowing_config,
+            )
+
+        duplicate_labels = {source.label for source in trusted.sources} & {
+            source.label for source in manifest_sources
+        }
+        assert not duplicate_labels, "tool.skills.files labels must be unique"
+        return (
+            replace_trusted_skill_settings(
+                trusted,
+                sources=(*trusted.sources, *manifest_sources),
+                manifest_auto_enable=manifest_auto_enable,
+            ),
+            narrowing_config,
+        )
+
+    @staticmethod
+    def _manifest_auto_enable_from_config(
+        skills_config: Mapping[str, object],
+        *,
+        default: bool,
+    ) -> bool:
+        assert isinstance(default, bool)
+        has_manifest_key = "manifest_auto_enable" in skills_config
+        has_file_key = "file_auto_enable" in skills_config
+        assert not (
+            has_manifest_key and has_file_key
+        ), "tool.skills cannot mix manifest_auto_enable and file_auto_enable"
+        if has_manifest_key:
+            value = skills_config["manifest_auto_enable"]
+        elif has_file_key:
+            value = skills_config["file_auto_enable"]
+        else:
+            return default
+        assert isinstance(
+            value,
+            bool,
+        ), "tool.skills.manifest_auto_enable must be a boolean"
+        return value
+
+    @classmethod
+    def _manifest_skill_sources_from_config(
+        cls,
+        files_config: object,
+    ) -> tuple[SkillSourceConfig, ...]:
+        if files_config is None:
+            return ()
+        assert isinstance(
+            files_config,
+            Mapping,
+        ), "tool.skills.files must be a mapping"
+        sources: list[SkillSourceConfig] = []
+        for label, config in files_config.items():
+            assert isinstance(
+                label,
+                str,
+            ), "tool.skills.files labels must be strings"
+            sources.append(
+                cls._manifest_skill_source_from_config(label, config)
+            )
+        return tuple(sources)
+
+    @staticmethod
+    def _manifest_skill_source_from_config(
+        label: str,
+        config: object,
+    ) -> SkillSourceConfig:
+        assert label.strip(), "tool.skills.files label must be non-empty"
+        if isinstance(config, str):
+            return SkillSourceConfig(
+                label=label,
+                authority=WorkspaceSkillSourceAuthority(),
+                manifest_path=config,
+            )
+        assert isinstance(
+            config,
+            Mapping,
+        ), "tool.skills.files entries must be strings or mappings"
+        unknown_keys = sorted(
+            set(config) - {"allow_hidden", "authority", "path"}
+        )
+        assert not unknown_keys, "tool.skills.files entry has unknown keys"
+        path = config.get("path")
+        assert isinstance(
+            path,
+            str,
+        ), "tool.skills.files entry path must be a string"
+        authority_value = config.get("authority")
+        authority: SkillSourceAuthority
+        if authority_value is None:
+            authority = WorkspaceSkillSourceAuthority()
+        else:
+            assert isinstance(
+                authority_value,
+                str,
+            ), "tool.skills.files entry authority must be a string"
+            authority = OrchestratorLoader._skill_source_authority_from_config(
+                authority_value,
+            )
+        allow_hidden = config.get("allow_hidden", False)
+        assert isinstance(
+            allow_hidden,
+            bool,
+        ), "tool.skills.files entry allow_hidden must be a boolean"
+        return SkillSourceConfig(
+            label=label,
+            authority=authority,
+            manifest_path=path,
+            allow_hidden_paths=allow_hidden,
+        )
+
+    @classmethod
     def _untrusted_skills_settings_from_config(
         cls,
         skills_config: Mapping[str, object],
@@ -1488,6 +1691,41 @@ class OrchestratorLoader:
             surface=SkillSettingsSurface.AGENT,
             section="tool.skills",
         )
+
+    @staticmethod
+    def _skill_source_authority_from_config(
+        value: str,
+    ) -> SkillSourceAuthority:
+        kind_value, separator, identity = value.partition(":")
+        try:
+            kind = SkillSourceAuthorityKind(kind_value)
+        except ValueError as exc:
+            raise AssertionError(
+                "unsupported skills source authority"
+            ) from exc
+        if kind is SkillSourceAuthorityKind.BUNDLED:
+            return BundledSkillSourceAuthority(
+                bundle_id=identity if separator else "avalan"
+            )
+        if kind is SkillSourceAuthorityKind.WORKSPACE:
+            return WorkspaceSkillSourceAuthority(
+                workspace_id=identity if separator else "workspace"
+            )
+        if kind is SkillSourceAuthorityKind.USER_LOCAL:
+            return UserLocalSkillSourceAuthority(
+                profile_id=identity if separator else "user-local"
+            )
+        if kind is SkillSourceAuthorityKind.PLUGIN_PROVIDED:
+            assert (
+                identity
+            ), "plugin_provided skills authority requires plugin id"
+            return PluginProvidedSkillSourceAuthority(plugin_id=identity)
+        if kind is SkillSourceAuthorityKind.PREINSTALLED_REMOTE:
+            assert (
+                identity
+            ), "preinstalled_remote skills authority requires registry id"
+            return PreinstalledRemoteSkillSourceAuthority(registry_id=identity)
+        raise AssertionError("unsupported skills source authority")
 
     @staticmethod
     def _tool_name_policy_from_tool_section(
@@ -1656,6 +1894,10 @@ class OrchestratorLoader:
             assert (
                 skills_settings.enabled
             ), "skills tools require enabled trusted skills settings"
+        effective_enabled_tools = effective_skills_enabled_tools(
+            skills_settings,
+            enabled_tools,
+        )
 
         _l(
             "Tool settings: browser=%s, database=%s, graph=%s, shell=%s",
@@ -1748,7 +1990,7 @@ class OrchestratorLoader:
 
         tool = ToolManager.create_instance(
             available_toolsets=available_toolsets,
-            enable_tools=enabled_tools,
+            enable_tools=effective_enabled_tools,
             settings=ToolManagerSettings(
                 tool_format=tool_format,
                 tool_name_policy=(

@@ -129,6 +129,8 @@ Trusted skill source flags are available on `avalan agent message search`,
 | Flag | Effect |
 | --- | --- |
 | `--tool-skills-source LABEL=PATH` | Add a trusted filesystem source. |
+| `--tool-skills-file LABEL=PATH` | Add a trusted direct `SKILL.md` or `SKILL-*.md` manifest file source. The label is allowed as a skill ID by default, so use the manifest's normalized `name`/skill ID when relying on auto-enable. |
+| `--tool-skills-file-no-auto-enable` | Do not automatically add manifest file labels to the allowed skill IDs. |
 | `--tool-skills-source-authority LABEL=KIND[:ID]` | Assign `bundled`, `workspace`, `user_local`, `plugin_provided`, or `preinstalled_remote` authority. |
 | `--tool-skills-source-package LABEL=PATH` | Select a package directory under the source. |
 | `--tool-skills-source-allow-hidden LABEL` | Allow hidden paths inside that trusted source. |
@@ -150,6 +152,17 @@ Trusted skill source flags are available on `avalan agent message search`,
 | `--tool-skills-max-directory-entries-per-source N` | Bound directory entries scanned per source. |
 | `--tool-skills-max-active-cursors N` | Bound active read cursors. |
 | `--tool-skills-max-cursor-age-seconds N` | Bound cursor lifetime. |
+
+For one tracked skill file, use `--tool-skills-file` instead of trusting a
+whole directory. The `LABEL` should match the manifest skill ID unless you
+also pass `--tool-skills-skill` explicitly:
+
+```bash
+echo "Use the PDF skill to decide the review workflow." \
+  | avalan agent run docs/examples/agent_skills_pdf.toml \
+      --tool-skills-file pdf=docs/examples/skills/pdf/SKILL.md \
+      --tool-skills-source-authority pdf=workspace:docs
+```
 
 Operator inspection uses the existing runtime surfaces. Use
 `--display-tools` and `--display-events` to inspect `skills.list`,
