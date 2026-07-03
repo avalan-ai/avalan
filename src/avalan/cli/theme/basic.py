@@ -352,6 +352,7 @@ class BasicStreamPresenter:
         self._last_visible_answer_text = ""
         self._visible_roles: set[StreamFrameRole] = set()
         self._stderr_tool_line_keys: set[str] = set()
+        self._live_tool_history_line_keys: set[str] = set()
         self._active_model_continuations: dict[
             str, tuple[float | None, float | None]
         ] = {}
@@ -367,6 +368,7 @@ class BasicStreamPresenter:
         self._last_visible_answer_text = ""
         self._visible_roles.clear()
         self._stderr_tool_line_keys.clear()
+        self._live_tool_history_line_keys.clear()
         self._active_model_continuations.clear()
         self._completed_model_continuation_keys.clear()
 
@@ -445,10 +447,55 @@ class BasicStreamPresenter:
         self,
         request: CliStreamPresenterRequest,
     ) -> RenderableType | None:
-        return _basic_tool_frame(
+        completed_model_entries = self._completed_model_entries(request)
+        renderable = _basic_tool_frame(
             request,
-            completed_model_entries=self._completed_model_entries(request),
+            completed_model_entries=completed_model_entries,
         )
+        if (
+            renderable is not None
+            and request.display_config.diagnostic_channel == "live"
+        ):
+            self._remember_live_tool_history_entries(
+                _basic_tool_entries(
+                    request,
+                    include_active=False,
+                    completed_model_entries=completed_model_entries,
+                )
+            )
+        return renderable
+
+    def _remember_live_tool_history_entries(
+        self,
+        entries: tuple[_BasicToolLineEntry, ...],
+    ) -> None:
+        for entry in entries:
+            self._live_tool_history_line_keys.add(entry.key)
+
+    def _new_live_tool_history_entries(
+        self,
+        request: CliStreamPresenterRequest,
+        *,
+        include_displayed: bool = False,
+    ) -> tuple[_BasicToolLineEntry, ...]:
+        assert isinstance(include_displayed, bool)
+        return tuple(
+            entry
+            for entry in _basic_tool_entries(request, include_active=False)
+            if include_displayed
+            or entry.key not in self._live_tool_history_line_keys
+        )
+
+    def _live_tool_history_frame(
+        self,
+        entries: tuple[_BasicToolLineEntry, ...],
+    ) -> RenderableType | None:
+        if not entries:
+            return None
+        self._remember_live_tool_history_entries(entries)
+        if any(entry.executed for entry in entries):
+            self._executed_tool_frame_seen = True
+        return _basic_frame_text(tuple(entry.line for entry in entries))
 
     def _stderr_tool_frame(
         self,
@@ -495,15 +542,24 @@ class BasicStreamPresenter:
             or request.snapshot.active_model_continuations
             or request.snapshot.active_tools
         )
-        entries = self._completed_model_entries(request)
-        if not has_progress and not entries:
-            return None
-        renderable = _basic_tool_frame(
-            request,
-            include_active_tool_progress=False,
-            include_model_progress=False,
+        first_visible_answer = not self._last_visible_answer_text
+        include_displayed_history = first_visible_answer and (
+            has_progress
+            or (
+                _basic_terminal_completed(request)
+                and structured_answer_started(visible_answer_text)
+            )
         )
-        return self._role_frame("tools", renderable)
+        entries = self._new_live_tool_history_entries(
+            request,
+            include_displayed=include_displayed_history,
+        )
+        if entries:
+            renderable = self._live_tool_history_frame(entries)
+            return self._role_frame("tools", renderable)
+        if has_progress and first_visible_answer:
+            return self._role_frame("tools", None)
+        return None
 
     def _needs_answer_separator(
         self,

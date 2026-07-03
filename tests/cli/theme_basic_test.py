@@ -1968,6 +1968,55 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             [("tools", "")],
         )
 
+    async def test_live_tool_history_is_not_repeated_during_answer(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_result_summary(
+            tool_call_id="pdfinfo-call",
+            name="pdfinfo",
+            status="result",
+            result="PDF metadata",
+            arguments_count=1,
+            elapsed_seconds=0.065,
+        )
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-1",
+            started_at=1.0,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            diagnostics = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+
+        builder.append_answer_text("I")
+        first_answer = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.append_answer_text(" matched and read the skill.")
+        second_answer = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        diagnostics_text = _visible_text(diagnostics)
+        first_answer_text = _visible_text(first_answer)
+        second_answer_text = _visible_text(second_answer)
+        self.assertIn("Executed tool pdfinfo", diagnostics_text)
+        self.assertEqual(_answer_chunks(first_answer), ["I"])
+        self.assertEqual(
+            _answer_chunks(second_answer),
+            [" matched and read the skill."],
+        )
+        self.assertIn("Executed tool pdfinfo", first_answer_text)
+        self.assertNotIn("Executed tool pdfinfo", second_answer_text)
+        self.assertEqual(_frames(second_answer), [])
+
     async def test_display_tools_events_zero_keeps_active_and_clears_stale(
         self,
     ) -> None:
