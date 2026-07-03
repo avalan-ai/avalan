@@ -219,6 +219,47 @@ class SkillResolverPhase2Test(IsolatedAsyncioTestCase):
             self.assertEqual(sibling.status, SkillStatus.POLICY_DENIED)
             self.assertIn("manifest_source_resource", _reasons(sibling))
 
+    async def test_manifest_source_respects_index_byte_limit(self) -> None:
+        with TemporaryDirectory() as directory:
+            manifest_path = Path(directory) / "SKILL.md"
+            manifest_text = "manifest\n"
+            _write_text(manifest_path, manifest_text)
+            max_read_bytes = len(manifest_text)
+
+            allowed = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=manifest_path,
+                    ),
+                ),
+                index_limits=SkillIndexLimits(
+                    max_indexed_bytes=max_read_bytes
+                ),
+                read_limits=SkillReadLimits(max_bytes_per_read=max_read_bytes),
+            )
+            limited = await resolve_skill_sources(
+                (
+                    SkillConfiguredSource(
+                        label="workspace-main",
+                        authority=WorkspaceSkillSourceAuthority(),
+                        manifest_path=manifest_path,
+                    ),
+                ),
+                index_limits=SkillIndexLimits(
+                    max_indexed_bytes=max_read_bytes - 1
+                ),
+                read_limits=SkillReadLimits(max_bytes_per_read=max_read_bytes),
+            )
+
+            self.assertEqual(
+                tuple(resource.resource_id for resource in allowed.resources),
+                ("SKILL.md",),
+            )
+            self.assertEqual(limited.resources, ())
+            self.assertIn("indexed_bytes", _reasons(limited))
+
     async def test_manifest_source_model_dicts_and_authorization_diagnostics(
         self,
     ) -> None:

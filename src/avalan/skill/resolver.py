@@ -1021,7 +1021,10 @@ class SkillSourceResolver:
             diagnostics = (diagnostic,)
         else:
             assert resource is not None
-            resources = (resource,)
+            if resource.size_bytes > self._index_limits.max_indexed_bytes:
+                diagnostics = (_bound_diagnostic("indexed_bytes"),)
+            else:
+                resources = (resource,)
         return (
             SkillAuthorizedSourceRoot(
                 label=config.source_label,
