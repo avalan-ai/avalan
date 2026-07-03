@@ -48,6 +48,22 @@ _FORBIDDEN_OPTIONS = frozenset(
         "preprocessors",
     )
 )
+_RG_SEARCH_ONLY_OPTIONS = (
+    "pattern",
+    "case",
+    "fixed_strings",
+    "context_lines",
+    "before_context",
+    "after_context",
+    "max_matches_per_file",
+)
+_RG_COMMON_OPTIONS = (
+    "mode",
+    "max_depth",
+    "max_filesize_bytes",
+    "globs",
+)
+_RG_ALLOWED_OPTIONS = set((*_RG_SEARCH_ONLY_OPTIONS, *_RG_COMMON_OPTIONS))
 
 
 def _normalized_rg_globs(
@@ -167,22 +183,51 @@ def build_argv(
     settings = context.settings
     _validate_known_options(
         request.options,
-        allowed_options={
-            "pattern",
-            "case",
-            "fixed_strings",
-            "context_lines",
-            "before_context",
-            "after_context",
-            "max_matches_per_file",
-            "max_depth",
-            "max_filesize_bytes",
-            "globs",
-        },
+        allowed_options=_RG_ALLOWED_OPTIONS,
         forbidden_options=_FORBIDDEN_OPTIONS,
         command="rg",
         include_option_name=True,
     )
+    mode = _literal_option(
+        request.options,
+        "mode",
+        default="search",
+        allowed=("search", "files"),
+    )
+    _validate_rg_paths(context.paths)
+    max_depth = _optional_non_negative_int_option(
+        request.options,
+        "max_depth",
+    )
+    max_filesize_bytes = _optional_positive_int_option(
+        request.options, "max_filesize_bytes"
+    )
+    globs = _normalized_rg_globs(request.options.get("globs"), settings)
+    if mode == "files":
+        _reject_rg_files_search_options(request.options)
+        return _build_files_argv(
+            context,
+            max_depth=max_depth,
+            max_filesize_bytes=max_filesize_bytes,
+            globs=globs,
+        )
+    return _build_search_argv(
+        context,
+        max_depth=max_depth,
+        max_filesize_bytes=max_filesize_bytes,
+        globs=globs,
+    )
+
+
+def _build_search_argv(
+    context: ShellCommandPolicyContext,
+    *,
+    max_depth: int | None,
+    max_filesize_bytes: int | None,
+    globs: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...], None]:
+    request = context.request
+    settings = context.settings
     pattern = _required_string_option(request.options, "pattern")
     case_mode = _literal_option(
         request.options,
@@ -220,15 +265,6 @@ def build_argv(
         min_value=1,
         max_value=settings.max_rg_matches_per_file,
     )
-    max_depth = _optional_non_negative_int_option(
-        request.options,
-        "max_depth",
-    )
-    max_filesize_bytes = _optional_positive_int_option(
-        request.options, "max_filesize_bytes"
-    )
-    globs = _normalized_rg_globs(request.options.get("globs"), settings)
-    _validate_rg_paths(context.paths)
     argv_parts = [
         context.executable_name,
         "--no-config",
@@ -269,6 +305,46 @@ def build_argv(
     display_parts.extend(_rg_display_path_arguments(context.paths))
     context.metadata["exit_code_statuses"] = {1: "no_matches"}
     return tuple(argv_parts), tuple(display_parts), None
+
+
+def _build_files_argv(
+    context: ShellCommandPolicyContext,
+    *,
+    max_depth: int | None,
+    max_filesize_bytes: int | None,
+    globs: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...], None]:
+    settings = context.settings
+    argv_parts = [
+        context.executable_name,
+        "--no-config",
+        "--color=never",
+        "--files",
+    ]
+    if max_depth is not None:
+        argv_parts.extend(("--max-depth", str(max_depth)))
+    if max_filesize_bytes is not None:
+        argv_parts.extend(("--max-filesize", str(max_filesize_bytes)))
+    for glob in globs:
+        argv_parts.extend(("--glob", glob))
+    display_parts = list(argv_parts)
+    for glob in _rg_policy_deny_globs(settings):
+        argv_parts.extend(("--glob", glob))
+    argv_parts.append("--")
+    display_parts.append("--")
+    argv_parts.extend(_rg_path_arguments(context.paths, context.workspace))
+    display_parts.extend(_rg_display_path_arguments(context.paths))
+    context.metadata["exit_code_statuses"] = {1: "no_matches"}
+    return tuple(argv_parts), tuple(display_parts), None
+
+
+def _reject_rg_files_search_options(options: dict[str, object]) -> None:
+    for option in _RG_SEARCH_ONLY_OPTIONS:
+        if option in options:
+            raise policy_denied(
+                ShellExecutionErrorCode.INVALID_OPTION,
+                f"{option} is unsupported in rg files mode",
+            )
 
 
 def filter_output(value: str) -> str:

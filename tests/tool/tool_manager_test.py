@@ -1299,6 +1299,77 @@ class ToolManagerCreationTestCase(TestCase):
             ),
             "$ does not match any allowed schema.",
         )
+        mode_schema = {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["search"]},
+                        "pattern": {"type": "string"},
+                    },
+                    "required": ["pattern"],
+                    "additionalProperties": False,
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["files"]},
+                    },
+                    "required": ["mode"],
+                    "additionalProperties": False,
+                },
+            ]
+        }
+        self.assertEqual(
+            ToolManager._schema_validation_error(
+                {"mode": "search"},
+                mode_schema,
+                "$",
+            ),
+            "$.pattern is required.",
+        )
+        self.assertEqual(
+            ToolManager._schema_validation_error(
+                {"mode": "files", "pattern": "needle"},
+                mode_schema,
+                "$",
+            ),
+            "$.pattern is not allowed.",
+        )
+        self.assertEqual(
+            ToolManager._schema_validation_error(
+                {"kind": "search", "paths": "src"},
+                {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "kind": {
+                                    "type": "string",
+                                    "enum": ["search"],
+                                },
+                                "paths": {"type": "array"},
+                            },
+                            "required": ["kind"],
+                            "additionalProperties": False,
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "mode": {
+                                    "type": "string",
+                                    "enum": ["files"],
+                                },
+                            },
+                            "required": ["mode"],
+                            "additionalProperties": False,
+                        },
+                    ]
+                },
+                "$",
+            ),
+            "$.paths must be array.",
+        )
         self.assertIsNone(
             ToolManager._object_schema_validation_error(
                 "not-object",

@@ -351,7 +351,10 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     _request(**kwargs)
 
     async def test_policy_revalidates_corrupted_budget_hints(self) -> None:
-        cases = (
+        cases: tuple[
+            tuple[dict[object, object], ShellExecutionErrorCode],
+            ...,
+        ] = (
             ("timeout_seconds", True),
             ("timeout_seconds", nan),
             ("max_stdout_bytes", True),
@@ -642,6 +645,64 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("!.env", spec.display_argv)
 
+    async def test_rg_files_mode_builds_files_argv_without_pattern(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "src").mkdir()
+            (root / "tests").mkdir()
+            settings = ShellToolSettings(workspace_root=str(root))
+
+            spec = await ExecutionPolicy(
+                settings=settings,
+                resolver=_CountingResolver("/usr/bin/rg"),
+            ).normalize(
+                _request(
+                    options={
+                        "mode": "files",
+                        "max_depth": 2,
+                        "max_filesize_bytes": 4096,
+                        "globs": ("*.py",),
+                    },
+                    paths=(
+                        _path("src", kind="directory"),
+                        _path("tests", kind="directory"),
+                    ),
+                )
+            )
+
+        user_glob_args = ("--glob", "*.py")
+        injected_glob_args = _glob_args(_rg_policy_deny_globs(settings))
+        expected_display_argv = (
+            "rg",
+            "--no-config",
+            "--color=never",
+            "--files",
+            "--max-depth",
+            "2",
+            "--max-filesize",
+            "4096",
+            *user_glob_args,
+            "--",
+            "src",
+            "tests",
+        )
+
+        self.assertEqual(spec.display_argv, expected_display_argv)
+        self.assertEqual(
+            spec.argv,
+            (
+                *expected_display_argv[:-3],
+                *injected_glob_args,
+                *expected_display_argv[-3:],
+            ),
+        )
+        self.assertNotIn("-e", spec.argv)
+        self.assertNotIn("needle", spec.argv)
+        self.assertNotIn("needle", spec.display_argv)
+        self.assertNotIn("!.env", spec.display_argv)
+
     async def test_rg_builds_case_and_optional_branches(self) -> None:
         insensitive = await ExecutionPolicy().normalize(
             _request(options={"pattern": "needle", "case": "insensitive"})
@@ -777,8 +838,12 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
     async def test_rg_rejects_invalid_options_before_resolver(self) -> None:
         resolver = _CountingResolver("/usr/bin/rg")
         policy = ExecutionPolicy(resolver=resolver)
-        cases = (
+        cases: tuple[
+            tuple[dict[object, object], ShellExecutionErrorCode],
+            ...,
+        ] = (
             ({}, ShellExecutionErrorCode.INVALID_OPTION),
+            ({"pattern": None}, ShellExecutionErrorCode.INVALID_OPTION),
             ({"pattern": ""}, ShellExecutionErrorCode.INVALID_OPTION),
             ({"pattern": " "}, ShellExecutionErrorCode.INVALID_OPTION),
             (
@@ -839,6 +904,66 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
             ),
             ({"hidden": True}, ShellExecutionErrorCode.INVALID_OPTION),
             ({"unknown": "value"}, ShellExecutionErrorCode.INVALID_OPTION),
+        )
+
+        for options, error_code in cases:
+            with self.subTest(options=options):
+                await self._assert_denied(
+                    _request(options=options),
+                    error_code,
+                    policy=policy,
+                )
+        self.assertEqual(resolver.calls, ())
+
+    async def test_rg_files_mode_validates_mode_and_pattern_before_resolver(
+        self,
+    ) -> None:
+        resolver = _CountingResolver("/usr/bin/rg")
+        policy = ExecutionPolicy(resolver=resolver)
+        cases: tuple[
+            tuple[dict[object, object], ShellExecutionErrorCode],
+            ...,
+        ] = (
+            (
+                {"mode": "search"},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"mode": "search", "pattern": None},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"mode": "files", "pattern": "needle"},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"mode": "invalid", "pattern": "needle"},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"mode": "files", "case": "smart"},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"mode": "files", "fixed_strings": True},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"mode": "files", "context_lines": 1},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"mode": "files", "before_context": 1},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"mode": "files", "after_context": 1},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
+            (
+                {"mode": "files", "max_matches_per_file": 1},
+                ShellExecutionErrorCode.INVALID_OPTION,
+            ),
         )
 
         for options, error_code in cases:

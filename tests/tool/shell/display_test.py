@@ -251,6 +251,26 @@ class ShellDisplayProjectionCallTest(TestCase):
         self.assertEqual(_detail_value(projection, "pattern"), "needle")
         self.assertEqual(_detail_value(projection, "case"), "smart")
 
+    def test_rg_files_call_projection_describes_file_listing(self) -> None:
+        projection = _call_projection(
+            "shell.rg",
+            {
+                "mode": "files",
+                "paths": ["filesystem"],
+                "globs": ["*.txt"],
+                "max_depth": 2,
+            },
+        )
+
+        self.assertEqual(projection.action, "list")
+        self.assertEqual(projection.target, "filesystem")
+        self.assertEqual(projection.scope, "filesystem")
+        self.assertIn("List", projection.summary or "")
+        self.assertEqual(_detail_value(projection, "mode"), "files")
+        self.assertFalse(_has_detail(projection, "pattern"))
+        self.assertEqual(_detail_value(projection, "globs"), "*.txt")
+        self.assertEqual(_detail_value(projection, "max depth"), 2)
+
     def test_request_projection_includes_cwd_limits_and_metrics(self) -> None:
         projection = _call_projection(
             "shell.rg",

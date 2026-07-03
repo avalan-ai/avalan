@@ -119,7 +119,7 @@ def project_shell_command_request(
     request: ShellCommandRequest,
 ) -> ToolDisplayProjection:
     assert isinstance(request, ShellCommandRequest)
-    action = _REQUEST_ACTIONS.get(request.command, "run")
+    action = _request_action(request)
     target, target_redacted = _request_target(request)
     scope, scope_redacted = _request_scope(request)
     output_details = _request_output_details(request)
@@ -134,7 +134,7 @@ def project_shell_command_request(
         label=request.tool_name,
         target=target,
         scope=scope,
-        summary=_REQUEST_SUMMARIES.get(request.command, "Run a command."),
+        summary=_request_summary(request),
         details=details,
         metrics=metrics,
         redacted=target_redacted or scope_redacted,
@@ -436,6 +436,8 @@ def _request_target(
 ) -> tuple[str | None, bool]:
     match request.command:
         case "rg":
+            if _rg_files_mode(request):
+                return _paths_value(request.paths, default="workspace")
             return _string_option(request.options, "pattern"), False
         case "jq":
             return _string_option(request.options, "filter"), False
@@ -485,11 +487,19 @@ def _request_details(
         details.append(_detail("paths", paths, redacted=paths_redacted))
     match request.command:
         case "rg":
-            _append_option(details, request.options, "pattern")
-            _append_option(details, request.options, "case")
-            _append_option(details, request.options, "fixed_strings")
-            _append_option(details, request.options, "context_lines")
+            _append_option(details, request.options, "mode")
+            if not _rg_files_mode(request):
+                _append_option(details, request.options, "pattern")
+                _append_option(details, request.options, "case")
+                _append_option(details, request.options, "fixed_strings")
+                _append_option(details, request.options, "context_lines")
+                _append_option(
+                    details,
+                    request.options,
+                    "max_matches_per_file",
+                )
             _append_option(details, request.options, "max_depth")
+            _append_option(details, request.options, "max_filesize_bytes")
             _append_globs(details, request.options)
         case "head":
             _append_option(details, request.options, "lines")
@@ -624,6 +634,7 @@ def _request_metrics(
         "psm",
         "oem",
         "max_depth",
+        "max_filesize_bytes",
         "starting_line_number",
         "line_increment",
         "number_width",
@@ -632,6 +643,22 @@ def _request_metrics(
         if isinstance(value, int) and not isinstance(value, bool):
             metrics[name] = value
     return metrics
+
+
+def _request_action(request: ShellCommandRequest) -> str:
+    if request.command == "rg" and _rg_files_mode(request):
+        return "list"
+    return _REQUEST_ACTIONS.get(request.command, "run")
+
+
+def _request_summary(request: ShellCommandRequest) -> str:
+    if request.command == "rg" and _rg_files_mode(request):
+        return "List workspace files."
+    return _REQUEST_SUMMARIES.get(request.command, "Run a command.")
+
+
+def _rg_files_mode(request: ShellCommandRequest) -> bool:
+    return request.command == "rg" and request.options.get("mode") == "files"
 
 
 def _result_fact_details(
