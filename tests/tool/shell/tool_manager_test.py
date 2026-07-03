@@ -24,6 +24,7 @@ from avalan.entities import (
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
     SHELL_COMMAND_IDS,
+    SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS,
     ExecutionPolicy,
     ExecutionResult,
     ExecutionSpec,
@@ -41,13 +42,21 @@ from avalan.tool.shell import (
 _EXPECTED_TOOL_NAMES = tuple(
     f"shell.{command_id}" for command_id in SHELL_COMMAND_IDS
 )
+_EXPECTED_GIT_READ_TOOL_NAMES = tuple(
+    f"shell.git_{command_id.replace('-', '_')}"
+    for command_id in SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS
+)
+_EXPECTED_SHELL_NAMESPACE_TOOL_NAMES = (
+    *_EXPECTED_TOOL_NAMES,
+    *_EXPECTED_GIT_READ_TOOL_NAMES,
+)
 
 
 class ShellToolManagerFilteringTest(TestCase):
     def test_namespace_wildcard_and_concrete_enablement(self) -> None:
         cases = (
-            (["shell"], _EXPECTED_TOOL_NAMES),
-            (["shell.*"], _EXPECTED_TOOL_NAMES),
+            (["shell"], _EXPECTED_SHELL_NAMESPACE_TOOL_NAMES),
+            (["shell.*"], _EXPECTED_SHELL_NAMESPACE_TOOL_NAMES),
             (["shell.rg"], ("shell.rg",)),
         )
 
@@ -196,8 +205,14 @@ class ShellToolManagerFilteringTest(TestCase):
     def test_schema_and_descriptors_use_single_shell_namespace(self) -> None:
         manager = _shell_manager(["shell"])
 
-        self.assertEqual(_schema_names(manager), _EXPECTED_TOOL_NAMES)
-        self.assertEqual(_tool_names(manager), _EXPECTED_TOOL_NAMES)
+        self.assertEqual(
+            _schema_names(manager),
+            _EXPECTED_SHELL_NAMESPACE_TOOL_NAMES,
+        )
+        self.assertEqual(
+            _tool_names(manager),
+            _EXPECTED_SHELL_NAMESPACE_TOOL_NAMES,
+        )
         self.assertTrue(
             all("shell.shell." not in name for name in _schema_names(manager))
         )

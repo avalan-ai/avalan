@@ -2,6 +2,15 @@ from copy import copy, deepcopy
 from dataclasses import FrozenInstanceError
 from unittest import TestCase, main
 
+from avalan.tool.shell import (
+    ShellGitCapability,
+    ShellGitCommandName,
+    ShellGitCommandRequest,
+    ShellGitCommandResult,
+    ShellGitExecutionErrorCode,
+    ShellGitExecutionStatus,
+    ShellGitFormattedResult,
+)
 from avalan.tool.shell.entities import (
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
     SHELL_STATUS_ERROR_CODES,
@@ -98,6 +107,175 @@ class ShellEntitiesTest(TestCase):
         self.assertEqual(
             {kind.value for kind in ShellOutputKind},
             {"text", "json", "generated_files"},
+        )
+
+    def test_git_contract_values_are_locked(self) -> None:
+        self.assertEqual(
+            {capability.value for capability in ShellGitCapability},
+            {"read", "worktree", "history", "remote"},
+        )
+        self.assertEqual(
+            {status.value for status in ShellGitExecutionStatus},
+            {
+                "success",
+                "policy_denied",
+                "command_unavailable",
+                "failed",
+                "timeout",
+                "cancelled",
+            },
+        )
+        self.assertEqual(
+            {code.value for code in ShellGitExecutionErrorCode},
+            {
+                "capability_required",
+                "command_disabled",
+                "repo_not_found",
+                "repo_boundary_denied",
+                "bare_repo_denied",
+                "submodule_denied",
+                "alternate_denied",
+                "pathspec_denied",
+                "revision_denied",
+                "revision_not_found",
+                "ambiguous_revision",
+                "invalid_option",
+                "unsafe_git_config",
+                "external_process_denied",
+                "optional_lock_denied",
+                "credential_denied",
+                "remote_protocol_denied",
+                "remote_host_denied",
+                "output_truncated",
+                "timeout",
+                "nonzero_exit",
+                "command_unavailable",
+            },
+        )
+
+    def test_git_request_and_result_copy_mutable_inputs(self) -> None:
+        options: dict[str, object] = {"mode": "porcelain_v2"}
+        metadata: dict[str, object] = {"source": "test"}
+        request = ShellGitCommandRequest(
+            tool_name="shell.git_status",
+            command=ShellGitCommandName.STATUS,
+            capability_required=ShellGitCapability.READ,
+            options=options,
+            pathspecs=("src",),
+            metadata=metadata,
+        )
+        audit_metadata: dict[str, object] = {"request_options": options}
+        result = ShellGitCommandResult(
+            tool_name="shell.git_status",
+            command=ShellGitCommandName.STATUS,
+            display_argv=("git", "status"),
+            effective_cwd=".",
+            resolved_repo_root=None,
+            capability_required=ShellGitCapability.READ,
+            capability_used=None,
+            execution_mode="disabled",
+            status=ShellGitExecutionStatus.POLICY_DENIED,
+            exit_code=None,
+            stdout_snippet="",
+            stderr_snippet="",
+            error_code=ShellGitExecutionErrorCode.COMMAND_DISABLED,
+            error_message="disabled",
+            audit_metadata=audit_metadata,
+        )
+
+        options["mode"] = "short"
+        metadata["source"] = "changed"
+        audit_metadata["request_options"] = {}
+
+        self.assertEqual(request.options, {"mode": "porcelain_v2"})
+        self.assertEqual(request.metadata, {"source": "test"})
+        self.assertEqual(
+            result.audit_metadata,
+            {"request_options": {"mode": "short"}},
+        )
+
+    def test_git_request_and_result_accept_optional_execution_fields(
+        self,
+    ) -> None:
+        request = ShellGitCommandRequest(
+            tool_name="shell.git_status",
+            command=ShellGitCommandName.STATUS,
+            capability_required=ShellGitCapability.READ,
+            options={},
+            cwd="repo",
+            timeout_seconds=1.0,
+            max_stdout_bytes=10,
+            max_stderr_bytes=11,
+        )
+        result = ShellGitCommandResult(
+            tool_name="shell.git_status",
+            command=ShellGitCommandName.STATUS,
+            display_argv=("git", "status"),
+            effective_cwd="repo",
+            resolved_repo_root="/workspace/repo",
+            capability_required=ShellGitCapability.READ,
+            capability_used=ShellGitCapability.READ,
+            execution_mode="local",
+            status=ShellGitExecutionStatus.SUCCESS,
+            exit_code=0,
+            stdout_snippet="ok",
+            stderr_snippet="",
+        )
+
+        self.assertEqual(request.cwd, "repo")
+        self.assertEqual(request.timeout_seconds, 1.0)
+        self.assertEqual(result.resolved_repo_root, "/workspace/repo")
+        self.assertEqual(result.capability_used, ShellGitCapability.READ)
+        self.assertEqual(result.exit_code, 0)
+
+    def test_git_entities_reject_invalid_fields(self) -> None:
+        with self.assertRaises(AssertionError):
+            ShellGitCommandRequest(
+                tool_name="shell.git_status",
+                command="status",  # type: ignore[arg-type]
+                capability_required=ShellGitCapability.READ,
+                options={},
+            )
+        with self.assertRaises(AssertionError):
+            ShellGitCommandResult(
+                tool_name="shell.git_status",
+                command=ShellGitCommandName.STATUS,
+                display_argv=("git", "status"),
+                effective_cwd=".",
+                resolved_repo_root=None,
+                capability_required=ShellGitCapability.READ,
+                capability_used=None,
+                execution_mode="remote",  # type: ignore[arg-type]
+                status=ShellGitExecutionStatus.POLICY_DENIED,
+                exit_code=None,
+                stdout_snippet="",
+                stderr_snippet="",
+            )
+
+    def test_git_formatted_result_preserves_result(self) -> None:
+        result = ShellGitCommandResult(
+            tool_name="shell.git_status",
+            command=ShellGitCommandName.STATUS,
+            display_argv=("git", "status"),
+            effective_cwd=".",
+            resolved_repo_root=None,
+            capability_required=ShellGitCapability.READ,
+            capability_used=None,
+            execution_mode="disabled",
+            status=ShellGitExecutionStatus.POLICY_DENIED,
+            exit_code=None,
+            stdout_snippet="",
+            stderr_snippet="",
+        )
+        formatted = ShellGitFormattedResult("formatted", result)
+
+        self.assertEqual(formatted, "formatted")
+        self.assertIs(formatted.git_result, result)
+        self.assertIs(copy(formatted), formatted)
+        self.assertIs(deepcopy(formatted), formatted)
+        self.assertEqual(
+            formatted.__reduce__(),
+            (ShellGitFormattedResult, ("formatted", result)),
         )
 
     def test_path_operand_accepts_expected_fields(self) -> None:

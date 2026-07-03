@@ -88,6 +88,25 @@ from .filesystem import read_image_signature as read_image_signature
 from .filesystem import read_pdf_signature as read_pdf_signature
 from .filesystem import read_signature as read_signature
 from .filesystem import resolve_policy_path as resolve_policy_path
+from .git import (
+    SHELL_GIT_CAPABILITY_IDS as SHELL_GIT_CAPABILITY_IDS,
+)
+from .git import (
+    SHELL_GIT_COMMAND_CAPABILITIES as SHELL_GIT_COMMAND_CAPABILITIES,
+)
+from .git import SHELL_GIT_COMMAND_IDS as SHELL_GIT_COMMAND_IDS
+from .git import (
+    SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS as _GIT_DEFAULT_ALLOWED_COMMAND_IDS,
+)
+from .git import SHELL_GIT_TOOL_COMMANDS as SHELL_GIT_TOOL_COMMANDS
+from .git import SHELL_GIT_TOOL_NAMES as SHELL_GIT_TOOL_NAMES
+from .git import ShellGitCapability as ShellGitCapability
+from .git import ShellGitCommandName as ShellGitCommandName
+from .git import ShellGitCommandRequest as ShellGitCommandRequest
+from .git import ShellGitCommandResult as ShellGitCommandResult
+from .git import ShellGitExecutionErrorCode as ShellGitExecutionErrorCode
+from .git import ShellGitExecutionStatus as ShellGitExecutionStatus
+from .git import ShellGitFormattedResult as ShellGitFormattedResult
 from .opt_in import SHELL_TOOL_NAMESPACE as SHELL_TOOL_NAMESPACE
 from .opt_in import SHELL_TOOL_WILDCARD as SHELL_TOOL_WILDCARD
 from .opt_in import enables_shell_tools as enables_shell_tools
@@ -118,5 +137,8 @@ from .resolver import (
     unavailable_executable_lookup as unavailable_executable_lookup,
 )
 from .sandbox import ShellSandboxCommandExecutor as ShellSandboxCommandExecutor
+from .settings import ShellGitToolSettings as ShellGitToolSettings
 from .settings import ShellToolSettings as ShellToolSettings
 from .toolset import ShellToolSet as ShellToolSet
+
+SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS = _GIT_DEFAULT_ALLOWED_COMMAND_IDS

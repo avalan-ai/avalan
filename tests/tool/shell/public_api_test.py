@@ -21,6 +21,12 @@ from avalan.tool.shell import (
     SHELL_COMMAND_DEFINITIONS,
     SHELL_COMMAND_IDS,
     SHELL_COMMANDS,
+    SHELL_GIT_CAPABILITY_IDS,
+    SHELL_GIT_COMMAND_CAPABILITIES,
+    SHELL_GIT_COMMAND_IDS,
+    SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS,
+    SHELL_GIT_TOOL_COMMANDS,
+    SHELL_GIT_TOOL_NAMES,
     SHELL_STATUS_ERROR_CODES,
     BackendBoundaryCompositionExecutor,
     CommandExecutor,
@@ -49,6 +55,14 @@ from avalan.tool.shell import (
     ShellExecutionStepSpec,
     ShellFormattedCompositionResult,
     ShellFormattedResult,
+    ShellGitCapability,
+    ShellGitCommandName,
+    ShellGitCommandRequest,
+    ShellGitCommandResult,
+    ShellGitExecutionErrorCode,
+    ShellGitExecutionStatus,
+    ShellGitFormattedResult,
+    ShellGitToolSettings,
     ShellOutputKind,
     ShellPathMetadata,
     ShellPolicyDenied,
@@ -269,6 +283,64 @@ class ShellPublicApiTest(TestCase):
             import_module("avalan.tool.shell").SHELL_STATUS_ERROR_CODES,
         )
         self.assertIs(
+            SHELL_GIT_CAPABILITY_IDS,
+            import_module("avalan.tool.shell").SHELL_GIT_CAPABILITY_IDS,
+        )
+        self.assertIs(
+            SHELL_GIT_COMMAND_CAPABILITIES,
+            import_module("avalan.tool.shell").SHELL_GIT_COMMAND_CAPABILITIES,
+        )
+        self.assertIs(
+            SHELL_GIT_COMMAND_IDS,
+            import_module("avalan.tool.shell").SHELL_GIT_COMMAND_IDS,
+        )
+        self.assertIs(
+            SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS,
+            import_module(
+                "avalan.tool.shell"
+            ).SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS,
+        )
+        self.assertIs(
+            SHELL_GIT_TOOL_COMMANDS,
+            import_module("avalan.tool.shell").SHELL_GIT_TOOL_COMMANDS,
+        )
+        self.assertIs(
+            SHELL_GIT_TOOL_NAMES,
+            import_module("avalan.tool.shell").SHELL_GIT_TOOL_NAMES,
+        )
+        self.assertIs(
+            ShellGitCapability,
+            import_module("avalan.tool.shell").ShellGitCapability,
+        )
+        self.assertIs(
+            ShellGitCommandName,
+            import_module("avalan.tool.shell").ShellGitCommandName,
+        )
+        self.assertIs(
+            ShellGitCommandRequest,
+            import_module("avalan.tool.shell").ShellGitCommandRequest,
+        )
+        self.assertIs(
+            ShellGitCommandResult,
+            import_module("avalan.tool.shell").ShellGitCommandResult,
+        )
+        self.assertIs(
+            ShellGitExecutionErrorCode,
+            import_module("avalan.tool.shell").ShellGitExecutionErrorCode,
+        )
+        self.assertIs(
+            ShellGitExecutionStatus,
+            import_module("avalan.tool.shell").ShellGitExecutionStatus,
+        )
+        self.assertIs(
+            ShellGitFormattedResult,
+            import_module("avalan.tool.shell").ShellGitFormattedResult,
+        )
+        self.assertIs(
+            ShellGitToolSettings,
+            import_module("avalan.tool.shell").ShellGitToolSettings,
+        )
+        self.assertIs(
             normalize_shell_enabled_tools,
             import_module("avalan.tool.shell").normalize_shell_enabled_tools,
         )
@@ -316,6 +388,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.executor",
             "avalan.tool.shell.filesystem",
             "avalan.tool.shell.formatting",
+            "avalan.tool.shell.git",
             "avalan.tool.shell.opt_in",
             "avalan.tool.shell.policy",
             "avalan.tool.shell.python_pdf",

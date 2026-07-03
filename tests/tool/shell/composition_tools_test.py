@@ -200,6 +200,64 @@ class PipelineToolTest(IsolatedAsyncioTestCase):
         self.assertNotIn(raw_command, payload)
         self.assertNotIn(raw_step_id, payload)
 
+    async def test_pipeline_denial_redacts_ids_and_only_unknown_commands(
+        self,
+    ) -> None:
+        settings = ShellToolSettings(allow_pipelines=False)
+        executor = _StreamingCompositionExecutor()
+        tool = PipelineTool(
+            settings=settings,
+            policy=ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+            executor=executor,
+        )
+        raw_command = "unknown PRIVATE_COMMAND_DO_NOT_LEAK"
+
+        safe_call = ToolCall(
+            id="safe",
+            name="shell.pipeline",
+            arguments={"steps": [{"id": "read", "command": "cat"}]},
+        )
+        unsafe_call = ToolCall(
+            id="unsafe",
+            name="shell.pipeline",
+            arguments={"steps": [{"id": "secret", "command": raw_command}]},
+        )
+        output = await tool(
+            steps=[
+                {"id": "read", "command": "cat"},
+                {"id": "secret", "command": raw_command},
+            ],
+            context=ToolCallContext(),
+        )
+
+        self.assertIsNotNone(tool.tool_display_projector(safe_call))
+        self.assertIsNone(tool.tool_display_projector(unsafe_call))
+        self.assertIsInstance(output, ShellFormattedCompositionResult)
+        formatted_output = cast(ShellFormattedCompositionResult, output)
+        self.assertEqual(executor.calls, 0)
+        self.assertEqual(
+            tuple(
+                step.id for step in formatted_output.composition_result.steps
+            ),
+            ("[redacted]-0", "[redacted]-1"),
+        )
+        self.assertEqual(
+            tuple(
+                step.command
+                for step in formatted_output.composition_result.steps
+            ),
+            ("cat", "[redacted]"),
+        )
+        self.assertEqual(
+            tuple(
+                step.metadata["stdout_visible"]
+                for step in formatted_output.composition_result.steps
+            ),
+            (False, True),
+        )
+        self.assertNotIn("secret", output)
+        self.assertNotIn(raw_command, output)
+
     def test_build_request_accepts_none_paths_and_stream_ref_stdin(
         self,
     ) -> None:

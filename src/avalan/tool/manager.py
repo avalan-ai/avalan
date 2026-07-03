@@ -339,6 +339,7 @@ class ToolManager:
                 for name, aliases in self._toolset_tool_names(
                     toolset,
                     available=True,
+                    enable_tools=enable_tools,
                 ):
                     self._available_tool_names.add(name)
                     self._add_aliases(self._available_aliases, name, aliases)
@@ -416,6 +417,7 @@ class ToolManager:
         prefix: str | None = None,
         *,
         available: bool = False,
+        enable_tools: Sequence[str] | None = None,
     ) -> list[tuple[str, list[str]]]:
         namespace_prefix = (
             f"{prefix}.{toolset.namespace}"
@@ -426,7 +428,20 @@ class ToolManager:
         names: list[tuple[str, list[str]]] = []
         tools = toolset.tools
         if available:
-            advertised_tools = getattr(toolset, "available_tools", None)
+            advertised_tools = None
+            if enable_tools is not None:
+                selected_available_tools = getattr(
+                    toolset,
+                    "available_tools_for_enabled_tools",
+                    None,
+                )
+                if selected_available_tools is not None:
+                    assert callable(
+                        selected_available_tools
+                    ), "available_tools_for_enabled_tools must be callable"
+                    advertised_tools = selected_available_tools(enable_tools)
+            if advertised_tools is None:
+                advertised_tools = getattr(toolset, "available_tools", None)
             if advertised_tools is not None:
                 assert isinstance(
                     advertised_tools,
@@ -443,6 +458,7 @@ class ToolManager:
                         tool,
                         namespace_prefix,
                         available=available,
+                        enable_tools=enable_tools,
                     )
                 )
                 continue

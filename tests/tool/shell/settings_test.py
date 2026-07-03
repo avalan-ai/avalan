@@ -4,6 +4,12 @@ from unittest import TestCase, main
 
 from avalan.container import ContainerProfileSelection
 from avalan.isolation import SandboxProfileSelection
+from avalan.tool.shell import (
+    SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS,
+    ShellGitCapability,
+    ShellGitCommandName,
+    ShellGitToolSettings,
+)
 from avalan.tool.shell.registry import SHELL_COMMAND_IDS
 from avalan.tool.shell.settings import ShellToolSettings
 
@@ -92,6 +98,7 @@ class ShellToolSettingsTest(TestCase):
         self.assertEqual(settings.allowed_pdf_raster_formats, ("png",))
         self.assertEqual(settings.allowed_tesseract_output_formats, ("txt",))
         self.assertEqual(settings.allowed_tesseract_languages, ("eng",))
+        self.assertEqual(settings.git, ShellGitToolSettings())
         self.assertIsInstance(settings.environment, MappingProxyType)
         self.assertIsInstance(settings.executable_paths, MappingProxyType)
 
@@ -116,6 +123,7 @@ class ShellToolSettingsTest(TestCase):
         self.assertNotIn("environment_allowlist", scalar_fields)
         self.assertNotIn("executable_paths", scalar_fields)
         self.assertNotIn("executable_search_paths", scalar_fields)
+        self.assertNotIn("git", scalar_fields)
         self.assertNotIn("container", scalar_fields)
         self.assertNotIn("sandbox", scalar_fields)
         self.assertNotIn("allow_write", scalar_fields)
@@ -211,6 +219,131 @@ class ShellToolSettingsTest(TestCase):
         self.assertEqual(settings.executable_paths, {"rg": "/usr/bin/rg"})
         self.assertEqual(settings.executable_search_paths, ("/usr/bin",))
 
+    def test_git_settings_defaults_lock_contract(self) -> None:
+        settings = ShellGitToolSettings()
+
+        self.assertEqual(settings.workspace_root, ".")
+        self.assertEqual(settings.cwd, ".")
+        self.assertEqual(settings.capabilities, ("read",))
+        self.assertEqual(
+            settings.allowed_commands,
+            SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS,
+        )
+        self.assertEqual(settings.default_timeout_seconds, 10.0)
+        self.assertEqual(settings.max_timeout_seconds, 60.0)
+        self.assertEqual(settings.max_stdout_bytes, 65536)
+        self.assertEqual(settings.max_stderr_bytes, 32768)
+        self.assertEqual(settings.max_diff_bytes, 131072)
+        self.assertEqual(settings.max_log_count, 50)
+        self.assertEqual(settings.max_grep_matches, 1000)
+        self.assertEqual(settings.max_pathspecs, 64)
+        self.assertEqual(settings.max_pathspec_bytes, 4096)
+        self.assertEqual(settings.max_revision_bytes, 256)
+        self.assertFalse(settings.allow_external_diff)
+        self.assertFalse(settings.allow_textconv)
+        self.assertFalse(settings.allow_optional_locks)
+        self.assertFalse(settings.allow_submodules)
+        self.assertFalse(settings.allow_bare_repositories)
+        self.assertFalse(settings.allow_linked_worktrees)
+        self.assertFalse(settings.allow_alternates)
+        self.assertFalse(settings.allow_submodule_update)
+        self.assertEqual(settings.allowed_remote_protocols, ("https",))
+        self.assertEqual(settings.allowed_remote_hosts, ())
+        self.assertEqual(settings.credential_policy, "deny")
+        self.assertFalse(settings.allow_remote_credentials)
+        self.assertTrue(settings.redact_remote_urls)
+        self.assertTrue(settings.redact_credentials)
+        self.assertFalse(settings.redact_author_emails)
+
+    def test_shell_settings_accept_git_mapping(self) -> None:
+        settings = ShellToolSettings(
+            git={
+                "capabilities": ("read",),
+                "allowed_commands": ("status",),
+            }
+        )
+
+        self.assertIsInstance(settings.git, ShellGitToolSettings)
+        self.assertEqual(settings.git.allowed_commands, ("status",))
+
+    def test_git_settings_accept_enums_and_normalize_duplicates(self) -> None:
+        settings = ShellGitToolSettings(
+            workspace_root="workspace",
+            cwd="repo",
+            capabilities=(
+                ShellGitCapability.READ,
+                ShellGitCapability.REMOTE,
+                ShellGitCapability.REMOTE,
+            ),
+            allowed_commands=(
+                ShellGitCommandName.STATUS,
+                ShellGitCommandName.STATUS,
+                ShellGitCapability.REMOTE,
+            ),
+            default_timeout_seconds=1.0,
+            max_timeout_seconds=2.0,
+            max_stdout_bytes=1,
+            max_stderr_bytes=1,
+            max_diff_bytes=1,
+            max_log_count=1,
+            max_grep_matches=1,
+            max_pathspecs=1,
+            max_pathspec_bytes=1,
+            max_revision_bytes=1,
+            allow_external_diff=True,
+            allow_textconv=True,
+            allow_optional_locks=True,
+            allow_submodules=True,
+            allow_bare_repositories=True,
+            allow_linked_worktrees=True,
+            allow_alternates=True,
+            allow_submodule_update=True,
+            allowed_remote_protocols=("https", "https"),
+            allowed_remote_hosts=("GitHub.com", "github.com"),
+            credential_policy="allow_explicit",
+            redact_remote_urls=False,
+            redact_credentials=False,
+            redact_author_emails=True,
+        )
+
+        self.assertEqual(settings.workspace_root, "workspace")
+        self.assertEqual(settings.cwd, "repo")
+        self.assertEqual(settings.capabilities, ("read", "remote"))
+        self.assertEqual(
+            settings.allowed_commands,
+            (
+                ShellGitCommandName.STATUS.value,
+                ShellGitCommandName.REMOTE_LIST.value,
+                ShellGitCommandName.REMOTE_ADD.value,
+                ShellGitCommandName.REMOTE_SET_URL.value,
+                ShellGitCommandName.REMOTE_REMOVE.value,
+                ShellGitCommandName.REMOTE_RENAME.value,
+            ),
+        )
+        self.assertEqual(settings.allowed_remote_protocols, ("https",))
+        self.assertEqual(settings.allowed_remote_hosts, ("github.com",))
+        self.assertFalse(settings.redact_remote_urls)
+        self.assertFalse(settings.redact_credentials)
+        self.assertTrue(settings.redact_author_emails)
+
+    def test_shell_settings_accept_explicit_valid_branch_values(self) -> None:
+        settings = ShellToolSettings(
+            backend="sandbox",
+            materialized_input_files_dir="inputs",
+            default_timeout_seconds=1.0,
+            max_timeout_seconds=1.0,
+            environment_allowlist=("PATH",),
+            executable_search_paths=("/usr/bin",),
+            allowed_tesseract_languages=("eng", "spa"),
+        )
+
+        self.assertEqual(settings.execution_mode, "sandbox")
+        self.assertEqual(settings.backend, "sandbox")
+        self.assertEqual(settings.materialized_input_files_dir, "inputs")
+        self.assertEqual(settings.environment_allowlist, ("PATH",))
+        self.assertEqual(settings.executable_search_paths, ("/usr/bin",))
+        self.assertEqual(settings.allowed_tesseract_languages, ("eng", "spa"))
+
     def test_numeric_settings_reject_bool_as_int(self) -> None:
         for field_name in _numeric_field_names():
             with self.subTest(field_name=field_name):
@@ -258,6 +391,7 @@ class ShellToolSettingsTest(TestCase):
     def test_rejects_invalid_scalar_settings(self) -> None:
         invalid_kwargs = (
             {"backend": "remote"},
+            {"execution_mode": 1},
             {"execution_mode": "remote"},
             {"workspace_root": ""},
             {"cwd": ""},
@@ -287,6 +421,7 @@ class ShellToolSettingsTest(TestCase):
             {"allowed_tesseract_output_formats": ()},
             {"allowed_tesseract_output_formats": ("pdf",)},
             {"allowed_tesseract_languages": ()},
+            {"allowed_tesseract_languages": "eng"},
             {"allowed_tesseract_languages": ("eng+spa",)},
             {"allowed_tesseract_languages": ("-c",)},
         )
