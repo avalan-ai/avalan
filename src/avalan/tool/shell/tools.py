@@ -445,7 +445,7 @@ class GitStatusTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -507,7 +507,7 @@ class GitRevParseTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -576,7 +576,7 @@ class GitBranchTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -636,7 +636,7 @@ class GitTagTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -699,7 +699,7 @@ class GitDescribeTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -768,7 +768,7 @@ class GitLsFilesTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -833,7 +833,7 @@ class GitLogTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -5498,10 +5498,47 @@ def _git_status_and_error(
             ShellGitExecutionStatus.COMMAND_UNAVAILABLE,
             ShellGitExecutionErrorCode.COMMAND_UNAVAILABLE,
         )
+    if result.status is ShellExecutionStatus.NONZERO_EXIT:
+        return ShellGitExecutionStatus.FAILED, _git_nonzero_error_code(result)
     return (
         ShellGitExecutionStatus.FAILED,
         ShellGitExecutionErrorCode.NONZERO_EXIT,
     )
+
+
+def _git_nonzero_error_code(
+    result: ExecutionResult,
+) -> ShellGitExecutionErrorCode:
+    diagnostic = " ".join(
+        value.lower()
+        for value in (
+            result.error_message or "",
+            result.stderr,
+            result.stdout,
+        )
+        if value
+    )
+    if (
+        "ambiguous object name" in diagnostic
+        or "ambiguous revision" in diagnostic
+        or ("refname" in diagnostic and "ambiguous" in diagnostic)
+    ):
+        return ShellGitExecutionErrorCode.AMBIGUOUS_REVISION
+    if any(
+        marker in diagnostic
+        for marker in (
+            "unknown revision",
+            "bad revision",
+            "invalid revision",
+            "invalid object name",
+            "not a valid object name",
+            "needed a single revision",
+            "does not point to a commit",
+            "no names found",
+        )
+    ):
+        return ShellGitExecutionErrorCode.REVISION_NOT_FOUND
+    return ShellGitExecutionErrorCode.NONZERO_EXIT
 
 
 def _git_error_message(
@@ -5511,12 +5548,16 @@ def _git_error_message(
     error_code: ShellGitExecutionErrorCode | None,
     settings: ShellGitToolSettings,
 ) -> str | None:
-    if result.error_message is not None:
-        return redact_git_text(result.error_message, settings)
     if status is ShellGitExecutionStatus.CANCELLED:
         return "shell Git execution was cancelled"
     if error_code is None:
         return None
+    if error_code is ShellGitExecutionErrorCode.REVISION_NOT_FOUND:
+        return "Git revision was not found"
+    if error_code is ShellGitExecutionErrorCode.AMBIGUOUS_REVISION:
+        return "Git revision is ambiguous"
+    if result.error_message is not None:
+        return redact_git_text(result.error_message, settings)
     if error_code is ShellGitExecutionErrorCode.OUTPUT_TRUNCATED:
         return "shell Git output was truncated"
     if status is ShellGitExecutionStatus.COMMAND_UNAVAILABLE:

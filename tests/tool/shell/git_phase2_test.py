@@ -55,6 +55,8 @@ class GitExecutionPolicyPhase2Test(IsolatedAsyncioTestCase):
                 spec.argv,
                 (
                     "git",
+                    "--no-pager",
+                    "--no-optional-locks",
                     "status",
                     "--porcelain=v2",
                     "--branch",
@@ -195,8 +197,8 @@ class GitExecutionPolicyPhase2Test(IsolatedAsyncioTestCase):
             with self.assertRaises(ShellGitPolicyDenied) as raised:
                 await policy.normalize(
                     _request(
-                        command=ShellGitCommandName.REV_PARSE,
-                        options={"fact": "repo_root"},
+                        command=ShellGitCommandName.SHOW,
+                        options={"revision": "HEAD"},
                     )
                 )
 
@@ -362,7 +364,10 @@ class GitToolExecutionPhase2Test(IsolatedAsyncioTestCase):
 
             assert isinstance(result, ShellGitFormattedResult)
             self.assertEqual(len(executor.specs), 1)
-            self.assertEqual(executor.specs[0].argv[:2], ("git", "status"))
+            self.assertEqual(
+                executor.specs[0].argv[:4],
+                ("git", "--no-pager", "--no-optional-locks", "status"),
+            )
             self.assertEqual(
                 result.git_result.status,
                 ShellGitExecutionStatus.SUCCESS,

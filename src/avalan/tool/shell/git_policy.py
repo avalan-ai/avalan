@@ -86,10 +86,13 @@ _UNSAFE_OPTION_NAMES = frozenset(
         "pager",
         "paginate",
         "prompt",
+        "recurse-submodules",
         "sign",
         "signing",
         "ssh",
         "ssh-command",
+        "submodule",
+        "submodules",
         "textconv",
         "work-tree",
     }
@@ -143,6 +146,21 @@ _DANGEROUS_ATTRIBUTES_MARKERS = (
     "textconv",
     "diff=",
 )
+_ALLOWED_GIT_OPTION_KEYS = {
+    ShellGitCommandName.STATUS: frozenset({"mode", "include_branch"}),
+    ShellGitCommandName.REV_PARSE: frozenset({"fact"}),
+    ShellGitCommandName.BRANCH: frozenset({"mode", "contains"}),
+    ShellGitCommandName.TAG: frozenset({"mode", "name", "max_count"}),
+    ShellGitCommandName.DESCRIBE: frozenset(
+        {
+            "target",
+            "mode",
+            "max_candidates",
+        }
+    ),
+    ShellGitCommandName.LS_FILES: frozenset({"mode"}),
+    ShellGitCommandName.LOG: frozenset({"max_count", "revision", "format"}),
+}
 
 
 @final
@@ -192,9 +210,10 @@ class GitExecutionPolicy:
             repo_root=repo_root,
             settings=git_settings,
         )
+        _validate_git_option_keys(request)
         _validate_revisions(request, git_settings)
-        _validate_git_options(request.options)
-        argv = _argv_for_request(request, pathspecs)
+        _validate_git_option_values(request.options)
+        argv = _argv_for_request(request, pathspecs, git_settings)
         _validate_argv_budgets(argv, self._settings)
         timeout_seconds = _bounded_float(
             request.timeout_seconds,
@@ -576,9 +595,19 @@ def _validate_pathspec(value: str, *, repo_root: Path) -> None:
         )
 
 
-def _validate_git_options(options: Mapping[str, object]) -> None:
-    for name, value in options.items():
+def _validate_git_option_keys(request: ShellGitCommandRequest) -> None:
+    allowed_options = _ALLOWED_GIT_OPTION_KEYS.get(request.command)
+    for name in request.options:
         _validate_git_option_name(name)
+        if allowed_options is not None and name not in allowed_options:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.INVALID_OPTION,
+                "Git option is unsupported for this command",
+            )
+
+
+def _validate_git_option_values(options: Mapping[str, object]) -> None:
+    for value in options.values():
         _validate_git_option_value(value)
 
 
@@ -685,32 +714,50 @@ def _validate_revision(
 def _argv_for_request(
     request: ShellGitCommandRequest,
     pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
 ) -> tuple[str, ...]:
     if request.command is ShellGitCommandName.STATUS:
         return _status_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.REV_PARSE:
+        return _rev_parse_argv(request)
+    if request.command is ShellGitCommandName.BRANCH:
+        return _branch_argv(request)
+    if request.command is ShellGitCommandName.TAG:
+        return _tag_argv(request, settings)
+    if request.command is ShellGitCommandName.DESCRIBE:
+        return _describe_argv(request, settings)
+    if request.command is ShellGitCommandName.LS_FILES:
+        return _ls_files_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.LOG:
+        return _log_argv(request, pathspecs, settings)
     raise ShellGitPolicyDenied(
         ShellGitExecutionErrorCode.COMMAND_DISABLED,
-        "shell Git command is not executable in Phase 2",
+        "shell Git command is not executable in Phase 3",
     )
+
+
+def _base_argv(subcommand: str) -> list[str]:
+    return ["git", "--no-pager", "--no-optional-locks", subcommand]
 
 
 def _status_argv(
     request: ShellGitCommandRequest,
     pathspecs: tuple[str, ...],
 ) -> tuple[str, ...]:
-    mode = request.options.get("mode", "porcelain_v2")
-    include_branch = request.options.get("include_branch", True)
-    if mode not in ("porcelain_v2", "short"):
-        raise ShellGitPolicyDenied(
-            ShellGitExecutionErrorCode.INVALID_OPTION,
-            "git status mode is unsupported",
-        )
-    if not isinstance(include_branch, bool):
-        raise ShellGitPolicyDenied(
-            ShellGitExecutionErrorCode.INVALID_OPTION,
-            "git status include_branch must be boolean",
-        )
-    argv = ["git", "status"]
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="porcelain_v2",
+        allowed_values=("porcelain_v2", "short"),
+        message="git status mode is unsupported",
+    )
+    include_branch = _bool_option(
+        request.options,
+        "include_branch",
+        default_value=True,
+        message="git status include_branch must be boolean",
+    )
+    argv = _base_argv("status")
     argv.append("--porcelain=v2" if mode == "porcelain_v2" else "--short")
     if include_branch:
         argv.append("--branch")
@@ -719,6 +766,327 @@ def _status_argv(
         argv.append("--")
         argv.extend(pathspecs)
     return tuple(argv)
+
+
+def _rev_parse_argv(request: ShellGitCommandRequest) -> tuple[str, ...]:
+    fact = _string_option(
+        request.options,
+        "fact",
+        default_value="head",
+        allowed_values=("head", "short_head", "current_branch", "repo_root"),
+        message="git rev-parse fact is unsupported",
+    )
+    argv = _base_argv("rev-parse")
+    match fact:
+        case "head":
+            argv.extend(("--verify", "HEAD^{commit}"))
+        case "short_head":
+            argv.extend(("--short=12", "--verify", "HEAD^{commit}"))
+        case "current_branch":
+            argv.append("--abbrev-ref")
+            argv.append("HEAD")
+        case "repo_root":
+            argv.append("--show-toplevel")
+    return tuple(argv)
+
+
+def _branch_argv(request: ShellGitCommandRequest) -> tuple[str, ...]:
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="current",
+        allowed_values=("current", "list"),
+        message="git branch mode is unsupported",
+    )
+    contains = _optional_string_option(
+        request.options,
+        "contains",
+        message="git branch contains revision must be a string",
+    )
+    argv = _base_argv("branch")
+    argv.append("--no-color")
+    if mode == "current":
+        if contains is not None:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.INVALID_OPTION,
+                "git branch current mode does not support filters",
+            )
+        argv.append("--show-current")
+        return tuple(argv)
+    argv.extend(("--list", "--format=%(refname:short)"))
+    if contains is not None:
+        argv.extend(("--contains", contains))
+    return tuple(argv)
+
+
+def _tag_argv(
+    request: ShellGitCommandRequest,
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="list",
+        allowed_values=("list", "show"),
+        message="git tag mode is unsupported",
+    )
+    name = _optional_string_option(
+        request.options,
+        "name",
+        message="git tag name must be a string",
+    )
+    if mode == "list":
+        if name is not None:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.INVALID_OPTION,
+                "git tag list mode does not accept tag names",
+            )
+        count = _bounded_count(
+            request.options.get("max_count"),
+            default_value=settings.max_log_count,
+            max_value=settings.max_log_count,
+            option_name="max_count",
+        )
+        return (
+            "git",
+            "--no-pager",
+            "--no-optional-locks",
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "--sort=refname",
+            f"--count={count}",
+            "refs/tags",
+        )
+    if name is None:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            "git tag show mode requires a tag name",
+        )
+    _validate_ref_name(name, settings, "tag name")
+    if request.options.get("max_count") is not None:
+        _bounded_count(
+            request.options.get("max_count"),
+            default_value=1,
+            max_value=1,
+            option_name="max_count",
+        )
+    return (
+        "git",
+        "--no-pager",
+        "--no-optional-locks",
+        "for-each-ref",
+        "--format=%(refname:short)%09%(objectname:short)%09%(subject)",
+        "--count=1",
+        f"refs/tags/{name}",
+    )
+
+
+def _describe_argv(
+    request: ShellGitCommandRequest,
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="tags",
+        allowed_values=("tags", "always"),
+        message="git describe mode is unsupported",
+    )
+    max_candidates = _bounded_count(
+        request.options.get("max_candidates"),
+        default_value=10,
+        max_value=settings.max_log_count,
+        option_name="max_candidates",
+        allow_zero=True,
+    )
+    target = _optional_string_option(
+        request.options,
+        "target",
+        message="git describe target must be a string",
+    )
+    argv = _base_argv("describe")
+    argv.append("--tags")
+    argv.append(f"--candidates={max_candidates}")
+    if mode == "always":
+        argv.append("--always")
+    if target is not None:
+        argv.append(target)
+    return tuple(argv)
+
+
+def _ls_files_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="tracked",
+        allowed_values=("tracked", "modified", "deleted", "others"),
+        message="git ls-files mode is unsupported",
+    )
+    argv = _base_argv("ls-files")
+    match mode:
+        case "tracked":
+            argv.extend(("--cached", "--deduplicate"))
+        case "modified":
+            argv.extend(("--modified", "--deduplicate"))
+        case "deleted":
+            argv.extend(("--deleted", "--deduplicate"))
+        case "others":
+            argv.extend(("--others", "--exclude-standard"))
+    if pathspecs:
+        argv.append("--")
+        argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _log_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    max_count = _bounded_count(
+        request.options.get("max_count"),
+        default_value=10,
+        max_value=settings.max_log_count,
+        option_name="max_count",
+    )
+    format_name = _string_option(
+        request.options,
+        "format",
+        default_value="summary",
+        allowed_values=("summary", "oneline"),
+        message="git log format is unsupported",
+    )
+    revision = _optional_string_option(
+        request.options,
+        "revision",
+        message="git log revision must be a string",
+    )
+    format_value = (
+        "%H%x09%an%x09%ae%x09%ad%x09%s"
+        if format_name == "summary"
+        else "%h %s"
+    )
+    argv = _base_argv("log")
+    argv.extend(
+        (
+            f"--max-count={max_count}",
+            "--no-decorate",
+            "--no-color",
+            "--no-ext-diff",
+            "--date=iso-strict",
+            f"--format={format_value}",
+        )
+    )
+    if revision is not None:
+        argv.append(revision)
+    if pathspecs:
+        argv.append("--")
+        argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _string_option(
+    options: Mapping[str, object],
+    name: str,
+    *,
+    default_value: str,
+    allowed_values: tuple[str, ...],
+    message: str,
+) -> str:
+    value = options.get(name, default_value)
+    if not isinstance(value, str) or value not in allowed_values:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            message,
+        )
+    return value
+
+
+def _optional_string_option(
+    options: Mapping[str, object],
+    name: str,
+    *,
+    message: str,
+) -> str | None:
+    value = options.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            message,
+        )
+    return value
+
+
+def _bool_option(
+    options: Mapping[str, object],
+    name: str,
+    *,
+    default_value: bool,
+    message: str,
+) -> bool:
+    value = options.get(name, default_value)
+    if not isinstance(value, bool):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            message,
+        )
+    return value
+
+
+def _bounded_count(
+    value: object,
+    *,
+    default_value: int,
+    max_value: int,
+    option_name: str,
+    allow_zero: bool = False,
+) -> int:
+    count = default_value if value is None else value
+    minimum = 0 if allow_zero else 1
+    if (
+        isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < minimum
+        or count > max_value
+    ):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            f"git {option_name} is outside the allowed range",
+        )
+    return count
+
+
+def _validate_ref_name(
+    value: str,
+    settings: ShellGitToolSettings,
+    field_name: str,
+) -> None:
+    if (
+        not value
+        or _contains_control(value)
+        or "\x00" in value
+        or value.startswith("-")
+        or ":" in value
+        or "@" in value
+        or "\\" in value
+        or "{" in value
+        or "}" in value
+        or "/" in value
+        or ".." in value
+        or " " in value
+        or any(character in value for character in ("*", "?", "[", "]"))
+        or len(value.encode("utf-8")) > settings.max_revision_bytes
+        or not _REVISION_PATTERN.match(value)
+    ):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REVISION_DENIED,
+            f"Git {field_name} form is unsupported",
+        )
 
 
 def _validate_argv_budgets(
