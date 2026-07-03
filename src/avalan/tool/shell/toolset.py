@@ -12,6 +12,7 @@ from ...isolation import (
 )
 from ...sandbox import SandboxAsyncBackend
 from .. import Tool, ToolSet
+from ..names import matches_tool_namespace
 from .composition_executor import (
     BackendBoundaryCompositionExecutor,
     CompositionExecutor,
@@ -23,16 +24,70 @@ from .formatting import (
     format_shell_composition_result,
     format_shell_result,
 )
-from .opt_in import SHELL_TOOL_NAMESPACE, enables_shell_pipeline
+from .git import (
+    SHELL_GIT_COMMAND_CAPABILITIES,
+    ShellGitCapability,
+    ShellGitCommandName,
+)
+from .opt_in import (
+    SHELL_TOOL_NAMESPACE,
+    SHELL_TOOL_WILDCARD,
+    enables_shell_pipeline,
+)
 from .policy import ExecutionPolicy
 from .process import ShellProcessRuntime
 from .sandbox import ShellSandboxCommandExecutor
-from .settings import ShellToolSettings
+from .settings import ShellGitToolSettings, ShellToolSettings
 from .tools import (
     AwkTool,
     CatTool,
     FileTool,
     FindTool,
+    GitAddTool,
+    GitBlameTool,
+    GitBranchCreateTool,
+    GitBranchDeleteTool,
+    GitBranchRenameTool,
+    GitBranchTool,
+    GitCheckoutTool,
+    GitCherryPickTool,
+    GitCleanTool,
+    GitCloneTool,
+    GitCommitTool,
+    GitDescribeTool,
+    GitDiffTool,
+    GitFetchTool,
+    GitGrepTool,
+    GitLogTool,
+    GitLsFilesTool,
+    GitMergeTool,
+    GitMvTool,
+    GitPullTool,
+    GitPushTool,
+    GitRebaseTool,
+    GitRemoteAddTool,
+    GitRemoteListTool,
+    GitRemoteRemoveTool,
+    GitRemoteRenameTool,
+    GitRemoteSetUrlTool,
+    GitResetTool,
+    GitRestoreTool,
+    GitRevertTool,
+    GitRevParseTool,
+    GitRmTool,
+    GitShowTool,
+    GitStashApplyTool,
+    GitStashDropTool,
+    GitStashListTool,
+    GitStashPopTool,
+    GitStashPushTool,
+    GitStashShowTool,
+    GitStatusTool,
+    GitSubmoduleUpdateTool,
+    GitSwitchTool,
+    GitTagCreateTool,
+    GitTagDeleteTool,
+    GitTagTool,
     HeadTool,
     JqTool,
     LsTool,
@@ -350,11 +405,27 @@ class ShellToolSet(ToolSet):
             tools.append(self._pipeline_tool)
         return tools
 
+    def available_tools_for_enabled_tools(
+        self,
+        enable_tools: Sequence[str],
+    ) -> list[Callable[..., object] | Tool | ToolSet]:
+        tools = self.available_tools
+        _append_missing_tools(
+            tools,
+            _available_git_tools_for_selection(self._settings, enable_tools),
+        )
+        return tools
+
     def with_enabled_tools(self, enable_tools: list[str]) -> "ShellToolSet":
         if enables_shell_pipeline(
             enable_tools, self._settings
         ) and not _has_pipeline_tool(self.tools):
             self.tools.append(self._pipeline_tool)
+        if _enables_shell_git_tools(enable_tools):
+            _append_missing_tools(
+                self.tools,
+                _authorized_git_tools(self._settings),
+            )
         return cast(ShellToolSet, super().with_enabled_tools(enable_tools))
 
 
@@ -388,6 +459,160 @@ def _has_pipeline_tool(
     tools: Sequence[Callable[..., object] | Tool | ToolSet],
 ) -> bool:
     return any(getattr(tool, "__name__", "") == "pipeline" for tool in tools)
+
+
+def _append_missing_tools(
+    tools: list[Callable[..., object] | Tool | ToolSet],
+    candidates: Sequence[Callable[..., object] | Tool | ToolSet],
+) -> None:
+    names = {getattr(tool, "__name__", "") for tool in tools}
+    for candidate in candidates:
+        name = getattr(candidate, "__name__", "")
+        if name not in names:
+            tools.append(candidate)
+            names.add(name)
+
+
+def _enables_shell_git_tools(enable_tools: Sequence[str]) -> bool:
+    return any(
+        matches_tool_namespace("shell.git_status", enabled)
+        or enabled.startswith("shell.git_")
+        for enabled in enable_tools
+    )
+
+
+def _available_git_tools_for_selection(
+    settings: ShellToolSettings,
+    enable_tools: Sequence[str],
+) -> list[Tool]:
+    if _enables_shell_namespace(enable_tools):
+        return _authorized_git_tools(settings)
+
+    explicit_tool_names = {
+        enabled
+        for enabled in enable_tools
+        if enabled.startswith(f"{SHELL_TOOL_NAMESPACE}.git_")
+    }
+    if not explicit_tool_names:
+        return []
+
+    return [
+        tool
+        for tool in _all_git_tools(settings)
+        if f"{SHELL_TOOL_NAMESPACE}.{getattr(tool, '__name__', '')}"
+        in explicit_tool_names
+    ]
+
+
+def _enables_shell_namespace(enable_tools: Sequence[str]) -> bool:
+    return any(
+        enabled in (SHELL_TOOL_NAMESPACE, SHELL_TOOL_WILDCARD)
+        for enabled in enable_tools
+    )
+
+
+def _authorized_git_tools(settings: ShellToolSettings) -> list[Tool]:
+    git_settings = settings.git
+    assert isinstance(
+        git_settings,
+        ShellGitToolSettings,
+    ), "git must be shell Git tool settings"
+    return [
+        tool
+        for tool in _all_git_tools(settings)
+        if _git_tool_allowed(tool, git_settings)
+    ]
+
+
+def _git_tool_allowed(
+    tool: Tool,
+    settings: ShellGitToolSettings,
+) -> bool:
+    command = _git_tool_command(tool)
+    capability = SHELL_GIT_COMMAND_CAPABILITIES[command]
+    if command.value not in settings.allowed_commands:
+        return False
+    if capability.value not in settings.capabilities:
+        return False
+    if capability is ShellGitCapability.REMOTE:
+        return _git_remote_policy_allows_tool(command, settings)
+    return True
+
+
+def _git_remote_policy_allows_tool(
+    command: ShellGitCommandName,
+    settings: ShellGitToolSettings,
+) -> bool:
+    if (
+        not settings.allowed_remote_protocols
+        or not settings.allowed_remote_hosts
+    ):
+        return False
+    if (
+        command is ShellGitCommandName.SUBMODULE_UPDATE
+        and not settings.allow_submodule_update
+    ):
+        return False
+    return True
+
+
+def _git_tool_command(tool: Tool) -> ShellGitCommandName:
+    command = getattr(tool, "_command", None)
+    assert isinstance(
+        command,
+        ShellGitCommandName,
+    ), "Git tool must declare a shell Git command"
+    return command
+
+
+def _all_git_tools(settings: ShellToolSettings) -> list[Tool]:
+    return [
+        GitStatusTool(settings=settings),
+        GitRevParseTool(settings=settings),
+        GitBranchTool(settings=settings),
+        GitTagTool(settings=settings),
+        GitDescribeTool(settings=settings),
+        GitLsFilesTool(settings=settings),
+        GitLogTool(settings=settings),
+        GitDiffTool(settings=settings),
+        GitShowTool(settings=settings),
+        GitBlameTool(settings=settings),
+        GitGrepTool(settings=settings),
+        GitStashListTool(settings=settings),
+        GitStashShowTool(settings=settings),
+        GitAddTool(settings=settings),
+        GitRestoreTool(settings=settings),
+        GitCheckoutTool(settings=settings),
+        GitSwitchTool(settings=settings),
+        GitResetTool(settings=settings),
+        GitRmTool(settings=settings),
+        GitMvTool(settings=settings),
+        GitStashPushTool(settings=settings),
+        GitStashApplyTool(settings=settings),
+        GitCommitTool(settings=settings),
+        GitBranchCreateTool(settings=settings),
+        GitBranchDeleteTool(settings=settings),
+        GitBranchRenameTool(settings=settings),
+        GitTagCreateTool(settings=settings),
+        GitTagDeleteTool(settings=settings),
+        GitMergeTool(settings=settings),
+        GitRebaseTool(settings=settings),
+        GitCherryPickTool(settings=settings),
+        GitRevertTool(settings=settings),
+        GitCleanTool(settings=settings),
+        GitStashPopTool(settings=settings),
+        GitStashDropTool(settings=settings),
+        GitFetchTool(settings=settings),
+        GitPullTool(settings=settings),
+        GitPushTool(settings=settings),
+        GitCloneTool(settings=settings),
+        GitRemoteListTool(settings=settings),
+        GitRemoteAddTool(settings=settings),
+        GitRemoteSetUrlTool(settings=settings),
+        GitRemoteRemoveTool(settings=settings),
+        GitRemoteRenameTool(settings=settings),
+        GitSubmoduleUpdateTool(settings=settings),
+    ]
 
 
 def _isolation_runtime_hooks_configured(

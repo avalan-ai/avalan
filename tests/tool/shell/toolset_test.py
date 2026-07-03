@@ -28,6 +28,7 @@ from avalan.isolation import (
 from avalan.tool import Tool
 from avalan.tool.shell import (
     SHELL_COMMAND_IDS,
+    SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS,
     CommandExecutor,
     ExecutionPolicy,
     ExecutionResult,
@@ -71,9 +72,18 @@ _EXPECTED_SCHEMA_NAMES = (
     "shell.pypdf",
     "shell.tesseract",
 )
-_EXPECTED_SCHEMA_NAMES_WITH_PIPELINE = (
+_EXPECTED_GIT_READ_SCHEMA_NAMES = tuple(
+    f"shell.git_{command_id.replace('-', '_')}"
+    for command_id in SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS
+)
+_EXPECTED_SCHEMA_NAMES_WITH_READ_GIT = (
+    *_EXPECTED_SCHEMA_NAMES,
+    *_EXPECTED_GIT_READ_SCHEMA_NAMES,
+)
+_EXPECTED_SCHEMA_NAMES_WITH_PIPELINE_AND_READ_GIT = (
     *_EXPECTED_SCHEMA_NAMES,
     "shell.pipeline",
+    *_EXPECTED_GIT_READ_SCHEMA_NAMES,
 )
 _DIGEST = "7" * 64
 _IMAGE = f"ghcr.io/example/sdk-shell@sha256:{_DIGEST}"
@@ -97,7 +107,10 @@ class ShellToolSetAssemblyTest(TestCase):
         concrete_enabled = ShellToolSet().with_enabled_tools(["shell.rg"])
         disabled = ShellToolSet().with_enabled_tools(["shellx"])
 
-        self.assertEqual(_schema_names(all_enabled), _EXPECTED_SCHEMA_NAMES)
+        self.assertEqual(
+            _schema_names(all_enabled),
+            _EXPECTED_SCHEMA_NAMES_WITH_READ_GIT,
+        )
         self.assertEqual(_schema_names(concrete_enabled), ("shell.rg",))
         self.assertEqual(_schema_names(disabled), ())
 
@@ -120,8 +133,8 @@ class ShellToolSetAssemblyTest(TestCase):
     ) -> None:
         settings = ShellToolSettings(allow_pipelines=True)
         cases = (
-            (["shell"], _EXPECTED_SCHEMA_NAMES_WITH_PIPELINE),
-            (["shell.*"], _EXPECTED_SCHEMA_NAMES_WITH_PIPELINE),
+            (["shell"], _EXPECTED_SCHEMA_NAMES_WITH_PIPELINE_AND_READ_GIT),
+            (["shell.*"], _EXPECTED_SCHEMA_NAMES_WITH_PIPELINE_AND_READ_GIT),
             (["shell.pipeline"], ("shell.pipeline",)),
             (["shell.rg"], ("shell.rg",)),
             (["shell.cat"], ("shell.cat",)),

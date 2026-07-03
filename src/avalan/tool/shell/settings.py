@@ -31,6 +31,13 @@ from ...types import (
     assert_positive_int as _assert_positive_int,
 )
 from .entities import ShellExecutionModeValue
+from .git import (
+    SHELL_GIT_CAPABILITY_IDS,
+    SHELL_GIT_COMMAND_IDS,
+    SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS,
+    ShellGitCapability,
+    ShellGitCommandName,
+)
 from .registry import SHELL_COMMAND_IDS
 
 from collections.abc import Mapping, Sequence
@@ -46,6 +53,111 @@ _PIPELINE_TRANSPORTS: tuple[ShellPipelineTransport, ...] = (
     "buffered",
     "native",
 )
+ShellGitCredentialPolicy = Literal["deny", "allow_explicit"]
+_GIT_CREDENTIAL_POLICIES: tuple[ShellGitCredentialPolicy, ...] = (
+    "deny",
+    "allow_explicit",
+)
+_GIT_REMOTE_PROTOCOLS: tuple[str, ...] = ("https",)
+_GIT_REMOTE_MANAGEMENT_COMMAND_IDS: tuple[str, ...] = tuple(
+    command.value
+    for command in (
+        ShellGitCommandName.REMOTE_LIST,
+        ShellGitCommandName.REMOTE_ADD,
+        ShellGitCommandName.REMOTE_SET_URL,
+        ShellGitCommandName.REMOTE_REMOVE,
+        ShellGitCommandName.REMOTE_RENAME,
+    )
+)
+_GIT_HOST_PATTERN = compile_pattern(
+    r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShellGitToolSettings:
+    workspace_root: str = "."
+    cwd: str = "."
+    capabilities: Sequence[str] = field(
+        default_factory=lambda: (ShellGitCapability.READ.value,),
+    )
+    allowed_commands: Sequence[str] = field(
+        default_factory=lambda: SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS,
+    )
+    default_timeout_seconds: float = 10.0
+    max_timeout_seconds: float = 60.0
+    max_stdout_bytes: int = 65536
+    max_stderr_bytes: int = 32768
+    max_diff_bytes: int = 131072
+    max_log_count: int = 50
+    max_grep_matches: int = 1000
+    max_pathspecs: int = 64
+    max_pathspec_bytes: int = 4096
+    max_revision_bytes: int = 256
+    allow_external_diff: bool = False
+    allow_textconv: bool = False
+    allow_optional_locks: bool = False
+    allow_submodules: bool = False
+    allow_bare_repositories: bool = False
+    allow_linked_worktrees: bool = False
+    allow_alternates: bool = False
+    allow_submodule_update: bool = False
+    allowed_remote_protocols: Sequence[str] = field(
+        default_factory=lambda: ("https",),
+    )
+    allowed_remote_hosts: Sequence[str] = field(default_factory=tuple)
+    credential_policy: ShellGitCredentialPolicy = "deny"
+    allow_remote_credentials: bool = False
+    redact_remote_urls: bool = True
+    redact_credentials: bool = True
+    redact_author_emails: bool = False
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.workspace_root, "git.workspace_root")
+        _assert_non_empty_string(self.cwd, "git.cwd")
+        object.__setattr__(
+            self,
+            "capabilities",
+            _normalized_git_capabilities(self.capabilities),
+        )
+        object.__setattr__(
+            self,
+            "allowed_commands",
+            _normalized_git_commands(self.allowed_commands),
+        )
+        _assert_positive_timeout_order(
+            self.default_timeout_seconds,
+            self.max_timeout_seconds,
+            "git.default_timeout_seconds",
+            "git.max_timeout_seconds",
+        )
+        for field_name in _GIT_POSITIVE_INT_FIELDS:
+            _assert_positive_int(
+                getattr(self, field_name), f"git.{field_name}"
+            )
+        for field_name in _GIT_BOOLEAN_FIELDS:
+            _assert_bool(getattr(self, field_name), f"git.{field_name}")
+        object.__setattr__(
+            self,
+            "allowed_remote_protocols",
+            _normalized_git_remote_protocols(
+                self.allowed_remote_protocols,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "allowed_remote_hosts",
+            _normalized_git_remote_hosts(self.allowed_remote_hosts),
+        )
+        _assert_git_credential_policy(self.credential_policy)
+        if self.allow_remote_credentials:
+            object.__setattr__(
+                self,
+                "credential_policy",
+                "allow_explicit",
+            )
 
 
 @final
@@ -204,6 +316,9 @@ class ShellToolSettings:
     environment_allowlist: Sequence[str] = field(default_factory=tuple)
     executable_paths: Mapping[str, str] = field(default_factory=dict)
     executable_search_paths: Sequence[str] = field(default_factory=tuple)
+    git: ShellGitToolSettings | Mapping[str, object] = field(
+        default_factory=ShellGitToolSettings,
+    )
     container: ContainerProfileSelection | None = None
     sandbox: SandboxProfileSelection | None = None
 
@@ -214,6 +329,7 @@ class ShellToolSettings:
         )
         object.__setattr__(self, "execution_mode", execution_mode)
         object.__setattr__(self, "backend", execution_mode)
+        object.__setattr__(self, "git", _coerce_git_settings(self.git))
         _assert_non_empty_string(self.workspace_root, "workspace_root")
         _assert_non_empty_string(self.cwd, "cwd")
         _assert_relative_path(
@@ -293,6 +409,10 @@ class ShellToolSettings:
             self.executable_search_paths,
             "executable_search_paths",
         )
+        assert isinstance(
+            self.git,
+            ShellGitToolSettings,
+        ), "git must be shell Git tool settings"
         if self.container is not None:
             assert isinstance(self.container, ContainerProfileSelection)
         if self.sandbox is not None:
@@ -409,6 +529,32 @@ _BOOLEAN_FIELDS = (
     "allow_hidden",
 )
 
+_GIT_POSITIVE_INT_FIELDS = (
+    "max_stdout_bytes",
+    "max_stderr_bytes",
+    "max_diff_bytes",
+    "max_log_count",
+    "max_grep_matches",
+    "max_pathspecs",
+    "max_pathspec_bytes",
+    "max_revision_bytes",
+)
+
+_GIT_BOOLEAN_FIELDS = (
+    "allow_external_diff",
+    "allow_textconv",
+    "allow_optional_locks",
+    "allow_submodules",
+    "allow_bare_repositories",
+    "allow_linked_worktrees",
+    "allow_alternates",
+    "allow_submodule_update",
+    "allow_remote_credentials",
+    "redact_remote_urls",
+    "redact_credentials",
+    "redact_author_emails",
+)
+
 
 def _normalized_execution_mode(
     execution_mode: object,
@@ -487,6 +633,105 @@ def _assert_pipeline_transport(value: object) -> None:
     assert (
         value in _PIPELINE_TRANSPORTS
     ), "pipeline_transport must be buffered or native"
+
+
+def _coerce_git_settings(value: object) -> ShellGitToolSettings:
+    if isinstance(value, ShellGitToolSettings):
+        return value
+    assert isinstance(value, Mapping), "git must be shell Git tool settings"
+    return ShellGitToolSettings(**dict(value))
+
+
+def _normalized_git_capabilities(value: object) -> tuple[str, ...]:
+    _assert_non_empty_string_sequence(value, "git.capabilities")
+    assert isinstance(value, Sequence)
+    capabilities: list[str] = []
+    for item in value:
+        capability = (
+            item.value if isinstance(item, ShellGitCapability) else item
+        )
+        assert (
+            capability in SHELL_GIT_CAPABILITY_IDS
+        ), f"git.capabilities contains unsupported value: {item!r}"
+        if capability not in capabilities:
+            capabilities.append(capability)
+    return tuple(capabilities)
+
+
+def _normalized_git_commands(value: object) -> tuple[str, ...]:
+    assert isinstance(
+        value, Sequence
+    ), "git.allowed_commands must be a sequence"
+    assert not isinstance(
+        value,
+        str | bytes,
+    ), "git.allowed_commands must be a sequence"
+    commands: list[str] = []
+    for item in value:
+        command = item.value if isinstance(item, ShellGitCommandName) else item
+        assert isinstance(
+            command,
+            str,
+        ), "git.allowed_commands must contain strings"
+        assert (
+            command.strip()
+        ), "git.allowed_commands must not contain empty values"
+        if command == ShellGitCapability.REMOTE.value:
+            for remote_command in _GIT_REMOTE_MANAGEMENT_COMMAND_IDS:
+                if remote_command not in commands:
+                    commands.append(remote_command)
+            continue
+        assert (
+            command in SHELL_GIT_COMMAND_IDS
+        ), f"git.allowed_commands contains unsupported value: {item!r}"
+        if command not in commands:
+            commands.append(command)
+    return tuple(commands)
+
+
+def _normalized_git_remote_protocols(value: object) -> tuple[str, ...]:
+    _assert_non_empty_string_sequence(value, "git.allowed_remote_protocols")
+    assert isinstance(value, Sequence)
+    protocols: list[str] = []
+    for item in value:
+        assert (
+            item in _GIT_REMOTE_PROTOCOLS
+        ), f"git.allowed_remote_protocols contains unsafe value: {item!r}"
+        if item not in protocols:
+            protocols.append(item)
+    return tuple(protocols)
+
+
+def _normalized_git_remote_hosts(value: object) -> tuple[str, ...]:
+    assert isinstance(
+        value,
+        Sequence,
+    ), "git.allowed_remote_hosts must be a sequence"
+    assert not isinstance(
+        value,
+        str | bytes,
+    ), "git.allowed_remote_hosts must be a sequence"
+    hosts: list[str] = []
+    for item in value:
+        _assert_non_empty_string(item, "git.allowed_remote_hosts")
+        assert isinstance(item, str)
+        assert not any(
+            marker in item for marker in (":", "/", "@", "*")
+        ), "git.allowed_remote_hosts contains unsafe value"
+        assert _GIT_HOST_PATTERN.match(
+            item,
+        ), "git.allowed_remote_hosts contains unsafe value"
+        host = item.lower()
+        if host not in hosts:
+            hosts.append(host)
+    return tuple(hosts)
+
+
+def _assert_git_credential_policy(value: object) -> None:
+    _assert_non_empty_string(value, "git.credential_policy")
+    assert (
+        value in _GIT_CREDENTIAL_POLICIES
+    ), "git.credential_policy must be deny or allow_explicit"
 
 
 def _assert_tesseract_languages(value: object) -> None:
