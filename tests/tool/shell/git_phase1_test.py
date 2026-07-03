@@ -1,4 +1,6 @@
 from json import dumps
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
@@ -382,26 +384,36 @@ class ShellGitToolManagerPhase1Test(TestCase):
 
 
 class ShellGitWrapperPhase1Test(IsolatedAsyncioTestCase):
-    async def test_git_wrapper_returns_disabled_result_without_execution(
+    async def test_git_wrapper_returns_stable_result_without_git_lookup(
         self,
     ) -> None:
-        toolset = ShellToolSet().with_enabled_tools(["shell.git_status"])
-        tool = cast(Any, toolset.tools[0])
+        with TemporaryDirectory() as workspace:
+            _write_minimal_git_repo(Path(workspace) / "repo")
+            settings = ShellToolSettings(
+                git=ShellGitToolSettings(
+                    workspace_root=workspace,
+                    cwd="repo",
+                )
+            )
+            toolset = ShellToolSet(settings=settings).with_enabled_tools(
+                ["shell.git_status"]
+            )
+            tool = cast(Any, toolset.tools[0])
 
-        result = await tool(context=ToolCallContext())
+            result = await tool(context=ToolCallContext())
 
         self.assertIsInstance(result, ShellGitFormattedResult)
         assert isinstance(result, ShellGitFormattedResult)
         self.assertEqual(
             result.git_result.status,
-            ShellGitExecutionStatus.POLICY_DENIED,
+            ShellGitExecutionStatus.COMMAND_UNAVAILABLE,
         )
         self.assertEqual(
             result.git_result.error_code,
-            ShellGitExecutionErrorCode.COMMAND_DISABLED,
+            ShellGitExecutionErrorCode.COMMAND_UNAVAILABLE,
         )
         self.assertIn("tool: shell.git_status", result)
-        self.assertIn("error_code: command_disabled", result)
+        self.assertIn("error_code: command_unavailable", result)
 
     def test_git_wrapper_builds_typed_request(self) -> None:
         toolset = ShellToolSet().with_enabled_tools(["shell.git_status"])
@@ -412,7 +424,7 @@ class ShellGitWrapperPhase1Test(IsolatedAsyncioTestCase):
         self.assertEqual(request.command, ShellGitCommandName.STATUS)
         self.assertEqual(request.pathspecs, ("src",))
 
-    async def test_all_git_wrappers_build_requests_and_return_disabled_results(
+    async def test_all_git_wrappers_build_requests_and_return_stable_results(
         self,
     ) -> None:
         tools = _all_git_tools_by_name()
@@ -441,11 +453,18 @@ class ShellGitWrapperPhase1Test(IsolatedAsyncioTestCase):
                     result.git_result.status,
                     ShellGitExecutionStatus.POLICY_DENIED,
                 )
+                expected_error_code = (
+                    ShellGitExecutionErrorCode.SUBMODULE_DENIED
+                    if (
+                        request.command is ShellGitCommandName.SUBMODULE_UPDATE
+                    )
+                    else ShellGitExecutionErrorCode.REPO_NOT_FOUND
+                )
                 self.assertEqual(
                     result.git_result.error_code,
-                    ShellGitExecutionErrorCode.COMMAND_DISABLED,
+                    expected_error_code,
                 )
-                self.assertIn("execution_mode: disabled", result)
+                self.assertIn("execution_mode: policy", result)
                 self.assertIn("status: policy_denied", result)
 
     async def test_base_git_wrapper_call_is_abstract(self) -> None:
@@ -526,6 +545,16 @@ def _git_kwargs(**kwargs: object) -> dict[str, object]:
         "max_stdout_bytes": 32,
         "max_stderr_bytes": 33,
     }
+
+
+def _write_minimal_git_repo(repo: Path) -> None:
+    git_dir = repo / ".git"
+    (git_dir / "objects" / "info").mkdir(parents=True)
+    (git_dir / "refs").mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n")
+    (git_dir / "config").write_text(
+        "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+    )
 
 
 _GIT_TOOL_ARGUMENTS: dict[str, dict[str, object]] = {
