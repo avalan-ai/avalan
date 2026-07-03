@@ -24,7 +24,7 @@ from avalan.tool.shell.entities import (
     ShellExecutionStatus,
 )
 from avalan.tool.shell.git import ShellGitPolicyDenied
-from avalan.tool.shell.git_policy import _display_path
+from avalan.tool.shell.git_policy import _display_path, _redacted_metadata
 from avalan.tool.shell.tools import GitStatusTool
 
 
@@ -48,6 +48,8 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
             spec.argv,
             (
                 "git",
+                "--no-pager",
+                "--no-optional-locks",
                 "status",
                 "--porcelain=v2",
                 "--branch",
@@ -425,9 +427,8 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     options={"revision": 123},
                 ),
             )
-            none_revision_error = await _policy_error(
-                policy,
-                request=_request(
+            none_revision_spec = await policy.normalize(
+                _request(
                     command=ShellGitCommandName.LOG,
                     options={"revision": None},
                 ),
@@ -436,10 +437,7 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                 non_string_error.error_code,
                 ShellGitExecutionErrorCode.REVISION_DENIED,
             )
-            self.assertEqual(
-                none_revision_error.error_code,
-                ShellGitExecutionErrorCode.COMMAND_DISABLED,
-            )
+            self.assertNotIn("None", none_revision_spec.argv)
 
             option_cases: tuple[dict[str, object], ...] = (
                 {"mode": "short", "pager": "less"},
@@ -702,11 +700,7 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
                 )
 
-    async def test_status_options_and_metadata_redaction_are_stable(
-        self,
-    ) -> None:
-        secret_url = "https://token@github.com/acme/private.git"
-
+    async def test_status_options_are_stable(self) -> None:
         with TemporaryDirectory() as workspace:
             root = Path(workspace)
             _write_minimal_git_repo(root / "repo")
@@ -715,6 +709,11 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
             option_cases: tuple[dict[str, object], ...] = (
                 {"mode": "invalid", "include_branch": True},
                 {"mode": "short", "include_branch": "yes"},
+                {"mode": "short", "include_branch": False, "ignored": True},
+                {
+                    "mode": ["--git-dir=/tmp/repo"],
+                    "include_branch": True,
+                },
             )
             for options in option_cases:
                 with self.subTest(options=options):
@@ -732,8 +731,6 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     options={
                         "mode": "short",
                         "include_branch": False,
-                        "tuple_url": (secret_url,),
-                        "list_url": [secret_url],
                     },
                 )
             )
@@ -742,16 +739,34 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
             spec.argv,
             (
                 "git",
+                "--no-pager",
+                "--no-optional-locks",
                 "status",
                 "--short",
                 "--untracked-files=all",
                 "--ignore-submodules=all",
             ),
         )
-        metadata = str(spec.metadata["git_request_options"])
-        self.assertNotIn("token", metadata)
-        self.assertNotIn("private.git", metadata)
-        self.assertIn("https://github.com/[redacted]", metadata)
+
+    def test_git_metadata_redaction_handles_collections(self) -> None:
+        secret_url = "https://token@github.com/acme/private.git"
+        settings = ShellGitToolSettings()
+
+        redacted = _redacted_metadata(
+            {
+                "tuple_url": (secret_url,),
+                "list_url": [secret_url],
+            },
+            settings,
+        )
+
+        self.assertEqual(
+            redacted,
+            {
+                "tuple_url": ("https://github.com/[redacted]",),
+                "list_url": ["https://github.com/[redacted]"],
+            },
+        )
 
     async def test_boundaries_are_enforced(self) -> None:
         with TemporaryDirectory() as workspace:
