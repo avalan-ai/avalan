@@ -3379,8 +3379,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 "--tool-shell-git-credential-policy",
                 "allow_explicit",
                 "--tool-shell-git-allow-remote-credentials",
-                "--tool-shell-git-allow-submodules",
-                "--no-tool-shell-git-allow-submodules",
+                "--tool-shell-git-allow-submodule-update",
                 "--no-tool-shell-git-redact-remote-urls",
             ]
         )
@@ -3403,11 +3402,25 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
             "allow_explicit",
         )
         self.assertTrue(args.tool_shell_git_allow_remote_credentials)
-        self.assertFalse(args.tool_shell_git_allow_submodules)
+        self.assertTrue(args.tool_shell_git_allow_submodule_update)
         self.assertFalse(args.tool_shell_git_redact_remote_urls)
 
         with self.assertRaises(SystemExit):
             parser.parse_args(["--tool-shell-git-credential-policy", "ask"])
+        removed_flags = (
+            "--tool-shell-git-allow-external-diff",
+            "--no-tool-shell-git-allow-external-diff",
+            "--tool-shell-git-allow-textconv",
+            "--no-tool-shell-git-allow-textconv",
+            "--tool-shell-git-allow-optional-locks",
+            "--no-tool-shell-git-allow-optional-locks",
+            "--tool-shell-git-allow-submodules",
+            "--no-tool-shell-git-allow-submodules",
+        )
+        for flag in removed_flags:
+            with self.subTest(flag=flag):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args([flag])
 
     def test_add_shell_tool_settings_arguments_accepts_executables(self):
         parser = ArgumentParser()

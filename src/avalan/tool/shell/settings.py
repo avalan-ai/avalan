@@ -59,16 +59,6 @@ _GIT_CREDENTIAL_POLICIES: tuple[ShellGitCredentialPolicy, ...] = (
     "allow_explicit",
 )
 _GIT_REMOTE_PROTOCOLS: tuple[str, ...] = ("file", "https")
-_GIT_REMOTE_MANAGEMENT_COMMAND_IDS: tuple[str, ...] = tuple(
-    command.value
-    for command in (
-        ShellGitCommandName.REMOTE_LIST,
-        ShellGitCommandName.REMOTE_ADD,
-        ShellGitCommandName.REMOTE_SET_URL,
-        ShellGitCommandName.REMOTE_REMOVE,
-        ShellGitCommandName.REMOTE_RENAME,
-    )
-)
 _GIT_HOST_PATTERN = compile_pattern(
     r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
@@ -92,10 +82,6 @@ class ShellGitToolSettings:
         "max_pathspec_bytes",
         "max_revision_bytes",
         "max_commit_message_bytes",
-        "allow_external_diff",
-        "allow_textconv",
-        "allow_optional_locks",
-        "allow_submodules",
         "allow_bare_repositories",
         "allow_linked_worktrees",
         "allow_alternates",
@@ -175,6 +161,12 @@ class ShellGitToolSettings:
             )
         for field_name in _GIT_BOOLEAN_FIELDS:
             _assert_bool(getattr(self, field_name), f"git.{field_name}")
+        for field_name in _GIT_RESERVED_FALSE_ONLY_FIELDS:
+            assert getattr(self, field_name) is False, (
+                f"git.{field_name} is reserved and must be false; "
+                "Git external diff, textconv, optional locks, and "
+                "submodule recursion stay disabled"
+            )
         object.__setattr__(
             self,
             "allowed_remote_protocols",
@@ -188,7 +180,13 @@ class ShellGitToolSettings:
             _normalized_git_remote_hosts(self.allowed_remote_hosts),
         )
         _assert_git_credential_policy(self.credential_policy)
-        if self.allow_remote_credentials:
+        if self.credential_policy == "allow_explicit":
+            object.__setattr__(
+                self,
+                "allow_remote_credentials",
+                True,
+            )
+        elif self.allow_remote_credentials:
             object.__setattr__(
                 self,
                 "credential_policy",
@@ -592,6 +590,13 @@ _GIT_BOOLEAN_FIELDS = (
     "redact_author_emails",
 )
 
+_GIT_RESERVED_FALSE_ONLY_FIELDS = (
+    "allow_external_diff",
+    "allow_textconv",
+    "allow_optional_locks",
+    "allow_submodules",
+)
+
 
 def _normalized_execution_mode(
     execution_mode: object,
@@ -713,11 +718,6 @@ def _normalized_git_commands(value: object) -> tuple[str, ...]:
         assert (
             command.strip()
         ), "git.allowed_commands must not contain empty values"
-        if command == ShellGitCapability.REMOTE.value:
-            for remote_command in _GIT_REMOTE_MANAGEMENT_COMMAND_IDS:
-                if remote_command not in commands:
-                    commands.append(remote_command)
-            continue
         assert (
             command in SHELL_GIT_COMMAND_IDS
         ), f"git.allowed_commands contains unsupported value: {item!r}"

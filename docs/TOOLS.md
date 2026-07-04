@@ -612,12 +612,15 @@ max_log_count = 25
 max_grep_matches = 1000
 max_pathspecs = 16
 max_pathspec_bytes = 4096
-allow_optional_locks = false
-allow_submodules = false
 redact_remote_urls = true
 redact_credentials = true
 redact_author_emails = true
 ```
+
+External diff, textconv, optional locks, and submodule recursion stay
+disabled. `allow_submodule_update = true` is the supported remote submodule
+update gate, and still requires the remote capability, command, protocol, and
+host allowlists.
 
 `agent run`, `task run`, and `flow run` accept the same trusted CLI settings
 with `--tool-shell-git-*` flags:
@@ -657,17 +660,23 @@ The example flow is
 
 Capabilities are independent. `read` is the default when Git is configured,
 but it does not imply local mutation, history mutation, or network access.
+`allowed_commands` accepts exact Git shell command IDs only; it does not accept
+capability names. Use `remote` only under `capabilities`. Remote-management
+command IDs are `remote-list`, `remote-add`, `remote-set-url`,
+`remote-remove`, and `remote-rename`.
 
 | Capability | Enables | Typical tools |
 | --- | --- | --- |
 | `read` | Non-network repository inspection. | `shell.git_status`, `shell.git_diff`, `shell.git_log`, `shell.git_show`, `shell.git_blame`, `shell.git_grep` |
 | `worktree` | Working tree and index changes. | `shell.git_add`, `shell.git_restore`, `shell.git_checkout`, `shell.git_reset`, `shell.git_stash_push` |
 | `history` | Commits, refs, merge/rebase/cherry-pick/revert, destructive history forms. | `shell.git_commit`, `shell.git_branch_create`, `shell.git_tag_delete`, `shell.git_merge`, `shell.git_rebase`, `shell.git_clean` |
-| `remote` | Network and remote configuration operations with protocol/host policy. | `shell.git_fetch`, `shell.git_push`, `shell.git_clone`, `shell.git_remote_add`, `shell.git_submodule_update` |
+| `remote` | Network and remote configuration operations with protocol/host policy. | `shell.git_fetch`, `shell.git_push`, `shell.git_clone`, `shell.git_remote_list`, `shell.git_remote_add`, `shell.git_submodule_update` |
 
 Remote profiles require both `remote` capability and protocol/host
 allowlists. Credential-bearing URLs are denied unless trusted configuration
-opts into explicit credentials.
+opts into explicit credentials. Setting `credential_policy = "allow_explicit"`
+enables explicit userinfo credentials in allowed remote URLs; the legacy
+`allow_remote_credentials = true` switch normalizes to the same policy.
 
 ```toml
 [tool]
@@ -683,6 +692,12 @@ allow_remote_credentials = false
 redact_remote_urls = true
 redact_credentials = true
 ```
+
+Hostless local file remotes such as `file:///workspace/repo.git` require
+`allowed_remote_protocols = ["file"]` and
+`allowed_remote_hosts = ["localhost"]`; `localhost` is the authority gate for
+local file remotes even when the URL has no host. The resolved file path must
+be absolute and remain inside the configured Git `workspace_root`.
 
 For capability-gated mutation, opt in to only the required capability and
 command:

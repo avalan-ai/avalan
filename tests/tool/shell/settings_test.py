@@ -129,6 +129,15 @@ class ShellToolSettingsTest(TestCase):
         self.assertNotIn("allow_write", scalar_fields)
         self.assertNotIn("allow_shell", scalar_fields)
 
+    def test_git_cli_scalar_fields_hide_reserved_settings(self) -> None:
+        scalar_fields = set(ShellGitToolSettings.CLI_SCALAR_FIELDS)
+
+        self.assertIn("allow_submodule_update", scalar_fields)
+        self.assertNotIn("allow_external_diff", scalar_fields)
+        self.assertNotIn("allow_textconv", scalar_fields)
+        self.assertNotIn("allow_optional_locks", scalar_fields)
+        self.assertNotIn("allow_submodules", scalar_fields)
+
     def test_execution_mode_and_backend_alias_are_synchronized(self) -> None:
         canonical = ShellToolSettings(execution_mode="sandbox")
         legacy = ShellToolSettings(backend="container")
@@ -256,6 +265,45 @@ class ShellToolSettingsTest(TestCase):
         self.assertTrue(settings.redact_credentials)
         self.assertFalse(settings.redact_author_emails)
 
+    def test_git_settings_accept_reserved_false_values(self) -> None:
+        settings = ShellGitToolSettings(
+            allow_external_diff=False,
+            allow_textconv=False,
+            allow_optional_locks=False,
+            allow_submodules=False,
+        )
+
+        self.assertFalse(settings.allow_external_diff)
+        self.assertFalse(settings.allow_textconv)
+        self.assertFalse(settings.allow_optional_locks)
+        self.assertFalse(settings.allow_submodules)
+
+    def test_git_settings_reject_reserved_true_values(self) -> None:
+        field_names = (
+            "allow_external_diff",
+            "allow_textconv",
+            "allow_optional_locks",
+            "allow_submodules",
+        )
+
+        for field_name in field_names:
+            with self.subTest(field_name=field_name):
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    f"git.{field_name} is reserved and must be false",
+                ):
+                    ShellGitToolSettings(**{field_name: True})
+
+    def test_git_settings_allow_explicit_policy_enables_credentials(
+        self,
+    ) -> None:
+        settings = ShellGitToolSettings(
+            credential_policy="allow_explicit",
+        )
+
+        self.assertEqual(settings.credential_policy, "allow_explicit")
+        self.assertTrue(settings.allow_remote_credentials)
+
     def test_shell_settings_accept_git_mapping(self) -> None:
         settings = ShellToolSettings(
             git={
@@ -279,7 +327,8 @@ class ShellToolSettingsTest(TestCase):
             allowed_commands=(
                 ShellGitCommandName.STATUS,
                 ShellGitCommandName.STATUS,
-                ShellGitCapability.REMOTE,
+                ShellGitCommandName.REMOTE_LIST,
+                ShellGitCommandName.REMOTE_LIST,
             ),
             default_timeout_seconds=1.0,
             max_timeout_seconds=2.0,
@@ -292,10 +341,6 @@ class ShellToolSettingsTest(TestCase):
             max_pathspec_bytes=1,
             max_revision_bytes=1,
             max_commit_message_bytes=1,
-            allow_external_diff=True,
-            allow_textconv=True,
-            allow_optional_locks=True,
-            allow_submodules=True,
             allow_bare_repositories=True,
             allow_linked_worktrees=True,
             allow_alternates=True,
@@ -316,18 +361,25 @@ class ShellToolSettingsTest(TestCase):
             (
                 ShellGitCommandName.STATUS.value,
                 ShellGitCommandName.REMOTE_LIST.value,
-                ShellGitCommandName.REMOTE_ADD.value,
-                ShellGitCommandName.REMOTE_SET_URL.value,
-                ShellGitCommandName.REMOTE_REMOVE.value,
-                ShellGitCommandName.REMOTE_RENAME.value,
             ),
         )
         self.assertEqual(settings.allowed_remote_protocols, ("https",))
         self.assertEqual(settings.allowed_remote_hosts, ("github.com",))
+        self.assertEqual(settings.credential_policy, "allow_explicit")
+        self.assertTrue(settings.allow_remote_credentials)
         self.assertEqual(settings.max_commit_message_bytes, 1)
         self.assertFalse(settings.redact_remote_urls)
         self.assertFalse(settings.redact_credentials)
         self.assertTrue(settings.redact_author_emails)
+
+    def test_git_settings_reject_remote_capability_as_allowed_command(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            AssertionError,
+            "git.allowed_commands contains unsupported value: 'remote'",
+        ):
+            ShellGitToolSettings(allowed_commands=("remote",))
 
     def test_shell_settings_accept_explicit_valid_branch_values(self) -> None:
         settings = ShellToolSettings(

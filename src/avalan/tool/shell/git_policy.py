@@ -152,6 +152,12 @@ _AUTHOR_HEADER_EMAIL_PATTERN = compile_pattern(
 _AUTHOR_PORCELAIN_EMAIL_PATTERN = compile_pattern(
     r"(?im)^((?:author|committer)-mail\s+<)" r"[^<>\r\n]*@[^<>\r\n]*(>)"
 )
+_GIT_INDEX_FILE_MODES = frozenset((0o100644, 0o100755, 0o120000))
+_GIT_INDEX_HASH_SIZES = (20, 32)
+_GIT_INDEX_LINK_EXTENSION = b"link"
+_GIT_INDEX_SIGNATURE = b"DIRC"
+_GIT_INDEX_SPARSE_EXTENSION = b"sdir"
+_GIT_INDEX_SUPPORTED_VERSIONS = (2, 3)
 _CONTROL_CHARACTERS = tuple(chr(value) for value in (*range(0, 32), 127))
 _DANGEROUS_CONFIG_SECTION_NAMES = frozenset(
     (
@@ -424,6 +430,20 @@ class _RemoteConfig:
     entries: tuple[_GitConfigEntry, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _GitIndexEntry:
+    mode: int
+    path: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class _GitIndexData:
+    entries: tuple[_GitIndexEntry, ...]
+    hash_size: int
+    split_index: bool = False
+    sparse: bool = False
+
+
 @final
 class GitExecutionPolicy:
     _executable_lookup: GitExecutableLookup
@@ -513,7 +533,12 @@ class GitExecutionPolicy:
                 settings=git_settings,
             )
             argv_request = request
-            _validate_content_pathspec_scope(request, pathspecs, repo_root)
+            await _validate_content_pathspec_scope(
+                request,
+                pathspecs,
+                repo_root,
+                git_dir=git_dir,
+            )
             _validate_mutation_pathspec_scope(request, pathspecs, repo_root)
             execution_cwd = repo_root
         argv = _argv_for_request(
@@ -522,6 +547,7 @@ class GitExecutionPolicy:
             git_settings,
             workspace_root=workspace_root,
             git_dir=git_dir,
+            allow_hidden=self._settings.allow_hidden,
         )
         _validate_argv_budgets(argv, self._settings)
         timeout_seconds = _bounded_float(
@@ -708,10 +734,7 @@ def _validate_remote_url(
             "remote URL protocol is unsupported",
         ) from error
     if (
-        not parts.scheme
-        or not parts.netloc
-        or not parts.hostname
-        or parts.query
+        parts.query
         or parts.fragment
         or _contains_control(url)
         or "\x00" in url
@@ -721,6 +744,28 @@ def _validate_remote_url(
             "remote URL protocol is unsupported",
         )
     protocol = parts.scheme.lower()
+    if protocol == "file" and not parts.netloc:
+        if protocol not in settings.allowed_remote_protocols:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+                "remote URL protocol is not allowlisted",
+            )
+        if "localhost" not in settings.allowed_remote_hosts:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.REMOTE_HOST_DENIED,
+                "remote URL host is not allowlisted",
+            )
+        _validate_hostless_file_remote_url(
+            url,
+            parts.path,
+            workspace_root=workspace_root,
+        )
+        return
+    if not parts.scheme or not parts.netloc or not parts.hostname:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+            "remote URL protocol is unsupported",
+        )
     host = parts.hostname.lower()
     if protocol not in settings.allowed_remote_protocols:
         raise ShellGitPolicyDenied(
@@ -764,6 +809,28 @@ def _validate_file_remote_url(
     workspace_root: Path | None,
 ) -> None:
     _validated_file_remote_path(value, workspace_root=workspace_root)
+
+
+def _validate_hostless_file_remote_url(
+    url: str,
+    value: str,
+    *,
+    workspace_root: Path | None,
+) -> None:
+    decoded_value = unquote(value)
+    path = Path(decoded_value)
+    if (
+        not url.startswith("file:///")
+        or value.startswith("//")
+        or decoded_value.startswith("//")
+        or not path.is_absolute()
+        or url != f"file://{path.resolve().as_posix()}"
+    ):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+            "remote URL protocol is unsupported",
+        )
+    _validate_file_remote_url(value, workspace_root=workspace_root)
 
 
 def _validated_file_remote_path(
@@ -1688,6 +1755,7 @@ async def _validate_repository_form(
     await _validate_attributes(repo_root / ".gitattributes")
     await _validate_attributes(git_dir / "info" / "attributes")
     await _validate_hooks(git_dir / "hooks")
+    await _validate_repository_index_form(git_dir)
 
 
 async def _validate_alternates(
@@ -1905,43 +1973,318 @@ def _validate_git_option_string(value: str) -> None:
         )
 
 
-def _validate_content_pathspec_scope(
+async def _validate_content_pathspec_scope(
     request: ShellGitCommandRequest,
     pathspecs: tuple[str, ...],
     repo_root: Path,
+    *,
+    git_dir: Path,
 ) -> None:
-    if not pathspecs or not _needs_file_scoped_content_pathspecs(request):
+    if not pathspecs:
         return
-    for value in pathspecs:
-        path = PurePosixPath(value)
-        if path.as_posix() == ".":
-            raise ShellGitPolicyDenied(
-                ShellGitExecutionErrorCode.PATHSPEC_DENIED,
-                "Git content pathspec must name a file path",
-            )
-        resolved = (repo_root / Path(*path.parts)).resolve()
-        if not resolved.exists() or not resolved.is_file():
-            raise ShellGitPolicyDenied(
-                ShellGitExecutionErrorCode.PATHSPEC_DENIED,
-                "Git content pathspec must name an existing file",
-            )
-
-
-def _needs_file_scoped_content_pathspecs(
-    request: ShellGitCommandRequest,
-) -> bool:
     if request.command in (
         ShellGitCommandName.BLAME,
-        ShellGitCommandName.DIFF,
         ShellGitCommandName.GREP,
         ShellGitCommandName.STASH_APPLY,
-        ShellGitCommandName.STASH_SHOW,
     ):
-        return True
+        _validate_existing_file_content_pathspecs(pathspecs, repo_root)
+        return
+    if request.command is ShellGitCommandName.DIFF:
+        mode = _diff_mode_option(request.options)
+        if mode in ("worktree", "staged", "range"):
+            await _validate_file_like_content_pathspecs(
+                pathspecs,
+                repo_root,
+                git_dir=git_dir,
+            )
+        return
     if request.command is ShellGitCommandName.SHOW:
-        mode = request.options.get("mode", "summary")
-        return mode in ("stat", "patch")
-    return False
+        if _show_mode_option(request.options) == "patch":
+            await _validate_file_like_content_pathspecs(
+                pathspecs,
+                repo_root,
+                git_dir=git_dir,
+            )
+        return
+    if request.command is ShellGitCommandName.STASH_SHOW:
+        if _stash_show_mode_option(request.options) == "patch":
+            await _validate_file_like_content_pathspecs(
+                pathspecs,
+                repo_root,
+                git_dir=git_dir,
+            )
+
+
+async def _validate_file_like_content_pathspecs(
+    pathspecs: tuple[str, ...],
+    repo_root: Path,
+    *,
+    git_dir: Path,
+) -> None:
+    for value in pathspecs:
+        await _validate_file_like_content_pathspec(
+            value,
+            repo_root,
+            git_dir=git_dir,
+        )
+
+
+async def _validate_file_like_content_pathspec(
+    value: str,
+    repo_root: Path,
+    *,
+    git_dir: Path,
+) -> None:
+    path = PurePosixPath(value)
+    if path.as_posix() == ".":
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git content pathspec must name a file path",
+        )
+    resolved = (repo_root / Path(*path.parts)).resolve()
+    if resolved.exists() and not resolved.is_file():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git content pathspec must name a file path",
+        )
+    if resolved.exists():
+        return
+    if await _is_missing_tracked_file_pathspec(
+        value,
+        git_dir,
+    ):
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        "Git content pathspec must name a deleted tracked file",
+    )
+
+
+async def _is_missing_tracked_file_pathspec(
+    value: str,
+    git_dir: Path,
+) -> bool:
+    index_path = git_dir / "index"
+    if not index_path.is_file():
+        return False
+    index = await _read_bytes(index_path)
+    return _git_index_data_has_exact_file_pathspec(index, value)
+
+
+async def _validate_repository_index_form(git_dir: Path) -> None:
+    index_path = git_dir / "index"
+    if not index_path.exists():
+        return
+    if index_path.is_symlink() or not index_path.is_file():
+        _deny_unsafe_git_config("Git repository index is unsafe")
+    index = await _read_bytes(index_path)
+    if not _git_index_form_is_supported(index):
+        _deny_unsafe_git_config("Git repository index format is unsupported")
+
+
+def _git_index_form_is_supported(index: bytes) -> bool:
+    if len(index) < 12 or index[:4] != _GIT_INDEX_SIGNATURE:
+        return False
+    version = int.from_bytes(index[4:8], "big")
+    if version not in _GIT_INDEX_SUPPORTED_VERSIONS:
+        return False
+    parsed = _parse_git_index_data(index)
+    return parsed is not None and not parsed.split_index
+
+
+def _git_index_data_has_exact_file_pathspec(
+    index: bytes,
+    value: str,
+) -> bool:
+    parsed = _parse_git_index_data(index)
+    if parsed is None or parsed.sparse or parsed.split_index:
+        return False
+    target = value.encode("utf-8", "surrogateescape")
+    return _git_index_entries_have_exact_file_pathspec(
+        parsed.entries,
+        target,
+    )
+
+
+def _parse_git_index_data(index: bytes) -> _GitIndexData | None:
+    for hash_size in _GIT_INDEX_HASH_SIZES:
+        parsed = _parse_git_index_data_with_hash_size(
+            index,
+            hash_size=hash_size,
+        )
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_git_index_data_with_hash_size(
+    index: bytes,
+    *,
+    hash_size: int,
+) -> _GitIndexData | None:
+    if len(index) < 12 or index[:4] != _GIT_INDEX_SIGNATURE:
+        return None
+    version = int.from_bytes(index[4:8], "big")
+    if version not in _GIT_INDEX_SUPPORTED_VERSIONS:
+        return None
+    count = int.from_bytes(index[8:12], "big")
+    entries: list[_GitIndexEntry] = []
+    offset = 12
+    for _ in range(count):
+        entry = _git_index_entry(
+            index,
+            offset,
+            hash_size=hash_size,
+            version=version,
+        )
+        if entry is None:
+            return None
+        mode, path, offset = entry
+        entries.append(_GitIndexEntry(mode=mode, path=path))
+    extension_end = _git_index_extension_end(
+        index,
+        offset,
+        hash_size=hash_size,
+    )
+    if extension_end is None:
+        return None
+    extensions = _git_index_extensions(
+        index,
+        offset,
+        extension_end,
+    )
+    if extensions is None:
+        return None
+    split_index, sparse = extensions
+    return _GitIndexData(
+        entries=tuple(entries),
+        hash_size=hash_size,
+        split_index=split_index,
+        sparse=sparse,
+    )
+
+
+def _git_index_entry(
+    index: bytes,
+    offset: int,
+    *,
+    hash_size: int,
+    version: int,
+) -> tuple[int, bytes, int] | None:
+    flags_offset = offset + 40 + hash_size
+    if flags_offset + 2 > len(index):
+        return None
+    mode = int.from_bytes(index[offset + 24 : offset + 28], "big")
+    flags = int.from_bytes(index[flags_offset : flags_offset + 2], "big")
+    path_offset = flags_offset + 2
+    if flags & 0x4000:
+        if version < 3:
+            return None
+        if path_offset + 2 > len(index):
+            return None
+        path_offset += 2
+    path_end = index.find(b"\x00", path_offset)
+    if path_end < 0:
+        return None
+    next_offset = offset + _padded_git_index_entry_size(
+        path_end + 1 - offset,
+    )
+    if next_offset > len(index):
+        return None
+    return (
+        mode,
+        index[path_offset:path_end],
+        next_offset,
+    )
+
+
+def _git_index_extension_end(
+    index: bytes,
+    offset: int,
+    *,
+    hash_size: int,
+) -> int | None:
+    if offset == len(index):
+        return offset
+    if offset <= len(index) - hash_size:
+        return len(index) - hash_size
+    return None
+
+
+def _git_index_extensions(
+    index: bytes,
+    offset: int,
+    extension_end: int,
+) -> tuple[bool, bool] | None:
+    split_index = False
+    sparse = False
+    while offset < extension_end:
+        if offset + 8 > extension_end:
+            return None
+        signature = index[offset : offset + 4]
+        size = int.from_bytes(index[offset + 4 : offset + 8], "big")
+        data_offset = offset + 8
+        next_offset = data_offset + size
+        if next_offset > extension_end:
+            return None
+        if signature == _GIT_INDEX_LINK_EXTENSION:
+            if split_index:
+                return None
+            split_index = True
+        elif signature == _GIT_INDEX_SPARSE_EXTENSION:
+            sparse = True
+        elif signature[:1].islower():
+            return None
+        offset = next_offset
+    return split_index, sparse
+
+
+def _git_index_entries_have_exact_file_pathspec(
+    entries: tuple[_GitIndexEntry, ...],
+    target: bytes,
+) -> bool:
+    return any(
+        _git_index_entry_matches_file_pathspec(entry, target)
+        for entry in entries
+    )
+
+
+def _git_index_entry_matches_file_pathspec(
+    entry: _GitIndexEntry,
+    target: bytes,
+) -> bool:
+    return entry.path == target and entry.mode in _GIT_INDEX_FILE_MODES
+
+
+def _padded_git_index_entry_size(size: int) -> int:
+    remainder = size % 8
+    return size if remainder == 0 else size + (8 - remainder)
+
+
+def _validate_existing_file_content_pathspecs(
+    pathspecs: tuple[str, ...],
+    repo_root: Path,
+) -> None:
+    for value in pathspecs:
+        _validate_existing_file_content_pathspec(value, repo_root)
+
+
+def _validate_existing_file_content_pathspec(
+    value: str,
+    repo_root: Path,
+) -> None:
+    path = PurePosixPath(value)
+    if path.as_posix() == ".":
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git content pathspec must name a file path",
+        )
+    resolved = (repo_root / Path(*path.parts)).resolve()
+    if not resolved.exists() or not resolved.is_file():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git content pathspec must name an existing file",
+        )
 
 
 def _validate_mutation_pathspec_scope(
@@ -2477,6 +2820,7 @@ def _argv_for_request(
     *,
     workspace_root: Path | None = None,
     git_dir: Path | None = None,
+    allow_hidden: bool = False,
 ) -> tuple[str, ...]:
     if request.command is ShellGitCommandName.STATUS:
         return _status_argv(request, pathspecs)
@@ -2557,7 +2901,12 @@ def _argv_for_request(
         return _push_argv(request, settings)
     if request.command is ShellGitCommandName.CLONE:
         assert workspace_root is not None, "clone requires a workspace"
-        return _clone_argv(request, workspace_root, settings)
+        return _clone_argv(
+            request,
+            workspace_root,
+            settings,
+            allow_hidden=allow_hidden,
+        )
     if request.command is ShellGitCommandName.REMOTE_LIST:
         return _remote_list_argv(request)
     if request.command is ShellGitCommandName.REMOTE_ADD:
@@ -2827,13 +3176,7 @@ def _diff_argv(
     request: ShellGitCommandRequest,
     pathspecs: tuple[str, ...],
 ) -> tuple[str, ...]:
-    mode = _string_option(
-        request.options,
-        "mode",
-        default_value="worktree",
-        allowed_values=("worktree", "staged", "range", "stat", "name_only"),
-        message="git diff mode is unsupported",
-    )
+    mode = _diff_mode_option(request.options)
     base_revision = _optional_string_option(
         request.options,
         "base_revision",
@@ -2852,12 +3195,15 @@ def _diff_argv(
     )
     argv = _base_argv("diff")
     argv.extend(diff_args)
+    requires_pathspecs = False
     match mode:
         case "worktree":
             _reject_revisions_for_mode(base_revision, head_revision, mode)
+            requires_pathspecs = True
             argv.append("--patch")
         case "staged":
             _reject_revisions_for_mode(base_revision, head_revision, mode)
+            requires_pathspecs = True
             argv.extend(("--cached", "--patch"))
         case "range":
             if base_revision is None or head_revision is None:
@@ -2865,6 +3211,7 @@ def _diff_argv(
                     ShellGitExecutionErrorCode.INVALID_OPTION,
                     "git diff range mode requires base and head revisions",
                 )
+            requires_pathspecs = True
             range_args = (
                 "--patch",
                 _commit_revision(base_revision),
@@ -2877,11 +3224,22 @@ def _diff_argv(
         case "name_only":
             _reject_revisions_for_mode(base_revision, head_revision, mode)
             argv.append("--name-only")
-    _require_pathspecs_for_content(pathspecs, "git diff")
+    if requires_pathspecs:
+        _require_pathspecs_for_content(pathspecs, "git diff")
     if pathspecs:
         argv.append("--")
         argv.extend(pathspecs)
     return tuple(argv)
+
+
+def _diff_mode_option(options: Mapping[str, object]) -> str:
+    return _string_option(
+        options,
+        "mode",
+        default_value="worktree",
+        allowed_values=("worktree", "staged", "range", "stat", "name_only"),
+        message="git diff mode is unsupported",
+    )
 
 
 def _show_argv(
@@ -2893,13 +3251,7 @@ def _show_argv(
         "revision",
         message="git show revision must be a string",
     )
-    mode = _string_option(
-        request.options,
-        "mode",
-        default_value="summary",
-        allowed_values=("summary", "stat", "patch"),
-        message="git show mode is unsupported",
-    )
+    mode = _show_mode_option(request.options)
     show_args = (
         "--no-ext-diff",
         "--no-textconv",
@@ -2916,7 +3268,6 @@ def _show_argv(
         case "summary":
             argv.append("--no-patch")
         case "stat":
-            _require_pathspecs_for_content(pathspecs, "git show stat")
             argv.append("--stat")
         case "patch":
             _require_pathspecs_for_content(pathspecs, "git show patch")
@@ -2926,6 +3277,16 @@ def _show_argv(
         argv.append("--")
         argv.extend(pathspecs)
     return tuple(argv)
+
+
+def _show_mode_option(options: Mapping[str, object]) -> str:
+    return _string_option(
+        options,
+        "mode",
+        default_value="summary",
+        allowed_values=("summary", "stat", "patch"),
+        message="git show mode is unsupported",
+    )
 
 
 def _blame_argv(
@@ -3060,14 +3421,9 @@ def _stash_show_argv(
         message="git stash show stash reference must be a string",
     )
     _validate_stash_ref(stash, settings)
-    mode = _string_option(
-        request.options,
-        "mode",
-        default_value="stat",
-        allowed_values=("stat", "patch"),
-        message="git stash show mode is unsupported",
-    )
-    _require_pathspecs_for_content(pathspecs, "git stash show")
+    mode = _stash_show_mode_option(request.options)
+    if mode == "patch":
+        _require_pathspecs_for_content(pathspecs, "git stash show")
     diff_args = (
         "--no-ext-diff",
         "--no-textconv",
@@ -3079,9 +3435,20 @@ def _stash_show_argv(
     argv.append("--stat" if mode == "stat" else "--patch")
     argv.append(f"{stash}^1")
     argv.append(stash)
-    argv.append("--")
-    argv.extend(pathspecs)
+    if pathspecs:
+        argv.append("--")
+        argv.extend(pathspecs)
     return tuple(argv)
+
+
+def _stash_show_mode_option(options: Mapping[str, object]) -> str:
+    return _string_option(
+        options,
+        "mode",
+        default_value="stat",
+        allowed_values=("stat", "patch"),
+        message="git stash show mode is unsupported",
+    )
 
 
 def _add_argv(
@@ -3763,6 +4130,8 @@ def _clone_argv(
     request: ShellGitCommandRequest,
     workspace_root: Path,
     settings: ShellGitToolSettings,
+    *,
+    allow_hidden: bool,
 ) -> tuple[str, ...]:
     url = _required_string_option(
         request.options,
@@ -3777,7 +4146,7 @@ def _clone_argv(
     _validate_workspace_destination(
         destination,
         workspace_root=workspace_root,
-        allow_hidden=False,
+        allow_hidden=allow_hidden,
     )
     branch = _optional_string_option(
         request.options,
@@ -4407,9 +4776,7 @@ def git_remote_audit_metadata(
             "credential_helpers": "denied",
             "custom_transports": "denied",
         },
-        "git_credential_mode": (
-            "allow_explicit" if settings.allow_remote_credentials else "deny"
-        ),
+        "git_credential_mode": settings.credential_policy,
         "git_remote_state_may_mutate": (
             request.command in _REMOTE_STATE_MUTATING_COMMANDS
         ),
