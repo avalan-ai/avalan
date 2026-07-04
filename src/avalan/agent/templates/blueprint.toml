@@ -264,6 +264,7 @@ collapse_replacement = {{ tool_name_policy.collapse_replacement | lower }}
 {% if shell_tool is not none %}
 [tool.shell]
 {% for k, v in shell_tool.items() %}
+{% if k != 'git' %}
 {% if v is boolean %}
 {{ k }} = {{ v | lower }}
 {% elif v is number %}
@@ -278,6 +279,14 @@ collapse_replacement = {{ tool_name_policy.collapse_replacement | lower }}
 {% endfor %}
 ]
 {% endif %}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if shell_tool and shell_tool.get('git') %}
+[tool.shell.git]
+{% for k, v in shell_tool['git'].items() %}
+{{ k }} = {{ v | toml_value }}
 {% endfor %}
 {% endif %}
 

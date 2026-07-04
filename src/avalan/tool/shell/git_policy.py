@@ -142,6 +142,16 @@ _REMOTE_URL_PATTERN = compile_pattern(
     r"(?:(?P<userinfo>[^/@\s]+)@)?(?P<host>[^/@:\s]+)"
     r"(?::[0-9]+)?(?:/.*)?$"
 )
+_AUTHOR_SUMMARY_EMAIL_PATTERN = compile_pattern(
+    r"(?m)^([0-9a-fA-F]{7,64}\t[^\t\r\n]*\t)" r"[^\t\r\n]*@[^\t\r\n]*(\t)"
+)
+_AUTHOR_HEADER_EMAIL_PATTERN = compile_pattern(
+    r"(?im)^((?:author|commit|committer):[^\r\n<]*<)"
+    r"[^<>\r\n]*@[^<>\r\n]*(>)"
+)
+_AUTHOR_PORCELAIN_EMAIL_PATTERN = compile_pattern(
+    r"(?im)^((?:author|committer)-mail\s+<)" r"[^<>\r\n]*@[^<>\r\n]*(>)"
+)
 _CONTROL_CHARACTERS = tuple(chr(value) for value in (*range(0, 32), 127))
 _DANGEROUS_CONFIG_SECTION_NAMES = frozenset(
     (
@@ -612,7 +622,7 @@ def _validate_authorization(
     if capability.value not in settings.capabilities:
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.CAPABILITY_REQUIRED,
-            f"shell Git command requires capability {capability.value}; "
+            f"{request.tool_name} requires capability {capability.value}; "
             f"configured capabilities: {', '.join(settings.capabilities)}",
         )
     _validate_multi_capability_authorization(request, settings)
@@ -634,7 +644,7 @@ def _validate_multi_capability_authorization(
     if missing:
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.CAPABILITY_REQUIRED,
-            "shell Git command requires capabilities "
+            f"{request.tool_name} requires capabilities "
             + ", ".join(
                 capability.value for capability in _PULL_REQUIRED_CAPABILITIES
             )
@@ -881,6 +891,12 @@ def _remote_url_parts(url: str) -> tuple[str, str, str]:
         parts = urlsplit(url)
     except ValueError:
         return "", "", url
+    if (
+        parts.scheme.lower() == "file"
+        and not parts.netloc
+        and url.lower().startswith("file:///")
+    ):
+        return "file", "", url
     if not parts.scheme or not parts.hostname:
         return "", "", url
     protocol = parts.scheme.lower()
@@ -4488,9 +4504,31 @@ def _redact_text(value: str, settings: ShellGitToolSettings) -> str:
         ).sub(r"\1[redacted]", redacted)
     if settings.redact_remote_urls:
         redacted = compile_pattern(
-            r"([A-Za-z][A-Za-z0-9+.-]*://)(?:[^/@\s]+@)?([^/\s]+)(/[^\s]*)?"
+            r"(?<![A-Za-z0-9+.-])([Ff][Ii][Ll][Ee]:///)"
+            r"(?:[^?#\s]*)?(?:[?#][^\s]*)?"
+        ).sub(r"\1[redacted]", redacted)
+        redacted = compile_pattern(
+            r"([A-Za-z][A-Za-z0-9+.-]*://)(?:[^/@\s]+@)?"
+            r"([^/?#\s]+)(?:[/?#][^\s]*)?"
         ).sub(r"\1\2/[redacted]", redacted)
+    if settings.redact_author_emails:
+        redacted = _redact_author_email_fields(redacted)
     return redacted
+
+
+def _redact_author_email_fields(value: str) -> str:
+    redacted = _AUTHOR_SUMMARY_EMAIL_PATTERN.sub(
+        r"\1[redacted]\2",
+        value,
+    )
+    redacted = _AUTHOR_HEADER_EMAIL_PATTERN.sub(
+        r"\1[redacted]\2",
+        redacted,
+    )
+    return _AUTHOR_PORCELAIN_EMAIL_PATTERN.sub(
+        r"\1[redacted]\2",
+        redacted,
+    )
 
 
 def _display_path(root: Path, path: Path) -> str:

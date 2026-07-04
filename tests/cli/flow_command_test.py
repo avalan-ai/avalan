@@ -3632,6 +3632,64 @@ class FlowRunCommandTestCase(TestCase):
         self.assertTrue(settings.allow_media_tools)
         self.assertEqual(settings.max_head_lines, 12)
 
+    def test_flow_tool_manager_accepts_shell_git_read_only_profile(
+        self,
+    ) -> None:
+        original_shell_toolset = flow_cmds.ShellToolSet
+        captured_settings: list[ShellToolSettings] = []
+
+        def shell_toolset_factory(**kwargs: object) -> ToolSet:
+            settings = cast(ShellToolSettings, kwargs["settings"])
+            captured_settings.append(settings)
+            namespace = cast(str | None, kwargs.get("namespace"))
+            return original_shell_toolset(
+                settings=settings, namespace=namespace
+            )
+
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+            patch.object(
+                flow_cmds,
+                "ShellToolSet",
+                side_effect=shell_toolset_factory,
+            ),
+        ):
+            manager = flow_cmds._flow_tool_manager(
+                _args(
+                    tool=[
+                        "shell.git_status",
+                        "shell.git_diff",
+                        "shell.git_log",
+                    ],
+                    tool_shell_git_capabilities=["read"],
+                    tool_shell_git_allowed_commands=[
+                        "status",
+                        "diff",
+                        "log",
+                    ],
+                    tool_shell_git_max_log_count=7,
+                    tool_shell_git_max_diff_bytes=8192,
+                )
+            )
+
+        self.assertIsNotNone(manager)
+        assert manager is not None
+        self.assertIsNotNone(manager.describe_tool("shell.git_status"))
+        self.assertIsNotNone(manager.describe_tool("shell.git_diff"))
+        self.assertIsNotNone(manager.describe_tool("shell.git_log"))
+        self.assertIsNone(manager.describe_tool("shell.git_commit"))
+        self.assertEqual(len(captured_settings), 1)
+        git_settings = captured_settings[0].git
+        self.assertEqual(git_settings.capabilities, ("read",))
+        self.assertEqual(
+            git_settings.allowed_commands,
+            ("status", "diff", "log"),
+        )
+        self.assertEqual(git_settings.max_log_count, 7)
+        self.assertEqual(git_settings.max_diff_bytes, 8192)
+
     def test_flow_tool_manager_passes_sandbox_runtime_to_shell_toolset(
         self,
     ) -> None:

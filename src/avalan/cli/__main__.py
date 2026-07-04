@@ -37,7 +37,7 @@ from ..skill import SkillSourceAuthorityKind
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
 from ..tool.graph_settings import GraphToolSettings
-from ..tool.shell import ShellToolSettings
+from ..tool.shell import ShellGitToolSettings, ShellToolSettings
 from ..types import assert_positive_int
 from ..utils import logger_replace
 
@@ -3920,6 +3920,7 @@ class CLI:
                 )
 
         if settings_cls is ShellToolSettings and prefix == "shell":
+            CLI._add_shell_git_settings_arguments(group)
             group.add_argument(
                 "--tool-shell-executable-search-path",
                 dest="tool_shell_executable_search_paths",
@@ -4195,6 +4196,73 @@ class CLI:
             )
 
         return group
+
+    @staticmethod
+    def _add_shell_git_settings_arguments(group: _ArgumentGroup) -> None:
+        git_scalar_fields = ShellGitToolSettings.CLI_SCALAR_FIELDS
+        git_sequence_fields = ShellGitToolSettings.CLI_SEQUENCE_FIELDS
+        git_fields = {
+            dataclass_field.name: dataclass_field
+            for dataclass_field in fields(ShellGitToolSettings)
+        }
+        for field_name in (*git_scalar_fields, *git_sequence_fields):
+            field = git_fields[field_name]
+            option = f"--tool-shell-git-{field_name.replace('_', '-')}"
+            dest = f"tool_shell_git_{field_name}"
+            if field_name in git_sequence_fields:
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    action="append",
+                    type=str,
+                    default=None,
+                    help="Trusted shell Git list setting.",
+                )
+            elif field_name == "credential_policy":
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    choices=("deny", "allow_explicit"),
+                    default=None,
+                    help="Trusted shell Git credential policy.",
+                )
+            elif isinstance(field.default, bool):
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    action="store_true",
+                    default=None,
+                    help="Trusted shell Git policy flag.",
+                )
+                group.add_argument(
+                    f"--no-tool-shell-git-{field_name.replace('_', '-')}",
+                    dest=dest,
+                    action="store_false",
+                )
+            elif isinstance(field.default, int):
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    type=int,
+                    default=None,
+                    help="Trusted shell Git integer cap.",
+                )
+            elif isinstance(field.default, float):
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    type=float,
+                    default=None,
+                    help="Trusted shell Git timeout cap.",
+                )
+            else:
+                group.add_argument(
+                    option,
+                    dest=dest,
+                    type=str,
+                    default=None,
+                    help="Trusted shell Git scalar setting.",
+                )
 
     @staticmethod
     def _add_skills_settings_arguments(

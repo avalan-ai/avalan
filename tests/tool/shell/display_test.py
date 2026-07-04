@@ -33,6 +33,14 @@ from avalan.tool.shell import (
     ShellExecutionErrorCode,
     ShellExecutionStatus,
     ShellExecutionStepResult,
+    ShellGitCapability,
+    ShellGitCommandName,
+    ShellGitCommandRequest,
+    ShellGitCommandResult,
+    ShellGitExecutionErrorCode,
+    ShellGitExecutionStatus,
+    ShellGitFormattedResult,
+    ShellGitToolSettings,
     ShellOutputKind,
     ShellStreamRef,
     ShellToolSet,
@@ -44,6 +52,8 @@ from avalan.tool.shell.display import (
     project_shell_composition_request,
     project_shell_composition_result,
     project_shell_execution_result,
+    project_shell_git_request,
+    project_shell_git_result,
     project_shell_tool_display,
 )
 from avalan.tool.shell.entities import (
@@ -222,6 +232,489 @@ class ShellDisplayProjectionCallTest(TestCase):
                 self.assertEqual(projection.label, name)
                 self.assertEqual(projection.action, _EXPECTED_ACTIONS[name])
 
+    def test_git_call_projection_describes_read_only_request(self) -> None:
+        projection = _call_projection(
+            "shell.git_status",
+            {
+                "paths": ["src/avalan/tool"],
+                "cwd": ".",
+                "mode": "porcelain_v2",
+                "timeout_seconds": 2.5,
+                "max_stdout_bytes": 1024,
+                "max_stderr_bytes": 512,
+            },
+        )
+
+        self.assertEqual(projection.label, "shell.git_status")
+        self.assertEqual(projection.action, "git inspect")
+        self.assertEqual(projection.target, "src/avalan/tool")
+        self.assertEqual(projection.scope, ".")
+        self.assertEqual(_detail_value(projection, "git command"), "status")
+        self.assertEqual(_detail_value(projection, "mode"), "porcelain_v2")
+        self.assertEqual(_detail_value(projection, "cwd"), ".")
+        self.assertEqual(_detail_value(projection, "path count"), 1)
+        self.assertEqual(
+            _detail_value(projection, "caps"),
+            "timeout=2.5, stdout=1024, stderr=512",
+        )
+
+    def test_git_call_projection_uses_defaults_for_missing_arguments(
+        self,
+    ) -> None:
+        manager = _shell_manager(["shell.git_status"])
+        call = ToolCall(
+            id="call-git-status",
+            name="shell.git_status",
+            arguments=None,
+        )
+        descriptor = manager.describe_tool_call(call)
+
+        assert descriptor is not None
+        projection = descriptor.project_display(call)
+
+        self.assertIsInstance(projection, ToolDisplayProjection)
+        assert isinstance(projection, ToolDisplayProjection)
+        self.assertEqual(projection.target, "status")
+        self.assertEqual(_detail_value(projection, "mode"), "porcelain_v2")
+
+    def test_git_call_projection_rejects_invalid_argument_payloads(
+        self,
+    ) -> None:
+        manager = _shell_manager(["shell.git_status"])
+        descriptor = manager.describe_tool("shell.git_status")
+        invalid_payload_call = ToolCall(
+            id="call-git-invalid-payload",
+            name="shell.git_status",
+            arguments=cast(dict[str, ToolValue], ["not", "a", "dict"]),
+        )
+        invalid_key_call = ToolCall(
+            id="call-git-invalid-key",
+            name="shell.git_status",
+            arguments={"unknown": True},
+        )
+
+        assert descriptor is not None
+        self.assertIsNone(descriptor.project_display(invalid_payload_call))
+        self.assertIsNone(descriptor.project_display(invalid_key_call))
+
+    def test_git_request_projection_handles_target_edges(self) -> None:
+        unsafe_path = project_shell_git_request(
+            ShellGitCommandRequest(
+                tool_name="shell.git_show",
+                command=ShellGitCommandName.SHOW,
+                capability_required=ShellGitCapability.READ,
+                options={"path": "$HOME/private"},
+            )
+        )
+        command_default = project_shell_git_request(
+            ShellGitCommandRequest(
+                tool_name="shell.git_branch",
+                command=ShellGitCommandName.BRANCH,
+                capability_required=ShellGitCapability.READ,
+                options={},
+            )
+        )
+        many_paths = project_shell_git_request(
+            ShellGitCommandRequest(
+                tool_name="shell.git_diff",
+                command=ShellGitCommandName.DIFF,
+                capability_required=ShellGitCapability.READ,
+                options={"mode": "worktree"},
+                pathspecs=("one.py", "two.py", "three.py", "four.py"),
+            )
+        )
+
+        self.assertTrue(unsafe_path.redacted)
+        self.assertEqual(unsafe_path.target, "[redacted]")
+        self.assertEqual(command_default.target, "branch")
+        self.assertEqual(many_paths.target, "one.py, two.py, three.py, ...")
+        self.assertEqual(
+            _detail_value(many_paths, "pathspecs"),
+            "one.py, two.py, three.py, ...",
+        )
+
+    def test_git_clone_call_projection_redacts_remote_url_credentials(
+        self,
+    ) -> None:
+        raw_url = "https://alice:hunter2@example.com/repo.git"
+        manager = ToolManager.create_instance(
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(
+                        git=ShellGitToolSettings(
+                            capabilities=("remote",),
+                            allowed_commands=("clone",),
+                            allowed_remote_hosts=("example.com",),
+                            allow_remote_credentials=True,
+                        )
+                    )
+                )
+            ],
+            enable_tools=["shell.git_clone"],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-git-clone",
+            name="shell.git_clone",
+            arguments=cast(
+                dict[str, ToolValue],
+                {
+                    "url": raw_url,
+                    "destination": "repo-copy",
+                },
+            ),
+        )
+        descriptor = manager.describe_tool_call(call)
+        assert descriptor is not None
+
+        projection = descriptor.project_display(call)
+        assert isinstance(projection, ToolDisplayProjection)
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertTrue(projection.redacted)
+        self.assertEqual(
+            projection.target,
+            "https://example.com/[redacted]",
+        )
+        self.assertNotIn(raw_url, payload)
+        self.assertNotIn("alice", payload)
+        self.assertNotIn("hunter2", payload)
+        self.assertNotIn("repo.git", payload)
+
+    def test_git_clone_call_projection_redacts_remote_url_path_and_query(
+        self,
+    ) -> None:
+        raw_url = "https://github.com/acme/private.git?jwt=abc123&ref=hidden"
+        manager = ToolManager.create_instance(
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(
+                        git=ShellGitToolSettings(
+                            capabilities=("remote",),
+                            allowed_commands=("clone",),
+                            allowed_remote_hosts=("github.com",),
+                        )
+                    )
+                )
+            ],
+            enable_tools=["shell.git_clone"],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-git-clone",
+            name="shell.git_clone",
+            arguments=cast(
+                dict[str, ToolValue],
+                {
+                    "url": raw_url,
+                    "destination": "repo-copy",
+                    "branch": "safe-branch",
+                },
+            ),
+        )
+        descriptor = manager.describe_tool_call(call)
+        assert descriptor is not None
+
+        projection = descriptor.project_display(call)
+        assert isinstance(projection, ToolDisplayProjection)
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertTrue(projection.redacted)
+        self.assertEqual(
+            projection.target,
+            "https://github.com/[redacted]",
+        )
+        self.assertNotIn(raw_url, payload)
+        self.assertNotIn("acme/private.git", payload)
+        self.assertNotIn("private.git", payload)
+        self.assertNotIn("jwt=abc123", payload)
+        self.assertNotIn("abc123", payload)
+        self.assertNotIn("ref=hidden", payload)
+        self.assertNotIn("hidden", payload)
+
+    def test_git_clone_call_projection_redacts_hostless_file_remote_url(
+        self,
+    ) -> None:
+        raw_url = "file:///Users/mariano/private.git?token=abc123#hidden"
+        manager = ToolManager.create_instance(
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(
+                        git=ShellGitToolSettings(
+                            capabilities=("remote",),
+                            allowed_commands=("clone",),
+                            allowed_remote_protocols=("file",),
+                            allowed_remote_hosts=("localhost",),
+                        )
+                    )
+                )
+            ],
+            enable_tools=["shell.git_clone"],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-git-clone",
+            name="shell.git_clone",
+            arguments=cast(
+                dict[str, ToolValue],
+                {
+                    "url": raw_url,
+                    "destination": "repo-copy",
+                },
+            ),
+        )
+        descriptor = manager.describe_tool_call(call)
+        assert descriptor is not None
+
+        projection = descriptor.project_display(call)
+        assert isinstance(projection, ToolDisplayProjection)
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertTrue(projection.redacted)
+        self.assertEqual(projection.target, "file:///[redacted]")
+        self.assertNotIn(raw_url, payload)
+        self.assertNotIn("/Users/mariano/private.git", payload)
+        self.assertNotIn("/Users/mariano", payload)
+        self.assertNotIn("private.git", payload)
+        self.assertNotIn("token=abc123", payload)
+        self.assertNotIn("abc123", payload)
+        self.assertNotIn("hidden", payload)
+
+    def test_git_result_projection_reports_audit_and_redacted_argv(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(
+                        git=ShellGitToolSettings(
+                            capabilities=("remote",),
+                            allowed_commands=("clone",),
+                            allowed_remote_hosts=("github.com",),
+                            allow_remote_credentials=True,
+                        )
+                    )
+                )
+            ],
+            enable_tools=["shell.git_clone"],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-git",
+            name="shell.git_clone",
+            arguments=cast(
+                dict[str, ToolValue],
+                {
+                    "url": "https://github.com/[redacted]",
+                    "destination": "repo-copy",
+                },
+            ),
+        )
+        git_result = ShellGitCommandResult(
+            tool_name="shell.git_clone",
+            command=ShellGitCommandName.CLONE,
+            display_argv=("git", "clone", "https://github.com/[redacted]"),
+            effective_cwd=".",
+            resolved_repo_root=None,
+            capability_required=ShellGitCapability.REMOTE,
+            capability_used=ShellGitCapability.REMOTE,
+            execution_mode="local",
+            status=ShellGitExecutionStatus.SUCCESS,
+            exit_code=0,
+            stdout_snippet="RAW_STDOUT_SHOULD_NOT_PROJECT",
+            stderr_snippet="RAW_STDERR_SHOULD_NOT_PROJECT",
+            stdout_bytes=30,
+            stderr_bytes=0,
+            stdout_truncated=True,
+            stderr_truncated=False,
+            duration_ms=42,
+            audit_metadata={
+                "git_request_pathspecs": (),
+                "git_request_options": {
+                    "url": "https://github.com/[redacted]",
+                },
+                "git_remote_hosts": ("github.com",),
+            },
+        )
+        outcome = ToolCallResult(
+            id="result-git",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=cast(
+                ToolValue,
+                ShellGitFormattedResult("formatted", git_result),
+            ),
+        )
+
+        projection = _terminal_projection(manager, outcome)
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertEqual(projection.action, "git remote")
+        self.assertEqual(projection.status, "success")
+        self.assertIn("https://github.com/[redacted]", projection.target or "")
+        self.assertEqual(_detail_value(projection, "git command"), "clone")
+        self.assertEqual(_detail_value(projection, "repo root"), "unknown")
+        self.assertEqual(_detail_value(projection, "path count"), 0)
+        self.assertEqual(_detail_value(projection, "truncation"), "stdout")
+        self.assertIn(
+            "git_remote_hosts",
+            str(_detail_value(projection, "audit metadata")),
+        )
+        self.assertEqual(projection.metrics["duration_ms"], 42)
+        self.assertEqual(projection.metrics["stdout_bytes"], 30)
+        self.assertNotIn("RAW_STDOUT_SHOULD_NOT_PROJECT", payload)
+        self.assertNotIn("RAW_STDERR_SHOULD_NOT_PROJECT", payload)
+
+    def test_git_result_projection_retains_mode_and_errors_after_cap(
+        self,
+    ) -> None:
+        projection = project_shell_git_result(
+            ShellGitCommandResult(
+                tool_name="shell.git_status",
+                command=ShellGitCommandName.STATUS,
+                display_argv=("git", "status", "--porcelain=v2"),
+                effective_cwd=".",
+                resolved_repo_root="/workspace/repo",
+                capability_required=ShellGitCapability.READ,
+                capability_used=ShellGitCapability.READ,
+                execution_mode="local",
+                status=ShellGitExecutionStatus.POLICY_DENIED,
+                exit_code=None,
+                stdout_snippet="RAW_STDOUT_SHOULD_NOT_PROJECT",
+                stderr_snippet="RAW_STDERR_SHOULD_NOT_PROJECT",
+                stdout_bytes=0,
+                stderr_bytes=0,
+                duration_ms=3,
+                error_code=ShellGitExecutionErrorCode.CAPABILITY_REQUIRED,
+                error_message="shell.git_status requires capability read",
+                audit_metadata={
+                    "git_request_pathspecs": ("src",),
+                    "git_request_options": {"mode": "porcelain_v2"},
+                },
+            )
+        )
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertLessEqual(len(projection.details), 12)
+        self.assertEqual(_detail_value(projection, "mode"), "porcelain_v2")
+        self.assertEqual(
+            _detail_value(projection, "error code"),
+            "capability_required",
+        )
+        self.assertEqual(
+            _detail_value(projection, "error message"),
+            "shell.git_status requires capability read",
+        )
+        self.assertNotIn("RAW_STDOUT_SHOULD_NOT_PROJECT", payload)
+        self.assertNotIn("RAW_STDERR_SHOULD_NOT_PROJECT", payload)
+
+    def test_git_result_projection_groups_commands_by_git_surface(
+        self,
+    ) -> None:
+        cases = (
+            (ShellGitCommandName.ADD, "git worktree"),
+            (ShellGitCommandName.COMMIT, "git history"),
+            (ShellGitCommandName.RESET, "git mutation"),
+        )
+
+        for command, action in cases:
+            with self.subTest(command=command):
+                projection = project_shell_git_result(
+                    _git_result(command=command)
+                )
+
+                self.assertEqual(projection.action, action)
+
+    def test_git_result_projection_covers_status_summary_edges(self) -> None:
+        cases = (
+            (
+                _git_result(
+                    status=ShellGitExecutionStatus.POLICY_DENIED,
+                    exit_code=None,
+                ),
+                "shell.git_status was denied by policy.",
+                "warning",
+            ),
+            (
+                _git_result(
+                    status=ShellGitExecutionStatus.COMMAND_UNAVAILABLE,
+                    exit_code=None,
+                    error_code=(
+                        ShellGitExecutionErrorCode.COMMAND_UNAVAILABLE
+                    ),
+                ),
+                "git executable is unavailable.",
+                "error",
+            ),
+            (
+                _git_result(
+                    status=ShellGitExecutionStatus.TIMEOUT,
+                    exit_code=None,
+                    error_code=ShellGitExecutionErrorCode.TIMEOUT,
+                ),
+                "shell.git_status timed out.",
+                "error",
+            ),
+            (
+                _git_result(
+                    status=ShellGitExecutionStatus.CANCELLED,
+                    exit_code=None,
+                ),
+                "shell.git_status was cancelled.",
+                "error",
+            ),
+            (
+                _git_result(
+                    status=ShellGitExecutionStatus.FAILED,
+                    exit_code=2,
+                    error_code=ShellGitExecutionErrorCode.NONZERO_EXIT,
+                ),
+                "shell.git_status exited with status 2.",
+                "error",
+            ),
+            (
+                _git_result(
+                    status=ShellGitExecutionStatus.FAILED,
+                    exit_code=None,
+                    error_code=ShellGitExecutionErrorCode.NONZERO_EXIT,
+                ),
+                "shell.git_status ended with failed.",
+                "error",
+            ),
+        )
+
+        for result, summary, severity in cases:
+            with self.subTest(
+                status=result.status,
+                exit_code=result.exit_code,
+            ):
+                projection = project_shell_git_result(result)
+
+                self.assertEqual(projection.summary, summary)
+                self.assertEqual(projection.severity, severity)
+
+    def test_git_result_projection_reports_audit_edges(self) -> None:
+        empty_audit = project_shell_git_result(
+            _git_result(
+                audit_metadata={},
+                stderr_truncated=True,
+            )
+        )
+        long_audit = project_shell_git_result(
+            _git_result(
+                audit_metadata={f"key_{index}": index for index in range(9)},
+            )
+        )
+
+        self.assertEqual(_detail_value(empty_audit, "path count"), 0)
+        self.assertEqual(_detail_value(empty_audit, "truncation"), "stderr")
+        self.assertEqual(_detail_value(empty_audit, "audit metadata"), "none")
+        self.assertEqual(
+            _detail_value(long_audit, "audit metadata"),
+            "key_0, key_1, key_2, key_3, key_4, key_5, key_6, key_7, ...",
+        )
+
     def test_default_find_call_projects_workspace_scope(self) -> None:
         projection = _call_projection("shell.find", {})
 
@@ -379,7 +872,7 @@ class ShellDisplayProjectionCallTest(TestCase):
         self.assertFalse(_has_detail(projection, "name"))
 
     def test_alternate_request_targets_are_projected(self) -> None:
-        cases = (
+        cases: tuple[tuple[str, dict[str, object], str], ...] = (
             (
                 "shell.sed",
                 {
@@ -804,6 +1297,27 @@ class ShellDisplayProjectionTerminalTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(projection.summary, "cat completed.")
         self.assertEqual(projection.status, "completed")
+
+    def test_git_result_carrier_outcome_projects_git_result(self) -> None:
+        manager = _shell_manager(["shell.git_status"])
+        call = ToolCall(
+            id="call-git-status",
+            name="shell.git_status",
+            arguments={},
+        )
+        outcome = ToolCallResult(
+            id="result-git-status",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=cast(ToolValue, _GitResultCarrier(_git_result())),
+        )
+
+        projection = _terminal_projection(manager, outcome)
+
+        self.assertEqual(projection.label, "shell.git_status")
+        self.assertEqual(projection.status, "success")
+        self.assertEqual(projection.summary, "shell.git_status completed.")
 
     def test_invalid_result_carrier_outcome_does_not_project(self) -> None:
         manager = _shell_manager(["shell.cat"])
@@ -1562,6 +2076,51 @@ def _terminal_projection(
     return projection
 
 
+def _git_result(
+    *,
+    command: ShellGitCommandName = ShellGitCommandName.STATUS,
+    display_argv: tuple[str, ...] | None = None,
+    status: ShellGitExecutionStatus = ShellGitExecutionStatus.SUCCESS,
+    exit_code: int | None = 0,
+    stdout_truncated: bool = False,
+    stderr_truncated: bool = False,
+    duration_ms: int = 1,
+    error_code: ShellGitExecutionErrorCode | None = None,
+    error_message: str | None = None,
+    audit_metadata: dict[str, object] | None = None,
+) -> ShellGitCommandResult:
+    capability = ShellGitCapability.READ
+    if command in {ShellGitCommandName.ADD, ShellGitCommandName.RESET}:
+        capability = ShellGitCapability.WORKTREE
+    elif command is ShellGitCommandName.COMMIT:
+        capability = ShellGitCapability.HISTORY
+    elif command is ShellGitCommandName.FETCH:
+        capability = ShellGitCapability.REMOTE
+    tool_name = f"shell.git_{command.value.replace('-', '_')}"
+    return ShellGitCommandResult(
+        tool_name=tool_name,
+        command=command,
+        display_argv=display_argv or ("git", command.value),
+        effective_cwd=".",
+        resolved_repo_root=".",
+        capability_required=capability,
+        capability_used=capability,
+        execution_mode="local",
+        status=status,
+        exit_code=exit_code,
+        stdout_snippet="RAW_STDOUT_SHOULD_NOT_PROJECT",
+        stderr_snippet="RAW_STDERR_SHOULD_NOT_PROJECT",
+        stdout_bytes=0,
+        stderr_bytes=0,
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
+        duration_ms=duration_ms,
+        error_code=error_code,
+        error_message=error_message,
+        audit_metadata=audit_metadata or {},
+    )
+
+
 def _direct_execution_result(
     *,
     command: str = "command",
@@ -1667,6 +2226,11 @@ def _has_detail(
 class _ExecutionResultCarrier:
     def __init__(self, execution_result: ExecutionResult) -> None:
         self.execution_result = execution_result
+
+
+class _GitResultCarrier:
+    def __init__(self, git_result: ShellGitCommandResult) -> None:
+        self.git_result = git_result
 
 
 class _CompositionResultCarrier:

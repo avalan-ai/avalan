@@ -384,8 +384,18 @@ class GitHistoryPolicyPhase6Test(IsolatedAsyncioTestCase):
             ShellGitExecutionErrorCode.CAPABILITY_REQUIRED,
         )
         self.assertEqual(
+            str(history_error),
+            "shell.git_reset requires capability worktree; "
+            "configured capabilities: history",
+        )
+        self.assertEqual(
             worktree_error.error_code,
             ShellGitExecutionErrorCode.CAPABILITY_REQUIRED,
+        )
+        self.assertEqual(
+            str(worktree_error),
+            "shell.git_reset requires capability history; "
+            "configured capabilities: worktree",
         )
 
     async def test_history_confirmation_and_unsafe_forms_fail_closed(

@@ -1,4 +1,8 @@
+from os import environ
 from pathlib import Path
+from shutil import which
+from subprocess import run
+from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 
 from async_helpers import run_async
@@ -25,6 +29,7 @@ from avalan.flow import (
     FlowEdgeDefinition,
     FlowEdgeKind,
     FlowEntryBehavior,
+    FlowExecutor,
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
@@ -55,7 +60,11 @@ from avalan.flow import validator as flow_validator
 from avalan.flow.node import Node
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
-from avalan.tool.shell import ShellToolSet, ShellToolSettings
+from avalan.tool.shell import (
+    ShellGitToolSettings,
+    ShellToolSet,
+    ShellToolSettings,
+)
 
 
 async def validator_flow_adder(a: int, b: int) -> int:
@@ -80,6 +89,46 @@ async def validator_flow_disabled(value: int) -> int:
     return value
 
 
+def _write_shell_git_example_repo(root: Path, git_binary: str) -> Path:
+    repo = root / "repo"
+    repo.mkdir()
+    _run_git(git_binary, "init", cwd=repo)
+    (repo / "README.md").write_text("initial\n", encoding="utf-8")
+    _run_git(git_binary, "add", "README.md", cwd=repo)
+    _run_git(
+        git_binary,
+        "-c",
+        "user.name=Avalan Test",
+        "-c",
+        "user.email=avalan@example.test",
+        "commit",
+        "-m",
+        "initial commit",
+        cwd=repo,
+    )
+    (repo / "README.md").write_text("initial\nupdated\n", encoding="utf-8")
+    return repo
+
+
+def _run_git(git_binary: str, *args: str, cwd: Path) -> None:
+    git_env = dict(environ)
+    git_env.update(
+        {
+            "GIT_CONFIG_GLOBAL": "/nonexistent",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    run(
+        (git_binary, *args),
+        cwd=cwd,
+        env=git_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _tool_manager(
     *,
     enable_tools: list[str] | None = None,
@@ -102,8 +151,14 @@ def _tool_manager(
 
 
 class StaticToolResolver:
-    def __init__(self, descriptors: list[ToolDescriptor]) -> None:
+    def __init__(
+        self,
+        descriptors: list[ToolDescriptor],
+        *,
+        disabled_names: set[str] | None = None,
+    ) -> None:
         self.descriptors = descriptors
+        self.disabled_names = disabled_names or set()
 
     def list_tools(self) -> list[ToolDescriptor]:
         return self.descriptors
@@ -112,6 +167,12 @@ class StaticToolResolver:
         self, name: str, *, provider_originated: bool = False
     ) -> ToolNameResolution:
         _ = provider_originated
+        if name in self.disabled_names:
+            return ToolNameResolution(
+                requested_name=name,
+                status=ToolNameResolutionStatus.DISABLED,
+                candidates=[name],
+            )
         names = {descriptor.name for descriptor in self.descriptors}
         if name in names:
             return ToolNameResolution(
@@ -1280,6 +1341,282 @@ class FlowValidatorTestCase(TestCase):
                     "shell.pipeline",
                 )
 
+    def test_docs_shell_git_flow_example_validates_and_runs(
+        self,
+    ) -> None:
+        git_binary = which("git")
+        if git_binary is None:
+            self.skipTest("git executable is required for shell Git examples")
+
+        root = Path(__file__).resolve().parents[2]
+        example_path = (
+            root
+            / "docs"
+            / "examples"
+            / "flows"
+            / "shell_git_readonly.flow.toml"
+        )
+        with TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            repo = _write_shell_git_example_repo(workspace, git_binary)
+            manager = ToolManager.create_instance(
+                enable_tools=[
+                    "shell.git_status",
+                    "shell.git_diff",
+                    "shell.git_log",
+                ],
+                available_toolsets=[
+                    ShellToolSet(
+                        settings=ShellToolSettings(
+                            executable_search_paths=(
+                                str(Path(git_binary).parent),
+                            ),
+                            git=ShellGitToolSettings(
+                                workspace_root=str(workspace),
+                                cwd=repo.name,
+                                capabilities=("read",),
+                                allowed_commands=("status", "diff", "log"),
+                            ),
+                        )
+                    )
+                ],
+                settings=ToolManagerSettings(),
+            )
+            loader = flow_loader.FlowDefinitionLoader(
+                tool_flow_node_registry(manager)
+            )
+
+            result = run_async(loader.load_result(example_path))
+
+            self.assertTrue(result.ok, result.public_diagnostics)
+            assert result.definition is not None
+            self.assertEqual(
+                [node.ref for node in result.definition.nodes if node.ref],
+                ["shell.git_status", "shell.git_diff", "shell.git_log"],
+            )
+            run_result = run_async(
+                FlowExecutor(registry=tool_flow_node_registry(manager)).run(
+                    result.definition
+                )
+            )
+
+        self.assertTrue(run_result.ok, run_result.public_diagnostics)
+        output = run_result.outputs
+        self.assertIn("status", output)
+        self.assertIn("diff", output)
+        self.assertIn("log", output)
+        self.assertIn("status: success", output["status"])
+        self.assertIn("status: success", output["diff"])
+        self.assertIn("status: success", output["log"])
+        self.assertIn("updated", output["diff"])
+        self.assertIn("initial commit", output["log"])
+
+    def test_validate_flow_definition_accepts_shell_git_read_refs(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=[
+                "shell.git_status",
+                "shell.git_diff",
+                "shell.git_log",
+            ],
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(
+                        git=ShellGitToolSettings(
+                            capabilities=("read",),
+                            allowed_commands=("status", "diff", "log"),
+                        )
+                    )
+                )
+            ],
+        )
+        registry = tool_flow_node_registry(manager)
+        cases = (
+            ("shell.git_status", {"arguments": {}}),
+            (
+                "shell.git_diff",
+                {
+                    "arguments": {
+                        "mode": "staged",
+                        "paths": ["src/avalan/tool"],
+                    }
+                },
+            ),
+            (
+                "shell.git_log",
+                {"arguments": {"max_count": 3, "format": "oneline"}},
+            ),
+        )
+
+        for ref, config in cases:
+            with self.subTest(ref=ref):
+                result = validate_flow_definition(
+                    self._strict_definition(
+                        nodes=(
+                            FlowNodeDefinition(
+                                name="start",
+                                type=FLOW_TOOL_NODE_TYPE,
+                                ref=ref,
+                                config=config,
+                            ),
+                        ),
+                    ),
+                    registry,
+                )
+
+                self.assertTrue(result.ok, result.public_diagnostics)
+
+    def test_validate_flow_definition_rejects_shell_git_capability_bypass(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.git_commit"],
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(
+                        git=ShellGitToolSettings(
+                            capabilities=("read",),
+                            allowed_commands=("commit",),
+                        )
+                    )
+                )
+            ],
+        )
+        registry = tool_flow_node_registry(manager)
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(
+                        name="start",
+                        type=FLOW_TOOL_NODE_TYPE,
+                        ref="shell.git_commit",
+                        config={"arguments": {"message": "blocked"}},
+                    ),
+                )
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.tool_disabled")
+        self.assertEqual(result.diagnostics[0].path, "nodes.start.ref")
+        self.assertEqual(
+            result.diagnostics[0].message,
+            "shell.git_commit is disabled for this flow.",
+        )
+        self.assertIn("history", result.diagnostics[0].hint)
+        self.assertIn("allowed_commands", result.diagnostics[0].hint)
+        self.assertIn("commit", result.diagnostics[0].hint)
+
+    def test_validate_flow_definition_rejects_shell_git_allowed_command_bypass(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.git_status"],
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(
+                        git=ShellGitToolSettings(
+                            capabilities=("read",),
+                            allowed_commands=("diff",),
+                        )
+                    )
+                )
+            ],
+        )
+        registry = tool_flow_node_registry(manager)
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(
+                        name="start",
+                        type=FLOW_TOOL_NODE_TYPE,
+                        ref="shell.git_status",
+                        config={"arguments": {}},
+                    ),
+                )
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.tool_disabled")
+        self.assertEqual(
+            result.diagnostics[0].message,
+            "shell.git_status is disabled for this flow.",
+        )
+        self.assertIn("capabilities", result.diagnostics[0].hint)
+        self.assertIn("read", result.diagnostics[0].hint)
+        self.assertIn("allowed_commands", result.diagnostics[0].hint)
+        self.assertIn("status", result.diagnostics[0].hint)
+
+    def test_validate_flow_definition_rejects_unavailable_shell_git_runtime(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(_tool_manager())
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(
+                        name="start",
+                        type=FLOW_TOOL_NODE_TYPE,
+                        ref="shell.git_status",
+                        config={"arguments": {}},
+                    ),
+                )
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.tool_unknown")
+        self.assertEqual(
+            result.diagnostics[0].message,
+            "shell.git_status is not available in this flow runtime.",
+        )
+        self.assertIn("shell tool resolver", result.diagnostics[0].hint)
+        self.assertIn("required capability", result.diagnostics[0].hint)
+
+    def test_validate_flow_definition_rejects_disabled_unknown_shell_git_name(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(
+            StaticToolResolver(
+                [],
+                disabled_names={"shell.git_custom_operation"},
+            )
+        )
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(
+                        name="start",
+                        type=FLOW_TOOL_NODE_TYPE,
+                        ref="shell.git_custom_operation",
+                        config={"arguments": {}},
+                    ),
+                )
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.tool_disabled")
+        self.assertEqual(
+            result.diagnostics[0].message,
+            "shell.git_custom_operation is disabled for this flow.",
+        )
+        self.assertIn(
+            "the required Git capability",
+            result.diagnostics[0].hint,
+        )
+        self.assertIn("custom-operation", result.diagnostics[0].hint)
+
     def test_validate_flow_definition_rejects_strict_tool_refs(
         self,
     ) -> None:
@@ -1407,6 +1744,34 @@ class FlowValidatorTestCase(TestCase):
         )
         self.assertIn("shell tool resolver", result.diagnostics[0].hint)
         self.assertIn("allow_pipelines=true", result.diagnostics[0].hint)
+
+    def test_validate_flow_definition_rejects_unavailable_unknown_git_ref(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(StaticToolResolver([]))
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(
+                        name="start",
+                        type=FLOW_TOOL_NODE_TYPE,
+                        ref="shell.git_custom_command",
+                        config={"arguments": {}},
+                    ),
+                )
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.tool_unknown")
+        self.assertEqual(result.diagnostics[0].path, "nodes.start.ref")
+        self.assertEqual(
+            result.diagnostics[0].message,
+            "shell.git_custom_command is not available in this flow runtime.",
+        )
+        self.assertIn("shell tool resolver", result.diagnostics[0].hint)
 
     def test_validate_flow_definition_rejects_strict_tool_bindings(
         self,

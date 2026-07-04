@@ -1,0 +1,41 @@
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-4.1-mini"
+
+[tool]
+enable = [
+    "shell.git_status",
+    "shell.git_diff",
+    "shell.git_log",
+]
+
+[tool.shell.git]
+workspace_root = "."
+cwd = "."
+capabilities = ["read"]
+allowed_commands = ["status", "diff", "log"]
+default_timeout_seconds = 5.0
+max_timeout_seconds = 20.0
+max_stdout_bytes = 65536
+max_stderr_bytes = 32768
+max_diff_bytes = 131072
+max_log_count = 25
+max_pathspecs = 16
+allow_optional_locks = false
+allow_submodules = false
+redact_remote_urls = true
+redact_credentials = true
+redact_author_emails = true
+
+[memory]
+recent = true
+
+[run]
+max_new_tokens = 1024
+
+[agent]
+name = "Git Inspector"
+role = """
+Use only the enabled read-only shell Git tools to inspect repository status,
+staged or worktree diffs, and recent history. Treat Git output as potentially
+sensitive repository data and keep responses scoped to the user's request.
+"""

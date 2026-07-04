@@ -19,7 +19,16 @@ from .entities import (
     ShellFormattedCompositionResult,
     ShellFormattedResult,
 )
+from .git import (
+    ShellGitCommandName,
+    ShellGitCommandRequest,
+    ShellGitCommandResult,
+    ShellGitExecutionStatus,
+    ShellGitFormattedResult,
+)
+from .git_policy import redact_git_text
 from .registry import SHELL_COMMAND_DEFINITIONS
+from .settings import ShellGitToolSettings
 
 from collections.abc import Mapping, Sequence
 from shlex import join as shell_join
@@ -91,16 +100,25 @@ _GENERATED_OUTPUT_PATH_MARKERS = (
     "/private/var/folders/",
     "avalan-shell-",
 )
+_GIT_DISPLAY_REDACTION_SETTINGS = ShellGitToolSettings()
 
 
 def project_shell_tool_display(
     *,
     call: ToolCall,
     outcome: ToolCallOutcome | None = None,
-    request: ShellCommandRequest | ShellCompositionRequest | None = None,
+    request: (
+        ShellCommandRequest
+        | ShellCompositionRequest
+        | ShellGitCommandRequest
+        | None
+    ) = None,
 ) -> ToolDisplayProjection | None:
     assert isinstance(call, ToolCall)
     if outcome is not None:
+        git_result = _git_result_from_outcome(outcome)
+        if git_result is not None:
+            return project_shell_git_result(git_result)
         composition_result = _composition_result_from_outcome(outcome)
         if composition_result is not None:
             return project_shell_composition_result(composition_result)
@@ -112,6 +130,8 @@ def project_shell_tool_display(
         return None
     if isinstance(request, ShellCompositionRequest):
         return project_shell_composition_request(request)
+    if isinstance(request, ShellGitCommandRequest):
+        return project_shell_git_request(request)
     return project_shell_command_request(request)
 
 
@@ -229,6 +249,101 @@ def project_shell_composition_result(
     )
 
 
+def project_shell_git_request(
+    request: ShellGitCommandRequest,
+) -> ToolDisplayProjection:
+    assert isinstance(request, ShellGitCommandRequest)
+    target, target_redacted = _git_request_target(request)
+    scope, scope_redacted = _safe_path(request.cwd or ".")
+    details = [
+        _detail("action", _git_command_action(request.command)),
+        _detail("git command", request.command.value),
+        _detail("cwd", scope or ".", redacted=scope_redacted),
+        _detail("capability required", request.capability_required.value),
+        _detail("path count", len(request.pathspecs)),
+    ]
+    mode = _string_option(request.options, "mode")
+    if mode is not None:
+        details.append(_detail("mode", mode))
+    pathspecs, pathspecs_redacted = _pathspecs_value(
+        request.pathspecs,
+        default=None,
+    )
+    if pathspecs is not None:
+        details.append(
+            _detail("pathspecs", pathspecs, redacted=pathspecs_redacted)
+        )
+    caps = _git_caps(
+        timeout_seconds=request.timeout_seconds,
+        max_stdout_bytes=request.max_stdout_bytes,
+        max_stderr_bytes=request.max_stderr_bytes,
+    )
+    if caps is not None:
+        details.append(_detail("caps", caps))
+    return ToolDisplayProjection(
+        action=_git_command_action(request.command),
+        label=request.tool_name,
+        target=target,
+        scope=scope or ".",
+        summary=f"Run bounded shell Git {request.command.value}.",
+        details=details,
+        metrics=_git_request_metrics(request),
+        redacted=target_redacted or scope_redacted or pathspecs_redacted,
+    )
+
+
+def project_shell_git_result(
+    result: ShellGitCommandResult,
+) -> ToolDisplayProjection:
+    assert isinstance(result, ShellGitCommandResult)
+    target, target_redacted = _git_display_argv(result.display_argv)
+    scope, scope_redacted = _safe_path(result.effective_cwd)
+    repo_root, repo_root_redacted = _safe_path(result.resolved_repo_root)
+    truncation = _git_truncation(result)
+    details = [
+        _detail("git command", result.command.value),
+        _detail("display argv", target, redacted=target_redacted),
+        _detail("cwd", scope or ".", redacted=scope_redacted),
+        _detail(
+            "repo root",
+            repo_root or "unknown",
+            redacted=repo_root_redacted,
+        ),
+        _detail("capability required", result.capability_required.value),
+        _detail("execution mode", result.execution_mode),
+    ]
+    mode = _git_result_mode(result)
+    if mode is not None:
+        details.append(_detail("mode", mode))
+    if result.error_code is not None:
+        details.append(_detail("error code", result.error_code.value))
+    if result.error_message is not None:
+        details.append(_detail("error message", result.error_message))
+    details.extend(
+        (
+            _detail("path count", _git_result_path_count(result)),
+            _detail("truncation", truncation),
+            _detail(
+                "audit metadata",
+                _git_audit_summary(result.audit_metadata),
+            ),
+        )
+    )
+    return ToolDisplayProjection(
+        action=_git_command_action(result.command),
+        label=result.tool_name,
+        target=target,
+        scope=scope or ".",
+        summary=_git_result_summary(result),
+        status=result.status.value,
+        outcome=result.status.value,
+        severity=_git_result_severity(result.status),
+        details=details,
+        metrics=_git_result_metrics(result),
+        redacted=target_redacted or scope_redacted or repo_root_redacted,
+    )
+
+
 def _execution_result_from_outcome(
     outcome: ToolCallOutcome,
 ) -> ExecutionResult | None:
@@ -241,6 +356,230 @@ def _execution_result_from_outcome(
     if isinstance(execution_result, ExecutionResult):
         return execution_result
     return None
+
+
+def _git_result_from_outcome(
+    outcome: ToolCallOutcome,
+) -> ShellGitCommandResult | None:
+    if not isinstance(outcome, ToolCallResult):
+        return None
+    result = outcome.result
+    if isinstance(result, ShellGitFormattedResult):
+        return result.git_result
+    git_result = getattr(result, "git_result", None)
+    if isinstance(git_result, ShellGitCommandResult):
+        return git_result
+    return None
+
+
+def _git_command_action(command: ShellGitCommandName) -> str:
+    assert isinstance(command, ShellGitCommandName)
+    if command in {
+        ShellGitCommandName.ADD,
+        ShellGitCommandName.RESTORE,
+        ShellGitCommandName.CHECKOUT,
+        ShellGitCommandName.SWITCH,
+        ShellGitCommandName.RM,
+        ShellGitCommandName.MV,
+        ShellGitCommandName.STASH_PUSH,
+        ShellGitCommandName.STASH_APPLY,
+    }:
+        return "git worktree"
+    if command in {
+        ShellGitCommandName.COMMIT,
+        ShellGitCommandName.BRANCH_CREATE,
+        ShellGitCommandName.BRANCH_DELETE,
+        ShellGitCommandName.BRANCH_RENAME,
+        ShellGitCommandName.TAG_CREATE,
+        ShellGitCommandName.TAG_DELETE,
+        ShellGitCommandName.MERGE,
+        ShellGitCommandName.REBASE,
+        ShellGitCommandName.CHERRY_PICK,
+        ShellGitCommandName.REVERT,
+        ShellGitCommandName.CLEAN,
+        ShellGitCommandName.STASH_POP,
+        ShellGitCommandName.STASH_DROP,
+    }:
+        return "git history"
+    if command is ShellGitCommandName.RESET:
+        return "git mutation"
+    if command in {
+        ShellGitCommandName.FETCH,
+        ShellGitCommandName.PULL,
+        ShellGitCommandName.PUSH,
+        ShellGitCommandName.CLONE,
+        ShellGitCommandName.REMOTE_LIST,
+        ShellGitCommandName.REMOTE_ADD,
+        ShellGitCommandName.REMOTE_SET_URL,
+        ShellGitCommandName.REMOTE_REMOVE,
+        ShellGitCommandName.REMOTE_RENAME,
+        ShellGitCommandName.SUBMODULE_UPDATE,
+    }:
+        return "git remote"
+    return "git inspect"
+
+
+def _git_request_target(
+    request: ShellGitCommandRequest,
+) -> tuple[str | None, bool]:
+    for key in (
+        "revision",
+        "target",
+        "remote",
+        "url",
+        "branch",
+        "path",
+        "source_path",
+        "destination_path",
+    ):
+        value = _string_option(request.options, key)
+        if value is not None:
+            if "path" in key:
+                return _safe_path(value)
+            return _safe_git_request_value(value)
+    paths, redacted = _pathspecs_value(request.pathspecs, default=None)
+    if paths is not None:
+        return paths, redacted
+    return request.command.value, False
+
+
+def _safe_git_request_value(value: str) -> tuple[str, bool]:
+    redacted = redact_git_text(value, _GIT_DISPLAY_REDACTION_SETTINGS)
+    return redacted, redacted != value
+
+
+def _pathspecs_value(
+    pathspecs: Sequence[str],
+    *,
+    default: str | None,
+) -> tuple[str | None, bool]:
+    if not pathspecs:
+        return default, False
+    values: list[str] = []
+    redacted = False
+    for pathspec in pathspecs:
+        value, value_redacted = _safe_path(pathspec)
+        values.append(value or REDACTED_DISPLAY_VALUE)
+        redacted = redacted or value_redacted
+    if len(values) <= 3:
+        return ", ".join(values), redacted
+    return f"{', '.join(values[:3])}, ...", redacted
+
+
+def _git_caps(
+    *,
+    timeout_seconds: float | None,
+    max_stdout_bytes: int | None,
+    max_stderr_bytes: int | None,
+) -> str | None:
+    parts = [
+        _composition_cap("timeout", timeout_seconds),
+        _composition_cap("stdout", max_stdout_bytes),
+        _composition_cap("stderr", max_stderr_bytes),
+    ]
+    caps = ", ".join(part for part in parts if part is not None)
+    return caps or None
+
+
+def _git_request_metrics(
+    request: ShellGitCommandRequest,
+) -> dict[str, int | float]:
+    metrics: dict[str, int | float] = {"path_count": len(request.pathspecs)}
+    if request.timeout_seconds is not None:
+        metrics["timeout_seconds"] = request.timeout_seconds
+    if request.max_stdout_bytes is not None:
+        metrics["max_stdout_bytes"] = request.max_stdout_bytes
+    if request.max_stderr_bytes is not None:
+        metrics["max_stderr_bytes"] = request.max_stderr_bytes
+    return metrics
+
+
+def _git_display_argv(
+    display_argv: tuple[str, ...],
+) -> tuple[str, bool]:
+    arguments: list[str] = []
+    redacted = False
+    for argument in display_argv:
+        display_argument, argument_redacted = _safe_command_argument(argument)
+        arguments.append(display_argument)
+        redacted = redacted or argument_redacted
+    return shell_join(tuple(arguments)), redacted
+
+
+def _git_result_path_count(result: ShellGitCommandResult) -> int:
+    for key in ("git_request_pathspecs", "request_pathspecs"):
+        value = result.audit_metadata.get(key)
+        if isinstance(value, Sequence) and not isinstance(
+            value,
+            str | bytes | bytearray,
+        ):
+            return len(value)
+    return 0
+
+
+def _git_result_mode(result: ShellGitCommandResult) -> str | None:
+    for key in ("git_request_options", "request_options"):
+        options = result.audit_metadata.get(key)
+        if isinstance(options, Mapping):
+            mode = options.get("mode")
+            if isinstance(mode, str) and mode:
+                return mode
+    return None
+
+
+def _git_truncation(result: ShellGitCommandResult) -> str:
+    truncated = []
+    if result.stdout_truncated:
+        truncated.append("stdout")
+    if result.stderr_truncated:
+        truncated.append("stderr")
+    return ", ".join(truncated) if truncated else "none"
+
+
+def _git_audit_summary(metadata: Mapping[str, object]) -> str:
+    keys = tuple(str(key) for key in metadata.keys())
+    if not keys:
+        return "none"
+    if len(keys) <= 8:
+        return ", ".join(keys)
+    return f"{', '.join(keys[:8])}, ..."
+
+
+def _git_result_summary(result: ShellGitCommandResult) -> str:
+    if result.status is ShellGitExecutionStatus.SUCCESS:
+        return f"{result.tool_name} completed."
+    if result.status is ShellGitExecutionStatus.POLICY_DENIED:
+        if result.error_message is not None:
+            return f"{result.tool_name} was denied: {result.error_message}."
+        return f"{result.tool_name} was denied by policy."
+    if result.status is ShellGitExecutionStatus.COMMAND_UNAVAILABLE:
+        return "git executable is unavailable."
+    if result.status is ShellGitExecutionStatus.TIMEOUT:
+        return f"{result.tool_name} timed out."
+    if result.status is ShellGitExecutionStatus.CANCELLED:
+        return f"{result.tool_name} was cancelled."
+    if result.exit_code is not None:
+        return f"{result.tool_name} exited with status {result.exit_code}."
+    return f"{result.tool_name} ended with {result.status.value}."
+
+
+def _git_result_severity(status: ShellGitExecutionStatus) -> str:
+    if status is ShellGitExecutionStatus.SUCCESS:
+        return "info"
+    if status is ShellGitExecutionStatus.POLICY_DENIED:
+        return "warning"
+    return "error"
+
+
+def _git_result_metrics(
+    result: ShellGitCommandResult,
+) -> dict[str, int]:
+    return {
+        "duration_ms": result.duration_ms,
+        "stdout_bytes": result.stdout_bytes,
+        "stderr_bytes": result.stderr_bytes,
+        "path_count": _git_result_path_count(result),
+    }
 
 
 def _composition_result_from_outcome(

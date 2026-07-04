@@ -83,7 +83,7 @@ from ...tool.browser import BrowserToolSettings
 from ...tool.context import ToolSettingsContext
 from ...tool.database.settings import DatabaseToolSettings
 from ...tool.graph_settings import GraphToolSettings
-from ...tool.shell import ShellToolSettings
+from ...tool.shell import ShellGitToolSettings, ShellToolSettings
 
 from argparse import Namespace
 from collections.abc import Iterable, Mapping, Sequence
@@ -366,6 +366,11 @@ def _tool_settings_from_mapping(
                 value = _coerce_shell_tool_setting_value(field.name, value)
             values[field.name] = value
 
+    if settings_cls is ShellToolSettings:
+        git_settings = _shell_git_settings_from_mapping(mapping)
+        if git_settings is not None:
+            values["git"] = git_settings
+
     if not values:
         return None
 
@@ -405,6 +410,10 @@ def _tool_settings_explicit_fields_from_mapping(
             and mapping[field.name] is not None
         ):
             explicit_fields.add(field.name)
+    if settings_cls is ShellToolSettings:
+        explicit_fields.update(
+            _shell_git_explicit_fields_from_mapping(mapping)
+        )
     return frozenset(explicit_fields)
 
 
@@ -424,6 +433,71 @@ def _coerce_shell_tool_setting_value(field_name: str, value: object) -> object:
     if field_name == "executable_paths":
         return _coerce_shell_executable_paths(value)
     return value
+
+
+def _shell_git_settings_from_mapping(
+    mapping: Mapping[str, object] | Namespace,
+) -> ShellGitToolSettings | None:
+    values: dict[str, object] = {}
+    for field in fields(ShellGitToolSettings):
+        key = f"tool_shell_git_{field.name}"
+        if isinstance(mapping, Namespace):
+            if not hasattr(mapping, key):
+                continue
+            value = getattr(mapping, key)
+        else:
+            if key not in mapping:
+                continue
+            value = mapping[key]
+        if value is not None:
+            values[field.name] = value
+    if not values:
+        return None
+    _complete_partial_shell_git_timeout_values(values)
+    return cast(
+        ShellGitToolSettings, cast(Any, ShellGitToolSettings)(**values)
+    )
+
+
+def _complete_partial_shell_git_timeout_values(
+    values: dict[str, object],
+) -> None:
+    default_key = "default_timeout_seconds"
+    max_key = "max_timeout_seconds"
+    if default_key in values and max_key in values:
+        return
+
+    defaults = ShellGitToolSettings()
+    if max_key in values:
+        max_timeout = values[max_key]
+        if (
+            isinstance(max_timeout, int | float)
+            and not isinstance(max_timeout, bool)
+            and max_timeout < defaults.default_timeout_seconds
+        ):
+            values[default_key] = max_timeout
+    elif default_key in values:
+        default_timeout = values[default_key]
+        if (
+            isinstance(default_timeout, int | float)
+            and not isinstance(default_timeout, bool)
+            and default_timeout > defaults.max_timeout_seconds
+        ):
+            values[max_key] = default_timeout
+
+
+def _shell_git_explicit_fields_from_mapping(
+    mapping: Mapping[str, object] | Namespace,
+) -> set[str]:
+    explicit_fields: set[str] = set()
+    for field in fields(ShellGitToolSettings):
+        key = f"tool_shell_git_{field.name}"
+        if isinstance(mapping, Namespace):
+            if hasattr(mapping, key) and getattr(mapping, key) is not None:
+                explicit_fields.add(f"git.{field.name}")
+        elif key in mapping and mapping[key] is not None:
+            explicit_fields.add(f"git.{field.name}")
+    return explicit_fields
 
 
 def _coerce_shell_executable_paths(value: object) -> object:
@@ -519,7 +593,7 @@ def _shell_tool_template_settings(
 ) -> (
     dict[
         str,
-        bool | int | float | str | tuple[str, ...] | dict[str, str],
+        bool | int | float | str | tuple[str, ...] | dict[str, object],
     ]
     | None
 ):
@@ -529,7 +603,7 @@ def _shell_tool_template_settings(
     default_settings = ShellToolSettings()
     rendered: dict[
         str,
-        bool | int | float | str | tuple[str, ...] | dict[str, str],
+        bool | int | float | str | tuple[str, ...] | dict[str, object],
     ] = {}
     for field in fields(ShellToolSettings):
         name = field.name
@@ -538,10 +612,38 @@ def _shell_tool_template_settings(
         value = getattr(settings, name)
         if value == getattr(default_settings, name):
             continue
+        if name == "git":
+            assert isinstance(value, ShellGitToolSettings)
+            default_git_settings = default_settings.git
+            assert isinstance(default_git_settings, ShellGitToolSettings)
+            git_settings = _shell_git_tool_template_settings(
+                value,
+                default_git_settings,
+            )
+            if git_settings:
+                rendered[name] = git_settings
+            continue
         if isinstance(value, bool | int | float | str):
             rendered[name] = value
         elif _is_simple_string_mapping(value):
             rendered[name] = dict(value)
+        elif _is_simple_string_sequence(value):
+            rendered[name] = tuple(value)
+    return rendered
+
+
+def _shell_git_tool_template_settings(
+    settings: ShellGitToolSettings,
+    default_settings: ShellGitToolSettings,
+) -> dict[str, object]:
+    rendered: dict[str, object] = {}
+    for field in fields(ShellGitToolSettings):
+        name = field.name
+        value = getattr(settings, name)
+        if value == getattr(default_settings, name):
+            continue
+        if isinstance(value, bool | int | float | str):
+            rendered[name] = value
         elif _is_simple_string_sequence(value):
             rendered[name] = tuple(value)
     return rendered

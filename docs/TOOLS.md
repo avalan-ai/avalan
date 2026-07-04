@@ -105,7 +105,7 @@ enabled.
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
 | `skills` | `skills.list`, `skills.match`, `skills.read`, `skills.check` | Discover and read trusted instruction resources through a registry. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline` | Read, inspect, search, transform, and compose workspace file operations under policy limits. `shell.pipeline` also requires `allow_pipelines = true`. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline`, `git_*` | Read, inspect, search, transform, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -577,6 +577,186 @@ See [agent_shell_pipeline.toml](examples/agent_shell_pipeline.toml),
 [shell_pipeline.flow.toml](examples/flows/shell_pipeline.flow.toml), and the
 pipeline task examples in [docs/examples/tasks](examples/tasks/README.md).
 
+### Shell Git Tools
+
+Shell Git tools are typed wrappers under the existing shell namespace, with
+flat names such as `shell.git_status` and `shell.git_diff`. They are not a raw
+Git dispatcher: models cannot pass arbitrary Git subcommands, global options,
+aliases, shell snippets, pager/editor hooks, or custom argument vectors.
+
+Read-only Git output can still expose sensitive repository data, including
+file names, author metadata, branches, commit subjects, patches, stashes, and
+remote names. Enable only the exact tools needed, keep byte and count caps
+low, and treat formatted output, display projections, audit metadata, logs,
+MCP/A2A responses, and task artifacts as sensitive.
+
+```toml
+[tool]
+enable = [
+  "shell.git_status",
+  "shell.git_diff",
+  "shell.git_log",
+]
+
+[tool.shell.git]
+workspace_root = "."
+cwd = "."
+capabilities = ["read"]
+allowed_commands = ["status", "diff", "log"]
+default_timeout_seconds = 5.0
+max_timeout_seconds = 20.0
+max_stdout_bytes = 65536
+max_stderr_bytes = 32768
+max_diff_bytes = 131072
+max_log_count = 25
+max_grep_matches = 1000
+max_pathspecs = 16
+max_pathspec_bytes = 4096
+allow_optional_locks = false
+allow_submodules = false
+redact_remote_urls = true
+redact_credentials = true
+redact_author_emails = true
+```
+
+`agent run`, `task run`, and `flow run` accept the same trusted CLI settings
+with `--tool-shell-git-*` flags:
+
+```sh
+avalan agent run docs/examples/agent_shell_git.toml \
+  --tool shell.git_status \
+  --tool shell.git_diff \
+  --tool shell.git_log \
+  --tool-shell-git-workspace-root . \
+  --tool-shell-git-cwd . \
+  --tool-shell-git-capabilities read \
+  --tool-shell-git-allowed-commands status \
+  --tool-shell-git-allowed-commands diff \
+  --tool-shell-git-allowed-commands log \
+  --display-tools
+```
+
+Strict flow tool nodes use the same flat refs:
+
+```toml
+[nodes.status]
+type = "tool"
+ref = "shell.git_status"
+
+[nodes.diff]
+type = "tool"
+ref = "shell.git_diff"
+
+[nodes.log]
+type = "tool"
+ref = "shell.git_log"
+```
+
+The example flow is
+[shell_git_readonly.flow.toml](examples/flows/shell_git_readonly.flow.toml).
+
+Capabilities are independent. `read` is the default when Git is configured,
+but it does not imply local mutation, history mutation, or network access.
+
+| Capability | Enables | Typical tools |
+| --- | --- | --- |
+| `read` | Non-network repository inspection. | `shell.git_status`, `shell.git_diff`, `shell.git_log`, `shell.git_show`, `shell.git_blame`, `shell.git_grep` |
+| `worktree` | Working tree and index changes. | `shell.git_add`, `shell.git_restore`, `shell.git_checkout`, `shell.git_reset`, `shell.git_stash_push` |
+| `history` | Commits, refs, merge/rebase/cherry-pick/revert, destructive history forms. | `shell.git_commit`, `shell.git_branch_create`, `shell.git_tag_delete`, `shell.git_merge`, `shell.git_rebase`, `shell.git_clean` |
+| `remote` | Network and remote configuration operations with protocol/host policy. | `shell.git_fetch`, `shell.git_push`, `shell.git_clone`, `shell.git_remote_add`, `shell.git_submodule_update` |
+
+Remote profiles require both `remote` capability and protocol/host
+allowlists. Credential-bearing URLs are denied unless trusted configuration
+opts into explicit credentials.
+
+```toml
+[tool]
+enable = ["shell.git_fetch", "shell.git_push"]
+
+[tool.shell.git]
+capabilities = ["remote"]
+allowed_commands = ["fetch", "push"]
+allowed_remote_protocols = ["https"]
+allowed_remote_hosts = ["github.com"]
+credential_policy = "deny"
+allow_remote_credentials = false
+redact_remote_urls = true
+redact_credentials = true
+```
+
+For capability-gated mutation, opt in to only the required capability and
+command:
+
+```toml
+[tool]
+enable = ["shell.git_add"]
+
+[tool.shell.git]
+capabilities = ["worktree"]
+allowed_commands = ["add"]
+max_pathspecs = 8
+```
+
+Common read-only calls:
+
+```json
+{"mode": "porcelain_v2", "include_branch": true}
+```
+
+```json
+{"mode": "staged", "paths": ["src/avalan/tool/shell"], "max_stdout_bytes": 32768}
+```
+
+```json
+{"max_count": 5, "format": "oneline", "paths": ["src/avalan/tool/shell"]}
+```
+
+```json
+{"path": "src/avalan/tool/shell/git_policy.py", "start_line": 1, "end_line": 80}
+```
+
+```json
+{"pattern": "shell.git_", "paths": ["src", "tests"], "max_matches": 50}
+```
+
+| Tool | Capability | Supported modes | Denied forms | Output caps | Default exposure | Implementation phase | Mutation risk |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `shell.git_status` | `read` | `porcelain_v2`, `short` | Global options, optional locks by default, pathspec escapes, submodule recursion. | `max_stdout_bytes`, `max_stderr_bytes`, pathspec count/byte caps. | Read if enabled | 3 | None intended. |
+| `shell.git_rev_parse`, `shell.git_branch`, `shell.git_tag`, `shell.git_describe`, `shell.git_ls_files` | `read` | Approved facts, current/list branches, list/show tags, bounded describe, tracked/safe file listing. | Mutation modes, arbitrary formats, unsafe refs, unsafe pathspecs, repository-boundary escapes. | `max_stdout_bytes`, `max_stderr_bytes`, revision/pathspec caps. | Read if enabled | 3 | None intended. |
+| `shell.git_log` | `read` | `summary`, `oneline` | Reflog walking, arbitrary formats, unsafe revisions, unsafe pathspecs. | `max_log_count`, `max_stdout_bytes`, `max_stderr_bytes`, revision/pathspec caps. | Read if enabled | 3 | None intended. |
+| `shell.git_diff` | `read` | `worktree`, `staged`, `range`, `stat`, `name_only` | External diff, textconv, unsafe revisions, unsafe pathspecs. | `max_diff_bytes`, `max_stdout_bytes`, `max_stderr_bytes`, revision/pathspec caps. | Read if enabled | 4 | None intended. |
+| `shell.git_show` | `read` | `summary`, `stat`, `patch` | Broad object reads, arbitrary formats, unsafe revisions, unsafe pathspecs. | `max_diff_bytes`, `max_stdout_bytes`, `max_stderr_bytes`, revision/pathspec caps. | Read if enabled | 4 | None intended. |
+| `shell.git_blame` | `read` | Bounded line range for one repo path. | External contents, textconv, submodule recursion, unsafe paths. | Line range, path, `max_stdout_bytes`, and `max_stderr_bytes` caps. | Read if enabled | 4 | None intended. |
+| `shell.git_grep` | `read` | Bounded repository search. | Pager use, `--no-index`, submodule recursion, unsafe patterns or paths. | `max_grep_matches`, pattern/path caps, `max_stdout_bytes`, `max_stderr_bytes`. | Read if enabled | 4 | None intended. |
+| `shell.git_stash_list`, `shell.git_stash_show` | `read` | Bounded stash listing, stat, or patch display. | Reflog walking outside typed stash forms, external diff, textconv. | `max_log_count`, `max_diff_bytes`, `max_stdout_bytes`, `max_stderr_bytes`. | Read if enabled | 4 | None intended. |
+| `shell.git_add`, `shell.git_restore`, `shell.git_checkout`, `shell.git_switch`, `shell.git_reset`, `shell.git_rm`, `shell.git_mv`, `shell.git_stash_push`, `shell.git_stash_apply` | `worktree` | Typed local working-tree/index forms. | Hooks, prompts, network, unsafe refs/pathspecs, unsupported destructive reset forms without history capability. | Pathspec/revision caps, commit-message caps where used, stdout/stderr caps. | Capability gated | 5 | Local files and index can change. |
+| `shell.git_commit`, branch/tag mutation, `shell.git_merge`, `shell.git_rebase`, `shell.git_cherry_pick`, `shell.git_revert`, `shell.git_reset`, `shell.git_clean`, stash pop/drop | `history` | Typed history/ref forms. | Editor, signing, hooks, prompts, unsafe refs, unsupported destructive forms without confirmations. | Revision/pathspec caps, commit-message caps, stdout/stderr caps. | Capability gated | 6 | Commits, refs, working tree, index, and destructive history can change. |
+| `shell.git_fetch`, `shell.git_pull`, `shell.git_push`, `shell.git_clone`, `shell.git_remote_*`, `shell.git_submodule_update` | `remote` | Typed remote/ref forms. | Disallowed protocols/hosts, credentials by default, force/mirror/prune/custom helpers, unsafe refspecs, submodule update unless explicitly allowed. | Refspec, URL, stdout/stderr, timeout, and path caps. | Remote-policy gated | 7 | Network, remote state, local remote config, and for pull/submodule local state can change. |
+
+Display projections include the Git action, target, cwd, repository root,
+mode, path count, caps, status, truncation, redacted display argv, and audit
+metadata keys. Policy denials are returned as tool results and are intended to
+be actionable, for example:
+
+```text
+shell.git_commit requires capability history; configured capabilities: read.
+```
+
+Common failure modes:
+
+| Failure | Result |
+| --- | --- |
+| Git executable is unavailable | `command_unavailable` result; install Git or choose a shell backend image/profile that includes it. |
+| `cwd` is not a repository | `repo_not_found`; set `workspace_root` and `cwd` to an existing repository or use `shell.git_clone` with a remote profile. |
+| Tool not enabled | `tool.disabled`/strict `flow.tool_disabled`; enable the exact `shell.git_*` tool and configure matching capability. |
+| Capability missing | `capability_required`; add the required capability only if the workflow is allowed to perform that class of action. |
+| Path outside repository or denied pathspec | `pathspec_denied` or repository-boundary denial; use repo-relative paths inside `workspace_root`. |
+| Revision rejected or not found | `revision_denied`, `revision_not_found`, or `ambiguous_revision`; use bounded ref names, `HEAD`, or validated commit ids. |
+| Remote protocol or host denied | `remote_protocol_denied` or `remote_host_denied`; add trusted protocol and host allowlists. |
+| Credential-bearing URL denied | `credential_denied`; remove credentials or enable explicit credential policy through trusted settings. |
+| Timeout | `timeout`; increase `max_timeout_seconds` and per-call `timeout_seconds` only for trusted workloads. |
+| Output truncated | Successful or failed result with truncation metadata; narrow paths/modes or raise output caps deliberately. |
+
 ## Database Tools
 
 Database tools share configured SQLAlchemy settings. Keep database agents
@@ -728,6 +908,8 @@ local runs often use `harmony`, while DS4 native tool calls use `dsml`.
   `database.kill`.
 - Scope shell tools to a trusted `workspace_root`; opt into media tools,
   absolute paths, symlinks, hidden files, and executable paths deliberately.
+- Treat read-only shell Git output as sensitive repository data, and keep Git
+  capabilities, command allowlists, remote allowlists, and output caps narrow.
 - Treat MCP and A2A endpoints as network trust boundaries; pin or allowlist
   remote `uri` and `name` values in code for production agents.
 - Log tool events safely. Avoid storing secrets, raw file bytes, or sensitive
