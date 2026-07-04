@@ -197,8 +197,9 @@ class GitExecutionPolicyPhase2Test(IsolatedAsyncioTestCase):
                     git=ShellGitToolSettings(
                         workspace_root=workspace,
                         cwd="repo",
-                        capabilities=("history",),
-                        allowed_commands=("commit",),
+                        capabilities=("remote",),
+                        allowed_commands=("fetch",),
+                        allowed_remote_hosts=("github.com",),
                     )
                 ),
                 executable_lookup=_fake_executable,
@@ -207,8 +208,11 @@ class GitExecutionPolicyPhase2Test(IsolatedAsyncioTestCase):
             with self.assertRaises(ShellGitPolicyDenied) as raised:
                 await policy.normalize(
                     _request(
-                        command=ShellGitCommandName.COMMIT,
-                        options={"message": "unsupported"},
+                        command=ShellGitCommandName.FETCH,
+                        options={
+                            "remote": "origin",
+                            "refspecs": ("main",),
+                        },
                     )
                 )
 

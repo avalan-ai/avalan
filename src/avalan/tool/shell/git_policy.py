@@ -10,12 +10,12 @@ from .entities import (
 from .filesystem import list_directory as _list_directory
 from .filesystem import read_bytes as _read_bytes
 from .git import (
-    SHELL_GIT_COMMAND_CAPABILITIES,
     ShellGitCapability,
     ShellGitCommandName,
     ShellGitCommandRequest,
     ShellGitExecutionErrorCode,
     ShellGitPolicyDenied,
+    shell_git_capability_for_request,
 )
 from .policy import ExecutionPolicy
 from .settings import ShellGitToolSettings, ShellToolSettings
@@ -43,6 +43,8 @@ _SAFE_GIT_ENVIRONMENT = {
     "GIT_PAGER": "/nonexistent",
     "PAGER": "/nonexistent",
     "GIT_EDITOR": "/nonexistent",
+    "GIT_SEQUENCE_EDITOR": "/nonexistent",
+    "GIT_MERGE_AUTOEDIT": "no",
     "VISUAL": "/nonexistent",
     "EDITOR": "/nonexistent",
     "GIT_ASKPASS": "/nonexistent",
@@ -124,6 +126,7 @@ _ANCESTRY_REVISION_PATTERN = compile_pattern(
     r"(?:(?:~[0-9]+)|(?:\^[0-9]*))*$"
 )
 _STASH_REF_PATTERN = compile_pattern(r"^stash@\{(?P<index>[0-9]+)\}$")
+_REVISION_BASE_PATTERN = compile_pattern(r"^(?P<base>[^~^]+)")
 _REMOTE_URL_PATTERN = compile_pattern(
     r"^(?P<protocol>[A-Za-z][A-Za-z0-9+.-]*)://"
     r"(?:(?P<userinfo>[^/@\s]+)@)?(?P<host>[^/@:\s]+)"
@@ -149,16 +152,21 @@ _DANGEROUS_CONFIG_MARKERS = (
     "gpgsign",
     "showsignature",
     "ignorerevsfile",
+    "[merge",
+    "merge.",
     "signing",
     "worktree",
 )
 _DANGEROUS_ATTRIBUTES_MARKERS = (
     "filter",
+    "merge=",
     "textconv",
     "diff=",
 )
 _DESCRIBE_OPTION_KEYS = frozenset(("target", "mode", "max_candidates"))
 _DIFF_OPTION_KEYS = frozenset(("mode", "base_revision", "head_revision"))
+_RESET_HISTORY_MODES = ("soft", "mixed", "hard")
+_RESET_MODES = ("paths", *_RESET_HISTORY_MODES)
 _ALLOWED_GIT_OPTION_KEYS = {
     ShellGitCommandName.STATUS: frozenset({"mode", "include_branch"}),
     ShellGitCommandName.REV_PARSE: frozenset({"fact"}),
@@ -183,7 +191,9 @@ _ALLOWED_GIT_OPTION_KEYS = {
     ),
     ShellGitCommandName.CHECKOUT: frozenset({"target"}),
     ShellGitCommandName.SWITCH: frozenset({"branch"}),
-    ShellGitCommandName.RESET: frozenset({"mode"}),
+    ShellGitCommandName.RESET: frozenset(
+        {"mode", "revision", "confirm_revision", "confirm_hard"},
+    ),
     ShellGitCommandName.RM: frozenset({"cached"}),
     ShellGitCommandName.MV: frozenset({"source", "destination"}),
     ShellGitCommandName.STASH_PUSH: frozenset(
@@ -193,6 +203,37 @@ _ALLOWED_GIT_OPTION_KEYS = {
         }
     ),
     ShellGitCommandName.STASH_APPLY: frozenset({"stash"}),
+    ShellGitCommandName.COMMIT: frozenset({"message"}),
+    ShellGitCommandName.BRANCH_CREATE: frozenset(
+        {"name", "start_point"},
+    ),
+    ShellGitCommandName.BRANCH_DELETE: frozenset(
+        {"name", "confirm_name"},
+    ),
+    ShellGitCommandName.BRANCH_RENAME: frozenset(
+        {"old_name", "new_name", "confirm_old_name"},
+    ),
+    ShellGitCommandName.TAG_CREATE: frozenset(
+        {"name", "target", "message"},
+    ),
+    ShellGitCommandName.TAG_DELETE: frozenset({"name", "confirm_name"}),
+    ShellGitCommandName.MERGE: frozenset(
+        {"revision", "mode", "confirm_revision"},
+    ),
+    ShellGitCommandName.REBASE: frozenset(
+        {"upstream", "branch", "confirm_upstream"},
+    ),
+    ShellGitCommandName.CHERRY_PICK: frozenset(
+        {"revision", "confirm_revision"},
+    ),
+    ShellGitCommandName.REVERT: frozenset({"revision", "confirm_revision"}),
+    ShellGitCommandName.CLEAN: frozenset(
+        {"dry_run", "confirm_paths"},
+    ),
+    ShellGitCommandName.STASH_POP: frozenset(
+        {"stash", "index", "confirm_stash"},
+    ),
+    ShellGitCommandName.STASH_DROP: frozenset({"stash", "confirm_stash"}),
 }
 
 
@@ -247,6 +288,11 @@ class GitExecutionPolicy:
         _validate_git_option_keys(request)
         _validate_revisions(request, git_settings)
         _validate_git_option_values(request.options)
+        await _validate_history_ref_state(
+            request,
+            git_dir=git_dir,
+            settings=git_settings,
+        )
         _validate_content_pathspec_scope(request, pathspecs, repo_root)
         _validate_mutation_pathspec_scope(request, pathspecs, repo_root)
         argv = _argv_for_request(request, pathspecs, git_settings)
@@ -261,7 +307,12 @@ class GitExecutionPolicy:
             request.max_stderr_bytes,
             git_settings.max_stderr_bytes,
         )
-        display_argv = _redacted_argv(argv, git_settings)
+        capability = shell_git_capability_for_request(request)
+        display_argv = _redacted_argv(
+            argv,
+            git_settings,
+            redact_messages=capability is ShellGitCapability.HISTORY,
+        )
         metadata = _metadata(
             request,
             workspace_root=workspace_root,
@@ -327,7 +378,14 @@ def _validate_authorization(
     request: ShellGitCommandRequest,
     settings: ShellGitToolSettings,
 ) -> None:
-    capability = SHELL_GIT_COMMAND_CAPABILITIES[request.command]
+    if request.command is ShellGitCommandName.RESET:
+        mode = _reset_mode_option(request.options)
+        if mode != "paths" and request.pathspecs:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.INVALID_OPTION,
+                "git reset ref-moving modes do not accept pathspecs",
+            )
+    capability = shell_git_capability_for_request(request)
     if request.command.value not in settings.allowed_commands:
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.COMMAND_DISABLED,
@@ -751,6 +809,12 @@ def _validate_mutation_pathspec_scope(
     pathspecs: tuple[str, ...],
     repo_root: Path,
 ) -> None:
+    if (
+        request.command is ShellGitCommandName.RESET
+        and _reset_mode_option(request.options) != "paths"
+    ):
+        _reject_pathspecs(pathspecs, "git reset ref-moving mode")
+        return
     if request.command is ShellGitCommandName.MV:
         _validate_mv_pathspec_scope(request, pathspecs, repo_root)
         return
@@ -762,6 +826,7 @@ def _validate_mutation_pathspec_scope(
         ShellGitCommandName.RM,
         ShellGitCommandName.STASH_PUSH,
         ShellGitCommandName.STASH_APPLY,
+        ShellGitCommandName.CLEAN,
     ):
         return
     for value in pathspecs:
@@ -877,6 +942,336 @@ def _validate_revisions(
         _validate_revision(value, settings)
 
 
+async def _validate_history_ref_state(
+    request: ShellGitCommandRequest,
+    *,
+    git_dir: Path,
+    settings: ShellGitToolSettings,
+) -> None:
+    if (
+        shell_git_capability_for_request(request)
+        is not ShellGitCapability.HISTORY
+    ):
+        return
+    heads, tags = await _local_ref_names(git_dir)
+    match request.command:
+        case ShellGitCommandName.BRANCH_CREATE:
+            name = _required_string_option(
+                request.options,
+                "name",
+                message="git branch create name must be a string",
+            )
+            _deny_existing_ref_name(name, heads, tags, "branch name")
+            start_point = _optional_string_option(
+                request.options,
+                "start_point",
+                message="git branch create start point must be a string",
+            )
+            if start_point is not None:
+                await _validate_resolvable_revision(
+                    start_point,
+                    heads,
+                    tags,
+                    git_dir=git_dir,
+                    settings=settings,
+                )
+            else:
+                await _require_head_ref(git_dir, heads)
+        case ShellGitCommandName.BRANCH_DELETE:
+            name = _required_string_option(
+                request.options,
+                "name",
+                message="git branch delete name must be a string",
+            )
+            _require_branch_ref(name, heads)
+        case ShellGitCommandName.BRANCH_RENAME:
+            old_name = _required_string_option(
+                request.options,
+                "old_name",
+                message="git branch rename old_name must be a string",
+            )
+            new_name = _required_string_option(
+                request.options,
+                "new_name",
+                message="git branch rename new_name must be a string",
+            )
+            _require_branch_ref(old_name, heads)
+            _deny_existing_ref_name(new_name, heads, tags, "new branch name")
+        case ShellGitCommandName.TAG_CREATE:
+            name = _required_string_option(
+                request.options,
+                "name",
+                message="git tag create name must be a string",
+            )
+            _deny_existing_ref_name(name, heads, tags, "tag name")
+            target = _optional_string_option(
+                request.options,
+                "target",
+                message="git tag create target must be a string",
+            )
+            if target is not None:
+                await _validate_resolvable_revision(
+                    target,
+                    heads,
+                    tags,
+                    git_dir=git_dir,
+                    settings=settings,
+                )
+            else:
+                await _require_head_ref(git_dir, heads)
+        case ShellGitCommandName.TAG_DELETE:
+            name = _required_string_option(
+                request.options,
+                "name",
+                message="git tag delete name must be a string",
+            )
+            _require_tag_ref(name, tags)
+        case ShellGitCommandName.RESET:
+            if _reset_mode_option(request.options) != "paths":
+                await _validate_required_revision_option(
+                    request,
+                    "revision",
+                    heads,
+                    tags,
+                    git_dir=git_dir,
+                    settings=settings,
+                )
+        case ShellGitCommandName.MERGE:
+            await _validate_required_revision_option(
+                request,
+                "revision",
+                heads,
+                tags,
+                git_dir=git_dir,
+                settings=settings,
+            )
+        case ShellGitCommandName.REBASE:
+            await _validate_required_revision_option(
+                request,
+                "upstream",
+                heads,
+                tags,
+                git_dir=git_dir,
+                settings=settings,
+            )
+            branch = _optional_string_option(
+                request.options,
+                "branch",
+                message="git rebase branch must be a string",
+            )
+            if branch is not None:
+                _require_branch_ref(branch, heads)
+        case ShellGitCommandName.CHERRY_PICK | ShellGitCommandName.REVERT:
+            await _validate_required_revision_option(
+                request,
+                "revision",
+                heads,
+                tags,
+                git_dir=git_dir,
+                settings=settings,
+            )
+        case ShellGitCommandName.STASH_POP | ShellGitCommandName.STASH_DROP:
+            stash = _required_string_option(
+                request.options,
+                "stash",
+                message="git stash reference must be a string",
+            )
+            await _validate_existing_stash_ref(stash, git_dir, settings)
+
+
+async def _local_ref_names(
+    git_dir: Path,
+) -> tuple[frozenset[str], frozenset[str]]:
+    heads = await _ref_names(git_dir, "heads")
+    tags = await _ref_names(git_dir, "tags")
+    packed = await _packed_ref_names(git_dir / "packed-refs")
+    return (
+        frozenset((*heads, *packed[0])),
+        frozenset((*tags, *packed[1])),
+    )
+
+
+async def _ref_names(git_dir: Path, namespace: str) -> frozenset[str]:
+    root = git_dir / "refs" / namespace
+    if not root.exists():
+        return frozenset()
+    names: set[str] = set()
+    await _collect_ref_names(root, root, names)
+    return frozenset(names)
+
+
+async def _collect_ref_names(
+    root: Path,
+    current: Path,
+    names: set[str],
+) -> None:
+    if not current.exists():
+        return
+    if not current.is_dir():
+        return
+    for child in await _list_directory(current):
+        if child.is_dir():
+            await _collect_ref_names(root, child, names)
+            continue
+        if not child.is_file():
+            continue
+        names.add(child.relative_to(root).as_posix())
+
+
+async def _packed_ref_names(
+    path: Path,
+) -> tuple[frozenset[str], frozenset[str]]:
+    heads: set[str] = set()
+    tags: set[str] = set()
+    for line in (await _read_text(path)).splitlines():
+        stripped = line.strip()
+        if (
+            not stripped
+            or stripped.startswith("#")
+            or stripped.startswith("^")
+        ):
+            continue
+        parts = stripped.split(" ", maxsplit=1)
+        if len(parts) != 2:
+            continue
+        ref = parts[1]
+        if ref.startswith("refs/heads/"):
+            heads.add(ref.removeprefix("refs/heads/"))
+        elif ref.startswith("refs/tags/"):
+            tags.add(ref.removeprefix("refs/tags/"))
+    return frozenset(heads), frozenset(tags)
+
+
+async def _validate_required_revision_option(
+    request: ShellGitCommandRequest,
+    name: str,
+    heads: frozenset[str],
+    tags: frozenset[str],
+    *,
+    git_dir: Path,
+    settings: ShellGitToolSettings,
+) -> None:
+    revision = _required_string_option(
+        request.options,
+        name,
+        message=f"git {name} must be a string",
+    )
+    await _validate_resolvable_revision(
+        revision,
+        heads,
+        tags,
+        git_dir=git_dir,
+        settings=settings,
+    )
+
+
+async def _validate_resolvable_revision(
+    value: str,
+    heads: frozenset[str],
+    tags: frozenset[str],
+    *,
+    git_dir: Path,
+    settings: ShellGitToolSettings,
+) -> None:
+    _validate_revision(value, settings)
+    base = _revision_base(value)
+    if _HEX_REVISION_PATTERN.match(base):
+        return
+    if base == "HEAD":
+        await _require_head_ref(git_dir, heads)
+        return
+    has_head = base in heads
+    has_tag = base in tags
+    if has_head and has_tag:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.AMBIGUOUS_REVISION,
+            "Git revision is ambiguous between local refs",
+        )
+    if not has_head and not has_tag:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REVISION_NOT_FOUND,
+            "Git revision was not found",
+        )
+
+
+def _revision_base(value: str) -> str:
+    match = _REVISION_BASE_PATTERN.match(value)
+    return value if match is None else match.group("base")
+
+
+async def _require_head_ref(
+    git_dir: Path,
+    heads: frozenset[str],
+) -> None:
+    head = (await _read_text(git_dir / "HEAD")).strip()
+    if head.startswith("ref: refs/heads/"):
+        name = head.removeprefix("ref: refs/heads/")
+        if name in heads:
+            return
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REVISION_NOT_FOUND,
+            "Git HEAD revision was not found",
+        )
+    if _HEX_REVISION_PATTERN.match(head):
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.REVISION_NOT_FOUND,
+        "Git HEAD revision was not found",
+    )
+
+
+def _require_branch_ref(name: str, heads: frozenset[str]) -> None:
+    if name in heads:
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.REVISION_NOT_FOUND,
+        "Git branch was not found",
+    )
+
+
+def _require_tag_ref(name: str, tags: frozenset[str]) -> None:
+    if name in tags:
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.REVISION_NOT_FOUND,
+        "Git tag was not found",
+    )
+
+
+def _deny_existing_ref_name(
+    name: str,
+    heads: frozenset[str],
+    tags: frozenset[str],
+    field_name: str,
+) -> None:
+    if name not in heads and name not in tags:
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.AMBIGUOUS_REVISION,
+        f"Git {field_name} already exists",
+    )
+
+
+async def _validate_existing_stash_ref(
+    value: str,
+    git_dir: Path,
+    settings: ShellGitToolSettings,
+) -> None:
+    _validate_stash_ref(value, settings)
+    match = _STASH_REF_PATTERN.match(value)
+    assert match is not None, "validated stash reference must match"
+    index = int(match.group("index"))
+    if index == 0 and (git_dir / "refs" / "stash").exists():
+        return
+    log = git_dir / "logs" / "refs" / "stash"
+    if log.exists() and len((await _read_text(log)).splitlines()) > index:
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.REVISION_NOT_FOUND,
+        "Git stash reference was not found",
+    )
+
+
 def _is_revision_option(command: ShellGitCommandName, name: str) -> bool:
     if command in (ShellGitCommandName.CLONE,):
         return False
@@ -964,7 +1359,7 @@ def _argv_for_request(
     if request.command is ShellGitCommandName.SWITCH:
         return _switch_argv(request, pathspecs, settings)
     if request.command is ShellGitCommandName.RESET:
-        return _reset_argv(request, pathspecs)
+        return _reset_argv(request, pathspecs, settings)
     if request.command is ShellGitCommandName.RM:
         return _rm_argv(request, pathspecs)
     if request.command is ShellGitCommandName.MV:
@@ -973,6 +1368,32 @@ def _argv_for_request(
         return _stash_push_argv(request, pathspecs)
     if request.command is ShellGitCommandName.STASH_APPLY:
         return _stash_apply_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.COMMIT:
+        return _commit_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.BRANCH_CREATE:
+        return _branch_create_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.BRANCH_DELETE:
+        return _branch_delete_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.BRANCH_RENAME:
+        return _branch_rename_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.TAG_CREATE:
+        return _tag_create_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.TAG_DELETE:
+        return _tag_delete_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.MERGE:
+        return _merge_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.REBASE:
+        return _rebase_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.CHERRY_PICK:
+        return _cherry_pick_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.REVERT:
+        return _revert_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.CLEAN:
+        return _clean_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.STASH_POP:
+        return _stash_pop_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.STASH_DROP:
+        return _stash_drop_argv(request, pathspecs, settings)
     raise ShellGitPolicyDenied(
         ShellGitExecutionErrorCode.COMMAND_DISABLED,
         "shell Git command is not executable in this phase",
@@ -1593,19 +2014,41 @@ def _switch_argv(
 def _reset_argv(
     request: ShellGitCommandRequest,
     pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
 ) -> tuple[str, ...]:
-    mode = _string_option(
+    mode = _reset_mode_option(request.options)
+    if mode == "paths":
+        _require_pathspecs_for_mutation(pathspecs, "git reset")
+        argv = _base_argv("reset")
+        argv.append("--")
+        argv.extend(pathspecs)
+        return tuple(argv)
+    _reject_pathspecs(pathspecs, "git reset ref-moving mode")
+    revision = _required_string_option(
         request.options,
-        "mode",
-        default_value="paths",
-        allowed_values=("paths",),
-        message="git reset mode is unsupported",
+        "revision",
+        message="git reset revision must be a string",
     )
-    assert mode == "paths"
-    _require_pathspecs_for_mutation(pathspecs, "git reset")
+    _require_confirmation(
+        request.options,
+        "confirm_revision",
+        revision,
+        "git reset",
+    )
+    confirm_hard = _bool_option(
+        request.options,
+        "confirm_hard",
+        default_value=False,
+        message="git reset confirm_hard must be boolean",
+    )
+    if mode == "hard" and not confirm_hard:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            "git reset hard mode requires confirm_hard",
+        )
+    _validate_revision(revision, settings)
     argv = _base_argv("reset")
-    argv.append("--")
-    argv.extend(pathspecs)
+    argv.extend((f"--{mode}", "--no-recurse-submodules", revision))
     return tuple(argv)
 
 
@@ -1703,6 +2146,371 @@ def _stash_apply_argv(
     return tuple(argv)
 
 
+def _commit_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git commit")
+    message = _required_string_option(
+        request.options,
+        "message",
+        message="git commit message must be a string",
+    )
+    _validate_message(message, settings, "commit message")
+    return (
+        *_base_argv("commit"),
+        "--no-edit",
+        "--no-gpg-sign",
+        "--no-verify",
+        "--no-post-rewrite",
+        "--no-status",
+        "--cleanup=strip",
+        "--message",
+        message,
+    )
+
+
+def _branch_create_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git branch create")
+    name = _required_string_option(
+        request.options,
+        "name",
+        message="git branch create name must be a string",
+    )
+    _validate_local_branch_target(name, settings, "branch name")
+    start_point = _optional_string_option(
+        request.options,
+        "start_point",
+        message="git branch create start point must be a string",
+    )
+    argv = _base_argv("branch")
+    argv.append("--no-track")
+    argv.append(name)
+    if start_point is not None:
+        argv.append(start_point)
+    return tuple(argv)
+
+
+def _branch_delete_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git branch delete")
+    name = _required_string_option(
+        request.options,
+        "name",
+        message="git branch delete name must be a string",
+    )
+    _validate_local_branch_target(name, settings, "branch name")
+    _require_confirmation(
+        request.options,
+        "confirm_name",
+        name,
+        "git branch delete",
+    )
+    return (*_base_argv("branch"), "--delete", name)
+
+
+def _branch_rename_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git branch rename")
+    old_name = _required_string_option(
+        request.options,
+        "old_name",
+        message="git branch rename old_name must be a string",
+    )
+    new_name = _required_string_option(
+        request.options,
+        "new_name",
+        message="git branch rename new_name must be a string",
+    )
+    _validate_local_branch_target(old_name, settings, "old branch name")
+    _validate_local_branch_target(new_name, settings, "new branch name")
+    _require_confirmation(
+        request.options,
+        "confirm_old_name",
+        old_name,
+        "git branch rename",
+    )
+    if old_name == new_name:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            "git branch rename requires different branch names",
+        )
+    return (*_base_argv("branch"), "--move", old_name, new_name)
+
+
+def _tag_create_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git tag create")
+    name = _required_string_option(
+        request.options,
+        "name",
+        message="git tag create name must be a string",
+    )
+    _validate_ref_name(name, settings, "tag name")
+    target = _optional_string_option(
+        request.options,
+        "target",
+        message="git tag create target must be a string",
+    )
+    message = _optional_string_option(
+        request.options,
+        "message",
+        message="git tag create message must be a string",
+    )
+    argv = _base_argv("tag")
+    if message is not None:
+        _validate_message(message, settings, "tag message")
+        argv.extend(("--annotate", "--no-sign", "--message", message))
+    argv.append(name)
+    if target is not None:
+        argv.append(target)
+    return tuple(argv)
+
+
+def _tag_delete_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git tag delete")
+    name = _required_string_option(
+        request.options,
+        "name",
+        message="git tag delete name must be a string",
+    )
+    _validate_ref_name(name, settings, "tag name")
+    _require_confirmation(
+        request.options,
+        "confirm_name",
+        name,
+        "git tag delete",
+    )
+    return (*_base_argv("tag"), "--delete", name)
+
+
+def _merge_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git merge")
+    revision = _required_string_option(
+        request.options,
+        "revision",
+        message="git merge revision must be a string",
+    )
+    _require_confirmation(
+        request.options,
+        "confirm_revision",
+        revision,
+        "git merge",
+    )
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="ff_only",
+        allowed_values=("ff_only", "no_ff"),
+        message="git merge mode is unsupported",
+    )
+    argv = _base_argv("merge")
+    argv.extend(
+        (
+            "--no-verify",
+            "--no-gpg-sign",
+            "--no-stat",
+            "--no-edit",
+            "--no-autostash",
+        )
+    )
+    argv.append("--ff-only" if mode == "ff_only" else "--no-ff")
+    argv.append(revision)
+    return tuple(argv)
+
+
+def _rebase_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git rebase")
+    upstream = _required_string_option(
+        request.options,
+        "upstream",
+        message="git rebase upstream must be a string",
+    )
+    _require_confirmation(
+        request.options,
+        "confirm_upstream",
+        upstream,
+        "git rebase",
+    )
+    branch = _optional_string_option(
+        request.options,
+        "branch",
+        message="git rebase branch must be a string",
+    )
+    if branch is not None:
+        _validate_local_branch_target(branch, settings, "rebase branch")
+    argv = _base_argv("rebase")
+    argv.extend(
+        (
+            "--no-verify",
+            "--no-gpg-sign",
+            "--no-stat",
+            "--no-autostash",
+            "--no-rebase-merges",
+            "--empty=stop",
+            upstream,
+        )
+    )
+    if branch is not None:
+        argv.append(branch)
+    return tuple(argv)
+
+
+def _cherry_pick_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git cherry-pick")
+    revision = _required_string_option(
+        request.options,
+        "revision",
+        message="git cherry-pick revision must be a string",
+    )
+    _require_confirmation(
+        request.options,
+        "confirm_revision",
+        revision,
+        "git cherry-pick",
+    )
+    return (
+        *_base_argv("cherry-pick"),
+        "--no-edit",
+        "--no-gpg-sign",
+        revision,
+    )
+
+
+def _revert_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git revert")
+    revision = _required_string_option(
+        request.options,
+        "revision",
+        message="git revert revision must be a string",
+    )
+    _require_confirmation(
+        request.options,
+        "confirm_revision",
+        revision,
+        "git revert",
+    )
+    return (
+        *_base_argv("revert"),
+        "--no-edit",
+        "--no-gpg-sign",
+        revision,
+    )
+
+
+def _clean_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    dry_run = _bool_option(
+        request.options,
+        "dry_run",
+        default_value=True,
+        message="git clean dry_run must be boolean",
+    )
+    _require_pathspecs_for_mutation(pathspecs, "git clean")
+    argv = _base_argv("clean")
+    argv.extend(("--dry-run",) if dry_run else ("--force",))
+    if not dry_run:
+        confirm_paths = _string_tuple_option(
+            request.options,
+            "confirm_paths",
+            message="git clean confirm_paths must be a sequence of strings",
+        )
+        if confirm_paths != pathspecs:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.INVALID_OPTION,
+                "git clean confirm_paths must match paths",
+            )
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _stash_pop_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git stash pop")
+    stash = _required_string_option(
+        request.options,
+        "stash",
+        message="git stash pop stash reference must be a string",
+    )
+    _validate_stash_ref(stash, settings)
+    _require_confirmation(
+        request.options,
+        "confirm_stash",
+        stash,
+        "git stash pop",
+    )
+    index = _bool_option(
+        request.options,
+        "index",
+        default_value=False,
+        message="git stash pop index must be boolean",
+    )
+    argv = _base_argv("stash")
+    argv.append("pop")
+    if index:
+        argv.append("--index")
+    argv.append(stash)
+    return tuple(argv)
+
+
+def _stash_drop_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git stash drop")
+    stash = _required_string_option(
+        request.options,
+        "stash",
+        message="git stash drop stash reference must be a string",
+    )
+    _validate_stash_ref(stash, settings)
+    _require_confirmation(
+        request.options,
+        "confirm_stash",
+        stash,
+        "git stash drop",
+    )
+    return (*_base_argv("stash"), "drop", stash)
+
+
 def _reject_revisions_for_mode(
     base_revision: str | None,
     head_revision: str | None,
@@ -1770,6 +2578,16 @@ def _string_option(
     return value
 
 
+def _reset_mode_option(options: Mapping[str, object]) -> str:
+    return _string_option(
+        options,
+        "mode",
+        default_value="paths",
+        allowed_values=_RESET_MODES,
+        message="git reset mode is unsupported",
+    )
+
+
 def _required_string_option(
     options: Mapping[str, object],
     name: str,
@@ -1835,6 +2653,60 @@ def _bool_option(
     return value
 
 
+def _string_tuple_option(
+    options: Mapping[str, object],
+    name: str,
+    *,
+    message: str,
+) -> tuple[str, ...]:
+    value = options.get(name, ())
+    if isinstance(value, str | bytes) or not isinstance(value, Sequence):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            message,
+        )
+    values: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.INVALID_OPTION,
+                message,
+            )
+        values.append(item)
+    return tuple(values)
+
+
+def _require_confirmation(
+    options: Mapping[str, object],
+    name: str,
+    expected: str,
+    command: str,
+) -> None:
+    value = options.get(name)
+    if value != expected:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            f"{command} requires {name} to match the requested target",
+        )
+
+
+def _validate_message(
+    value: str,
+    settings: ShellGitToolSettings,
+    field_name: str,
+) -> None:
+    if (
+        not value
+        or _contains_control(value)
+        or "\x00" in value
+        or len(value.encode("utf-8")) > settings.max_commit_message_bytes
+    ):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            f"Git {field_name} form is unsupported",
+        )
+
+
 def _bounded_count(
     value: object,
     *,
@@ -1876,8 +2748,12 @@ def _validate_ref_name(
         or "/" in value
         or ".." in value
         or " " in value
+        or value == "HEAD"
+        or value.endswith(".")
+        or value.endswith(".lock")
         or any(character in value for character in ("*", "?", "[", "]"))
         or len(value.encode("utf-8")) > settings.max_revision_bytes
+        or _HEX_REVISION_PATTERN.match(value)
         or not _REVISION_PATTERN.match(value)
     ):
         raise ShellGitPolicyDenied(
@@ -1891,7 +2767,6 @@ def _validate_local_branch_target(
     settings: ShellGitToolSettings,
     field_name: str,
 ) -> None:
-    _validate_ref_name(value, settings, field_name)
     if (
         value == "HEAD"
         or value.startswith(".")
@@ -1905,6 +2780,7 @@ def _validate_local_branch_target(
             ShellGitExecutionErrorCode.REVISION_DENIED,
             f"Git {field_name} form is unsupported",
         )
+    _validate_ref_name(value, settings, field_name)
 
 
 def _validate_stash_ref(
@@ -1995,13 +2871,12 @@ def _metadata(
     display_argv: tuple[str, ...],
     settings: ShellGitToolSettings,
 ) -> dict[str, object]:
+    capability = shell_git_capability_for_request(request)
     metadata: dict[str, object] = {
         "git_tool_name": request.tool_name,
         "git_command": request.command.value,
         "git_capability_required": request.capability_required.value,
-        "git_capability_used": (
-            SHELL_GIT_COMMAND_CAPABILITIES[request.command].value
-        ),
+        "git_capability_used": capability.value,
         "git_effective_cwd": _display_path(workspace_root, effective_cwd),
         "git_repo_root": _display_path(workspace_root, repo_root),
         "git_display_argv": display_argv,
@@ -2014,14 +2889,18 @@ def _metadata(
             settings,
         ),
     }
-    if (
-        SHELL_GIT_COMMAND_CAPABILITIES[request.command]
-        is ShellGitCapability.WORKTREE
-    ):
+    if capability is ShellGitCapability.WORKTREE:
         metadata.update(
             {
                 "git_mutation_attempted": True,
                 "git_mutation_scope": "worktree",
+            }
+        )
+    elif capability is ShellGitCapability.HISTORY:
+        metadata.update(
+            {
+                "git_mutation_attempted": True,
+                "git_mutation_scope": "history",
             }
         )
     if request.command is ShellGitCommandName.GREP:
@@ -2034,8 +2913,25 @@ def _metadata(
 def _redacted_argv(
     argv: tuple[str, ...],
     settings: ShellGitToolSettings,
+    *,
+    redact_messages: bool = False,
 ) -> tuple[str, ...]:
-    return tuple(_redact_text(argument, settings) for argument in argv)
+    redacted: list[str] = []
+    redact_next = False
+    for argument in argv:
+        if redact_next:
+            redacted.append("[redacted]")
+            redact_next = False
+            continue
+        if redact_messages and argument == "--message":
+            redacted.append(argument)
+            redact_next = True
+            continue
+        if redact_messages and argument.startswith("--message="):
+            redacted.append("--message=[redacted]")
+            continue
+        redacted.append(_redact_text(argument, settings))
+    return tuple(redacted)
 
 
 def _redacted_metadata(
@@ -2045,10 +2941,15 @@ def _redacted_metadata(
     if isinstance(value, str):
         return _redact_text(value, settings)
     if isinstance(value, Mapping):
-        return {
-            str(key): _redacted_metadata(item, settings)
-            for key, item in value.items()
-        }
+        redacted: dict[str, object] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            redacted[key_text] = (
+                "[redacted]"
+                if key_text == "message" and isinstance(item, str)
+                else _redacted_metadata(item, settings)
+            )
+        return redacted
     if isinstance(value, tuple):
         return tuple(_redacted_metadata(item, settings) for item in value)
     if isinstance(value, list):

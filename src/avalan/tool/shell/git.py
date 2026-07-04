@@ -276,6 +276,36 @@ class ShellGitCommandRequest:
         object.__setattr__(self, "metadata", dict(self.metadata))
 
 
+def shell_git_capability_for_request(
+    request: ShellGitCommandRequest,
+) -> ShellGitCapability:
+    assert isinstance(
+        request,
+        ShellGitCommandRequest,
+    ), "request must be a shell Git command request"
+    if request.command is ShellGitCommandName.RESET and _is_ref_reset_mode(
+        request.options.get("mode", "paths"),
+    ):
+        return ShellGitCapability.HISTORY
+    return SHELL_GIT_COMMAND_CAPABILITIES[request.command]
+
+
+def shell_git_capabilities_for_command(
+    command: ShellGitCommandName,
+) -> tuple[ShellGitCapability, ...]:
+    assert isinstance(
+        command,
+        ShellGitCommandName,
+    ), "command must be a shell Git command"
+    if command is ShellGitCommandName.RESET:
+        return (ShellGitCapability.WORKTREE, ShellGitCapability.HISTORY)
+    return (SHELL_GIT_COMMAND_CAPABILITIES[command],)
+
+
+def _is_ref_reset_mode(mode: object) -> bool:
+    return mode in ("soft", "mixed", "hard")
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ShellGitCommandResult:

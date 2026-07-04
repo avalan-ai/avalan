@@ -239,6 +239,7 @@ class ShellToolSettingsTest(TestCase):
         self.assertEqual(settings.max_pathspecs, 64)
         self.assertEqual(settings.max_pathspec_bytes, 4096)
         self.assertEqual(settings.max_revision_bytes, 256)
+        self.assertEqual(settings.max_commit_message_bytes, 4096)
         self.assertFalse(settings.allow_external_diff)
         self.assertFalse(settings.allow_textconv)
         self.assertFalse(settings.allow_optional_locks)
@@ -290,6 +291,7 @@ class ShellToolSettingsTest(TestCase):
             max_pathspecs=1,
             max_pathspec_bytes=1,
             max_revision_bytes=1,
+            max_commit_message_bytes=1,
             allow_external_diff=True,
             allow_textconv=True,
             allow_optional_locks=True,
@@ -322,6 +324,7 @@ class ShellToolSettingsTest(TestCase):
         )
         self.assertEqual(settings.allowed_remote_protocols, ("https",))
         self.assertEqual(settings.allowed_remote_hosts, ("github.com",))
+        self.assertEqual(settings.max_commit_message_bytes, 1)
         self.assertFalse(settings.redact_remote_urls)
         self.assertFalse(settings.redact_credentials)
         self.assertTrue(settings.redact_author_emails)
