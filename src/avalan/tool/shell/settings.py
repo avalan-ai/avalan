@@ -78,6 +78,41 @@ _GIT_HOST_PATTERN = compile_pattern(
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ShellGitToolSettings:
+    CLI_SCALAR_FIELDS: ClassVar[tuple[str, ...]] = (
+        "workspace_root",
+        "cwd",
+        "default_timeout_seconds",
+        "max_timeout_seconds",
+        "max_stdout_bytes",
+        "max_stderr_bytes",
+        "max_diff_bytes",
+        "max_log_count",
+        "max_grep_matches",
+        "max_pathspecs",
+        "max_pathspec_bytes",
+        "max_revision_bytes",
+        "max_commit_message_bytes",
+        "allow_external_diff",
+        "allow_textconv",
+        "allow_optional_locks",
+        "allow_submodules",
+        "allow_bare_repositories",
+        "allow_linked_worktrees",
+        "allow_alternates",
+        "allow_submodule_update",
+        "credential_policy",
+        "allow_remote_credentials",
+        "redact_remote_urls",
+        "redact_credentials",
+        "redact_author_emails",
+    )
+    CLI_SEQUENCE_FIELDS: ClassVar[tuple[str, ...]] = (
+        "capabilities",
+        "allowed_commands",
+        "allowed_remote_protocols",
+        "allowed_remote_hosts",
+    )
+
     workspace_root: str = "."
     cwd: str = "."
     capabilities: Sequence[str] = field(

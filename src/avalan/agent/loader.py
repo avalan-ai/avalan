@@ -91,6 +91,7 @@ from ..tool.mcp import McpToolSet
 from ..tool.memory import MemoryToolSet
 from ..tool.names import matches_tool_namespace
 from ..tool.shell import (
+    ShellGitToolSettings,
     ShellToolSet,
     ShellToolSettings,
     normalize_shell_enabled_tools,
@@ -288,7 +289,15 @@ def _merge_shell_tool_settings(
         return base
 
     valid_fields = {field.name for field in fields(ShellToolSettings)}
-    assert explicit_fields <= valid_fields
+    valid_git_fields = {field.name for field in fields(ShellGitToolSettings)}
+    assert all(
+        field in valid_fields
+        or (
+            field.startswith("git.")
+            and field.removeprefix("git.") in valid_git_fields
+        )
+        for field in explicit_fields
+    )
     values: dict[str, object] = {}
     execution_mode = _explicit_shell_execution_mode(
         override,
@@ -308,9 +317,73 @@ def _merge_shell_tool_settings(
     for name in explicit_fields:
         if name in _SHELL_EXECUTION_MODE_FIELDS:
             continue
+        if name.startswith("git."):
+            continue
         values[name] = getattr(override, name)
 
+    git_settings = _merge_shell_git_tool_settings(
+        base,
+        override,
+        explicit_fields,
+    )
+    if git_settings is not None:
+        values["git"] = git_settings
+
     return replace(base, **cast(Any, values))
+
+
+def _merge_shell_git_tool_settings(
+    base: ShellToolSettings,
+    override: ShellToolSettings,
+    explicit_fields: frozenset[str],
+) -> ShellGitToolSettings | None:
+    """Return Git settings with explicit nested overrides applied."""
+    if "git" in explicit_fields:
+        git_settings = override.git
+        assert isinstance(git_settings, ShellGitToolSettings)
+        return git_settings
+
+    explicit_git_fields = {
+        field.removeprefix("git.")
+        for field in explicit_fields
+        if field.startswith("git.")
+    }
+    if not explicit_git_fields:
+        return None
+
+    base_git_settings = base.git
+    override_git_settings = override.git
+    assert isinstance(base_git_settings, ShellGitToolSettings)
+    assert isinstance(override_git_settings, ShellGitToolSettings)
+    values = {
+        name: getattr(override_git_settings, name)
+        for name in explicit_git_fields
+    }
+    _complete_shell_git_timeout_merge_values(base_git_settings, values)
+    return replace(base_git_settings, **values)
+
+
+def _complete_shell_git_timeout_merge_values(
+    base: ShellGitToolSettings,
+    values: dict[str, object],
+) -> None:
+    """Add a timeout companion when a sparse overlay would be invalid."""
+    default_key = "default_timeout_seconds"
+    max_key = "max_timeout_seconds"
+    if default_key in values and max_key in values:
+        return
+
+    default_timeout = values.get(default_key, base.default_timeout_seconds)
+    max_timeout = values.get(max_key, base.max_timeout_seconds)
+    assert isinstance(default_timeout, int | float)
+    assert isinstance(max_timeout, int | float)
+    if default_timeout <= max_timeout:
+        return
+
+    if max_key in values:
+        values[default_key] = max_timeout
+    elif default_key in values:
+        values[max_key] = default_timeout
 
 
 def _explicit_shell_execution_mode(

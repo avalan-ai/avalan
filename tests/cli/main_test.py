@@ -28,7 +28,7 @@ from avalan.cli.display import cli_stream_display_config
 from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from avalan.entities import Model
 from avalan.tool.database import DatabaseToolSettings
-from avalan.tool.shell import ShellToolSettings
+from avalan.tool.shell import ShellGitToolSettings, ShellToolSettings
 
 README_CALCULATOR_ROLE = (
     "You are a helpful assistant named Tool, that can resolve user requests "
@@ -460,6 +460,7 @@ class CliShellToolOptionTestCase(TestCase):
             ["agent", "proxy"],
             ["agent", "init"],
             ["flow", "run", "flow.toml", "--tool", "shell.rg"],
+            ["task", "run", "task.toml", "--tool", "shell.rg"],
         ]
 
         for command in cases:
@@ -529,12 +530,29 @@ class CliShellToolOptionTestCase(TestCase):
             "agent proxy",
             "agent init",
             "flow run",
+            "task run",
         ]
         expected = {
             f"--tool-shell-{field.replace('_', '-')}"
             for field in ShellToolSettings.CLI_SCALAR_FIELDS
         }
         expected |= {
+            *(
+                f"--tool-shell-git-{field.replace('_', '-')}"
+                for field in ShellGitToolSettings.CLI_SCALAR_FIELDS
+            ),
+            *(
+                f"--tool-shell-git-{field.replace('_', '-')}"
+                for field in ShellGitToolSettings.CLI_SEQUENCE_FIELDS
+            ),
+            *(
+                f"--no-tool-shell-git-{field.replace('_', '-')}"
+                for field in ShellGitToolSettings.CLI_SCALAR_FIELDS
+                if isinstance(
+                    ShellGitToolSettings.__dataclass_fields__[field].default,
+                    bool,
+                )
+            ),
             "--no-tool-shell-input-file-manifest-enabled",
             "--tool-shell-container-profile",
             "--tool-shell-container-required",
@@ -3333,6 +3351,63 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         )
         with self.assertRaises(SystemExit):
             parser.parse_args(["--tool-shell-environment", "TOKEN=value"])
+
+    def test_add_shell_tool_settings_arguments_accepts_git_options(self):
+        parser = ArgumentParser()
+        CLI._add_tool_settings_arguments(
+            parser, prefix="shell", settings_cls=ShellToolSettings
+        )
+
+        args = parser.parse_args(
+            [
+                "--tool-shell-git-workspace-root",
+                "/workspace",
+                "--tool-shell-git-cwd",
+                "repo",
+                "--tool-shell-git-capabilities",
+                "read",
+                "--tool-shell-git-capabilities",
+                "remote",
+                "--tool-shell-git-allowed-commands",
+                "status",
+                "--tool-shell-git-max-log-count",
+                "12",
+                "--tool-shell-git-max-diff-bytes",
+                "8192",
+                "--tool-shell-git-allowed-remote-hosts",
+                "github.com",
+                "--tool-shell-git-credential-policy",
+                "allow_explicit",
+                "--tool-shell-git-allow-remote-credentials",
+                "--tool-shell-git-allow-submodules",
+                "--no-tool-shell-git-allow-submodules",
+                "--no-tool-shell-git-redact-remote-urls",
+            ]
+        )
+
+        self.assertEqual(args.tool_shell_git_workspace_root, "/workspace")
+        self.assertEqual(args.tool_shell_git_cwd, "repo")
+        self.assertEqual(
+            args.tool_shell_git_capabilities,
+            ["read", "remote"],
+        )
+        self.assertEqual(args.tool_shell_git_allowed_commands, ["status"])
+        self.assertEqual(args.tool_shell_git_max_log_count, 12)
+        self.assertEqual(args.tool_shell_git_max_diff_bytes, 8192)
+        self.assertEqual(
+            args.tool_shell_git_allowed_remote_hosts,
+            ["github.com"],
+        )
+        self.assertEqual(
+            args.tool_shell_git_credential_policy,
+            "allow_explicit",
+        )
+        self.assertTrue(args.tool_shell_git_allow_remote_credentials)
+        self.assertFalse(args.tool_shell_git_allow_submodules)
+        self.assertFalse(args.tool_shell_git_redact_remote_urls)
+
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--tool-shell-git-credential-policy", "ask"])
 
     def test_add_shell_tool_settings_arguments_accepts_executables(self):
         parser = ArgumentParser()

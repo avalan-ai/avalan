@@ -273,6 +273,31 @@ class ShellGitSettingsPhase1Test(TestCase):
 
 
 class ShellGitToolManagerPhase1Test(TestCase):
+    def test_sdk_read_only_profile_exposes_selected_git_tools(self) -> None:
+        manager = ToolManager.create_instance(
+            available_toolsets=[
+                ShellToolSet(
+                    settings=ShellToolSettings(
+                        git=ShellGitToolSettings(
+                            capabilities=("read",),
+                            allowed_commands=("status", "diff", "log"),
+                        )
+                    )
+                )
+            ],
+            enable_tools=[
+                "shell.git_status",
+                "shell.git_diff",
+                "shell.git_log",
+            ],
+            settings=ToolManagerSettings(),
+        )
+
+        self.assertIsNotNone(manager.describe_tool("shell.git_status"))
+        self.assertIsNotNone(manager.describe_tool("shell.git_diff"))
+        self.assertIsNotNone(manager.describe_tool("shell.git_log"))
+        self.assertIsNone(manager.describe_tool("shell.git_commit"))
+
     def test_tool_manager_provider_name_round_trips_git_tool(self) -> None:
         manager = ToolManager.create_instance(
             available_toolsets=[ShellToolSet()],

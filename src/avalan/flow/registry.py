@@ -21,6 +21,10 @@ from ..skill.settings import (
     trusted_skill_settings_identity_dict,
     trusted_skill_source_identity_dict,
 )
+from ..tool.shell.git import (
+    ShellGitCommandName,
+    shell_git_capabilities_for_command,
+)
 from ..tool.shell.opt_in import SHELL_PIPELINE_TOOL
 from ..utils import tool_call_diagnostic_payload, tool_call_error_payload
 from .definition import (
@@ -844,6 +848,26 @@ def _tool_ref_resolution_message(
                 "set trusted shell allow_pipelines=true."
             ),
         )
+    if requested_name.startswith("shell.git_"):
+        capability_hint = _shell_git_tool_capability_hint(requested_name)
+        command_hint = _shell_git_tool_command_hint(requested_name)
+        if status is ToolNameResolutionStatus.DISABLED:
+            return (
+                f"{requested_name} is disabled for this flow.",
+                (
+                    f"Enable {requested_name} and configure "
+                    "[tool.shell.git] capabilities to include "
+                    f"{capability_hint} and allowed_commands to include "
+                    f"{command_hint}."
+                ),
+            )
+        return (
+            f"{requested_name} is not available in this flow runtime.",
+            (
+                "Provide a shell tool resolver and enable the referenced "
+                "shell Git tool with the required capability."
+            ),
+        )
     if status is ToolNameResolutionStatus.DISABLED:
         return (
             "Tool flow node ref is disabled.",
@@ -853,6 +877,22 @@ def _tool_ref_resolution_message(
         "Tool flow node ref does not resolve to one enabled tool.",
         "Use an enabled avalan tool name or unambiguous alias.",
     )
+
+
+def _shell_git_tool_capability_hint(requested_name: str) -> str:
+    assert isinstance(requested_name, str) and requested_name.strip()
+    command_id = _shell_git_tool_command_hint(requested_name)
+    try:
+        command = ShellGitCommandName(command_id)
+    except ValueError:
+        return "the required Git capability"
+    capabilities = shell_git_capabilities_for_command(command)
+    return ", ".join(capability.value for capability in capabilities)
+
+
+def _shell_git_tool_command_hint(requested_name: str) -> str:
+    assert isinstance(requested_name, str) and requested_name.strip()
+    return requested_name.removeprefix("shell.git_").replace("_", "-")
 
 
 def _node_input_value(

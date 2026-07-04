@@ -7,6 +7,7 @@ This directory showcases configuration files and small programs that demonstrate
 - [agent_skills_pdf.toml](agent_skills_pdf.toml) – Agent that uses the read-only `skills` namespace with a trusted PDF skill source supplied at runtime. Adjust `tool.skills.skill_ids`, read limits, or the CLI `--tool-skills-source` / `--tool-skills-file` flags.
 - [agent_shell.toml](agent_shell.toml) – Agent with opt-in read-only shell tools for workspace inspection. Adjust `tool.enable`, `tool.shell.workspace_root`, or output caps to fit the workspace.
 - [agent_shell_pipeline.toml](agent_shell_pipeline.toml) – Agent with explicit `shell.pipeline` opt-in and structured pipeline arguments. Adjust `tool.shell.max_pipeline_*` caps or allowed commands to fit the workspace.
+- [agent_shell_git.toml](agent_shell_git.toml) – Agent with read-only `shell.git_status`, `shell.git_diff`, and `shell.git_log` tools. Adjust `[tool.shell.git]` workspace, command allowlist, and output caps for repository inspection.
 - [agent_gettext_translator.toml](agent_gettext_translator.toml) – Template-driven gettext translator. Adjust `source_language`, `destination_language`, or switch `engine.uri` to a different model.
 - [agent_support_reply.toml](agent_support_reply.toml) – Direct-prompt customer support reply drafter. Adapt the `system`, `developer`, or `user` prompts to fit your support policy.
 - [agent_messi.toml](agent_messi.toml) – Persona of Leo Messi with recent and PostgreSQL-backed memory. Change `engine.uri`, memory connection strings, or `run.max_new_tokens` for longer answers.
@@ -20,6 +21,10 @@ This directory showcases configuration files and small programs that demonstrate
 
 ## Tasks
 - [tasks](tasks/) – Task definition examples for scalar input, structured JSON, large direct files, provider file ids, hosted URLs, object-store URIs, conversion, retrieval and map-reduce fallback, local text conversion, local multimodal media, queued file tasks, artifact outputs, SDK construction, and intentionally invalid diagnostics.
+
+## Flows
+- [flows/shell_pipeline.flow.toml](flows/shell_pipeline.flow.toml) – Strict flow tool node backed by `shell.pipeline` when a runtime supplies the configured shell resolver.
+- [flows/shell_git_readonly.flow.toml](flows/shell_git_readonly.flow.toml) – Strict flow tool nodes that reference `shell.git_status`, `shell.git_diff`, and `shell.git_log` under a read-only shell Git runtime profile.
 
 ## Skills
 - [skills](skills/) – Hermetic skill packages for documentation tests. The PDF package teaches a tracked PDF workflow example and is trusted only when an operator or SDK config points a skills source at this directory or directly at `skills/pdf/SKILL.md`.

@@ -65,7 +65,7 @@ from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.graph_settings import GraphToolSettings
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.tool.parser import ToolCallParser
-from avalan.tool.shell import ShellToolSettings
+from avalan.tool.shell import ShellGitToolSettings, ShellToolSettings
 
 
 def _apple_container_backend_class() -> type[ContainerFakeBackend]:
@@ -645,6 +645,78 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(tool_settings.shell, ShellToolSettings)
         self.assertEqual(tool_settings.shell.max_head_lines, 9)
         server.serve.assert_awaited_once()
+
+    def test_agent_tool_settings_accept_shell_git_read_only_profile(
+        self,
+    ) -> None:
+        settings = agent_cmds._agent_tool_settings(
+            Namespace(
+                tool_shell_git_workspace_root="/workspace",
+                tool_shell_git_cwd="repo",
+                tool_shell_git_capabilities=["read"],
+                tool_shell_git_allowed_commands=["status", "diff", "log"],
+                tool_shell_git_max_log_count=12,
+                tool_shell_git_max_diff_bytes=8192,
+            )
+        )
+
+        self.assertIsInstance(settings.shell, ShellToolSettings)
+        assert settings.shell is not None
+        git_settings = settings.shell.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.workspace_root, "/workspace")
+        self.assertEqual(git_settings.cwd, "repo")
+        self.assertEqual(git_settings.capabilities, ("read",))
+        self.assertEqual(
+            git_settings.allowed_commands,
+            ("status", "diff", "log"),
+        )
+        self.assertEqual(git_settings.max_log_count, 12)
+        self.assertEqual(git_settings.max_diff_bytes, 8192)
+        self.assertEqual(
+            settings.shell_explicit_fields,
+            frozenset(
+                {
+                    "git.workspace_root",
+                    "git.cwd",
+                    "git.capabilities",
+                    "git.allowed_commands",
+                    "git.max_log_count",
+                    "git.max_diff_bytes",
+                }
+            ),
+        )
+
+    def test_shell_git_tool_settings_track_mapping_inputs(self) -> None:
+        mapping = {
+            "tool_shell_git_allowed_commands": ["status", "log"],
+            "tool_shell_git_max_log_count": 12,
+        }
+
+        settings = agent_cmds.get_tool_settings(
+            mapping,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
+        )
+        explicit_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                mapping,
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+
+        self.assertIsInstance(settings, ShellToolSettings)
+        assert isinstance(settings, ShellToolSettings)
+        self.assertIsInstance(settings.git, ShellGitToolSettings)
+        assert isinstance(settings.git, ShellGitToolSettings)
+        self.assertEqual(settings.git.allowed_commands, ("status", "log"))
+        self.assertEqual(settings.git.max_log_count, 12)
+        self.assertEqual(
+            explicit_fields,
+            frozenset({"git.allowed_commands", "git.max_log_count"}),
+        )
 
     async def test_agent_serve_needs_settings(self):
         args = Namespace(
@@ -1467,6 +1539,48 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_agent_init_shell_git_settings_output(self):
+        args = self._agent_init_args(
+            memory_recent=False,
+            tool=["shell.git_status", "shell.git_log"],
+            tool_shell_git_workspace_root="/workspace",
+            tool_shell_git_cwd="repo",
+            tool_shell_git_capabilities=["read"],
+            tool_shell_git_allowed_commands=["status", "log"],
+            tool_shell_git_default_timeout_seconds=5.0,
+            tool_shell_git_max_timeout_seconds=20.0,
+            tool_shell_git_max_log_count=12,
+            tool_shell_git_redact_author_emails=True,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T"]),
+            patch.object(agent_cmds.Prompt, "ask", side_effect=["N", "uri"]),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        self.assertIn("[tool.shell]", output)
+        self.assertIn("[tool.shell.git]", output)
+        self.assertNotIn("git = {", output)
+        parsed = tomllib.loads(output)
+        self.assertEqual(
+            parsed["tool"]["shell"]["git"],
+            {
+                "workspace_root": "/workspace",
+                "cwd": "repo",
+                "allowed_commands": ["status", "log"],
+                "default_timeout_seconds": 5.0,
+                "max_timeout_seconds": 20.0,
+                "max_log_count": 12,
+                "redact_author_emails": True,
+            },
+        )
+
     def test_shell_tool_template_settings_filters_defaults(self):
         settings = ShellToolSettings(
             max_head_lines=7,
@@ -1497,6 +1611,32 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         rendered = agent_cmds._shell_tool_template_settings(settings)
 
         self.assertEqual(rendered, {"backend": "sandbox"})
+
+    def test_shell_tool_template_settings_renders_git_settings(self):
+        settings = ShellToolSettings(
+            git=ShellGitToolSettings(
+                workspace_root="/workspace",
+                cwd="repo",
+                allowed_commands=("status", "diff"),
+                max_log_count=12,
+                redact_author_emails=True,
+            ),
+        )
+
+        rendered = agent_cmds._shell_tool_template_settings(settings)
+
+        self.assertEqual(
+            rendered,
+            {
+                "git": {
+                    "workspace_root": "/workspace",
+                    "cwd": "repo",
+                    "allowed_commands": ("status", "diff"),
+                    "max_log_count": 12,
+                    "redact_author_emails": True,
+                },
+            },
+        )
 
     def test_shell_tool_template_settings_rejects_non_simple_sequences(self):
         self.assertFalse(agent_cmds._is_simple_string_sequence("rg"))

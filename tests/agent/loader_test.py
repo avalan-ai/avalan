@@ -1,7 +1,10 @@
+from argparse import Namespace
 from contextlib import AsyncExitStack
 from logging import DEBUG, INFO, Logger
-from os import chmod, geteuid
+from os import chmod, devnull, environ, geteuid
 from pathlib import Path
+from shutil import which
+from subprocess import run
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any, Callable, cast
 from unittest import IsolatedAsyncioTestCase, main
@@ -15,6 +18,7 @@ from avalan.agent.loader import (
     _merge_shell_tool_settings,
     _shell_tool_runtime_settings,
 )
+from avalan.cli.commands import agent as agent_cmds
 from avalan.container import (
     ContainerProfileSelection,
     ContainerRuntimeEnvelopeKind,
@@ -67,6 +71,7 @@ from avalan.tool.shell import (
     ShellCommandRequest,
     ShellExecutionErrorCode,
     ShellExecutionStatus,
+    ShellGitToolSettings,
     ShellOutputKind,
     ShellPolicyDenied,
     ShellToolSet,
@@ -88,6 +93,50 @@ role = "assistant"
 [engine]
 uri = "ai://local/model"
 """
+
+
+def _write_agent_shell_git_example_repo(root: Path, git_binary: str) -> Path:
+    repo = root / "repo"
+    repo.mkdir()
+    _run_agent_shell_git(git_binary, "init", cwd=repo)
+    _run_agent_shell_git(git_binary, "checkout", "-B", "main", cwd=repo)
+    (repo / "README.md").write_text("initial\n", encoding="utf-8")
+    _run_agent_shell_git(git_binary, "add", "README.md", cwd=repo)
+    _run_agent_shell_git(
+        git_binary,
+        "-c",
+        "user.name=Avalan Test",
+        "-c",
+        "user.email=avalan@example.test",
+        "commit",
+        "-m",
+        "initial commit",
+        cwd=repo,
+    )
+    (repo / "README.md").write_text(
+        "initial\nworktree change\n",
+        encoding="utf-8",
+    )
+    return repo
+
+
+def _run_agent_shell_git(git_binary: str, *args: str, cwd: Path) -> None:
+    git_env = dict(environ)
+    git_env.update(
+        {
+            "GIT_CONFIG_GLOBAL": devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    run(
+        (git_binary, *args),
+        cwd=cwd,
+        env=git_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _orchestrator_settings(
@@ -985,6 +1034,260 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(tool_settings.shell.max_intermediate_bytes, 512)
             await stack.aclose()
 
+    async def test_shell_git_toml_builds_read_only_settings(self):
+        root = Path(__file__).resolve().parents[2]
+        example_path = root / "docs" / "examples" / "agent_shell_git.toml"
+        with self.subTest(example=example_path.name):
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(
+                    str(example_path),
+                    agent_id=uuid4(),
+                )
+
+            self.assertEqual(result, "orch")
+            settings = from_settings.call_args.args[0]
+            self.assertEqual(
+                settings.tools,
+                ["shell.git_status", "shell.git_diff", "shell.git_log"],
+            )
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+            git_settings = tool_settings.shell.git
+            self.assertIsInstance(git_settings, ShellGitToolSettings)
+            assert isinstance(git_settings, ShellGitToolSettings)
+            self.assertEqual(git_settings.capabilities, ("read",))
+            self.assertEqual(
+                git_settings.allowed_commands,
+                ("status", "diff", "log"),
+            )
+            self.assertEqual(git_settings.default_timeout_seconds, 5.0)
+            self.assertEqual(git_settings.max_timeout_seconds, 20.0)
+            self.assertEqual(git_settings.max_diff_bytes, 131072)
+            self.assertEqual(git_settings.max_log_count, 25)
+            self.assertEqual(git_settings.max_pathspecs, 16)
+            self.assertFalse(git_settings.allow_optional_locks)
+            self.assertFalse(git_settings.allow_submodules)
+            await stack.aclose()
+
+    async def test_merge_shell_tool_settings_applies_explicit_git_override(
+        self,
+    ) -> None:
+        base = ShellToolSettings(
+            git=ShellGitToolSettings(
+                workspace_root="/workspace",
+                cwd="repo",
+                max_log_count=25,
+                max_diff_bytes=4096,
+            )
+        )
+        override = ShellToolSettings(
+            git=ShellGitToolSettings(max_log_count=10)
+        )
+
+        merged = _merge_shell_tool_settings(
+            base,
+            override,
+            explicit_fields=frozenset({"git.max_log_count"}),
+        )
+
+        assert merged is not None
+        git_settings = merged.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.workspace_root, "/workspace")
+        self.assertEqual(git_settings.cwd, "repo")
+        self.assertEqual(git_settings.max_log_count, 10)
+        self.assertEqual(git_settings.max_diff_bytes, 4096)
+
+    async def test_merge_shell_tool_settings_replaces_explicit_git_block(
+        self,
+    ) -> None:
+        base = ShellToolSettings(
+            git=ShellGitToolSettings(
+                workspace_root="/workspace",
+                cwd="repo",
+                max_log_count=25,
+            )
+        )
+        override_git = ShellGitToolSettings(
+            workspace_root="/override",
+            cwd="override-repo",
+            max_log_count=10,
+        )
+        override = ShellToolSettings(git=override_git)
+
+        merged = _merge_shell_tool_settings(
+            base,
+            override,
+            explicit_fields=frozenset({"git"}),
+        )
+
+        assert merged is not None
+        self.assertIs(merged.git, override_git)
+
+    async def test_merge_shell_tool_settings_keeps_explicit_git_timeout_pair(
+        self,
+    ) -> None:
+        base = ShellToolSettings(
+            git=ShellGitToolSettings(
+                default_timeout_seconds=10.0,
+                max_timeout_seconds=20.0,
+            )
+        )
+        override = ShellToolSettings(
+            git=ShellGitToolSettings(
+                default_timeout_seconds=3.0,
+                max_timeout_seconds=4.0,
+            )
+        )
+
+        merged = _merge_shell_tool_settings(
+            base,
+            override,
+            explicit_fields=frozenset(
+                {
+                    "git.default_timeout_seconds",
+                    "git.max_timeout_seconds",
+                }
+            ),
+        )
+
+        assert merged is not None
+        git_settings = merged.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.default_timeout_seconds, 3.0)
+        self.assertEqual(git_settings.max_timeout_seconds, 4.0)
+
+    async def _shell_git_settings_from_partial_cli_timeout_merge(
+        self,
+        *,
+        toml_default_timeout_seconds: float,
+        toml_max_timeout_seconds: float,
+        cli_default_timeout_seconds: float | None = None,
+        cli_max_timeout_seconds: float | None = None,
+    ) -> ShellGitToolSettings:
+        assert (
+            cli_default_timeout_seconds is not None
+            or cli_max_timeout_seconds is not None
+        )
+        args = Namespace()
+        if cli_default_timeout_seconds is not None:
+            args.tool_shell_git_default_timeout_seconds = (
+                cli_default_timeout_seconds
+            )
+        if cli_max_timeout_seconds is not None:
+            args.tool_shell_git_max_timeout_seconds = cli_max_timeout_seconds
+
+        shell_override = agent_cmds.get_tool_settings(
+            args,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
+        )
+        assert isinstance(shell_override, ShellToolSettings)
+        explicit_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                args,
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+
+        stack = AsyncExitStack()
+        try:
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+                tmp.write(
+                    _minimal_agent_toml()
+                    + "\n[tool.shell.git]\n"
+                    + "default_timeout_seconds = "
+                    f"{toml_default_timeout_seconds}\n"
+                    + f"max_timeout_seconds = {toml_max_timeout_seconds}\n"
+                )
+                tmp.flush()
+
+                with patch.object(
+                    loader,
+                    "from_settings",
+                    new=AsyncMock(return_value="orch"),
+                ) as from_settings:
+                    result = await loader.from_file(
+                        tmp.name,
+                        agent_id=uuid4(),
+                        tool_settings=ToolSettingsContext(
+                            shell=shell_override,
+                            shell_explicit_fields=explicit_fields,
+                        ),
+                    )
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            git_settings = tool_settings.shell.git
+            self.assertIsInstance(git_settings, ShellGitToolSettings)
+            assert isinstance(git_settings, ShellGitToolSettings)
+            return git_settings
+        finally:
+            await stack.aclose()
+
+    async def test_shell_git_cli_max_timeout_keeps_toml_default(
+        self,
+    ) -> None:
+        git_settings = (
+            await self._shell_git_settings_from_partial_cli_timeout_merge(
+                toml_default_timeout_seconds=2.0,
+                toml_max_timeout_seconds=4.0,
+                cli_max_timeout_seconds=5.0,
+            )
+        )
+
+        self.assertEqual(git_settings.default_timeout_seconds, 2.0)
+        self.assertEqual(git_settings.max_timeout_seconds, 5.0)
+
+    async def test_shell_git_cli_max_timeout_lowers_toml_default(
+        self,
+    ) -> None:
+        git_settings = (
+            await self._shell_git_settings_from_partial_cli_timeout_merge(
+                toml_default_timeout_seconds=10.0,
+                toml_max_timeout_seconds=20.0,
+                cli_max_timeout_seconds=5.0,
+            )
+        )
+
+        self.assertEqual(git_settings.default_timeout_seconds, 5.0)
+        self.assertEqual(git_settings.max_timeout_seconds, 5.0)
+
+    async def test_shell_git_cli_default_timeout_raises_toml_max(
+        self,
+    ) -> None:
+        git_settings = (
+            await self._shell_git_settings_from_partial_cli_timeout_merge(
+                toml_default_timeout_seconds=10.0,
+                toml_max_timeout_seconds=20.0,
+                cli_default_timeout_seconds=120.0,
+            )
+        )
+
+        self.assertEqual(git_settings.default_timeout_seconds, 120.0)
+        self.assertEqual(git_settings.max_timeout_seconds, 120.0)
+
     async def test_docs_shell_pipeline_agent_example_builds_settings(self):
         example_path = (
             Path(__file__).resolve().parents[2]
@@ -1023,6 +1326,111 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             ("rg", "head", "wc"),
         )
         await stack.aclose()
+
+    async def test_docs_shell_git_agent_example_builds_settings(self):
+        example_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "examples"
+            / "agent_shell_git.toml"
+        )
+        stack = AsyncExitStack()
+        loader = OrchestratorLoader(
+            hub=MagicMock(spec=HuggingfaceHub),
+            logger=MagicMock(spec=Logger),
+            participant_id=uuid4(),
+            stack=stack,
+        )
+
+        with patch.object(
+            loader,
+            "from_settings",
+            new=AsyncMock(return_value="orch"),
+        ) as from_settings:
+            result = await loader.from_file(
+                str(example_path), agent_id=uuid4()
+            )
+
+        self.assertEqual(result, "orch")
+        settings = from_settings.call_args.args[0]
+        self.assertEqual(
+            settings.tools,
+            ["shell.git_status", "shell.git_diff", "shell.git_log"],
+        )
+        tool_settings = from_settings.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        git_settings = tool_settings.shell.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.capabilities, ("read",))
+        self.assertEqual(
+            git_settings.allowed_commands,
+            ("status", "diff", "log"),
+        )
+        self.assertEqual(git_settings.max_log_count, 25)
+        self.assertEqual(git_settings.max_pathspecs, 16)
+        self.assertTrue(git_settings.redact_author_emails)
+        await stack.aclose()
+
+    async def test_docs_shell_git_agent_example_executes_temp_repo_status(
+        self,
+    ) -> None:
+        git_binary = which("git")
+        if git_binary is None:
+            self.skipTest("git executable is required for shell Git examples")
+
+        example_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "examples"
+            / "agent_shell_git.toml"
+        )
+        with TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            repo = _write_agent_shell_git_example_repo(
+                workspace,
+                git_binary,
+            )
+            kwargs = await _from_file_tool_manager_kwargs(
+                example_path.read_text(encoding="utf-8"),
+                tool_settings=ToolSettingsContext(
+                    shell=ShellToolSettings(
+                        executable_search_paths=(
+                            str(Path(git_binary).parent),
+                        ),
+                        git=ShellGitToolSettings(
+                            workspace_root=str(workspace),
+                            cwd=repo.name,
+                        ),
+                    ),
+                    shell_explicit_fields=frozenset(
+                        {
+                            "executable_search_paths",
+                            "git.workspace_root",
+                            "git.cwd",
+                        }
+                    ),
+                ),
+            )
+            manager = _shell_only_manager(kwargs)
+            async with manager:
+                outcome = await manager.execute_call(
+                    ToolCall(
+                        id="call-1",
+                        name="shell.git_status",
+                        arguments={
+                            "mode": "porcelain_v2",
+                            "include_branch": True,
+                        },
+                    ),
+                    context=ToolCallContext(),
+                )
+
+        self.assertIsInstance(outcome, ToolCallResult)
+        assert isinstance(outcome, ToolCallResult)
+        result_text = str(outcome.result)
+        self.assertIn("status: success", result_text)
+        self.assertIn("README.md", result_text)
 
     async def test_from_file_pipeline_opt_in_exposes_schema_and_filter(self):
         kwargs = await _from_file_tool_manager_kwargs(

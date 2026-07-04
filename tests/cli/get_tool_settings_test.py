@@ -6,7 +6,7 @@ from tempfile import NamedTemporaryFile
 from avalan.cli.commands import agent as agent_cmds
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.database import DatabaseToolSettings
-from avalan.tool.shell import ShellToolSettings
+from avalan.tool.shell import ShellGitToolSettings, ShellToolSettings
 
 
 class GetToolSettingsTestCase(unittest.TestCase):
@@ -288,6 +288,171 @@ class GetToolSettingsTestCase(unittest.TestCase):
             agent_cmds.get_tool_settings(
                 args, prefix="shell", settings_cls=ShellToolSettings
             )
+
+    def test_shell_git_settings_from_cli_values(self):
+        args = Namespace(
+            tool_shell_git_workspace_root="/workspace",
+            tool_shell_git_cwd="repo",
+            tool_shell_git_capabilities=["read", "remote", "remote"],
+            tool_shell_git_allowed_commands=["status", "diff", "remote"],
+            tool_shell_git_default_timeout_seconds=5.0,
+            tool_shell_git_max_timeout_seconds=30.0,
+            tool_shell_git_max_stdout_bytes=4096,
+            tool_shell_git_max_stderr_bytes=2048,
+            tool_shell_git_max_diff_bytes=8192,
+            tool_shell_git_max_log_count=12,
+            tool_shell_git_max_grep_matches=25,
+            tool_shell_git_max_pathspecs=7,
+            tool_shell_git_allowed_remote_protocols=["https"],
+            tool_shell_git_allowed_remote_hosts=["github.com"],
+            tool_shell_git_credential_policy="allow_explicit",
+            tool_shell_git_allow_remote_credentials=True,
+            tool_shell_git_redact_remote_urls=False,
+            tool_shell_git_redact_credentials=False,
+            tool_shell_git_redact_author_emails=True,
+        )
+
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="shell", settings_cls=ShellToolSettings
+        )
+
+        self.assertIsInstance(settings, ShellToolSettings)
+        git_settings = settings.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.workspace_root, "/workspace")
+        self.assertEqual(git_settings.cwd, "repo")
+        self.assertEqual(git_settings.capabilities, ("read", "remote"))
+        self.assertEqual(
+            git_settings.allowed_commands,
+            (
+                "status",
+                "diff",
+                "remote-list",
+                "remote-add",
+                "remote-set-url",
+                "remote-remove",
+                "remote-rename",
+            ),
+        )
+        self.assertEqual(git_settings.default_timeout_seconds, 5.0)
+        self.assertEqual(git_settings.max_timeout_seconds, 30.0)
+        self.assertEqual(git_settings.max_stdout_bytes, 4096)
+        self.assertEqual(git_settings.max_stderr_bytes, 2048)
+        self.assertEqual(git_settings.max_diff_bytes, 8192)
+        self.assertEqual(git_settings.max_log_count, 12)
+        self.assertEqual(git_settings.max_grep_matches, 25)
+        self.assertEqual(git_settings.max_pathspecs, 7)
+        self.assertEqual(git_settings.allowed_remote_protocols, ("https",))
+        self.assertEqual(git_settings.allowed_remote_hosts, ("github.com",))
+        self.assertEqual(git_settings.credential_policy, "allow_explicit")
+        self.assertTrue(git_settings.allow_remote_credentials)
+        self.assertFalse(git_settings.redact_remote_urls)
+        self.assertFalse(git_settings.redact_credentials)
+        self.assertTrue(git_settings.redact_author_emails)
+
+    def test_shell_git_partial_cli_max_timeout_is_safe_override(self):
+        args = Namespace(tool_shell_git_max_timeout_seconds=5.0)
+
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="shell", settings_cls=ShellToolSettings
+        )
+        explicit_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                args,
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+
+        self.assertIsInstance(settings, ShellToolSettings)
+        git_settings = settings.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.default_timeout_seconds, 5.0)
+        self.assertEqual(git_settings.max_timeout_seconds, 5.0)
+        self.assertEqual(
+            explicit_fields,
+            frozenset({"git.max_timeout_seconds"}),
+        )
+
+    def test_shell_git_partial_cli_default_timeout_is_safe_override(self):
+        args = Namespace(tool_shell_git_default_timeout_seconds=120.0)
+
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="shell", settings_cls=ShellToolSettings
+        )
+        explicit_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                args,
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+
+        self.assertIsInstance(settings, ShellToolSettings)
+        git_settings = settings.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.default_timeout_seconds, 120.0)
+        self.assertEqual(git_settings.max_timeout_seconds, 120.0)
+        self.assertEqual(
+            explicit_fields,
+            frozenset({"git.default_timeout_seconds"}),
+        )
+
+    def test_shell_git_settings_track_explicit_cli_fields(self):
+        args = Namespace(
+            tool_shell_git_max_log_count=ShellGitToolSettings().max_log_count,
+            tool_shell_git_allow_optional_locks=False,
+            tool_shell_git_redact_remote_urls=False,
+        )
+
+        explicit_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                args,
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+
+        self.assertEqual(
+            explicit_fields,
+            frozenset(
+                {
+                    "git.max_log_count",
+                    "git.allow_optional_locks",
+                    "git.redact_remote_urls",
+                }
+            ),
+        )
+
+    def test_shell_git_settings_from_sparse_mapping_tracks_explicit_fields(
+        self,
+    ):
+        mapping = {"tool_shell_git_max_log_count": 9}
+
+        settings = agent_cmds._tool_settings_from_mapping(
+            mapping,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
+            open_files=False,
+        )
+        explicit_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                mapping,
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+
+        self.assertIsInstance(settings, ShellToolSettings)
+        assert isinstance(settings, ShellToolSettings)
+        git_settings = settings.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.max_log_count, 9)
+        self.assertEqual(explicit_fields, frozenset({"git.max_log_count"}))
 
     def test_shell_executable_path_coercion_preserves_non_cli_values(self):
         mapping = {"rg": "/usr/bin/rg"}

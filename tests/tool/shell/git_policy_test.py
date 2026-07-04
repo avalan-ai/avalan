@@ -24,8 +24,13 @@ from avalan.tool.shell.entities import (
     ShellExecutionStatus,
 )
 from avalan.tool.shell.git import ShellGitPolicyDenied
-from avalan.tool.shell.git_policy import _display_path, _redacted_metadata
-from avalan.tool.shell.tools import GitStatusTool
+from avalan.tool.shell.git_policy import (
+    _display_path,
+    _redacted_metadata,
+    git_remote_audit_metadata,
+    redact_git_text,
+)
+from avalan.tool.shell.tools import GitStatusTool, _git_policy_denied_result
 
 
 class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
@@ -797,6 +802,218 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                 "list_url": ["https://github.com/[redacted]"],
             },
         )
+
+    def test_git_text_redacts_remote_url_paths_queries_and_fragments(
+        self,
+    ) -> None:
+        cases = (
+            (
+                (
+                    "clone https://github.com/acme/private.git"
+                    "?jwt=abc123&ref=hidden"
+                ),
+                "clone https://github.com/[redacted]",
+            ),
+            (
+                "remote https://github.com?jwt=abc123",
+                "remote https://github.com/[redacted]",
+            ),
+            (
+                "remote https://github.com#private-fragment",
+                "remote https://github.com/[redacted]",
+            ),
+            (
+                (
+                    "clone https://alice:hunter2@example.com/private.git"
+                    "?token=abc123"
+                ),
+                "clone https://example.com/[redacted]",
+            ),
+            (
+                "clone file:///Users/mariano/private.git",
+                "clone file:///[redacted]",
+            ),
+            (
+                "clone file:///Users/mariano/private.git?token=abc123#hidden",
+                "clone file:///[redacted]",
+            ),
+            (
+                (
+                    "clone file://localhost/Users/mariano/private.git"
+                    "?token=abc123#hidden"
+                ),
+                "clone file://localhost/[redacted]",
+            ),
+        )
+        settings = ShellGitToolSettings()
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                redacted = redact_git_text(text, settings)
+
+                self.assertEqual(redacted, expected)
+                self.assertNotIn("private.git", redacted)
+                self.assertNotIn("jwt=abc123", redacted)
+                self.assertNotIn("abc123", redacted)
+                self.assertNotIn("hidden", redacted)
+                self.assertNotIn("private-fragment", redacted)
+                self.assertNotIn("alice", redacted)
+                self.assertNotIn("hunter2", redacted)
+                self.assertNotIn("/Users/mariano", redacted)
+                self.assertNotIn("mariano", redacted)
+
+    def test_git_text_redacts_author_email_fields_when_enabled(
+        self,
+    ) -> None:
+        text = (
+            "0123456789abcdef0123456789abcdef01234567\t"
+            "Alice Example\talice@example.test\t"
+            "2026-07-04T00:00:00+00:00\tAdd file\n"
+            "Author: Alice Example <alice@example.test>\n"
+        )
+        settings = ShellGitToolSettings(
+            redact_remote_urls=False,
+            redact_credentials=False,
+            redact_author_emails=True,
+        )
+
+        redacted = redact_git_text(text, settings)
+
+        self.assertIn("Alice Example\t[redacted]\t", redacted)
+        self.assertIn("Author: Alice Example <[redacted]>", redacted)
+        self.assertNotIn("alice@example.test", redacted)
+
+    def test_git_text_redacts_blame_porcelain_email_fields_when_enabled(
+        self,
+    ) -> None:
+        text = (
+            "0123456789abcdef0123456789abcdef01234567 1 1 1\n"
+            "author Alice Example\n"
+            "author-mail <alice@example.test>\n"
+            "committer Bob Example\n"
+            "committer-mail <bob@example.test>\n"
+            "summary author-mail <carol@example.test>\n"
+        )
+        settings = ShellGitToolSettings(
+            redact_remote_urls=False,
+            redact_credentials=False,
+            redact_author_emails=True,
+        )
+
+        redacted = redact_git_text(text, settings)
+
+        self.assertIn("author-mail <[redacted]>", redacted)
+        self.assertIn("committer-mail <[redacted]>", redacted)
+        self.assertIn("summary author-mail <carol@example.test>", redacted)
+        self.assertNotIn("alice@example.test", redacted)
+        self.assertNotIn("bob@example.test", redacted)
+
+    def test_git_text_keeps_author_email_fields_when_disabled(self) -> None:
+        text = (
+            "0123456789abcdef0123456789abcdef01234567\t"
+            "Alice Example\talice@example.test\t"
+            "2026-07-04T00:00:00+00:00\tAdd file\n"
+            "Author: Alice Example <alice@example.test>\n"
+            "author-mail <alice@example.test>\n"
+            "committer-mail <bob@example.test>\n"
+        )
+        settings = ShellGitToolSettings(
+            redact_remote_urls=False,
+            redact_credentials=False,
+            redact_author_emails=False,
+        )
+
+        self.assertEqual(redact_git_text(text, settings), text)
+
+    def test_git_remote_audit_redacts_hostless_file_url_metadata(
+        self,
+    ) -> None:
+        raw_url = "file:///Users/alice/private.git?token=abc123#hidden"
+        settings = ShellGitToolSettings(
+            allowed_remote_protocols=("file",),
+            allowed_remote_hosts=("localhost",),
+        )
+
+        metadata = git_remote_audit_metadata(
+            _request(
+                command=ShellGitCommandName.CLONE,
+                capability=ShellGitCapability.REMOTE,
+                options={
+                    "url": raw_url,
+                    "destination": "repo-copy",
+                    "branch": "main",
+                },
+            ),
+            settings=settings,
+        )
+
+        self.assertEqual(metadata["git_remote_protocol"], "file")
+        self.assertIsNone(metadata["git_remote_host"])
+        self.assertEqual(metadata["git_remote_url"], "file:///[redacted]")
+        self.assertEqual(metadata["git_remote_urls"], ("file:///[redacted]",))
+        self.assertNotIn(raw_url, str(metadata))
+        self.assertNotIn("/Users/alice", str(metadata))
+        self.assertNotIn("private.git", str(metadata))
+        self.assertNotIn("token=abc123", str(metadata))
+        self.assertNotIn("abc123", str(metadata))
+        self.assertNotIn("hidden", str(metadata))
+
+    def test_policy_denied_result_redacts_hostless_file_url_metadata(
+        self,
+    ) -> None:
+        raw_url = "file:///Users/alice/private.git?token=abc123#hidden"
+        settings = ShellToolSettings(
+            git=ShellGitToolSettings(
+                cwd=".",
+                capabilities=("remote",),
+                allowed_commands=("clone",),
+                allowed_remote_protocols=("file",),
+                allowed_remote_hosts=("localhost",),
+            ),
+        )
+        request = _request(
+            command=ShellGitCommandName.CLONE,
+            capability=ShellGitCapability.REMOTE,
+            options={
+                "url": raw_url,
+                "destination": "repo-copy",
+                "branch": "main",
+            },
+        )
+
+        result = _git_policy_denied_result(
+            request,
+            ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+                "remote URL protocol is unsupported",
+            ),
+            settings=settings,
+        )
+        metadata = result.audit_metadata
+
+        self.assertEqual(result.status, ShellGitExecutionStatus.POLICY_DENIED)
+        self.assertEqual(
+            metadata["git_request_options"],
+            {
+                "url": "file:///[redacted]",
+                "destination": "repo-copy",
+                "branch": "main",
+            },
+        )
+        self.assertEqual(
+            metadata["request_options"],
+            metadata["git_request_options"],
+        )
+        self.assertEqual(metadata["git_remote_protocol"], "file")
+        self.assertIsNone(metadata["git_remote_host"])
+        self.assertEqual(metadata["git_remote_url"], "file:///[redacted]")
+        self.assertEqual(metadata["git_remote_urls"], ("file:///[redacted]",))
+        self.assertNotIn(raw_url, str(metadata))
+        self.assertNotIn("/Users/alice", str(metadata))
+        self.assertNotIn("private.git", str(metadata))
+        self.assertNotIn("token=abc123", str(metadata))
+        self.assertNotIn("abc123", str(metadata))
+        self.assertNotIn("hidden", str(metadata))
 
     async def test_boundaries_are_enforced(self) -> None:
         with TemporaryDirectory() as workspace:

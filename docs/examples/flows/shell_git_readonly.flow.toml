@@ -1,0 +1,67 @@
+[flow]
+name = "shell_git_readonly"
+version = "1"
+description = "Inspect repository status, staged diff, and recent history through strict shell Git tool nodes."
+
+[[inputs]]
+name = "request"
+type = "string"
+
+[[outputs]]
+name = "status"
+type = "json"
+
+[[outputs]]
+name = "diff"
+type = "json"
+
+[[outputs]]
+name = "log"
+type = "json"
+
+[entry]
+type = "node"
+node = "status"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+status = "status.result"
+diff = "diff.result"
+log = "log.result"
+
+[[edges]]
+source = "status"
+target = "diff"
+
+[[edges]]
+source = "diff"
+target = "log"
+
+[nodes.status]
+type = "tool"
+ref = "shell.git_status"
+
+[nodes.status.config.arguments]
+mode = "porcelain_v2"
+include_branch = true
+
+[nodes.diff]
+type = "tool"
+ref = "shell.git_diff"
+
+[nodes.diff.config.arguments]
+mode = "worktree"
+paths = ["README.md"]
+max_stdout_bytes = 32768
+
+[nodes.log]
+type = "tool"
+ref = "shell.git_log"
+
+[nodes.log.config.arguments]
+max_count = 5
+format = "oneline"
+paths = ["README.md"]
+max_stdout_bytes = 8192

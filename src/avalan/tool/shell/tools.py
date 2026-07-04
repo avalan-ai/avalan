@@ -367,6 +367,42 @@ class _ShellGitCommandTool(Tool, ABC):
         self._executor = executor
         return self
 
+    def tool_display_projector(
+        self,
+        call: ToolCall,
+        outcome: ToolCallOutcome | None = None,
+    ) -> object | None:
+        request = None if outcome is not None else self._display_request(call)
+        return project_shell_tool_display(
+            call=call,
+            outcome=outcome,
+            request=request,
+        )
+
+    def _display_request(
+        self,
+        call: ToolCall,
+    ) -> ShellGitCommandRequest | None:
+        if call.arguments is None:
+            arguments = {}
+        elif isinstance(call.arguments, dict):
+            arguments = dict(call.arguments)
+        else:
+            return None
+        builder = getattr(self, "_build_request")
+        assert callable(builder), "shell Git tool must define _build_request"
+        try:
+            bound = signature(builder).bind(**arguments)
+            bound.apply_defaults()
+            request = builder(**bound.arguments)
+        except (AssertionError, TypeError, ValueError):
+            return None
+        assert isinstance(
+            request,
+            ShellGitCommandRequest,
+        ), "_build_request must return a shell Git command request"
+        return request
+
     async def _execute_request(
         self,
         request: ShellGitCommandRequest,
