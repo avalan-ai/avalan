@@ -197,8 +197,8 @@ class GitExecutionPolicyPhase2Test(IsolatedAsyncioTestCase):
                     git=ShellGitToolSettings(
                         workspace_root=workspace,
                         cwd="repo",
-                        capabilities=("worktree",),
-                        allowed_commands=("add",),
+                        capabilities=("history",),
+                        allowed_commands=("commit",),
                     )
                 ),
                 executable_lookup=_fake_executable,
@@ -207,9 +207,8 @@ class GitExecutionPolicyPhase2Test(IsolatedAsyncioTestCase):
             with self.assertRaises(ShellGitPolicyDenied) as raised:
                 await policy.normalize(
                     _request(
-                        command=ShellGitCommandName.ADD,
-                        options={"mode": "normal"},
-                        pathspecs=("README.md",),
+                        command=ShellGitCommandName.COMMIT,
+                        options={"message": "unsupported"},
                     )
                 )
 
