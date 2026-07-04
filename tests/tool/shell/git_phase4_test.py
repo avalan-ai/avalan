@@ -1661,6 +1661,73 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
                     ShellGitExecutionErrorCode.PATHSPEC_DENIED,
                 )
 
+    async def test_git_diff_staged_denies_loose_object_digest_mismatch(
+        self,
+    ) -> None:
+        def commit_digest_mismatch(repo: Path) -> None:
+            blob_oid = _write_loose_object(repo, "blob", b"deleted\n")
+            leaf_tree = _git_tree_entry_data(0o100644, "deleted.py", blob_oid)
+            leaf_tree_oid = _write_loose_object(repo, "tree", leaf_tree)
+            root_tree = _git_tree_entry_data(0o40000, "src", leaf_tree_oid)
+            root_tree_oid = _write_loose_object(repo, "tree", root_tree)
+            commit = (
+                f"tree {root_tree_oid}\n"
+                "author Avalan Test <avalan@example.test> 0 +0000\n"
+                "committer Avalan Test <avalan@example.test> 0 +0000\n"
+                "\n"
+                "content setup\n"
+            ).encode("utf-8")
+            expected_oid = "1" * 40
+            _write_raw_loose_object(
+                repo,
+                expected_oid,
+                zlib_compress(
+                    f"commit {len(commit)}\0".encode("ascii") + commit
+                ),
+            )
+            _write_head_ref(repo, expected_oid)
+
+        def tree_digest_mismatch(repo: Path) -> None:
+            blob_oid = _write_loose_object(repo, "blob", b"deleted\n")
+            leaf_tree = _git_tree_entry_data(0o100644, "deleted.py", blob_oid)
+            leaf_tree_oid = _write_loose_object(repo, "tree", leaf_tree)
+            root_tree = _git_tree_entry_data(0o40000, "src", leaf_tree_oid)
+            expected_oid = "2" * 40
+            _write_raw_loose_object(
+                repo,
+                expected_oid,
+                zlib_compress(
+                    f"tree {len(root_tree)}\0".encode("ascii") + root_tree
+                ),
+            )
+            _write_head_commit_for_tree(repo, expected_oid)
+
+        cases: tuple[tuple[str, Callable[[Path], None]], ...] = (
+            ("commit_digest_mismatch", commit_digest_mismatch),
+            ("tree_digest_mismatch", tree_digest_mismatch),
+        )
+
+        for name, setup in cases:
+            with self.subTest(name=name):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    repo = _write_minimal_git_repo(root / "repo")
+                    setup(repo)
+
+                    error = await _policy_error(
+                        _policy(root),
+                        _request(
+                            command=ShellGitCommandName.DIFF,
+                            options={"mode": "staged"},
+                            pathspecs=("src/deleted.py",),
+                        ),
+                    )
+
+                self.assertEqual(
+                    error.error_code,
+                    ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                )
+
     async def test_git_diff_staged_denies_tree_traversal_edge_cases(
         self,
     ) -> None:
@@ -1739,6 +1806,48 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
                     git_dir,
                     "not-an-object-id",
                     hash_size=20,
+                )
+            )
+            sha256_payload = b"sha256\n"
+            sha256_object = b"blob 7\0" + sha256_payload
+            sha256_oid = sha256(sha256_object).hexdigest()
+            _write_raw_loose_object(
+                repo,
+                sha256_oid,
+                zlib_compress(sha256_object),
+            )
+            self.assertEqual(
+                await _read_loose_git_object(
+                    git_dir,
+                    sha256_oid,
+                    hash_size=32,
+                ),
+                ("blob", sha256_payload),
+            )
+            sha256_mismatch_oid = "1" * 64
+            _write_raw_loose_object(
+                repo,
+                sha256_mismatch_oid,
+                zlib_compress(sha256_object),
+            )
+            self.assertIsNone(
+                await _read_loose_git_object(
+                    git_dir,
+                    sha256_mismatch_oid,
+                    hash_size=32,
+                )
+            )
+            unsupported_hash_oid = "2" * 42
+            _write_raw_loose_object(
+                repo,
+                unsupported_hash_oid,
+                zlib_compress(b"blob 0\0"),
+            )
+            self.assertIsNone(
+                await _read_loose_git_object(
+                    git_dir,
+                    unsupported_hash_oid,
+                    hash_size=21,
                 )
             )
             missing_oid = "a" * 40
