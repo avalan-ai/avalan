@@ -96,6 +96,7 @@ class ShellGitToolSettings:
     max_pathspecs: int = 64
     max_pathspec_bytes: int = 4096
     max_revision_bytes: int = 256
+    max_commit_message_bytes: int = 4096
     allow_external_diff: bool = False
     allow_textconv: bool = False
     allow_optional_locks: bool = False
@@ -538,6 +539,7 @@ _GIT_POSITIVE_INT_FIELDS = (
     "max_pathspecs",
     "max_pathspec_bytes",
     "max_revision_bytes",
+    "max_commit_message_bytes",
 )
 
 _GIT_BOOLEAN_FIELDS = (

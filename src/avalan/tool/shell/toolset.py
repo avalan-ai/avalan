@@ -25,9 +25,9 @@ from .formatting import (
     format_shell_result,
 )
 from .git import (
-    SHELL_GIT_COMMAND_CAPABILITIES,
     ShellGitCapability,
     ShellGitCommandName,
+    shell_git_capabilities_for_command,
 )
 from .git_policy import GitExecutionPolicy
 from .opt_in import (
@@ -549,12 +549,15 @@ def _git_tool_allowed(
     settings: ShellGitToolSettings,
 ) -> bool:
     command = _git_tool_command(tool)
-    capability = SHELL_GIT_COMMAND_CAPABILITIES[command]
     if command.value not in settings.allowed_commands:
         return False
-    if capability.value not in settings.capabilities:
+    capabilities = shell_git_capabilities_for_command(command)
+    if not any(
+        capability.value in settings.capabilities
+        for capability in capabilities
+    ):
         return False
-    if capability is ShellGitCapability.REMOTE:
+    if ShellGitCapability.REMOTE in capabilities:
         return _git_remote_policy_allows_tool(command, settings)
     return True
 
