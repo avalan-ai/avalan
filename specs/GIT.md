@@ -297,6 +297,9 @@ Pathspec requirements:
   tool policy unless a trusted setting explicitly narrows or widens it.
 - Validate refs and revisions separately from paths. Object path syntax must
   not become a hidden file-read or object-read API.
+- For staged diffs on deleted pathspecs, proof may use loose HEAD refs and
+  loose commit/tree objects only. Packed refs and packed objects are not
+  required for this proof and must fail closed.
 
 For mutating commands, path validation must be repeated close to execution
 and must avoid following symlinks outside the worktree for wrapper-side
@@ -532,6 +535,11 @@ Required constraints:
   and audit records.
 - Keep credential use explicit. `allow_remote_credentials=false` denies
   credential-bearing URLs and credential helper injection.
+- Hostless `file:///` remotes require the `file` protocol and `localhost`
+  host allowlist gate. They may use standard percent-encoding and
+  non-canonical path components, but the decoded, resolved absolute path must
+  stay inside `workspace_root`; command argv and audit/redaction preserve the
+  caller URL.
 - Deny broad refspecs by default. Allow only typed, bounded refspec forms
   such as selected branch, selected tag, or current branch.
 - Deny force push, mirror push, prune, tags-all behavior, recursive
