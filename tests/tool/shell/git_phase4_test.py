@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 from os import devnull, environ
 from pathlib import Path
 from shutil import which
-from subprocess import run
+from subprocess import CalledProcessError, run
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, skipIf
@@ -23,7 +23,10 @@ from avalan.tool.shell.git import (
     ShellGitExecutionStatus,
     ShellGitPolicyDenied,
 )
-from avalan.tool.shell.git_policy import GitExecutionPolicy
+from avalan.tool.shell.git_policy import (
+    GitExecutionPolicy,
+    _git_index_data_has_exact_file_pathspec,
+)
 from avalan.tool.shell.settings import ShellGitToolSettings, ShellToolSettings
 from avalan.tool.shell.toolset import ShellToolSet
 
@@ -556,16 +559,11 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
                 options={"pattern": "needle"},
             ),
             _request(
-                command=ShellGitCommandName.SHOW,
-                options={"revision": "HEAD", "mode": "stat"},
+                command=ShellGitCommandName.BLAME,
             ),
             _request(
                 command=ShellGitCommandName.SHOW,
                 options={"revision": "HEAD", "mode": "patch"},
-            ),
-            _request(
-                command=ShellGitCommandName.STASH_SHOW,
-                options={"stash": "stash@{0}", "mode": "stat"},
             ),
             _request(
                 command=ShellGitCommandName.STASH_SHOW,
@@ -590,6 +588,100 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
                     error.error_code,
                     ShellGitExecutionErrorCode.PATHSPEC_DENIED,
                 )
+
+    async def test_summary_content_modes_allow_optional_directory_scopes(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            _write_minimal_git_repo(root / "repo")
+            policy = _policy(root)
+
+            cases = (
+                (
+                    _request(
+                        command=ShellGitCommandName.DIFF,
+                        options={"mode": "stat"},
+                    ),
+                    ("diff", "--stat"),
+                    False,
+                ),
+                (
+                    _request(
+                        command=ShellGitCommandName.DIFF,
+                        options={"mode": "name_only"},
+                    ),
+                    ("diff", "--name-only"),
+                    False,
+                ),
+                (
+                    _request(
+                        command=ShellGitCommandName.DIFF,
+                        options={"mode": "stat"},
+                        pathspecs=("src",),
+                    ),
+                    ("diff", "--stat"),
+                    True,
+                ),
+                (
+                    _request(
+                        command=ShellGitCommandName.DIFF,
+                        options={"mode": "name_only"},
+                        pathspecs=("src",),
+                    ),
+                    ("diff", "--name-only"),
+                    True,
+                ),
+                (
+                    _request(
+                        command=ShellGitCommandName.SHOW,
+                        options={"revision": "HEAD", "mode": "stat"},
+                    ),
+                    ("show", "--stat"),
+                    False,
+                ),
+                (
+                    _request(
+                        command=ShellGitCommandName.SHOW,
+                        options={"revision": "HEAD", "mode": "stat"},
+                        pathspecs=("src",),
+                    ),
+                    ("show", "--stat"),
+                    True,
+                ),
+                (
+                    _request(
+                        command=ShellGitCommandName.STASH_SHOW,
+                        options={"stash": "stash@{0}", "mode": "stat"},
+                    ),
+                    ("diff", "--stat"),
+                    False,
+                ),
+                (
+                    _request(
+                        command=ShellGitCommandName.STASH_SHOW,
+                        options={"stash": "stash@{0}", "mode": "stat"},
+                        pathspecs=("src",),
+                    ),
+                    ("diff", "--stat"),
+                    True,
+                ),
+            )
+
+            for request, expected_markers, includes_pathspec in cases:
+                with self.subTest(
+                    command=request.command.value,
+                    options=request.options,
+                    pathspecs=request.pathspecs,
+                ):
+                    spec = await policy.normalize(request)
+
+                    for marker in expected_markers:
+                        self.assertIn(marker, spec.argv)
+                    if includes_pathspec:
+                        self.assertEqual(spec.argv[-2:], ("--", "src"))
+                    else:
+                        self.assertNotIn("--", spec.argv)
 
     async def test_content_pathspecs_reject_hidden_and_sensitive_paths(
         self,
@@ -674,7 +766,16 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
             _request(
                 command=ShellGitCommandName.GREP,
                 options={"pattern": "needle"},
+                pathspecs=(".",),
+            ),
+            _request(
+                command=ShellGitCommandName.GREP,
+                options={"pattern": "needle"},
                 pathspecs=("src",),
+            ),
+            _request(
+                command=ShellGitCommandName.BLAME,
+                pathspecs=(".",),
             ),
             _request(
                 command=ShellGitCommandName.BLAME,
@@ -683,7 +784,17 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
             _request(
                 command=ShellGitCommandName.SHOW,
                 options={"revision": "HEAD", "mode": "patch"},
+                pathspecs=(".",),
+            ),
+            _request(
+                command=ShellGitCommandName.SHOW,
+                options={"revision": "HEAD", "mode": "patch"},
                 pathspecs=("src",),
+            ),
+            _request(
+                command=ShellGitCommandName.STASH_SHOW,
+                options={"stash": "stash@{0}", "mode": "patch"},
+                pathspecs=(".",),
             ),
             _request(
                 command=ShellGitCommandName.STASH_SHOW,
@@ -711,6 +822,11 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
             _request(
                 command=ShellGitCommandName.DIFF,
                 options={"mode": "worktree"},
+                pathspecs=("src/missing.py",),
+            ),
+            _request(
+                command=ShellGitCommandName.DIFF,
+                options={"mode": "staged"},
                 pathspecs=("src/missing.py",),
             ),
             _request(
@@ -747,6 +863,198 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
                     ShellGitExecutionErrorCode.PATHSPEC_DENIED,
                 )
 
+    async def test_patch_modes_deny_unprovable_missing_file_pathspecs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            _write_minimal_git_repo(root / "repo")
+            policy = _policy(root)
+
+            cases = (
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/missing.py",),
+                ),
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "staged"},
+                    pathspecs=("src/missing.py",),
+                ),
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={
+                        "mode": "range",
+                        "base_revision": "HEAD~1",
+                        "head_revision": "HEAD",
+                    },
+                    pathspecs=("src/missing.py",),
+                ),
+                _request(
+                    command=ShellGitCommandName.SHOW,
+                    options={"revision": "HEAD", "mode": "patch"},
+                    pathspecs=("src/missing.py",),
+                ),
+                _request(
+                    command=ShellGitCommandName.STASH_SHOW,
+                    options={"stash": "stash@{0}", "mode": "patch"},
+                    pathspecs=("src/missing.py",),
+                ),
+            )
+
+            for request in cases:
+                with self.subTest(
+                    command=request.command.value,
+                    options=request.options,
+                ):
+                    error = await _policy_error(policy, request)
+                    self.assertEqual(
+                        error.error_code,
+                        ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                    )
+
+    def test_git_index_data_file_pathspec_matching(self) -> None:
+        valid = _git_index_data(_git_index_entry("src/app.py"))
+        exact_padding = _git_index_data(_git_index_entry("a"))
+        symlink = _git_index_data(_git_index_entry("src/link", mode=0o120000))
+        extended = _git_index_data(
+            _git_index_entry("src/app.py", extended=True)
+        )
+        gitlink = _git_index_data(
+            _git_index_entry("src/app.py", mode=0o160000)
+        )
+        split = _git_index_data(
+            _git_index_entry("src/app.py"),
+            checksum=b"\x00" * 20,
+            extensions=((b"link", b"\x00" * 20),),
+        )
+        sparse = _git_index_data(
+            _git_index_entry("src/app.py"),
+            checksum=b"\x00" * 20,
+            extensions=((b"sdir", b""),),
+        )
+        duplicate_link = _git_index_data(
+            _git_index_entry("src/app.py"),
+            checksum=b"\x00" * 20,
+            extensions=((b"link", b""), (b"link", b"")),
+        )
+        unknown_mandatory = _git_index_data(
+            _git_index_entry("src/app.py"),
+            checksum=b"\x00" * 20,
+            extensions=((b"abcd", b""),),
+        )
+        bad_extension_header = (
+            _git_index_data(_git_index_entry("src/app.py"))
+            + b"ABCD"
+            + b"\x00" * 20
+        )
+        bad_extension_size = (
+            _git_index_data(_git_index_entry("src/app.py"))
+            + b"ABCD"
+            + (1).to_bytes(4, "big")
+            + b"\x00" * 20
+        )
+        bad_extension_end = (
+            _git_index_data(_git_index_entry("src/app.py")) + b"\x00"
+        )
+        unsupported = b"DIRC" + (4).to_bytes(4, "big") + (0).to_bytes(4, "big")
+        truncated = _git_index_data(b"\x00" * 10)
+        version2_extended = _git_index_data(
+            _git_index_entry("src/app.py", extended=True),
+            version=2,
+        )
+        truncated_extended = _git_index_data(
+            _git_index_truncated_extended_entry()
+        )
+        unterminated = _git_index_data(
+            _git_index_entry("src/app.py", nul=False, pad=False)
+        )
+        unpadded = _git_index_data(_git_index_entry("src/app.py", pad=False))
+
+        self.assertTrue(
+            _git_index_data_has_exact_file_pathspec(valid, "src/app.py")
+        )
+        self.assertTrue(
+            _git_index_data_has_exact_file_pathspec(exact_padding, "a")
+        )
+        self.assertTrue(
+            _git_index_data_has_exact_file_pathspec(symlink, "src/link")
+        )
+        self.assertTrue(
+            _git_index_data_has_exact_file_pathspec(extended, "src/app.py")
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(b"", "src/app.py")
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(unsupported, "src/app.py")
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(truncated, "src/app.py")
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                truncated_extended,
+                "src/app.py",
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                unterminated,
+                "src/app.py",
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(unpadded, "src/app.py")
+        )
+        self.assertFalse(_git_index_data_has_exact_file_pathspec(valid, "src"))
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(gitlink, "src/app.py")
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(split, "src/app.py")
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(sparse, "src/app.py")
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                duplicate_link,
+                "src/app.py",
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                unknown_mandatory,
+                "src/app.py",
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                bad_extension_header,
+                "src/app.py",
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                bad_extension_size,
+                "src/app.py",
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                bad_extension_end,
+                "src/app.py",
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                version2_extended,
+                "src/app.py",
+            )
+        )
+
     async def test_gitattributes_filters_are_denied(self) -> None:
         with TemporaryDirectory() as workspace:
             root = Path(workspace)
@@ -764,6 +1072,51 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
         self.assertEqual(
             error.error_code,
             ShellGitExecutionErrorCode.EXTERNAL_PROCESS_DENIED,
+        )
+
+    async def test_content_denies_unsafe_repository_index_path(self) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            (repo / ".git" / "index").mkdir()
+
+            error = await _policy_error(
+                _policy(root),
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/app.py",),
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+        )
+        self.assertEqual(str(error), "Git repository index is unsafe")
+
+    async def test_content_denies_malformed_repository_index(self) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            (repo / ".git" / "index").write_bytes(b"not an index")
+
+            error = await _policy_error(
+                _policy(root),
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/app.py",),
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+        )
+        self.assertEqual(
+            str(error),
+            "Git repository index format is unsupported",
         )
 
     async def test_git_show_rejects_log_show_signature_config(self) -> None:
@@ -1130,6 +1483,140 @@ class GitContentResultPhase4Test(IsolatedAsyncioTestCase):
 
 @skipIf(_GIT_BINARY is None, "git executable is not available")
 class GitContentSmokePhase4Test(IsolatedAsyncioTestCase):
+    async def test_git_diff_allows_deleted_file_pathspec(self) -> None:
+        assert _GIT_BINARY is not None
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_real_git_repo(
+                root,
+                _GIT_BINARY,
+                "https://github.com/acme/public.git",
+            )
+            (repo / "src" / "app.py").unlink()
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
+
+            diff = await _call_tool(
+                toolset,
+                "git_diff",
+                paths=("src/app.py",),
+            )
+
+        self.assertEqual(
+            diff.git_result.status,
+            ShellGitExecutionStatus.SUCCESS,
+        )
+        self.assertIn("deleted file mode", diff.git_result.stdout_snippet)
+
+    async def test_git_diff_denies_deleted_file_with_index_v4(self) -> None:
+        assert _GIT_BINARY is not None
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_real_git_repo(
+                root,
+                _GIT_BINARY,
+                "https://github.com/acme/public.git",
+            )
+            _git(repo, _GIT_BINARY, "update-index", "--index-version", "4")
+            (repo / "src" / "app.py").unlink()
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
+
+            diff = await _call_tool(
+                toolset,
+                "git_diff",
+                paths=("src/app.py",),
+            )
+
+        self.assertEqual(
+            diff.git_result.status,
+            ShellGitExecutionStatus.POLICY_DENIED,
+        )
+        self.assertEqual(
+            diff.git_result.error_code,
+            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+        )
+        self.assertNotEqual(
+            diff.git_result.error_code,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        )
+        self.assertEqual(
+            diff.git_result.error_message,
+            "Git repository index format is unsupported",
+        )
+
+    async def test_git_diff_denies_deleted_file_with_split_index(self) -> None:
+        assert _GIT_BINARY is not None
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_real_git_repo(
+                root,
+                _GIT_BINARY,
+                "https://github.com/acme/public.git",
+            )
+            try:
+                _git(repo, _GIT_BINARY, "update-index", "--split-index")
+            except CalledProcessError as error:
+                self.skipTest(
+                    "git update-index --split-index is unsupported: "
+                    f"{error.stderr}"
+                )
+            (repo / "src" / "app.py").unlink()
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
+
+            diff = await _call_tool(
+                toolset,
+                "git_diff",
+                paths=("src/app.py",),
+            )
+
+        self.assertEqual(
+            diff.git_result.status,
+            ShellGitExecutionStatus.POLICY_DENIED,
+        )
+        self.assertEqual(
+            diff.git_result.error_code,
+            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+        )
+        self.assertNotEqual(
+            diff.git_result.error_code,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        )
+        self.assertEqual(
+            diff.git_result.error_message,
+            "Git repository index format is unsupported",
+        )
+
+    async def test_git_diff_denies_deleted_directory_pathspec(self) -> None:
+        assert _GIT_BINARY is not None
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_real_git_repo(
+                root,
+                _GIT_BINARY,
+                "https://github.com/acme/public.git",
+            )
+            (repo / "src" / "extra.py").write_text("extra\n")
+            _git(repo, _GIT_BINARY, "add", "src/extra.py")
+            _git(repo, _GIT_BINARY, "commit", "-m", "extra content")
+            (repo / "src" / "app.py").unlink()
+            (repo / "src" / "extra.py").unlink()
+            (repo / "src").rmdir()
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
+
+            diff = await _call_tool(
+                toolset,
+                "git_diff",
+                paths=("src",),
+            )
+
+        self.assertEqual(
+            diff.git_result.status,
+            ShellGitExecutionStatus.POLICY_DENIED,
+        )
+        self.assertEqual(
+            diff.git_result.error_code,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        )
+
     async def test_content_tools_execute_against_temporary_repo(self) -> None:
         assert _GIT_BINARY is not None
         secret_url = "https://token@github.com/acme/private.git"
@@ -1284,6 +1771,59 @@ def _git_prefix() -> tuple[str, str, str]:
     return ("git", "--no-pager", "--no-optional-locks")
 
 
+def _git_index_data(
+    *entries: bytes,
+    version: int = 3,
+    extensions: tuple[tuple[bytes, bytes], ...] = (),
+    checksum: bytes = b"",
+) -> bytes:
+    return (
+        b"DIRC"
+        + version.to_bytes(4, "big")
+        + len(entries).to_bytes(4, "big")
+        + b"".join(entries)
+        + b"".join(
+            signature + len(data).to_bytes(4, "big") + data
+            for signature, data in extensions
+        )
+        + checksum
+    )
+
+
+def _git_index_entry(
+    path: str,
+    *,
+    mode: int = 0o100644,
+    extended: bool = False,
+    nul: bool = True,
+    pad: bool = True,
+) -> bytes:
+    path_bytes = path.encode("utf-8", "surrogateescape")
+    flags = len(path_bytes)
+    if extended:
+        flags |= 0x4000
+    header = bytearray(62)
+    header[24:28] = mode.to_bytes(4, "big")
+    header[60:62] = flags.to_bytes(2, "big")
+    entry = bytes(header)
+    if extended:
+        entry += b"\x00\x00"
+    entry += path_bytes
+    if nul:
+        entry += b"\x00"
+    if pad:
+        remainder = len(entry) % 8
+        if remainder:
+            entry += b"\x00" * (8 - remainder)
+    return entry
+
+
+def _git_index_truncated_extended_entry() -> bytes:
+    entry = bytearray(62)
+    entry[60:62] = (0x4000).to_bytes(2, "big")
+    return bytes(entry)
+
+
 def _request(
     *,
     command: ShellGitCommandName,
@@ -1353,6 +1893,11 @@ def _policy(
 async def _fake_executable(search_paths: tuple[str, ...]) -> str | None:
     assert isinstance(search_paths, tuple)
     return "/usr/bin/git"
+
+
+async def _missing_executable(search_paths: tuple[str, ...]) -> str | None:
+    assert isinstance(search_paths, tuple)
+    return "/definitely/missing/git"
 
 
 async def _policy_error(

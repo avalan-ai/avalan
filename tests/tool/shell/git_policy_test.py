@@ -615,6 +615,74 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     error = await _policy_error(policy, request=request)
                     self.assertEqual(error.error_code, error_code)
 
+    async def test_default_policy_denies_credentialed_clone_url(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            error = await _policy_error(
+                _policy(
+                    root,
+                    capabilities=("remote",),
+                    allowed_commands=("clone",),
+                    allowed_remote_hosts=("github.com",),
+                ),
+                request=_request(
+                    command=ShellGitCommandName.CLONE,
+                    capability=ShellGitCapability.REMOTE,
+                    options={
+                        "url": "https://token@github.com/acme/repo.git",
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.CREDENTIAL_DENIED,
+        )
+
+    async def test_allow_explicit_policy_allows_credentialed_clone_url(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            policy = GitExecutionPolicy(
+                settings=ShellToolSettings(
+                    git=ShellGitToolSettings(
+                        workspace_root=str(root),
+                        cwd=".",
+                        capabilities=("remote",),
+                        allowed_commands=("clone",),
+                        allowed_remote_protocols=("https",),
+                        allowed_remote_hosts=("github.com",),
+                        credential_policy="allow_explicit",
+                    )
+                ),
+                executable_lookup=_found_git,
+            )
+
+            spec = await policy.normalize(
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    capability=ShellGitCapability.REMOTE,
+                    options={
+                        "url": "https://token@github.com/acme/repo.git",
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                )
+            )
+
+        self.assertIn("https://token@github.com/acme/repo.git", spec.argv)
+        self.assertEqual(
+            spec.metadata["git_credential_mode"],
+            "allow_explicit",
+        )
+        self.assertEqual(spec.metadata["git_remote_protocol"], "https")
+        self.assertEqual(spec.metadata["git_remote_host"], "github.com")
+
     async def test_unsafe_config_attributes_and_environment_are_neutralized(
         self,
     ) -> None:
@@ -691,10 +759,6 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
             root = Path(workspace)
             _write_minimal_git_repo(root / "repo")
             spec = await _policy(root).normalize(_status_request())
-            lock_spec = await _policy(
-                root,
-                allow_optional_locks=True,
-            ).normalize(_status_request())
 
         self.assertEqual(spec.env["GIT_TERMINAL_PROMPT"], "0")
         self.assertEqual(spec.env["GIT_PAGER"], "/nonexistent")
@@ -705,7 +769,6 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
         self.assertEqual(spec.env["GIT_EXTERNAL_DIFF"], "/nonexistent")
         self.assertEqual(spec.env["HOME"], "/nonexistent")
         self.assertEqual(spec.env["GIT_OPTIONAL_LOCKS"], "0")
-        self.assertEqual(lock_spec.env["GIT_OPTIONAL_LOCKS"], "0")
         self.assertNotIn("GIT_SSH_COMMAND", spec.env)
 
     async def test_config_include_surfaces_fail_closed(self) -> None:
@@ -1266,7 +1329,7 @@ class GitWrapperResultTest(IsolatedAsyncioTestCase):
         )
         self.assertIn("execution_mode: policy", result)
 
-    async def test_post_index_change_hook_denied_with_optional_locks(
+    async def test_post_index_change_hook_denied_with_optional_locks_disabled(
         self,
     ) -> None:
         with TemporaryDirectory() as workspace:
@@ -1281,7 +1344,6 @@ class GitWrapperResultTest(IsolatedAsyncioTestCase):
                 root,
                 executor=_UnexpectedExecutor(),
                 found=True,
-                allow_optional_locks=True,
             )
 
             result = await tool(context=ToolCallContext())

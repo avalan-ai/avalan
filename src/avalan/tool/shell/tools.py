@@ -950,7 +950,7 @@ class GitDiffTool(_ShellGitCommandTool):
         mode: Diff mode to request.
         base_revision: Optional base revision for range mode.
         head_revision: Optional head revision for range mode.
-        paths: Explicit repo-relative file pathspecs to diff.
+        paths: Optional repo-relative pathspecs to diff.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
@@ -971,7 +971,7 @@ class GitDiffTool(_ShellGitCommandTool):
         base_revision: str | None = None,
         head_revision: str | None = None,
         *,
-        paths: Sequence[str],
+        paths: Sequence[str] = (),
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -998,7 +998,7 @@ class GitDiffTool(_ShellGitCommandTool):
         base_revision: str | None = None,
         head_revision: str | None = None,
         *,
-        paths: Sequence[str],
+        paths: Sequence[str] = (),
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -1284,7 +1284,7 @@ class GitStashShowTool(_ShellGitCommandTool):
     Args:
         stash: Stash reference to inspect.
         mode: Fixed stash show mode to request.
-        paths: Explicit repo-relative file pathspecs to inspect.
+        paths: Optional repo-relative pathspecs to inspect.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
@@ -1305,7 +1305,7 @@ class GitStashShowTool(_ShellGitCommandTool):
         stash: str = "stash@{0}",
         mode: Literal["stat", "patch"] = "stat",
         *,
-        paths: Sequence[str],
+        paths: Sequence[str] = (),
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -1325,7 +1325,7 @@ class GitStashShowTool(_ShellGitCommandTool):
         stash: str = "stash@{0}",
         mode: Literal["stat", "patch"] = "stat",
         *,
-        paths: Sequence[str],
+        paths: Sequence[str] = (),
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,

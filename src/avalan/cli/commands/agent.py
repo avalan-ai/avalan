@@ -129,6 +129,12 @@ _SKILL_BOOTSTRAP_PROMPT_OMIT_FIELDS = {
     "check_guidance": "include_check_guidance",
     "behavior_guidance": "include_behavior_guidance",
 }
+_SHELL_GIT_CLI_FIELD_NAMES = frozenset(
+    (
+        *ShellGitToolSettings.CLI_SCALAR_FIELDS,
+        *ShellGitToolSettings.CLI_SEQUENCE_FIELDS,
+    )
+)
 
 
 def _parse_permanent_memory_items(
@@ -439,8 +445,8 @@ def _shell_git_settings_from_mapping(
     mapping: Mapping[str, object] | Namespace,
 ) -> ShellGitToolSettings | None:
     values: dict[str, object] = {}
-    for field in fields(ShellGitToolSettings):
-        key = f"tool_shell_git_{field.name}"
+    for field_name in _SHELL_GIT_CLI_FIELD_NAMES:
+        key = f"tool_shell_git_{field_name}"
         if isinstance(mapping, Namespace):
             if not hasattr(mapping, key):
                 continue
@@ -450,7 +456,7 @@ def _shell_git_settings_from_mapping(
                 continue
             value = mapping[key]
         if value is not None:
-            values[field.name] = value
+            values[field_name] = value
     if not values:
         return None
     _complete_partial_shell_git_timeout_values(values)
@@ -490,13 +496,13 @@ def _shell_git_explicit_fields_from_mapping(
     mapping: Mapping[str, object] | Namespace,
 ) -> set[str]:
     explicit_fields: set[str] = set()
-    for field in fields(ShellGitToolSettings):
-        key = f"tool_shell_git_{field.name}"
+    for field_name in _SHELL_GIT_CLI_FIELD_NAMES:
+        key = f"tool_shell_git_{field_name}"
         if isinstance(mapping, Namespace):
             if hasattr(mapping, key) and getattr(mapping, key) is not None:
-                explicit_fields.add(f"git.{field.name}")
+                explicit_fields.add(f"git.{field_name}")
         elif key in mapping and mapping[key] is not None:
-            explicit_fields.add(f"git.{field.name}")
+            explicit_fields.add(f"git.{field_name}")
     return explicit_fields
 
 

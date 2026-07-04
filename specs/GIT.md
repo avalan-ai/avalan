@@ -106,10 +106,6 @@ max_diff_bytes = 131072
 max_log_count = 50
 max_grep_matches = 1000
 max_pathspecs = 64
-allow_external_diff = false
-allow_textconv = false
-allow_optional_locks = false
-allow_submodules = false
 allow_bare_repositories = false
 allow_linked_worktrees = false
 allow_alternates = false
@@ -119,6 +115,11 @@ allowed_remote_protocols = ["https"]
 allowed_remote_hosts = []
 redact_remote_urls = true
 ```
+
+External diff, textconv, optional locks, and submodule recursion stay
+disabled. `allow_submodule_update = true` is the supported remote submodule
+update gate, and still requires the remote capability, command, protocol, and
+host allowlists.
 
 Remote-enabled profile:
 
@@ -131,7 +132,16 @@ enable = [
 
 [tool.shell.git]
 capabilities = ["read", "remote"]
-allowed_commands = ["status", "fetch", "push", "remote"]
+allowed_commands = [
+  "status",
+  "fetch",
+  "push",
+  "remote-list",
+  "remote-add",
+  "remote-set-url",
+  "remote-remove",
+  "remote-rename",
+]
 allowed_remote_protocols = ["https"]
 allowed_remote_hosts = ["github.com"]
 allow_remote_credentials = true
@@ -154,6 +164,11 @@ The capability vocabulary is fixed.
 Tool exposure and execution require both public tool enablement and the
 capability required by the command or mode. `allowed_commands` is an
 additional allowlist and cannot grant capabilities.
+
+`allowed_commands` uses exact shell Git command IDs. `remote` belongs only in
+`capabilities` and is not an alias for remote-management commands. The
+remote-management command IDs are `remote-list`, `remote-add`,
+`remote-set-url`, `remote-remove`, and `remote-rename`.
 
 `remote` is a separate boundary. It is never implied by `worktree` or
 `history`, and `remote` alone cannot permit local worktree or history

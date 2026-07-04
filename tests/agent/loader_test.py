@@ -1081,6 +1081,31 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             self.assertFalse(git_settings.allow_submodules)
             await stack.aclose()
 
+    async def test_shell_git_toml_rejects_reserved_true_setting(self):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(
+                _minimal_agent_toml()
+                + "\n[tool.shell.git]\n"
+                + "allow_textconv = true\n"
+            )
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            try:
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "git.allow_textconv is reserved and must be false",
+                ):
+                    await loader.from_file(tmp.name, agent_id=uuid4())
+            finally:
+                await stack.aclose()
+
     async def test_merge_shell_tool_settings_applies_explicit_git_override(
         self,
     ) -> None:

@@ -403,6 +403,203 @@ class GitRemotePolicyPhase7Test(IsolatedAsyncioTestCase):
                     )
                     self.assertEqual(error.error_code, error_code)
 
+    async def test_hostless_file_clone_url_inside_workspace_is_allowed(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            remote = _write_minimal_bare_git_repo(root / "remote.git")
+            url = _hostless_file_url(remote)
+            spec = await _policy(
+                root,
+                cwd=".",
+                allowed_commands=("clone",),
+            ).normalize(
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": url,
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                )
+            )
+
+        self.assertIn(url, spec.argv)
+        self.assertEqual(spec.metadata["git_remote_protocol"], "file")
+        self.assertIsNone(spec.metadata["git_remote_host"])
+        self.assertEqual(spec.metadata["git_remote_url"], "file:///[redacted]")
+
+    async def test_hostless_file_clone_url_rejects_raw_double_slash_path(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            remote = root / "remote.git"
+            error = await _policy_error(
+                _policy(root, cwd=".", allowed_commands=("clone",)),
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": f"file:///{remote.resolve().as_posix()}",
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+        )
+
+    async def test_hostless_file_clone_url_rejects_encoded_leading_slash(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            remote = root / "remote.git"
+            encoded_path = remote.resolve().as_posix().lstrip("/")
+            error = await _policy_error(
+                _policy(root, cwd=".", allowed_commands=("clone",)),
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": f"file:///%2F{encoded_path}",
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+        )
+
+    async def test_hostless_file_clone_url_rejects_file_absolute_form(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            remote = root / "remote.git"
+            error = await _policy_error(
+                _policy(root, cwd=".", allowed_commands=("clone",)),
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": f"file:{remote.resolve().as_posix()}",
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+        )
+
+    async def test_hostless_file_clone_url_rejects_query(self) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            error = await _policy_error(
+                _policy(root, cwd=".", allowed_commands=("clone",)),
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": (
+                            f"{_hostless_file_url(root / 'remote.git')}?q=1"
+                        ),
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+        )
+
+    async def test_hostless_file_clone_url_must_stay_inside_workspace(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            error = await _policy_error(
+                _policy(root, cwd=".", allowed_commands=("clone",)),
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": _hostless_file_url(root.parent / "remote.git"),
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.REPO_BOUNDARY_DENIED,
+        )
+
+    async def test_hostless_file_clone_url_requires_localhost_allowlist(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            error = await _policy_error(
+                _policy(
+                    root,
+                    cwd=".",
+                    allowed_commands=("clone",),
+                    allowed_remote_protocols=("file",),
+                    allowed_remote_hosts=("github.com",),
+                ),
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": _hostless_file_url(root / "remote.git"),
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.REMOTE_HOST_DENIED,
+        )
+
+    async def test_hostless_file_clone_url_requires_file_protocol_allowlist(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            error = await _policy_error(
+                _policy(
+                    root,
+                    cwd=".",
+                    allowed_commands=("clone",),
+                    allowed_remote_protocols=("https",),
+                    allowed_remote_hosts=("localhost",),
+                ),
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": _hostless_file_url(root / "remote.git"),
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+        )
+
     async def test_file_clone_url_requires_path_inside_workspace(self) -> None:
         with TemporaryDirectory() as workspace:
             root = Path(workspace)
@@ -2398,6 +2595,101 @@ class GitRemotePolicyPhase7Test(IsolatedAsyncioTestCase):
             ShellGitExecutionErrorCode.PATHSPEC_DENIED,
         )
 
+    async def test_default_clone_destination_denies_hidden_path(self) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            error = await _policy_error(
+                _policy(root, cwd=".", allowed_commands=("clone",)),
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": _file_url(root / "remote.git"),
+                        "destination": ".repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        )
+
+    async def test_allow_hidden_clone_destination_is_in_argv(self) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            policy = GitExecutionPolicy(
+                settings=ShellToolSettings(
+                    allow_hidden=True,
+                    git=ShellGitToolSettings(
+                        workspace_root=str(root),
+                        cwd=".",
+                        capabilities=("remote",),
+                        allowed_commands=("clone",),
+                        allowed_remote_protocols=("file",),
+                        allowed_remote_hosts=("localhost",),
+                    ),
+                ),
+                executable_lookup=_fake_executable,
+            )
+
+            spec = await policy.normalize(
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": _file_url(root / "remote.git"),
+                        "destination": ".repo-copy",
+                        "branch": "main",
+                    },
+                )
+            )
+
+        self.assertIn(".repo-copy", spec.argv)
+        self.assertEqual(spec.argv[-1], ".repo-copy")
+
+    async def test_allow_hidden_clone_destination_denies_sensitive_paths(
+        self,
+    ) -> None:
+        cases = (
+            ".git/config",
+            ".ssh/repo-copy",
+            ".env-copy",
+        )
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            policy = GitExecutionPolicy(
+                settings=ShellToolSettings(
+                    allow_hidden=True,
+                    git=ShellGitToolSettings(
+                        workspace_root=str(root),
+                        cwd=".",
+                        capabilities=("remote",),
+                        allowed_commands=("clone",),
+                        allowed_remote_protocols=("file",),
+                        allowed_remote_hosts=("localhost",),
+                    ),
+                ),
+                executable_lookup=_fake_executable,
+            )
+
+            for destination in cases:
+                with self.subTest(destination=destination):
+                    error = await _policy_error(
+                        policy,
+                        _request(
+                            command=ShellGitCommandName.CLONE,
+                            options={
+                                "url": _file_url(root / "remote.git"),
+                                "destination": destination,
+                                "branch": "main",
+                            },
+                        ),
+                    )
+                    self.assertEqual(
+                        error.error_code,
+                        ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                    )
+
     async def test_clone_cwd_must_stay_inside_workspace(self) -> None:
         with TemporaryDirectory() as workspace:
             root = Path(workspace)
@@ -3166,6 +3458,10 @@ def _write_minimal_bare_git_repo(repo: Path) -> Path:
 
 def _file_url(path: Path) -> str:
     return f"file://localhost{path.resolve().as_posix()}"
+
+
+def _hostless_file_url(path: Path) -> str:
+    return f"file://{path.resolve().as_posix()}"
 
 
 def _real_remote_toolset(

@@ -131,6 +131,13 @@ class ShellGitToolSetPhase1Test(TestCase):
                 allowed_remote_hosts=("github.com",),
             )
         )
+        allowed_management = ShellToolSettings(
+            git=ShellGitToolSettings(
+                capabilities=("remote",),
+                allowed_commands=_REMOTE_MANAGEMENT_COMMAND_IDS,
+                allowed_remote_hosts=("github.com",),
+            )
+        )
 
         self.assertNotIn(
             "shell.git_fetch",
@@ -144,6 +151,20 @@ class ShellGitToolSetPhase1Test(TestCase):
                 ShellToolSet(settings=allowed).with_enabled_tools(["shell.*"])
             ),
         )
+        management_names = set(
+            _schema_names(
+                ShellToolSet(settings=allowed_management).with_enabled_tools(
+                    ["shell.*"]
+                )
+            )
+        )
+        for command_id in _REMOTE_MANAGEMENT_COMMAND_IDS:
+            with self.subTest(command_id=command_id):
+                self.assertIn(
+                    f"shell.git_{command_id.replace('-', '_')}",
+                    management_names,
+                )
+        self.assertNotIn("shell.git_fetch", management_names)
 
     def test_submodule_update_requires_explicit_submodule_setting(
         self,
@@ -183,7 +204,12 @@ class ShellGitSettingsPhase1Test(TestCase):
         settings = ShellToolSettings(
             git={
                 "capabilities": ["read", "remote"],
-                "allowed_commands": ["status", "fetch", "push", "remote"],
+                "allowed_commands": [
+                    "status",
+                    "fetch",
+                    "push",
+                    *_REMOTE_MANAGEMENT_COMMAND_IDS,
+                ],
                 "allowed_remote_protocols": ["https"],
                 "allowed_remote_hosts": ["github.com"],
                 "allow_remote_credentials": True,
@@ -205,23 +231,14 @@ class ShellGitSettingsPhase1Test(TestCase):
         self.assertEqual(git_settings.credential_policy, "allow_explicit")
         self.assertTrue(git_settings.allow_remote_credentials)
 
-    def test_remote_allowed_command_bucket_expands_management_ids(
+    def test_remote_capability_is_not_allowed_command_alias(
         self,
     ) -> None:
-        settings = ShellGitToolSettings(allowed_commands=("remote",))
-
-        self.assertEqual(
-            settings.allowed_commands,
-            _REMOTE_MANAGEMENT_COMMAND_IDS,
-        )
-        self.assertNotIn(
-            ShellGitCommandName.FETCH.value,
-            settings.allowed_commands,
-        )
-        self.assertNotIn(
-            ShellGitCommandName.PUSH.value,
-            settings.allowed_commands,
-        )
+        with self.assertRaisesRegex(
+            AssertionError,
+            "git.allowed_commands contains unsupported value: 'remote'",
+        ):
+            ShellGitToolSettings(allowed_commands=("remote",))
 
     def test_git_settings_accept_mapping_and_copy_sequences(self) -> None:
         capabilities = ["read"]
@@ -380,12 +397,7 @@ class ShellGitToolManagerPhase1Test(TestCase):
             status_schema.parameter_schema["properties"]["mode"]["enum"],
             ["porcelain_v2", "short"],
         )
-        required_path_schemas = (
-            "shell.git_diff",
-            "shell.git_blame",
-            "shell.git_grep",
-            "shell.git_stash_show",
-        )
+        required_path_schemas = ("shell.git_blame", "shell.git_grep")
         for tool_name in required_path_schemas:
             with self.subTest(required_paths=tool_name):
                 tool_schema = manager.describe_tool(tool_name)
@@ -400,6 +412,16 @@ class ShellGitToolManagerPhase1Test(TestCase):
         assert show_schema is not None
         assert show_schema.parameter_schema is not None
         self.assertNotIn("paths", show_schema.parameter_schema["required"])
+
+        for tool_name in ("shell.git_diff", "shell.git_stash_show"):
+            with self.subTest(optional_paths=tool_name):
+                tool_schema = manager.describe_tool(tool_name)
+                assert tool_schema is not None
+                assert tool_schema.parameter_schema is not None
+                self.assertNotIn(
+                    "paths",
+                    tool_schema.parameter_schema["required"],
+                )
 
     def test_worktree_reset_schema_excludes_history_modes(self) -> None:
         settings = ShellToolSettings(

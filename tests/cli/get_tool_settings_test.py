@@ -294,7 +294,15 @@ class GetToolSettingsTestCase(unittest.TestCase):
             tool_shell_git_workspace_root="/workspace",
             tool_shell_git_cwd="repo",
             tool_shell_git_capabilities=["read", "remote", "remote"],
-            tool_shell_git_allowed_commands=["status", "diff", "remote"],
+            tool_shell_git_allowed_commands=[
+                "status",
+                "diff",
+                "remote-list",
+                "remote-add",
+                "remote-set-url",
+                "remote-remove",
+                "remote-rename",
+            ],
             tool_shell_git_default_timeout_seconds=5.0,
             tool_shell_git_max_timeout_seconds=30.0,
             tool_shell_git_max_stdout_bytes=4096,
@@ -401,7 +409,9 @@ class GetToolSettingsTestCase(unittest.TestCase):
             frozenset({"git.default_timeout_seconds"}),
         )
 
-    def test_shell_git_settings_track_explicit_cli_fields(self):
+    def test_shell_git_settings_track_explicit_cli_fields_excludes_reserved(
+        self,
+    ):
         args = Namespace(
             tool_shell_git_max_log_count=ShellGitToolSettings().max_log_count,
             tool_shell_git_allow_optional_locks=False,
@@ -421,7 +431,6 @@ class GetToolSettingsTestCase(unittest.TestCase):
             frozenset(
                 {
                     "git.max_log_count",
-                    "git.allow_optional_locks",
                     "git.redact_remote_urls",
                 }
             ),
@@ -452,6 +461,37 @@ class GetToolSettingsTestCase(unittest.TestCase):
         self.assertIsInstance(git_settings, ShellGitToolSettings)
         assert isinstance(git_settings, ShellGitToolSettings)
         self.assertEqual(git_settings.max_log_count, 9)
+        self.assertEqual(explicit_fields, frozenset({"git.max_log_count"}))
+
+    def test_shell_git_settings_from_sparse_mapping_ignores_reserved_fields(
+        self,
+    ):
+        mapping = {
+            "tool_shell_git_max_log_count": 9,
+            "tool_shell_git_allow_optional_locks": True,
+        }
+
+        settings = agent_cmds._tool_settings_from_mapping(
+            mapping,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
+            open_files=False,
+        )
+        explicit_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                mapping,
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+
+        self.assertIsInstance(settings, ShellToolSettings)
+        assert isinstance(settings, ShellToolSettings)
+        git_settings = settings.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.max_log_count, 9)
+        self.assertFalse(git_settings.allow_optional_locks)
         self.assertEqual(explicit_fields, frozenset({"git.max_log_count"}))
 
     def test_shell_executable_path_coercion_preserves_non_cli_values(self):
