@@ -552,6 +552,11 @@ def _git_tool_allowed(
     if command.value not in settings.allowed_commands:
         return False
     capabilities = shell_git_capabilities_for_command(command)
+    if command is ShellGitCommandName.PULL and not all(
+        capability.value in settings.capabilities
+        for capability in capabilities
+    ):
+        return False
     if not any(
         capability.value in settings.capabilities
         for capability in capabilities

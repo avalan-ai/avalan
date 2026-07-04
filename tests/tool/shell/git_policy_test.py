@@ -167,6 +167,7 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     root,
                     capabilities=("remote",),
                     allowed_commands=("submodule-update",),
+                    allowed_remote_hosts=("github.com",),
                 ),
                 request=_request(
                     command=ShellGitCommandName.SUBMODULE_UPDATE,
@@ -333,6 +334,7 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     capabilities=("remote",),
                     allowed_commands=("submodule-update",),
                     allow_submodule_update=True,
+                    allowed_remote_hosts=("github.com",),
                 ),
                 request=_request(
                     command=ShellGitCommandName.SUBMODULE_UPDATE,
@@ -477,12 +479,17 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                 request=_request(
                     command=ShellGitCommandName.CLONE,
                     capability=ShellGitCapability.REMOTE,
-                    options={"revision": "../unsafe"},
+                    options={
+                        "url": "https://github.com/acme/repo",
+                        "destination": "repo-copy",
+                        "branch": "main",
+                        "revision": "../unsafe",
+                    },
                 ),
             )
             self.assertEqual(
                 clone_error.error_code,
-                ShellGitExecutionErrorCode.COMMAND_DISABLED,
+                ShellGitExecutionErrorCode.INVALID_OPTION,
             )
 
     async def test_remote_policy_failures_are_stable(self) -> None:
@@ -498,6 +505,11 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     _request(
                         command=ShellGitCommandName.FETCH,
                         capability=ShellGitCapability.REMOTE,
+                        options={
+                            "remote": "origin",
+                            "ref_type": "branch",
+                            "ref_name": "main",
+                        },
                     ),
                     ShellGitExecutionErrorCode.REMOTE_HOST_DENIED,
                 ),
@@ -505,13 +517,17 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     _policy(
                         root,
                         capabilities=("remote",),
-                        allowed_commands=("fetch",),
+                        allowed_commands=("clone",),
                         allowed_remote_hosts=("github.com",),
                     ),
                     _request(
-                        command=ShellGitCommandName.FETCH,
+                        command=ShellGitCommandName.CLONE,
                         capability=ShellGitCapability.REMOTE,
-                        options={"url": "not-a-url"},
+                        options={
+                            "url": "not-a-url",
+                            "destination": "repo-copy",
+                            "branch": "main",
+                        },
                     ),
                     ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
                 ),
@@ -519,13 +535,17 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     _policy(
                         root,
                         capabilities=("remote",),
-                        allowed_commands=("fetch",),
+                        allowed_commands=("clone",),
                         allowed_remote_hosts=("github.com",),
                     ),
                     _request(
-                        command=ShellGitCommandName.FETCH,
+                        command=ShellGitCommandName.CLONE,
                         capability=ShellGitCapability.REMOTE,
-                        options={"url": "git://github.com/acme/repo"},
+                        options={
+                            "url": "git://github.com/acme/repo",
+                            "destination": "repo-copy",
+                            "branch": "main",
+                        },
                     ),
                     ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
                 ),
@@ -533,13 +553,17 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     _policy(
                         root,
                         capabilities=("remote",),
-                        allowed_commands=("fetch",),
+                        allowed_commands=("clone",),
                         allowed_remote_hosts=("github.com",),
                     ),
                     _request(
-                        command=ShellGitCommandName.FETCH,
+                        command=ShellGitCommandName.CLONE,
                         capability=ShellGitCapability.REMOTE,
-                        options={"url": "ssh://github.com/acme/repo"},
+                        options={
+                            "url": "ssh://github.com/acme/repo",
+                            "destination": "repo-copy",
+                            "branch": "main",
+                        },
                     ),
                     ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
                 ),
@@ -547,13 +571,17 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     _policy(
                         root,
                         capabilities=("remote",),
-                        allowed_commands=("fetch",),
+                        allowed_commands=("clone",),
                         allowed_remote_hosts=("github.com",),
                     ),
                     _request(
-                        command=ShellGitCommandName.FETCH,
+                        command=ShellGitCommandName.CLONE,
                         capability=ShellGitCapability.REMOTE,
-                        options={"url": "https://evil.com/acme/repo"},
+                        options={
+                            "url": "https://evil.com/acme/repo",
+                            "destination": "repo-copy",
+                            "branch": "main",
+                        },
                     ),
                     ShellGitExecutionErrorCode.REMOTE_HOST_DENIED,
                 ),
@@ -561,14 +589,16 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
                     _policy(
                         root,
                         capabilities=("remote",),
-                        allowed_commands=("fetch",),
+                        allowed_commands=("clone",),
                         allowed_remote_hosts=("github.com",),
                     ),
                     _request(
-                        command=ShellGitCommandName.FETCH,
+                        command=ShellGitCommandName.CLONE,
                         capability=ShellGitCapability.REMOTE,
                         options={
                             "url": "https://token@github.com/acme/repo",
+                            "destination": "repo-copy",
+                            "branch": "main",
                         },
                     ),
                     ShellGitExecutionErrorCode.CREDENTIAL_DENIED,

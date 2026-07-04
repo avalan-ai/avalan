@@ -58,7 +58,7 @@ _GIT_CREDENTIAL_POLICIES: tuple[ShellGitCredentialPolicy, ...] = (
     "deny",
     "allow_explicit",
 )
-_GIT_REMOTE_PROTOCOLS: tuple[str, ...] = ("https",)
+_GIT_REMOTE_PROTOCOLS: tuple[str, ...] = ("file", "https")
 _GIT_REMOTE_MANAGEMENT_COMMAND_IDS: tuple[str, ...] = tuple(
     command.value
     for command in (
@@ -692,15 +692,24 @@ def _normalized_git_commands(value: object) -> tuple[str, ...]:
 
 
 def _normalized_git_remote_protocols(value: object) -> tuple[str, ...]:
-    _assert_non_empty_string_sequence(value, "git.allowed_remote_protocols")
-    assert isinstance(value, Sequence)
+    assert isinstance(
+        value,
+        Sequence,
+    ), "git.allowed_remote_protocols must be a sequence"
+    assert not isinstance(
+        value,
+        str | bytes,
+    ), "git.allowed_remote_protocols must be a sequence"
     protocols: list[str] = []
     for item in value:
+        _assert_non_empty_string(item, "git.allowed_remote_protocols")
+        assert isinstance(item, str)
+        protocol = item.lower()
         assert (
-            item in _GIT_REMOTE_PROTOCOLS
+            protocol in _GIT_REMOTE_PROTOCOLS
         ), f"git.allowed_remote_protocols contains unsafe value: {item!r}"
-        if item not in protocols:
-            protocols.append(item)
+        if protocol not in protocols:
+            protocols.append(protocol)
     return tuple(protocols)
 
 

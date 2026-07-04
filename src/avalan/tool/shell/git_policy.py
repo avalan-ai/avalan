@@ -7,6 +7,7 @@ from .entities import (
     ShellExecutionStatus,
     ShellOutputKind,
 )
+from .filesystem import inspect_path as _inspect_path
 from .filesystem import list_directory as _list_directory
 from .filesystem import read_bytes as _read_bytes
 from .git import (
@@ -21,9 +22,12 @@ from .policy import ExecutionPolicy
 from .settings import ShellGitToolSettings, ShellToolSettings
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from re import compile as compile_pattern
-from typing import cast, final
+from stat import S_IXGRP, S_IXOTH, S_IXUSR
+from typing import NoReturn, cast, final
+from urllib.parse import unquote, urlsplit
 
 GitExecutableLookup = Callable[[tuple[str, ...]], Awaitable[str | None]]
 
@@ -100,6 +104,10 @@ _UNSAFE_OPTION_NAME_VALUES = (
     "submodule",
     "submodules",
     "textconv",
+    "receive-pack",
+    "receivepack",
+    "upload-pack",
+    "uploadpack",
     "work-tree",
 )
 _UNSAFE_OPTION_NAMES = frozenset(_UNSAFE_OPTION_NAME_VALUES)
@@ -117,6 +125,8 @@ _UNSAFE_VALUE_MARKERS = (
     "pager.",
     "sshcommand",
     "textconv",
+    "uploadpack",
+    "receivepack",
     "!",
 )
 _REVISION_PATTERN = compile_pattern(r"^[A-Za-z0-9][A-Za-z0-9._\-]*$")
@@ -133,29 +143,48 @@ _REMOTE_URL_PATTERN = compile_pattern(
     r"(?::[0-9]+)?(?:/.*)?$"
 )
 _CONTROL_CHARACTERS = tuple(chr(value) for value in (*range(0, 32), 127))
-_DANGEROUS_CONFIG_MARKERS = (
-    "fsmonitor",
-    "pager",
-    "editor",
+_DANGEROUS_CONFIG_SECTION_NAMES = frozenset(
+    (
+        "credential",
+        "diff",
+        "filter",
+        "gpg",
+        "hook",
+        "include",
+        "includeif",
+        "merge",
+        "pager",
+    )
+)
+_DANGEROUS_CONFIG_SECTION_PREFIXES = frozenset(
+    f"{section}." for section in _DANGEROUS_CONFIG_SECTION_NAMES
+)
+_DANGEROUS_CONFIG_KEY_NAMES = frozenset(
+    (
+        "askpass",
+        "editor",
+        "external",
+        "fsmonitor",
+        "gpgsign",
+        "hookspath",
+        "ignorerevsfile",
+        "insteadof",
+        "pager",
+        "pushinsteadof",
+        "receivepack",
+        "showsignature",
+        "sshcommand",
+        "textconv",
+        "uploadpack",
+        "worktree",
+        "worktreeconfig",
+    )
+)
+_DANGEROUS_CONFIG_KEY_MARKERS = (
     "credential",
-    "askpass",
-    "sshcommand",
-    "hookspath",
-    "diff.external",
-    "[include",
-    "include.path",
-    "includeif",
-    "[filter",
-    "[diff",
-    "textconv",
     "gpg",
-    "gpgsign",
-    "showsignature",
-    "ignorerevsfile",
-    "[merge",
-    "merge.",
+    "proxy",
     "signing",
-    "worktree",
 )
 _DANGEROUS_ATTRIBUTES_MARKERS = (
     "filter",
@@ -234,7 +263,155 @@ _ALLOWED_GIT_OPTION_KEYS = {
         {"stash", "index", "confirm_stash"},
     ),
     ShellGitCommandName.STASH_DROP: frozenset({"stash", "confirm_stash"}),
+    ShellGitCommandName.FETCH: frozenset(
+        {"remote", "ref_type", "ref_name"},
+    ),
+    ShellGitCommandName.PULL: frozenset({"remote", "branch"}),
+    ShellGitCommandName.PUSH: frozenset(
+        {"remote", "ref_type", "ref_name"},
+    ),
+    ShellGitCommandName.CLONE: frozenset(
+        {"url", "destination", "branch"},
+    ),
+    ShellGitCommandName.REMOTE_LIST: frozenset(),
+    ShellGitCommandName.REMOTE_ADD: frozenset({"name", "url"}),
+    ShellGitCommandName.REMOTE_SET_URL: frozenset({"name", "url"}),
+    ShellGitCommandName.REMOTE_REMOVE: frozenset({"name"}),
+    ShellGitCommandName.REMOTE_RENAME: frozenset({"old_name", "new_name"}),
+    ShellGitCommandName.SUBMODULE_UPDATE: frozenset({"init"}),
 }
+_REMOTE_REPOSITORY_COMMANDS = frozenset(
+    (
+        ShellGitCommandName.FETCH,
+        ShellGitCommandName.PULL,
+        ShellGitCommandName.PUSH,
+        ShellGitCommandName.REMOTE_LIST,
+        ShellGitCommandName.REMOTE_ADD,
+        ShellGitCommandName.REMOTE_SET_URL,
+        ShellGitCommandName.REMOTE_REMOVE,
+        ShellGitCommandName.REMOTE_RENAME,
+        ShellGitCommandName.SUBMODULE_UPDATE,
+    )
+)
+_REMOTE_NETWORK_COMMANDS = frozenset(
+    (
+        ShellGitCommandName.FETCH,
+        ShellGitCommandName.PULL,
+        ShellGitCommandName.PUSH,
+        ShellGitCommandName.CLONE,
+        ShellGitCommandName.SUBMODULE_UPDATE,
+    )
+)
+_PULL_REQUIRED_CAPABILITIES = (
+    ShellGitCapability.REMOTE,
+    ShellGitCapability.WORKTREE,
+    ShellGitCapability.HISTORY,
+)
+_REMOTE_STATE_MUTATING_COMMANDS = frozenset((ShellGitCommandName.PUSH,))
+_SERVER_SIDE_PUSH_HOOK_NAMES = frozenset(
+    (
+        "pre-receive",
+        "update",
+        "post-receive",
+        "post-update",
+        "proc-receive",
+        "reference-transaction",
+        "push-to-checkout",
+    )
+)
+_EXECUTABLE_PERMISSION_BITS = S_IXUSR | S_IXGRP | S_IXOTH
+_LOCAL_REMOTE_CONFIG_MUTATING_COMMANDS = frozenset(
+    (
+        ShellGitCommandName.REMOTE_ADD,
+        ShellGitCommandName.REMOTE_SET_URL,
+        ShellGitCommandName.REMOTE_REMOVE,
+        ShellGitCommandName.REMOTE_RENAME,
+    )
+)
+_REMOTE_CONFIG_DENIED_KEYS = frozenset(
+    (
+        "pushurl",
+        "receivepack",
+        "serveroption",
+        "uploadpack",
+        "vcs",
+    )
+)
+_REMOTE_CONFIG_DENIED_BOOL_KEYS = frozenset(
+    (
+        "mirror",
+        "prune",
+        "prunetags",
+    )
+)
+_HTTP_CREDENTIAL_CONFIG_KEYS = frozenset(
+    (
+        "cookiefile",
+        "delegation",
+        "emptyauth",
+        "extraheader",
+        "savecookies",
+        "sslcert",
+        "sslcertpasswordprotected",
+        "sslkey",
+    )
+)
+_HTTP_TLS_CONFIG_KEYS = frozenset(
+    (
+        "pinnedpubkey",
+        "schannelcheckrevoke",
+        "schannelusesslcainfo",
+        "sslbackend",
+        "sslcainfo",
+        "sslcapath",
+        "sslcipherlist",
+        "ssltry",
+        "sslverify",
+        "sslversion",
+    )
+)
+_FETCH_CONFIG_DENIED_BOOL_KEYS = frozenset(("prune", "prunetags"))
+_PULL_CONFIG_DENIED_KEYS = frozenset(
+    (
+        "ff",
+        "octopus",
+        "rebase",
+        "twohead",
+    )
+)
+_PUSH_CONFIG_DENIED_KEYS = frozenset(
+    (
+        "default",
+        "followtags",
+        "gpgsign",
+        "pushoption",
+    )
+)
+_GIT_CONFIG_EXPLICIT_FALSE_VALUES = frozenset(("false", "no", "off", "0"))
+_GIT_CONFIG_EXPLICIT_TRUE_VALUES = frozenset(("true", "yes", "on", "1"))
+_REMOTE_NAME_PATTERN = compile_pattern(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_REMOTE_REF_TYPES = ("branch", "tag")
+_REMOTE_REF_PATTERN = compile_pattern(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9._-])?$"
+)
+_URL_SCHEME_PATTERN = compile_pattern(r"^[A-Za-z][A-Za-z0-9+.-]*$")
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class _GitConfigEntry:
+    section: str
+    subsection: str | None
+    key: str
+    value: str
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class _RemoteConfig:
+    name: str
+    urls: tuple[str, ...]
+    entries: tuple[_GitConfigEntry, ...]
 
 
 @final
@@ -265,37 +442,77 @@ class GitExecutionPolicy:
         _validate_tool_name(request)
         _validate_authorization(request, git_settings)
         workspace_root = _resolve_workspace_root(git_settings.workspace_root)
-        effective_cwd = _resolve_effective_cwd(
-            request.cwd or git_settings.cwd,
-            workspace_root=workspace_root,
-        )
-        repo_root, git_dir = _discover_repository(
-            effective_cwd,
-            workspace_root=workspace_root,
-        )
-        await _validate_repository_form(
-            repo_root,
-            git_dir,
-            workspace_root=workspace_root,
-            settings=git_settings,
-        )
-        pathspecs = _validated_pathspecs(
-            request.pathspecs,
-            repo_root=repo_root,
-            settings=git_settings,
-            allow_hidden=self._settings.allow_hidden,
-        )
+        if request.command is ShellGitCommandName.CLONE:
+            effective_cwd = _resolve_workspace_cwd(
+                request.cwd or git_settings.cwd,
+                workspace_root=workspace_root,
+            )
+        else:
+            effective_cwd = _resolve_effective_cwd(
+                request.cwd or git_settings.cwd,
+                workspace_root=workspace_root,
+            )
         _validate_git_option_keys(request)
         _validate_revisions(request, git_settings)
         _validate_git_option_values(request.options)
-        await _validate_history_ref_state(
-            request,
+        if request.command is ShellGitCommandName.CLONE:
+            repo_root = None
+            git_dir = None
+            execution_cwd = workspace_root
+            pathspecs: tuple[str, ...] = ()
+            argv_request = request
+            _validate_clone_request(
+                request,
+                workspace_root=workspace_root,
+                settings=git_settings,
+                allow_hidden=self._settings.allow_hidden,
+            )
+            clone_url = _required_string_option(
+                request.options,
+                "url",
+                message="git clone url must be a string",
+            )
+            remote_urls: dict[str, str] = {"origin": clone_url}
+        else:
+            repo_root, git_dir = _discover_repository(
+                effective_cwd,
+                workspace_root=workspace_root,
+            )
+            await _validate_repository_form(
+                repo_root,
+                git_dir,
+                workspace_root=workspace_root,
+                settings=git_settings,
+            )
+            pathspecs = _validated_pathspecs(
+                request.pathspecs,
+                repo_root=repo_root,
+                settings=git_settings,
+                allow_hidden=self._settings.allow_hidden,
+            )
+            await _validate_history_ref_state(
+                request,
+                git_dir=git_dir,
+                settings=git_settings,
+            )
+            remote_urls = await _validate_remote_repository_state(
+                request,
+                git_dir=git_dir,
+                repo_root=repo_root,
+                workspace_root=workspace_root,
+                settings=git_settings,
+            )
+            argv_request = request
+            _validate_content_pathspec_scope(request, pathspecs, repo_root)
+            _validate_mutation_pathspec_scope(request, pathspecs, repo_root)
+            execution_cwd = repo_root
+        argv = _argv_for_request(
+            argv_request,
+            pathspecs,
+            git_settings,
+            workspace_root=workspace_root,
             git_dir=git_dir,
-            settings=git_settings,
         )
-        _validate_content_pathspec_scope(request, pathspecs, repo_root)
-        _validate_mutation_pathspec_scope(request, pathspecs, repo_root)
-        argv = _argv_for_request(request, pathspecs, git_settings)
         _validate_argv_budgets(argv, self._settings)
         timeout_seconds = _bounded_float(
             request.timeout_seconds,
@@ -314,12 +531,13 @@ class GitExecutionPolicy:
             redact_messages=capability is ShellGitCapability.HISTORY,
         )
         metadata = _metadata(
-            request,
+            argv_request,
             workspace_root=workspace_root,
             effective_cwd=effective_cwd,
             repo_root=repo_root,
             display_argv=display_argv,
             settings=git_settings,
+            remote_urls=remote_urls,
         )
         executable = await self._executable_lookup(
             tuple(self._settings.executable_search_paths)
@@ -334,7 +552,7 @@ class GitExecutionPolicy:
             executable=executable,
             argv=argv,
             display_argv=display_argv,
-            cwd=str(repo_root),
+            cwd=str(execution_cwd),
             display_cwd=_display_path(workspace_root, effective_cwd),
             env=_safe_git_environment(git_settings),
             stdin=None,
@@ -397,14 +615,48 @@ def _validate_authorization(
             f"shell Git command requires capability {capability.value}; "
             f"configured capabilities: {', '.join(settings.capabilities)}",
         )
+    _validate_multi_capability_authorization(request, settings)
     if capability is ShellGitCapability.REMOTE:
         _validate_remote_policy(request, settings)
+
+
+def _validate_multi_capability_authorization(
+    request: ShellGitCommandRequest,
+    settings: ShellGitToolSettings,
+) -> None:
+    if request.command is not ShellGitCommandName.PULL:
+        return
+    missing = tuple(
+        capability.value
+        for capability in _PULL_REQUIRED_CAPABILITIES
+        if capability.value not in settings.capabilities
+    )
+    if missing:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.CAPABILITY_REQUIRED,
+            "shell Git command requires capabilities "
+            + ", ".join(
+                capability.value for capability in _PULL_REQUIRED_CAPABILITIES
+            )
+            + "; configured capabilities: "
+            + ", ".join(settings.capabilities),
+        )
 
 
 def _validate_remote_policy(
     request: ShellGitCommandRequest,
     settings: ShellGitToolSettings,
 ) -> None:
+    if not settings.allowed_remote_protocols:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+            "remote protocols are not allowlisted",
+        )
+    if not settings.allowed_remote_hosts:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REMOTE_HOST_DENIED,
+            "remote hosts are not allowlisted",
+        )
     if request.command is ShellGitCommandName.SUBMODULE_UPDATE:
         if not settings.allow_submodule_update:
             raise ShellGitPolicyDenied(
@@ -416,25 +668,50 @@ def _validate_remote_policy(
                 ShellGitExecutionErrorCode.SUBMODULE_DENIED,
                 "recursive submodule update is disabled",
             )
-    if not settings.allowed_remote_hosts:
-        raise ShellGitPolicyDenied(
-            ShellGitExecutionErrorCode.REMOTE_HOST_DENIED,
-            "remote hosts are not allowlisted",
-        )
     url = request.options.get("url")
     if isinstance(url, str):
         _validate_remote_url(url, settings)
 
 
-def _validate_remote_url(url: str, settings: ShellGitToolSettings) -> None:
-    match = _REMOTE_URL_PATTERN.match(url)
-    if not match:
+def _validate_remote_url(
+    url: str,
+    settings: ShellGitToolSettings,
+    *,
+    workspace_root: Path | None = None,
+) -> None:
+    try:
+        parts = urlsplit(url)
+    except ValueError as error:
+        protocol = _url_scheme_prefix(url)
+        if protocol and protocol not in settings.allowed_remote_protocols:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+                "remote URL protocol is not allowlisted",
+            ) from error
+        if protocol:
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.REMOTE_HOST_DENIED,
+                "remote URL host is unsupported",
+            ) from error
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+            "remote URL protocol is unsupported",
+        ) from error
+    if (
+        not parts.scheme
+        or not parts.netloc
+        or not parts.hostname
+        or parts.query
+        or parts.fragment
+        or _contains_control(url)
+        or "\x00" in url
+    ):
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
             "remote URL protocol is unsupported",
         )
-    protocol = match.group("protocol").lower()
-    host = match.group("host").lower()
+    protocol = parts.scheme.lower()
+    host = parts.hostname.lower()
     if protocol not in settings.allowed_remote_protocols:
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
@@ -445,10 +722,820 @@ def _validate_remote_url(url: str, settings: ShellGitToolSettings) -> None:
             ShellGitExecutionErrorCode.REMOTE_HOST_DENIED,
             "remote URL host is not allowlisted",
         )
-    if not settings.allow_remote_credentials and "@" in url.split("://", 1)[1]:
+    if not settings.allow_remote_credentials and (
+        parts.username is not None or parts.password is not None
+    ):
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.CREDENTIAL_DENIED,
             "remote URL credentials are disabled",
+        )
+    if protocol == "file":
+        _validate_file_remote_url(parts.path, workspace_root=workspace_root)
+
+
+async def _validate_remote_url_for_command(
+    url: str,
+    settings: ShellGitToolSettings,
+    *,
+    workspace_root: Path,
+    command: ShellGitCommandName,
+) -> None:
+    _validate_remote_url(url, settings, workspace_root=workspace_root)
+    if command is ShellGitCommandName.PUSH:
+        await _validate_file_push_remote_url(
+            url,
+            workspace_root=workspace_root,
+        )
+
+
+def _validate_file_remote_url(
+    value: str,
+    *,
+    workspace_root: Path | None,
+) -> None:
+    _validated_file_remote_path(value, workspace_root=workspace_root)
+
+
+def _validated_file_remote_path(
+    value: str,
+    *,
+    workspace_root: Path | None,
+) -> Path | None:
+    if workspace_root is None:
+        return None
+    if not value:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+            "file remote URL path is unsupported",
+        )
+    path = Path(unquote(value))
+    if not path.is_absolute():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REPO_BOUNDARY_DENIED,
+            "file remote URL path must be absolute",
+        )
+    resolved = path.resolve()
+    if not _is_relative_to(resolved, workspace_root):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REPO_BOUNDARY_DENIED,
+            "file remote URL escapes workspace root",
+        )
+    return resolved
+
+
+async def _validate_file_push_remote_url(
+    url: str,
+    *,
+    workspace_root: Path,
+) -> None:
+    parts = urlsplit(url)
+    if parts.scheme.lower() != "file":
+        return
+    target = _validated_file_remote_path(
+        parts.path,
+        workspace_root=workspace_root,
+    )
+    assert target is not None, "workspace root must resolve file remote path"
+    await _validate_file_push_remote_target(target)
+
+
+async def _validate_file_push_remote_target(target: Path) -> None:
+    if not target.exists() or not target.is_dir():
+        _deny_unsafe_file_push_target()
+    git_marker = target / ".git"
+    if git_marker.exists() or git_marker.is_symlink():
+        _deny_unsafe_file_push_target()
+    if not _looks_like_bare_repository(target):
+        _deny_unsafe_file_push_target()
+    common_dir = target / "commondir"
+    if common_dir.exists() or common_dir.is_symlink():
+        _deny_unsafe_file_push_target()
+    config_path = target / "config"
+    if config_path.is_symlink() or not config_path.is_file():
+        _deny_unsafe_file_push_target()
+    try:
+        config = await _read_text(config_path)
+    except OSError as error:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.EXTERNAL_PROCESS_DENIED,
+            "Git file push target cannot be proven safe",
+        ) from error
+    _validate_git_config(config)
+    if not _config_strictly_declares_bare(config):
+        _deny_unsafe_file_push_target()
+    await _validate_server_side_push_hooks(target / "hooks")
+
+
+async def _validate_server_side_push_hooks(path: Path) -> None:
+    if not path.exists():
+        if path.is_symlink():
+            _deny_unsafe_file_push_target_hooks()
+        return
+    if path.is_symlink() or not path.is_dir():
+        _deny_unsafe_file_push_target_hooks()
+    try:
+        children = await _list_directory(path)
+    except OSError as error:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.EXTERNAL_PROCESS_DENIED,
+            "Git file push target cannot be proven safe",
+        ) from error
+    for child in children:
+        if child.name.endswith(".sample"):
+            continue
+        if child.name not in _SERVER_SIDE_PUSH_HOOK_NAMES:
+            continue
+        await _validate_server_side_push_hook(child)
+
+
+async def _validate_server_side_push_hook(path: Path) -> None:
+    if path.is_symlink() or not path.exists() or not path.is_file():
+        _deny_unsafe_file_push_target_hooks()
+    try:
+        metadata = await _inspect_path(path)
+    except OSError as error:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.EXTERNAL_PROCESS_DENIED,
+            "Git file push target cannot be proven safe",
+        ) from error
+    if metadata.mode & _EXECUTABLE_PERMISSION_BITS:
+        _deny_unsafe_file_push_target_hooks()
+
+
+def _deny_unsafe_file_push_target() -> NoReturn:
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.EXTERNAL_PROCESS_DENIED,
+        "Git file push target cannot be proven safe",
+    )
+
+
+def _deny_unsafe_file_push_target_hooks() -> NoReturn:
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.EXTERNAL_PROCESS_DENIED,
+        "Git file push target hooks can trigger external processing",
+    )
+
+
+def _remote_url_parts(url: str) -> tuple[str, str, str]:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "", "", url
+    if not parts.scheme or not parts.hostname:
+        return "", "", url
+    protocol = parts.scheme.lower()
+    host = parts.hostname.lower()
+    return protocol, host, url
+
+
+def _url_scheme_prefix(url: str) -> str:
+    scheme, separator, _ = url.partition("://")
+    if not separator or not _URL_SCHEME_PATTERN.match(scheme):
+        return ""
+    return scheme.lower()
+
+
+def _validate_remote_name(value: str, field_name: str) -> None:
+    if (
+        not value
+        or _contains_control(value)
+        or "\x00" in value
+        or value.startswith("-")
+        or value.startswith(".")
+        or value.endswith(".")
+        or value.endswith(".lock")
+        or value == "HEAD"
+        or "/" in value
+        or "\\" in value
+        or ":" in value
+        or "@" in value
+        or ".." in value
+        or " " in value
+        or any(character in value for character in ("*", "?", "[", "]"))
+        or not _REMOTE_NAME_PATTERN.match(value)
+    ):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            f"Git {field_name} form is unsupported",
+        )
+
+
+async def _validate_remote_repository_state(
+    request: ShellGitCommandRequest,
+    *,
+    git_dir: Path,
+    repo_root: Path,
+    workspace_root: Path,
+    settings: ShellGitToolSettings,
+) -> dict[str, str]:
+    if request.command not in _REMOTE_REPOSITORY_COMMANDS:
+        return {}
+    config = await _read_text(git_dir / "config")
+    entries = _git_config_entries(config)
+    _validate_remote_command_config(entries, request.command, settings)
+    remotes = _remote_configs(entries)
+    match request.command:
+        case ShellGitCommandName.FETCH | ShellGitCommandName.PULL:
+            remote = _remote_option(request.options)
+            url = await _require_existing_remote(
+                remote,
+                remotes,
+                settings,
+                workspace_root=workspace_root,
+                command=request.command,
+            )
+            return {remote: url}
+        case ShellGitCommandName.PUSH:
+            remote = _remote_option(request.options)
+            url = await _require_existing_remote(
+                remote,
+                remotes,
+                settings,
+                workspace_root=workspace_root,
+                command=request.command,
+            )
+            return {remote: url}
+        case ShellGitCommandName.REMOTE_LIST:
+            for name in remotes:
+                await _require_existing_remote(
+                    name,
+                    remotes,
+                    settings,
+                    workspace_root=workspace_root,
+                    command=request.command,
+                )
+            return {
+                name: _remote_config_url(remote_config)
+                for name, remote_config in remotes.items()
+            }
+        case ShellGitCommandName.REMOTE_ADD:
+            name = _remote_name_option(request.options, "name")
+            if name in remotes:
+                raise ShellGitPolicyDenied(
+                    ShellGitExecutionErrorCode.INVALID_OPTION,
+                    "Git remote entry already exists",
+                )
+            url = _required_string_option(
+                request.options,
+                "url",
+                message="git remote add url must be a string",
+            )
+            await _validate_remote_url_for_command(
+                url,
+                settings,
+                workspace_root=workspace_root,
+                command=request.command,
+            )
+            return {name: url}
+        case ShellGitCommandName.REMOTE_SET_URL:
+            name = _remote_name_option(request.options, "name")
+            await _require_existing_remote(
+                name,
+                remotes,
+                settings,
+                workspace_root=workspace_root,
+                command=request.command,
+            )
+            url = _required_string_option(
+                request.options,
+                "url",
+                message="git remote set-url url must be a string",
+            )
+            await _validate_remote_url_for_command(
+                url,
+                settings,
+                workspace_root=workspace_root,
+                command=request.command,
+            )
+            return {name: url}
+        case ShellGitCommandName.REMOTE_REMOVE:
+            name = _remote_name_option(request.options, "name")
+            url = await _require_existing_remote(
+                name,
+                remotes,
+                settings,
+                workspace_root=workspace_root,
+                command=request.command,
+            )
+            return {name: url}
+        case ShellGitCommandName.REMOTE_RENAME:
+            old_name = _remote_name_option(request.options, "old_name")
+            new_name = _remote_name_option(request.options, "new_name")
+            url = await _require_existing_remote(
+                old_name,
+                remotes,
+                settings,
+                workspace_root=workspace_root,
+                command=request.command,
+            )
+            if old_name == new_name:
+                raise ShellGitPolicyDenied(
+                    ShellGitExecutionErrorCode.INVALID_OPTION,
+                    "git remote rename requires different remote names",
+                )
+            if new_name in remotes:
+                raise ShellGitPolicyDenied(
+                    ShellGitExecutionErrorCode.INVALID_OPTION,
+                    "Git destination remote entry already exists",
+                )
+            return {old_name: url, new_name: url}
+    assert request.command is ShellGitCommandName.SUBMODULE_UPDATE
+    _require_pathspecs_for_mutation(
+        request.pathspecs,
+        "git submodule update",
+    )
+    return await _validate_submodule_urls(
+        repo_root,
+        git_dir,
+        settings,
+        workspace_root=workspace_root,
+    )
+
+
+def _git_config_entries(config: str) -> tuple[_GitConfigEntry, ...]:
+    entries: list[_GitConfigEntry] = []
+    section: str | None = None
+    subsection: str | None = None
+    for line in config.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        if stripped.startswith("["):
+            section, subsection = _git_config_section(stripped)
+            continue
+        if section is None:
+            continue
+        key, value = _git_config_key_value(stripped)
+        if not key:
+            continue
+        entries.append(
+            _GitConfigEntry(
+                section=section,
+                subsection=subsection,
+                key=key,
+                value=value.strip(),
+            )
+        )
+    return tuple(entries)
+
+
+def _git_config_section_names(config: str) -> tuple[str, ...]:
+    sections: list[str] = []
+    for line in config.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        if stripped.startswith("["):
+            section, _ = _git_config_section(stripped)
+            if section is not None:
+                sections.append(section)
+    return tuple(sections)
+
+
+def _git_config_key_value(line: str) -> tuple[str, str]:
+    if "=" in line:
+        key, value = line.split("=", maxsplit=1)
+        return key.strip().lower(), value.strip()
+    return _git_config_bare_key(line), "true"
+
+
+def _git_config_bare_key(line: str) -> str:
+    key = _git_config_unquoted_comment_prefix(line).strip().lower()
+    return key
+
+
+def _git_config_unquoted_comment_prefix(line: str) -> str:
+    quoted = False
+    escaped = False
+    for index, character in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if quoted and character == "\\":
+            escaped = True
+            continue
+        if character == '"':
+            quoted = not quoted
+            continue
+        if not quoted and character in ("#", ";"):
+            return line[:index]
+    return line
+
+
+def _git_config_section(section: str) -> tuple[str | None, str | None]:
+    closing_index = _git_config_section_closing_index(section)
+    if closing_index is None:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+            "Git repository configuration is unsafe",
+        )
+    trailing = section[closing_index + 1 :].strip()
+    if trailing and not trailing.startswith(("#", ";")):
+        _deny_unsafe_git_config("Git repository configuration is unsafe")
+    content = section[1:closing_index].strip()
+    if not content:
+        return None, None
+    parts = content.split(maxsplit=1)
+    if len(parts) == 1:
+        legacy_section = _git_config_legacy_subsection(content)
+        if legacy_section is not None:
+            return legacy_section
+        return content.lower(), None
+    name, subsection = parts
+    subsection = subsection.strip()
+    if subsection.startswith('"') and subsection.endswith('"'):
+        subsection = subsection[1:-1]
+    return name.lower(), subsection
+
+
+def _git_config_section_closing_index(section: str) -> int | None:
+    quoted = False
+    escaped = False
+    for index, character in enumerate(section[1:], start=1):
+        if escaped:
+            escaped = False
+            continue
+        if quoted and character == "\\":
+            escaped = True
+            continue
+        if character == '"':
+            quoted = not quoted
+            continue
+        if character == "]" and not quoted:
+            return index
+    return None
+
+
+def _git_config_legacy_subsection(
+    content: str,
+) -> tuple[str, str] | None:
+    lowered = content.lower()
+    for section in ("http", "remote", "submodule"):
+        prefix = f"{section}."
+        if lowered.startswith(prefix):
+            return section, content[len(prefix) :]
+    return None
+
+
+def _remote_configs(
+    entries: tuple[_GitConfigEntry, ...],
+) -> dict[str, _RemoteConfig]:
+    remote_entries: dict[str, list[_GitConfigEntry]] = {}
+    urls: dict[str, list[str]] = {}
+    for entry in entries:
+        if entry.section != "remote" or entry.subsection is None:
+            continue
+        _validate_remote_name(entry.subsection, "remote name")
+        remote_entries.setdefault(entry.subsection, []).append(entry)
+        if entry.key == "url":
+            urls.setdefault(entry.subsection, []).append(entry.value)
+    return {
+        name: _RemoteConfig(
+            name=name,
+            urls=tuple(urls.get(name, ())),
+            entries=tuple(values),
+        )
+        for name, values in remote_entries.items()
+    }
+
+
+def _validate_remote_command_config(
+    entries: tuple[_GitConfigEntry, ...],
+    command: ShellGitCommandName,
+    settings: ShellGitToolSettings,
+) -> None:
+    assert isinstance(settings, ShellGitToolSettings)
+    for entry in entries:
+        if entry.section == "http":
+            _validate_http_remote_config(entry)
+        if entry.section == "fetch" and command in (
+            ShellGitCommandName.FETCH,
+            ShellGitCommandName.PULL,
+        ):
+            if (
+                entry.key in _FETCH_CONFIG_DENIED_BOOL_KEYS
+                and _git_config_bool_enabled(entry.value)
+            ):
+                _deny_unsafe_git_config("Git fetch configuration is unsafe")
+        if entry.section == "pull" and command is ShellGitCommandName.PULL:
+            if entry.key in _PULL_CONFIG_DENIED_KEYS:
+                _deny_unsafe_git_config("Git pull configuration is unsafe")
+        if entry.section == "push" and command is ShellGitCommandName.PUSH:
+            if entry.key in _PUSH_CONFIG_DENIED_KEYS:
+                _deny_unsafe_git_config("Git push configuration is unsafe")
+
+
+def _validate_http_remote_config(entry: _GitConfigEntry) -> None:
+    if (
+        _http_config_subsection_has_credentials(entry)
+        or entry.key in _HTTP_CREDENTIAL_CONFIG_KEYS
+    ):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.CREDENTIAL_DENIED,
+            "Git HTTP credential configuration is disabled",
+        )
+    if entry.key in _HTTP_TLS_CONFIG_KEYS or entry.key.startswith("ssl"):
+        _deny_unsafe_git_config("Git HTTP TLS configuration is unsafe")
+
+
+def _http_config_subsection_has_credentials(entry: _GitConfigEntry) -> bool:
+    if entry.subsection is None:
+        return False
+    has_userinfo_marker = "@" in entry.subsection
+    try:
+        parts = urlsplit(entry.subsection)
+    except ValueError as error:
+        if has_userinfo_marker:
+            return True
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+            "Git HTTP URL configuration is unsafe",
+        ) from error
+    if parts.username is not None or parts.password is not None:
+        return True
+    if has_userinfo_marker:
+        return True
+    return False
+
+
+def _validate_remote_config(
+    remote_config: _RemoteConfig,
+    command: ShellGitCommandName,
+) -> None:
+    for entry in remote_config.entries:
+        if entry.key in _REMOTE_CONFIG_DENIED_KEYS:
+            _deny_unsafe_git_config("Git remote configuration is unsafe")
+        if (
+            entry.key in _REMOTE_CONFIG_DENIED_BOOL_KEYS
+            and _git_config_bool_enabled(entry.value)
+        ):
+            _deny_unsafe_git_config("Git remote configuration is unsafe")
+        if entry.key == "tagopt" and entry.value.strip() != "--no-tags":
+            _deny_unsafe_git_config("Git remote tag configuration is unsafe")
+        if (
+            command is ShellGitCommandName.PUSH
+            and entry.key == "tagopt"
+            and entry.value.strip()
+        ):
+            _deny_unsafe_git_config("Git remote tag configuration is unsafe")
+
+
+def _git_config_bool_enabled(value: str) -> bool:
+    lowered = value.strip().lower()
+    if not lowered or lowered in _GIT_CONFIG_EXPLICIT_FALSE_VALUES:
+        return False
+    if lowered in _GIT_CONFIG_EXPLICIT_TRUE_VALUES:
+        return True
+    return True
+
+
+def _deny_unsafe_git_config(message: str) -> None:
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+        message,
+    )
+
+
+def _remote_option(options: Mapping[str, object]) -> str:
+    return _remote_name_option(options, "remote", default_value="origin")
+
+
+def _remote_name_option(
+    options: Mapping[str, object],
+    name: str,
+    *,
+    default_value: str | None = None,
+) -> str:
+    value = options.get(name, default_value)
+    if not isinstance(value, str) or not value:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            f"git remote {name} must be a string",
+        )
+    _validate_remote_name(value, f"remote {name}")
+    return value
+
+
+async def _require_existing_remote(
+    name: str,
+    remotes: Mapping[str, _RemoteConfig],
+    settings: ShellGitToolSettings,
+    *,
+    workspace_root: Path,
+    command: ShellGitCommandName,
+) -> str:
+    remote_config = remotes.get(name)
+    if remote_config is None:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REVISION_NOT_FOUND,
+            "Git remote entry was not found",
+        )
+    _validate_remote_config(remote_config, command)
+    url = _remote_config_url(remote_config)
+    await _validate_remote_url_for_command(
+        url,
+        settings,
+        workspace_root=workspace_root,
+        command=command,
+    )
+    return url
+
+
+def _remote_config_url(remote_config: _RemoteConfig) -> str:
+    if not remote_config.urls:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REVISION_NOT_FOUND,
+            "Git remote URL was not found",
+        )
+    if len(remote_config.urls) != 1:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+            "Git remote URL configuration is unsupported",
+        )
+    return remote_config.urls[0]
+
+
+async def _validate_submodule_urls(
+    repo_root: Path,
+    git_dir: Path,
+    settings: ShellGitToolSettings,
+    *,
+    workspace_root: Path,
+) -> dict[str, str]:
+    gitmodules_entries = _git_config_entries(
+        await _read_text(repo_root / ".gitmodules"),
+    )
+    repo_entries = _git_config_entries(await _read_text(git_dir / "config"))
+    _validate_submodule_effective_config(gitmodules_entries, repo_entries)
+    urls = _submodule_urls(gitmodules_entries)
+    if not urls:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.SUBMODULE_DENIED,
+            "git submodule update requires validated submodule URLs",
+        )
+    for url in urls.values():
+        _validate_remote_url(url, settings, workspace_root=workspace_root)
+    return urls
+
+
+def _validate_submodule_effective_config(
+    gitmodules_entries: tuple[_GitConfigEntry, ...],
+    repo_entries: tuple[_GitConfigEntry, ...],
+) -> None:
+    for entry in gitmodules_entries:
+        if entry.section == "submodule":
+            if entry.key == "update":
+                _deny_unsafe_git_config(
+                    "Git submodule update configuration is unsafe"
+                )
+            if (
+                entry.key == "recurse"
+                and not _git_config_bool_explicitly_disabled(entry.value)
+            ):
+                _deny_unsafe_git_config(
+                    "Git submodule recurse configuration is unsafe"
+                )
+    for entry in repo_entries:
+        if entry.section != "submodule":
+            continue
+        if entry.key in ("url", "update"):
+            _deny_unsafe_git_config(
+                "Git effective submodule configuration is unsafe"
+            )
+        if (
+            entry.key == "recurse"
+            and not _git_config_bool_explicitly_disabled(entry.value)
+        ):
+            _deny_unsafe_git_config(
+                "Git effective submodule configuration is unsafe"
+            )
+
+
+def _git_config_bool_explicitly_disabled(value: str) -> bool:
+    return value.strip().lower() in _GIT_CONFIG_EXPLICIT_FALSE_VALUES
+
+
+def _git_config_bool_explicitly_enabled(value: str) -> bool:
+    return value.strip().lower() in _GIT_CONFIG_EXPLICIT_TRUE_VALUES
+
+
+def _submodule_urls(
+    gitmodules_entries: tuple[_GitConfigEntry, ...],
+) -> dict[str, str]:
+    urls: dict[str, str] = {}
+    index = 0
+    for entry in gitmodules_entries:
+        if (
+            entry.section != "submodule"
+            or entry.subsection is None
+            or entry.key != "url"
+        ):
+            continue
+        key = f"gitmodules:submodule:{entry.subsection or index}"
+        if key in urls:
+            key = f"{key}:{index}"
+        urls[key] = entry.value
+        index += 1
+    return urls
+
+
+def _validate_clone_request(
+    request: ShellGitCommandRequest,
+    *,
+    workspace_root: Path,
+    settings: ShellGitToolSettings,
+    allow_hidden: bool,
+) -> None:
+    url = _required_string_option(
+        request.options,
+        "url",
+        message="git clone url must be a string",
+    )
+    _validate_remote_url(url, settings, workspace_root=workspace_root)
+    destination = _required_string_option(
+        request.options,
+        "destination",
+        message="git clone destination must be a string",
+    )
+    if request.pathspecs and request.pathspecs != (destination,):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git clone pathspecs must match destination",
+        )
+    _validate_workspace_destination(
+        destination,
+        workspace_root=workspace_root,
+        allow_hidden=allow_hidden,
+    )
+    branch = _optional_string_option(
+        request.options,
+        "branch",
+        message="git clone branch must be a string",
+    )
+    if branch is not None:
+        _validate_remote_ref(branch, settings, "clone branch")
+
+
+def _validate_workspace_destination(
+    value: str,
+    *,
+    workspace_root: Path,
+    allow_hidden: bool,
+) -> None:
+    if _contains_unsafe_path_text(value):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git clone destination is unsafe",
+        )
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts or path.as_posix() == ".":
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git clone destination must be workspace-relative",
+        )
+    if (
+        value.startswith("-")
+        or value.startswith(":")
+        or ":" in value
+        or "\\" in value
+        or any(character in value for character in ("*", "?", "[", "]"))
+    ):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git clone destination form is unsupported",
+        )
+    if any(part == ".git" for part in path.parts):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git clone destination must not target Git metadata",
+        )
+    display_path = path.as_posix()
+    if not allow_hidden and _has_hidden_pathspec_component(display_path):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "hidden Git clone destinations are unsupported",
+        )
+    if path_matches_sensitive_denylist(display_path):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "sensitive Git clone destinations are unsupported",
+        )
+    resolved = (workspace_root / Path(*path.parts)).resolve()
+    if not _is_relative_to(resolved, workspace_root):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git clone destination escapes workspace root",
+        )
+    if resolved.exists():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git clone destination already exists",
+        )
+    parent = resolved.parent
+    if not parent.exists() or not parent.is_dir():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git clone destination parent must exist",
         )
 
 
@@ -482,6 +1569,29 @@ def _resolve_effective_cwd(value: str, *, workspace_root: Path) -> Path:
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.REPO_NOT_FOUND,
             "git cwd is not a repository",
+        )
+    return resolved
+
+
+def _resolve_workspace_cwd(value: str, *, workspace_root: Path) -> Path:
+    _assert_non_empty_string(value, "git.cwd")
+    path = Path(value)
+    if _contains_unsafe_path_text(value):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REPO_BOUNDARY_DENIED,
+            "git cwd is unsafe",
+        )
+    candidate = path if path.is_absolute() else workspace_root / path
+    resolved = candidate.resolve()
+    if not _is_relative_to(resolved, workspace_root):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REPO_BOUNDARY_DENIED,
+            "git cwd escapes workspace root",
+        )
+    if not resolved.exists() or not resolved.is_dir():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REPO_NOT_FOUND,
+            "git cwd is unavailable",
         )
     return resolved
 
@@ -589,12 +1699,26 @@ async def _validate_alternates(
 
 
 def _validate_git_config(config: str) -> None:
-    lowered = config.lower()
-    if any(marker in lowered for marker in _DANGEROUS_CONFIG_MARKERS):
-        raise ShellGitPolicyDenied(
-            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
-            "Git repository configuration is unsafe",
-        )
+    for section in _git_config_section_names(config):
+        if _git_config_section_is_dangerous(section):
+            _deny_unsafe_git_config("Git repository configuration is unsafe")
+    for entry in _git_config_entries(config):
+        if _git_config_entry_is_dangerous(entry):
+            _deny_unsafe_git_config("Git repository configuration is unsafe")
+
+
+def _git_config_entry_is_dangerous(entry: _GitConfigEntry) -> bool:
+    key = entry.key.replace("-", "")
+    return key in _DANGEROUS_CONFIG_KEY_NAMES or any(
+        marker in key for marker in _DANGEROUS_CONFIG_KEY_MARKERS
+    )
+
+
+def _git_config_section_is_dangerous(section: str) -> bool:
+    return section in _DANGEROUS_CONFIG_SECTION_NAMES or any(
+        section.startswith(prefix)
+        for prefix in _DANGEROUS_CONFIG_SECTION_PREFIXES
+    )
 
 
 async def _validate_attributes(path: Path) -> None:
@@ -1273,7 +2397,18 @@ async def _validate_existing_stash_ref(
 
 
 def _is_revision_option(command: ShellGitCommandName, name: str) -> bool:
-    if command in (ShellGitCommandName.CLONE,):
+    if command in (
+        ShellGitCommandName.FETCH,
+        ShellGitCommandName.PULL,
+        ShellGitCommandName.PUSH,
+        ShellGitCommandName.CLONE,
+        ShellGitCommandName.REMOTE_LIST,
+        ShellGitCommandName.REMOTE_ADD,
+        ShellGitCommandName.REMOTE_SET_URL,
+        ShellGitCommandName.REMOTE_REMOVE,
+        ShellGitCommandName.REMOTE_RENAME,
+        ShellGitCommandName.SUBMODULE_UPDATE,
+    ):
         return False
     return name in {
         "revision",
@@ -1323,6 +2458,9 @@ def _argv_for_request(
     request: ShellGitCommandRequest,
     pathspecs: tuple[str, ...],
     settings: ShellGitToolSettings,
+    *,
+    workspace_root: Path | None = None,
+    git_dir: Path | None = None,
 ) -> tuple[str, ...]:
     if request.command is ShellGitCommandName.STATUS:
         return _status_argv(request, pathspecs)
@@ -1394,10 +2532,28 @@ def _argv_for_request(
         return _stash_pop_argv(request, pathspecs, settings)
     if request.command is ShellGitCommandName.STASH_DROP:
         return _stash_drop_argv(request, pathspecs, settings)
-    raise ShellGitPolicyDenied(
-        ShellGitExecutionErrorCode.COMMAND_DISABLED,
-        "shell Git command is not executable in this phase",
-    )
+    if request.command is ShellGitCommandName.FETCH:
+        assert git_dir is not None, "fetch requires a repository"
+        return _fetch_argv(request, git_dir, settings)
+    if request.command is ShellGitCommandName.PULL:
+        return _pull_argv(request, settings)
+    if request.command is ShellGitCommandName.PUSH:
+        return _push_argv(request, settings)
+    if request.command is ShellGitCommandName.CLONE:
+        assert workspace_root is not None, "clone requires a workspace"
+        return _clone_argv(request, workspace_root, settings)
+    if request.command is ShellGitCommandName.REMOTE_LIST:
+        return _remote_list_argv(request)
+    if request.command is ShellGitCommandName.REMOTE_ADD:
+        return _remote_add_argv(request)
+    if request.command is ShellGitCommandName.REMOTE_SET_URL:
+        return _remote_set_url_argv(request)
+    if request.command is ShellGitCommandName.REMOTE_REMOVE:
+        return _remote_remove_argv(request)
+    if request.command is ShellGitCommandName.REMOTE_RENAME:
+        return _remote_rename_argv(request)
+    assert request.command is ShellGitCommandName.SUBMODULE_UPDATE
+    return _submodule_update_argv(request, pathspecs)
 
 
 def _base_argv(subcommand: str) -> list[str]:
@@ -2511,6 +3667,231 @@ def _stash_drop_argv(
     return (*_base_argv("stash"), "drop", stash)
 
 
+def _fetch_argv(
+    request: ShellGitCommandRequest,
+    git_dir: Path,
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    remote = _remote_option(request.options)
+    refspecs = _fetch_refspecs(request, remote, git_dir, settings)
+    argv = _base_argv("fetch")
+    argv.extend(
+        (
+            "--no-tags",
+            "--no-prune",
+            "--no-recurse-submodules",
+            "--no-write-fetch-head",
+            remote,
+        )
+    )
+    argv.extend(refspecs)
+    return tuple(argv)
+
+
+def _pull_argv(
+    request: ShellGitCommandRequest,
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    remote = _remote_option(request.options)
+    branch = _required_string_option(
+        request.options,
+        "branch",
+        message="git pull branch must be a string",
+    )
+    _validate_remote_ref(branch, settings, "pull branch")
+    argv = _base_argv("pull")
+    argv.extend(
+        (
+            "--ff-only",
+            "--no-verify",
+            "--no-tags",
+            "--no-prune",
+            "--no-recurse-submodules",
+            remote,
+            branch,
+        )
+    )
+    return tuple(argv)
+
+
+def _push_argv(
+    request: ShellGitCommandRequest,
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    remote = _remote_option(request.options)
+    ref_type = _string_option(
+        request.options,
+        "ref_type",
+        default_value="branch",
+        allowed_values=_REMOTE_REF_TYPES,
+        message="git push ref_type is unsupported",
+    )
+    ref_name = _required_string_option(
+        request.options,
+        "ref_name",
+        message="git push ref_name must be a string",
+    )
+    _validate_remote_ref(ref_name, settings, f"push {ref_type}")
+    selected_refspec = (
+        f"refs/tags/{ref_name}:refs/tags/{ref_name}"
+        if ref_type == "tag"
+        else f"refs/heads/{ref_name}:refs/heads/{ref_name}"
+    )
+    argv = _base_argv("push")
+    argv.extend(("--no-verify", "--porcelain"))
+    argv.extend((remote, selected_refspec))
+    return tuple(argv)
+
+
+def _clone_argv(
+    request: ShellGitCommandRequest,
+    workspace_root: Path,
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    url = _required_string_option(
+        request.options,
+        "url",
+        message="git clone url must be a string",
+    )
+    destination = _required_string_option(
+        request.options,
+        "destination",
+        message="git clone destination must be a string",
+    )
+    _validate_workspace_destination(
+        destination,
+        workspace_root=workspace_root,
+        allow_hidden=False,
+    )
+    branch = _optional_string_option(
+        request.options,
+        "branch",
+        message="git clone branch must be a string",
+    )
+    argv = _base_argv("clone")
+    argv.extend(("--no-tags", "--no-recurse-submodules", "--single-branch"))
+    if branch is not None:
+        _validate_remote_ref(branch, settings, "clone branch")
+        argv.extend(("--branch", branch))
+    argv.extend((url, destination))
+    return tuple(argv)
+
+
+def _remote_list_argv(request: ShellGitCommandRequest) -> tuple[str, ...]:
+    assert isinstance(request, ShellGitCommandRequest)
+    argv = _base_argv("remote")
+    argv.append("--verbose")
+    return tuple(argv)
+
+
+def _remote_add_argv(request: ShellGitCommandRequest) -> tuple[str, ...]:
+    name = _remote_name_option(request.options, "name")
+    url = _required_string_option(
+        request.options,
+        "url",
+        message="git remote add url must be a string",
+    )
+    return (*_base_argv("remote"), "add", name, url)
+
+
+def _remote_set_url_argv(request: ShellGitCommandRequest) -> tuple[str, ...]:
+    name = _remote_name_option(request.options, "name")
+    url = _required_string_option(
+        request.options,
+        "url",
+        message="git remote set-url url must be a string",
+    )
+    return (*_base_argv("remote"), "set-url", name, url)
+
+
+def _remote_remove_argv(request: ShellGitCommandRequest) -> tuple[str, ...]:
+    name = _remote_name_option(request.options, "name")
+    return (*_base_argv("remote"), "remove", name)
+
+
+def _remote_rename_argv(request: ShellGitCommandRequest) -> tuple[str, ...]:
+    old_name = _remote_name_option(request.options, "old_name")
+    new_name = _remote_name_option(request.options, "new_name")
+    return (*_base_argv("remote"), "rename", old_name, new_name)
+
+
+def _submodule_update_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    _require_pathspecs_for_mutation(pathspecs, "git submodule update")
+    init = _bool_option(
+        request.options,
+        "init",
+        default_value=False,
+        message="git submodule update init must be boolean",
+    )
+    argv = _base_argv("submodule")
+    argv.append("update")
+    if init:
+        argv.append("--init")
+    argv.extend(("--no-recommend-shallow", "--depth=1", "--"))
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _fetch_refspecs(
+    request: ShellGitCommandRequest,
+    remote: str,
+    git_dir: Path,
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    assert isinstance(git_dir, Path)
+    ref_type = _string_option(
+        request.options,
+        "ref_type",
+        default_value="branch",
+        allowed_values=_REMOTE_REF_TYPES,
+        message="git fetch ref_type is unsupported",
+    )
+    ref_name = _required_string_option(
+        request.options,
+        "ref_name",
+        message="git fetch ref_name must be a string",
+    )
+    _validate_remote_ref(ref_name, settings, f"fetch {ref_type}")
+    if ref_type == "tag":
+        return (f"refs/tags/{ref_name}:refs/tags/{ref_name}",)
+    return (f"refs/heads/{ref_name}:refs/remotes/{remote}/{ref_name}",)
+
+
+def _validate_remote_ref(
+    value: str,
+    settings: ShellGitToolSettings,
+    field_name: str,
+) -> None:
+    if (
+        not value
+        or _contains_control(value)
+        or "\x00" in value
+        or value.startswith(("-", "/", "."))
+        or value.endswith((".", "/", ".lock"))
+        or value == "HEAD"
+        or ":" in value
+        or "@" in value
+        or "\\" in value
+        or "{" in value
+        or "}" in value
+        or ".." in value
+        or " " in value
+        or any(part in ("", ".", "..") for part in value.split("/"))
+        or any(part.endswith(".lock") for part in value.split("/"))
+        or any(character in value for character in ("*", "?", "[", "]"))
+        or len(value.encode("utf-8")) > settings.max_revision_bytes
+        or _HEX_REVISION_PATTERN.match(value)
+        or not _REMOTE_REF_PATTERN.match(value)
+    ):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REVISION_DENIED,
+            f"Git {field_name} form is unsupported",
+        )
+
+
 def _reject_revisions_for_mode(
     base_revision: str | None,
     head_revision: str | None,
@@ -2832,6 +4213,10 @@ def _safe_git_environment(
 ) -> dict[str, str]:
     environment = dict(_SAFE_GIT_ENVIRONMENT)
     environment["GIT_OPTIONAL_LOCKS"] = "0"
+    if settings.allowed_remote_protocols:
+        environment["GIT_ALLOW_PROTOCOL"] = ":".join(
+            settings.allowed_remote_protocols
+        )
     return environment
 
 
@@ -2867,9 +4252,10 @@ def _metadata(
     *,
     workspace_root: Path,
     effective_cwd: Path,
-    repo_root: Path,
+    repo_root: Path | None,
     display_argv: tuple[str, ...],
     settings: ShellGitToolSettings,
+    remote_urls: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     capability = shell_git_capability_for_request(request)
     metadata: dict[str, object] = {
@@ -2878,7 +4264,11 @@ def _metadata(
         "git_capability_required": request.capability_required.value,
         "git_capability_used": capability.value,
         "git_effective_cwd": _display_path(workspace_root, effective_cwd),
-        "git_repo_root": _display_path(workspace_root, repo_root),
+        "git_repo_root": (
+            None
+            if repo_root is None
+            else _display_path(workspace_root, repo_root)
+        ),
         "git_display_argv": display_argv,
         "git_request_options": _redacted_metadata(
             request.options,
@@ -2907,6 +4297,14 @@ def _metadata(
         metadata["exit_code_statuses"] = {
             1: ShellExecutionStatus.NO_MATCHES.value,
         }
+    if capability is ShellGitCapability.REMOTE:
+        metadata.update(
+            git_remote_audit_metadata(
+                request,
+                settings=settings,
+                remote_urls={} if remote_urls is None else remote_urls,
+            )
+        )
     return metadata
 
 
@@ -2957,6 +4355,120 @@ def _redacted_metadata(
     return value
 
 
+def git_remote_audit_metadata(
+    request: ShellGitCommandRequest,
+    *,
+    settings: ShellGitToolSettings,
+    remote_urls: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    url_values = _remote_audit_urls(
+        request,
+        {} if remote_urls is None else remote_urls,
+    )
+    primary_url = url_values[0] if url_values else None
+    protocol, host, _ = (
+        ("", "", "") if primary_url is None else _remote_url_parts(primary_url)
+    )
+    selected_refs = _selected_remote_refs(request)
+    metadata: dict[str, object] = {
+        "git_network_command_type": _remote_command_type(request.command),
+        "git_remote_protocol": protocol or None,
+        "git_remote_host": host or None,
+        "git_remote_url": (
+            None
+            if primary_url is None
+            else _redact_text(primary_url, settings)
+        ),
+        "git_remote_urls": tuple(
+            _redact_text(url, settings) for url in url_values
+        ),
+        "git_selected_refs": selected_refs,
+        "git_network_policy": {
+            "allowed_remote_protocols": settings.allowed_remote_protocols,
+            "allowed_remote_hosts": settings.allowed_remote_hosts,
+            "terminal_prompts": "denied",
+            "askpass": "denied",
+            "credential_helpers": "denied",
+            "custom_transports": "denied",
+        },
+        "git_credential_mode": (
+            "allow_explicit" if settings.allow_remote_credentials else "deny"
+        ),
+        "git_remote_state_may_mutate": (
+            request.command in _REMOTE_STATE_MUTATING_COMMANDS
+        ),
+        "git_local_remote_config_may_mutate": (
+            request.command in _LOCAL_REMOTE_CONFIG_MUTATING_COMMANDS
+        ),
+        "git_network_may_run": request.command in _REMOTE_NETWORK_COMMANDS,
+    }
+    if request.command is ShellGitCommandName.SUBMODULE_UPDATE:
+        submodule_parts = tuple(_remote_url_parts(url) for url in url_values)
+        metadata.update(
+            {
+                "git_submodule_protocols": tuple(
+                    protocol or None for protocol, _, _ in submodule_parts
+                ),
+                "git_submodule_hosts": tuple(
+                    host or None for _, host, _ in submodule_parts
+                ),
+                "git_submodule_urls": tuple(
+                    _redact_text(url, settings) for url in url_values
+                ),
+            }
+        )
+    return metadata
+
+
+def _remote_audit_urls(
+    request: ShellGitCommandRequest,
+    remote_urls: Mapping[str, str],
+) -> tuple[str, ...]:
+    url = request.options.get("url")
+    urls: list[str] = []
+    if isinstance(url, str):
+        urls.append(url)
+    for value in remote_urls.values():
+        if value not in urls:
+            urls.append(value)
+    return tuple(urls)
+
+
+def _remote_command_type(command: ShellGitCommandName) -> str:
+    if command is ShellGitCommandName.CLONE:
+        return "clone"
+    if command in _LOCAL_REMOTE_CONFIG_MUTATING_COMMANDS:
+        return "remote_management"
+    if command is ShellGitCommandName.REMOTE_LIST:
+        return "remote_inspection"
+    if command is ShellGitCommandName.SUBMODULE_UPDATE:
+        return "submodule_update"
+    return "network"
+
+
+def _selected_remote_refs(
+    request: ShellGitCommandRequest,
+) -> tuple[str, ...]:
+    if request.command in (
+        ShellGitCommandName.FETCH,
+        ShellGitCommandName.PUSH,
+    ):
+        ref_type = request.options.get("ref_type", "branch")
+        ref_name = request.options.get("ref_name")
+        if ref_type == "tag" and isinstance(ref_name, str):
+            return (f"refs/tags/{ref_name}",)
+        if isinstance(ref_name, str):
+            return (f"refs/heads/{ref_name}",)
+    if request.command in (
+        ShellGitCommandName.PULL,
+        ShellGitCommandName.CLONE,
+    ):
+        branch = request.options.get("branch")
+        if isinstance(branch, str):
+            return (f"refs/heads/{branch}",)
+    return ()
+
+
 def redact_git_text(value: str, settings: ShellGitToolSettings) -> str:
     return _redact_text(value, settings)
 
@@ -2967,6 +4479,13 @@ def _redact_text(value: str, settings: ShellGitToolSettings) -> str:
         redacted = compile_pattern(
             r"([A-Za-z][A-Za-z0-9+.-]*://)([^/@\s]+)@"
         ).sub(r"\1[redacted]@", redacted)
+        redacted = compile_pattern(
+            r"([?&](?:access_)?token=)[^&#\s]+",
+            flags=0,
+        ).sub(r"\1[redacted]", redacted)
+        redacted = compile_pattern(
+            r"([?&](?:password|secret|credential)=)[^&#\s]+",
+        ).sub(r"\1[redacted]", redacted)
     if settings.redact_remote_urls:
         redacted = compile_pattern(
             r"([A-Za-z][A-Za-z0-9+.-]*://)(?:[^/@\s]+@)?([^/\s]+)(/[^\s]*)?"
@@ -2984,10 +4503,18 @@ def _display_path(root: Path, path: Path) -> str:
 
 def _looks_like_bare_repository(path: Path) -> bool:
     return (
-        (path / "HEAD").is_file()
-        and (path / "objects").is_dir()
-        and (path / "refs").is_dir()
+        _path_is_file_without_following_symlinks(path / "HEAD")
+        and _path_is_dir_without_following_symlinks(path / "objects")
+        and _path_is_dir_without_following_symlinks(path / "refs")
     )
+
+
+def _path_is_file_without_following_symlinks(path: Path) -> bool:
+    return not path.is_symlink() and path.is_file()
+
+
+def _path_is_dir_without_following_symlinks(path: Path) -> bool:
+    return not path.is_symlink() and path.is_dir()
 
 
 async def _read_text(path: Path) -> str:
@@ -2997,11 +4524,33 @@ async def _read_text(path: Path) -> str:
 
 
 def _config_declares_bare(config: str) -> bool:
-    for line in config.splitlines():
-        stripped = line.strip().lower()
-        if stripped.startswith("bare") and "true" in stripped:
+    for entry in _git_config_entries(config):
+        if (
+            entry.section == "core"
+            and entry.subsection is None
+            and entry.key == "bare"
+            and _git_config_bool_enabled(
+                _git_config_unquoted_comment_prefix(entry.value)
+            )
+        ):
             return True
     return False
+
+
+def _config_strictly_declares_bare(config: str) -> bool:
+    bare_values: list[str] = []
+    for entry in _git_config_entries(config):
+        if (
+            entry.section == "core"
+            and entry.subsection is None
+            and entry.key == "bare"
+        ):
+            bare_values.append(
+                _git_config_unquoted_comment_prefix(entry.value)
+            )
+    return bool(bare_values) and all(
+        _git_config_bool_explicitly_enabled(value) for value in bare_values
+    )
 
 
 def _resolve_gitdir_reference(value: str, *, base: Path) -> Path:
