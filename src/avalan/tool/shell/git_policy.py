@@ -2295,7 +2295,35 @@ async def _read_loose_git_object(
     )
     if data is None:
         return None
-    return _git_object_parts(data)
+    parts = _git_object_parts(data)
+    if parts is None:
+        return None
+    object_type, payload = parts
+    if not _git_loose_object_digest_matches(
+        oid,
+        object_type,
+        payload,
+        hash_size=hash_size,
+    ):
+        return None
+    return parts
+
+
+def _git_loose_object_digest_matches(
+    oid: str,
+    object_type: str,
+    payload: bytes,
+    *,
+    hash_size: int,
+) -> bool:
+    data = f"{object_type} {len(payload)}\0".encode("ascii") + payload
+    if hash_size == _GIT_OBJECT_HASH_SIZE_SHA1:
+        actual = sha1(data).hexdigest()
+    elif hash_size == _GIT_OBJECT_HASH_SIZE_SHA256:
+        actual = sha256(data).hexdigest()
+    else:
+        return False
+    return compare_digest(actual, oid.lower())
 
 
 def _safe_loose_git_object_path(git_dir: Path, oid: str) -> Path | None:
