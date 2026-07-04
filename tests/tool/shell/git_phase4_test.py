@@ -1,11 +1,14 @@
 from collections.abc import Awaitable, Callable
+from hashlib import sha1, sha256
 from os import devnull, environ
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from shutil import which
 from subprocess import CalledProcessError, run
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, skipIf
+from unittest.mock import patch
+from zlib import compress as zlib_compress
 
 from avalan.entities import ToolCallContext, ToolExecutionStreamEvent
 from avalan.tool.shell import ShellGitFormattedResult
@@ -24,8 +27,20 @@ from avalan.tool.shell.git import (
     ShellGitPolicyDenied,
 )
 from avalan.tool.shell.git_policy import (
+    _GIT_INDEX_MAX_PROBE_BYTES,
     GitExecutionPolicy,
+    _git_commit_tree_oid,
     _git_index_data_has_exact_file_pathspec,
+    _git_index_hash_size_from_config,
+    _git_object_parts,
+    _git_tree_entry,
+    _git_tree_has_file_pathspec,
+    _read_loose_git_object,
+    _safe_loose_git_object_path,
+    _zlib_decompress_bounded,
+)
+from avalan.tool.shell.git_policy import (
+    _read_bytes as _git_policy_read_bytes,
 )
 from avalan.tool.shell.settings import ShellGitToolSettings, ShellToolSettings
 from avalan.tool.shell.toolset import ShellToolSet
@@ -917,6 +932,10 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
     def test_git_index_data_file_pathspec_matching(self) -> None:
         valid = _git_index_data(_git_index_entry("src/app.py"))
         exact_padding = _git_index_data(_git_index_entry("a"))
+        sha256_valid = _git_index_data(
+            _git_index_entry("src/app.py", hash_size=32),
+            hash_size=32,
+        )
         symlink = _git_index_data(_git_index_entry("src/link", mode=0o120000))
         extended = _git_index_data(
             _git_index_entry("src/app.py", extended=True)
@@ -926,39 +945,32 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
         )
         split = _git_index_data(
             _git_index_entry("src/app.py"),
-            checksum=b"\x00" * 20,
             extensions=((b"link", b"\x00" * 20),),
         )
         sparse = _git_index_data(
             _git_index_entry("src/app.py"),
-            checksum=b"\x00" * 20,
             extensions=((b"sdir", b""),),
         )
         duplicate_link = _git_index_data(
             _git_index_entry("src/app.py"),
-            checksum=b"\x00" * 20,
             extensions=((b"link", b""), (b"link", b"")),
         )
         unknown_mandatory = _git_index_data(
             _git_index_entry("src/app.py"),
-            checksum=b"\x00" * 20,
             extensions=((b"abcd", b""),),
         )
-        bad_extension_header = (
-            _git_index_data(_git_index_entry("src/app.py"))
-            + b"ABCD"
-            + b"\x00" * 20
+        bad_extension_header = _git_index_signed_body(
+            _git_index_body(_git_index_entry("src/app.py")) + b"ABCD"
         )
-        bad_extension_size = (
-            _git_index_data(_git_index_entry("src/app.py"))
+        bad_extension_size = _git_index_signed_body(
+            _git_index_body(_git_index_entry("src/app.py"))
             + b"ABCD"
             + (1).to_bytes(4, "big")
-            + b"\x00" * 20
         )
-        bad_extension_end = (
-            _git_index_data(_git_index_entry("src/app.py")) + b"\x00"
+        bad_extension_end = _git_index_signed_body(
+            _git_index_body(_git_index_entry("src/app.py")) + b"\x00"
         )
-        unsupported = b"DIRC" + (4).to_bytes(4, "big") + (0).to_bytes(4, "big")
+        unsupported = _git_index_data(version=4)
         truncated = _git_index_data(b"\x00" * 10)
         version2_extended = _git_index_data(
             _git_index_entry("src/app.py", extended=True),
@@ -971,87 +983,174 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
             _git_index_entry("src/app.py", nul=False, pad=False)
         )
         unpadded = _git_index_data(_git_index_entry("src/app.py", pad=False))
+        bad_checksum = _corrupt_git_index_checksum(valid)
 
         self.assertTrue(
-            _git_index_data_has_exact_file_pathspec(valid, "src/app.py")
+            _git_index_data_has_exact_file_pathspec(
+                valid,
+                "src/app.py",
+                hash_size=20,
+            )
         )
         self.assertTrue(
-            _git_index_data_has_exact_file_pathspec(exact_padding, "a")
+            _git_index_data_has_exact_file_pathspec(
+                exact_padding,
+                "a",
+                hash_size=20,
+            )
         )
         self.assertTrue(
-            _git_index_data_has_exact_file_pathspec(symlink, "src/link")
+            _git_index_data_has_exact_file_pathspec(
+                sha256_valid,
+                "src/app.py",
+                hash_size=32,
+            )
         )
         self.assertTrue(
-            _git_index_data_has_exact_file_pathspec(extended, "src/app.py")
+            _git_index_data_has_exact_file_pathspec(
+                symlink,
+                "src/link",
+                hash_size=20,
+            )
+        )
+        self.assertTrue(
+            _git_index_data_has_exact_file_pathspec(
+                extended,
+                "src/app.py",
+                hash_size=20,
+            )
         )
         self.assertFalse(
-            _git_index_data_has_exact_file_pathspec(b"", "src/app.py")
+            _git_index_data_has_exact_file_pathspec(
+                b"",
+                "src/app.py",
+                hash_size=20,
+            )
         )
         self.assertFalse(
-            _git_index_data_has_exact_file_pathspec(unsupported, "src/app.py")
+            _git_index_data_has_exact_file_pathspec(
+                unsupported,
+                "src/app.py",
+                hash_size=20,
+            )
         )
         self.assertFalse(
-            _git_index_data_has_exact_file_pathspec(truncated, "src/app.py")
+            _git_index_data_has_exact_file_pathspec(
+                truncated,
+                "src/app.py",
+                hash_size=20,
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                sha256_valid,
+                "src/app.py",
+                hash_size=20,
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                valid,
+                "src/app.py",
+                hash_size=32,
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                bad_checksum,
+                "src/app.py",
+                hash_size=20,
+            )
         )
         self.assertFalse(
             _git_index_data_has_exact_file_pathspec(
                 truncated_extended,
                 "src/app.py",
+                hash_size=20,
             )
         )
         self.assertFalse(
             _git_index_data_has_exact_file_pathspec(
                 unterminated,
                 "src/app.py",
+                hash_size=20,
             )
         )
         self.assertFalse(
-            _git_index_data_has_exact_file_pathspec(unpadded, "src/app.py")
-        )
-        self.assertFalse(_git_index_data_has_exact_file_pathspec(valid, "src"))
-        self.assertFalse(
-            _git_index_data_has_exact_file_pathspec(gitlink, "src/app.py")
-        )
-        self.assertFalse(
-            _git_index_data_has_exact_file_pathspec(split, "src/app.py")
+            _git_index_data_has_exact_file_pathspec(
+                unpadded,
+                "src/app.py",
+                hash_size=20,
+            )
         )
         self.assertFalse(
-            _git_index_data_has_exact_file_pathspec(sparse, "src/app.py")
+            _git_index_data_has_exact_file_pathspec(
+                valid,
+                "src",
+                hash_size=20,
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                gitlink,
+                "src/app.py",
+                hash_size=20,
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                split,
+                "src/app.py",
+                hash_size=20,
+            )
+        )
+        self.assertFalse(
+            _git_index_data_has_exact_file_pathspec(
+                sparse,
+                "src/app.py",
+                hash_size=20,
+            )
         )
         self.assertFalse(
             _git_index_data_has_exact_file_pathspec(
                 duplicate_link,
                 "src/app.py",
+                hash_size=20,
             )
         )
         self.assertFalse(
             _git_index_data_has_exact_file_pathspec(
                 unknown_mandatory,
                 "src/app.py",
+                hash_size=20,
             )
         )
         self.assertFalse(
             _git_index_data_has_exact_file_pathspec(
                 bad_extension_header,
                 "src/app.py",
+                hash_size=20,
             )
         )
         self.assertFalse(
             _git_index_data_has_exact_file_pathspec(
                 bad_extension_size,
                 "src/app.py",
+                hash_size=20,
             )
         )
         self.assertFalse(
             _git_index_data_has_exact_file_pathspec(
                 bad_extension_end,
                 "src/app.py",
+                hash_size=20,
             )
         )
         self.assertFalse(
             _git_index_data_has_exact_file_pathspec(
                 version2_extended,
                 "src/app.py",
+                hash_size=20,
             )
         )
 
@@ -1074,50 +1173,817 @@ class GitContentPolicyPhase4Test(IsolatedAsyncioTestCase):
             ShellGitExecutionErrorCode.EXTERNAL_PROCESS_DENIED,
         )
 
-    async def test_content_denies_unsafe_repository_index_path(self) -> None:
+    async def test_current_index_deleted_file_proof_uses_configured_hash(
+        self,
+    ) -> None:
         with TemporaryDirectory() as workspace:
             root = Path(workspace)
             repo = _write_minimal_git_repo(root / "repo")
-            (repo / ".git" / "index").mkdir()
+            (repo / ".git" / "index").write_bytes(
+                _git_index_data(
+                    _git_index_entry("src/deleted.py", hash_size=32),
+                    hash_size=32,
+                )
+            )
+
+            sha1_error = await _policy_error(
+                _policy(root),
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/deleted.py",),
+                ),
+            )
+            (repo / ".git" / "config").write_text(
+                "[core]\n"
+                "\trepositoryformatversion = 1\n"
+                "\tbare = false\n"
+                "[extensions]\n"
+                "\tobjectformat = sha1\n"
+            )
+            explicit_sha1_error = await _policy_error(
+                _policy(root),
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/deleted.py",),
+                ),
+            )
+            (repo / ".git" / "config").write_text(
+                "[core]\n"
+                "\trepositoryformatversion = 1\n"
+                "\tbare = false\n"
+                "[extensions]\n"
+                "\tobjectformat = blake3\n"
+            )
+            unknown_error = await _policy_error(
+                _policy(root),
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/deleted.py",),
+                ),
+            )
+            (repo / ".git" / "config").write_text(
+                "[core]\n"
+                "\trepositoryformatversion = 1\n"
+                "\tbare = false\n"
+                "[extensions]\n"
+                "\tobjectformat = sha256\n"
+            )
+            sha256_spec = await _policy(root).normalize(
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/deleted.py",),
+                )
+            )
+            (repo / ".git" / "config").write_text(
+                "[core]\n"
+                "\trepositoryformatversion = 1\n"
+                "\tbare = false\n"
+                "[extensions]\n"
+                '\tobjectformat = "sha256"\n'
+            )
+            quoted_sha256_spec = await _policy(root).normalize(
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/deleted.py",),
+                )
+            )
+            (repo / ".git" / "config").write_text(
+                "[core]\n"
+                "\trepositoryformatversion = 1\n"
+                "\tbare = false\n"
+                "[extensions]\n"
+                "\tobjectformat = sha1\n"
+                "\tobjectformat = sha256\n"
+            )
+            duplicate_sha256_spec = await _policy(root).normalize(
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/deleted.py",),
+                )
+            )
+            (repo / ".git" / "index").write_bytes(
+                _git_index_data(_git_index_entry("src/deleted.py"))
+            )
+            (repo / ".git" / "config").write_text(
+                "[core]\n"
+                "\trepositoryformatversion = 1\n"
+                "\tbare = false\n"
+                "[extensions]\n"
+                "\tobjectformat = sha1\n"
+            )
+            explicit_sha1_spec = await _policy(root).normalize(
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/deleted.py",),
+                )
+            )
+            (repo / ".git" / "config").write_text(
+                "[core]\n"
+                "\trepositoryformatversion = 1\n"
+                "\tbare = false\n"
+                "[extensions]\n"
+                '\tobjectformat = "sha1"\n'
+            )
+            quoted_sha1_spec = await _policy(root).normalize(
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/deleted.py",),
+                )
+            )
+            (repo / ".git" / "config").write_text(
+                "[core]\n"
+                "\trepositoryformatversion = 1\n"
+                "\tbare = false\n"
+                "[extensions]\n"
+                "\tobjectformat = sha1\n"
+                "\tobjectformat = blake3\n"
+            )
+            duplicate_unknown_error = await _policy_error(
+                _policy(root),
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "worktree"},
+                    pathspecs=("src/deleted.py",),
+                ),
+            )
+
+        self.assertEqual(
+            sha1_error.error_code,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        )
+        self.assertEqual(
+            explicit_sha1_error.error_code,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        )
+        self.assertEqual(
+            unknown_error.error_code,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        )
+        self.assertEqual(sha256_spec.argv[-2:], ("--", "src/deleted.py"))
+        self.assertEqual(
+            quoted_sha256_spec.argv[-2:],
+            ("--", "src/deleted.py"),
+        )
+        self.assertEqual(
+            duplicate_sha256_spec.argv[-2:],
+            ("--", "src/deleted.py"),
+        )
+        self.assertEqual(
+            explicit_sha1_spec.argv[-2:],
+            ("--", "src/deleted.py"),
+        )
+        self.assertEqual(
+            quoted_sha1_spec.argv[-2:],
+            ("--", "src/deleted.py"),
+        )
+        self.assertEqual(
+            duplicate_unknown_error.error_code,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        )
+
+    async def test_git_diff_staged_allows_head_tracked_deleted_pathspec(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            _write_head_tree(repo, "src/deleted.py")
+
+            spec = await _policy(root).normalize(
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "staged"},
+                    pathspecs=("src/deleted.py",),
+                )
+            )
+
+        self.assertEqual(
+            spec.argv[-2:],
+            ("--", "src/deleted.py"),
+        )
+        self.assertIn("--cached", spec.argv)
+
+    async def test_git_diff_staged_rejects_non_file_pathspecs(self) -> None:
+        cases = (".", "src")
+
+        for pathspec in cases:
+            with self.subTest(pathspec=pathspec):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    _write_minimal_git_repo(root / "repo")
+
+                    error = await _policy_error(
+                        _policy(root),
+                        _request(
+                            command=ShellGitCommandName.DIFF,
+                            options={"mode": "staged"},
+                            pathspecs=(pathspec,),
+                        ),
+                    )
+
+                self.assertEqual(
+                    error.error_code,
+                    ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                )
+                self.assertEqual(
+                    str(error),
+                    "Git content pathspec must name a file path",
+                )
+
+    async def test_git_diff_staged_unknown_objectformat_escapes_fail_closed(
+        self,
+    ) -> None:
+        configs = (
+            (
+                "escaped_quote",
+                '[extensions]\n\tobjectformat = "sha\\"256"\n',
+            ),
+            (
+                "escaped_backslash",
+                '[extensions]\n\tobjectformat = "sha\\\\256"\n',
+            ),
+            (
+                "unsupported_escape",
+                '[extensions]\n\tobjectformat = "sha\\256"\n',
+            ),
+            (
+                "trailing_escape",
+                "[extensions]\n\tobjectformat = " + '"sha1\\' + '"\n',
+            ),
+        )
+
+        for name, config in configs:
+            with self.subTest(name=name):
+                self.assertIsNone(_git_index_hash_size_from_config(config))
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    repo = _write_minimal_git_repo(root / "repo")
+                    (repo / ".git" / "config").write_text(
+                        "[core]\n"
+                        "\trepositoryformatversion = 1\n"
+                        "\tbare = false\n"
+                        f"{config}"
+                    )
+
+                    error = await _policy_error(
+                        _policy(root),
+                        _request(
+                            command=ShellGitCommandName.DIFF,
+                            options={"mode": "staged"},
+                            pathspecs=("src/deleted.py",),
+                        ),
+                    )
+
+                self.assertEqual(
+                    error.error_code,
+                    ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                )
+
+    async def test_git_diff_staged_denies_malformed_head_refs(self) -> None:
+        head_cases = (
+            ("bad_prefix", "ref: refs/tags/main\n"),
+            ("control", "ref: refs/heads/ma\x01in\n"),
+            ("lock", "ref: refs/heads/main.lock\n"),
+            ("parent", "ref: refs/heads/../main\n"),
+        )
+
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            (repo / ".git" / "HEAD").unlink()
+            (repo / ".git" / "HEAD").mkdir()
+
+            directory_error = await _policy_error(
+                _policy(root),
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={"mode": "staged"},
+                    pathspecs=("src/deleted.py",),
+                ),
+            )
+
+        self.assertEqual(
+            directory_error.error_code,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        )
+
+        for name, head in head_cases:
+            with self.subTest(name=name):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    repo = _write_minimal_git_repo(root / "repo")
+                    (repo / ".git" / "HEAD").write_text(head)
+
+                    error = await _policy_error(
+                        _policy(root),
+                        _request(
+                            command=ShellGitCommandName.DIFF,
+                            options={"mode": "staged"},
+                            pathspecs=("src/deleted.py",),
+                        ),
+                    )
+
+                self.assertEqual(
+                    error.error_code,
+                    ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                )
+
+    async def test_git_diff_staged_denies_malformed_loose_object_size_header(
+        self,
+    ) -> None:
+        cases = ("commit", "tree")
+        for object_type in cases:
+            with self.subTest(object_type=object_type):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    repo = _write_minimal_git_repo(root / "repo")
+                    malformed_oid = _write_malformed_loose_object(
+                        repo,
+                        object_type,
+                        b"",
+                        size_text="1" * 5000,
+                    )
+                    if object_type == "commit":
+                        _write_head_ref(repo, malformed_oid)
+                    else:
+                        commit = (
+                            f"tree {malformed_oid}\n"
+                            "author Avalan Test <avalan@example.test> "
+                            "0 +0000\n"
+                            "committer Avalan Test <avalan@example.test> "
+                            "0 +0000\n"
+                            "\n"
+                            "content setup\n"
+                        ).encode("utf-8")
+                        _write_head_ref(
+                            repo,
+                            _write_loose_object(repo, "commit", commit),
+                        )
+
+                    error = await _policy_error(
+                        _policy(root),
+                        _request(
+                            command=ShellGitCommandName.DIFF,
+                            options={"mode": "staged"},
+                            pathspecs=("src/deleted.py",),
+                        ),
+                    )
+
+                self.assertEqual(
+                    error.error_code,
+                    ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                )
+
+    async def test_git_diff_staged_denies_symlinked_loose_object_prefix(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            external_objects = root / "external-objects"
+            object_ids = _write_head_tree(
+                repo,
+                "src/deleted.py",
+                objects_dir=external_objects,
+            )
+            _symlink_loose_object_prefixes(
+                repo,
+                external_objects,
+                object_ids,
+            )
 
             error = await _policy_error(
                 _policy(root),
                 _request(
                     command=ShellGitCommandName.DIFF,
-                    options={"mode": "worktree"},
-                    pathspecs=("src/app.py",),
+                    options={"mode": "staged"},
+                    pathspecs=("src/deleted.py",),
                 ),
             )
 
         self.assertEqual(
             error.error_code,
-            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
         )
-        self.assertEqual(str(error), "Git repository index is unsafe")
 
-    async def test_content_denies_malformed_repository_index(self) -> None:
+    async def test_git_diff_staged_denies_malformed_loose_objects(
+        self,
+    ) -> None:
+        def missing_object(repo: Path) -> None:
+            _write_head_ref(repo, "a" * 40)
+
+        def object_path_directory(repo: Path) -> None:
+            oid = "1" * 40
+            object_path = repo / ".git" / "objects" / oid[:2] / oid[2:]
+            object_path.mkdir(parents=True)
+            _write_head_ref(repo, oid)
+
+        def corrupt_zlib(repo: Path) -> None:
+            oid = "b" * 40
+            _write_raw_loose_object(repo, oid, b"not-zlib")
+            _write_head_ref(repo, oid)
+
+        def unterminated_header(repo: Path) -> None:
+            oid = "c" * 40
+            _write_raw_loose_object(repo, oid, zlib_compress(b"commit 0"))
+            _write_head_ref(repo, oid)
+
+        def header_without_size(repo: Path) -> None:
+            oid = "d" * 40
+            _write_raw_loose_object(repo, oid, zlib_compress(b"commit\0"))
+            _write_head_ref(repo, oid)
+
+        def non_ascii_header(repo: Path) -> None:
+            oid = "e" * 40
+            _write_raw_loose_object(repo, oid, zlib_compress(b"\xff 0\0"))
+            _write_head_ref(repo, oid)
+
+        def size_mismatch(repo: Path) -> None:
+            oid = "f" * 40
+            _write_raw_loose_object(repo, oid, zlib_compress(b"commit 1\0"))
+            _write_head_ref(repo, oid)
+
+        def wrong_type(repo: Path) -> None:
+            _write_head_ref(repo, _write_loose_object(repo, "tree", b""))
+
+        def missing_tree_oid(repo: Path) -> None:
+            _write_head_ref(
+                repo,
+                _write_loose_object(
+                    repo,
+                    "commit",
+                    (
+                        "author Avalan Test <avalan@example.test> 0 +0000\n"
+                        "\n"
+                        "content setup\n"
+                    ).encode("utf-8"),
+                ),
+            )
+
+        cases: tuple[tuple[str, Callable[[Path], None]], ...] = (
+            ("missing_object", missing_object),
+            ("object_path_directory", object_path_directory),
+            ("corrupt_zlib", corrupt_zlib),
+            ("unterminated_header", unterminated_header),
+            ("header_without_size", header_without_size),
+            ("non_ascii_header", non_ascii_header),
+            ("size_mismatch", size_mismatch),
+            ("wrong_type", wrong_type),
+            ("missing_tree_oid", missing_tree_oid),
+        )
+
+        for name, setup in cases:
+            with self.subTest(name=name):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    repo = _write_minimal_git_repo(root / "repo")
+                    setup(repo)
+
+                    error = await _policy_error(
+                        _policy(root),
+                        _request(
+                            command=ShellGitCommandName.DIFF,
+                            options={"mode": "staged"},
+                            pathspecs=("src/deleted.py",),
+                        ),
+                    )
+
+                self.assertEqual(
+                    error.error_code,
+                    ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                )
+
+    async def test_git_diff_staged_denies_tree_traversal_edge_cases(
+        self,
+    ) -> None:
+        def missing_target(repo: Path) -> None:
+            other_oid = _write_loose_object(repo, "blob", b"other\n")
+            tree = _git_tree_entry_data(0o100644, "other.py", other_oid)
+            _write_head_commit_for_tree(
+                repo,
+                _write_loose_object(repo, "tree", tree),
+            )
+
+        def intermediate_file(repo: Path) -> None:
+            blob_oid = _write_loose_object(repo, "blob", b"src\n")
+            tree = _git_tree_entry_data(0o100644, "src", blob_oid)
+            _write_head_commit_for_tree(
+                repo,
+                _write_loose_object(repo, "tree", tree),
+            )
+
+        def final_directory(repo: Path) -> None:
+            empty_tree_oid = _write_loose_object(repo, "tree", b"")
+            leaf_tree = _git_tree_entry_data(
+                0o40000,
+                "deleted.py",
+                empty_tree_oid,
+            )
+            leaf_tree_oid = _write_loose_object(repo, "tree", leaf_tree)
+            root_tree = _git_tree_entry_data(0o40000, "src", leaf_tree_oid)
+            _write_head_commit_for_tree(
+                repo,
+                _write_loose_object(repo, "tree", root_tree),
+            )
+
+        def tree_is_blob(repo: Path) -> None:
+            _write_head_commit_for_tree(
+                repo,
+                _write_loose_object(repo, "blob", b"not a tree"),
+            )
+
+        cases: tuple[tuple[str, Callable[[Path], None]], ...] = (
+            ("missing_target", missing_target),
+            ("intermediate_file", intermediate_file),
+            ("final_directory", final_directory),
+            ("tree_is_blob", tree_is_blob),
+        )
+
+        for name, setup in cases:
+            with self.subTest(name=name):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    repo = _write_minimal_git_repo(root / "repo")
+                    setup(repo)
+
+                    error = await _policy_error(
+                        _policy(root),
+                        _request(
+                            command=ShellGitCommandName.DIFF,
+                            options={"mode": "staged"},
+                            pathspecs=("src/deleted.py",),
+                        ),
+                    )
+
+                self.assertEqual(
+                    error.error_code,
+                    ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                )
+
+    async def test_git_object_read_helpers_fail_closed(self) -> None:
         with TemporaryDirectory() as workspace:
             root = Path(workspace)
             repo = _write_minimal_git_repo(root / "repo")
-            (repo / ".git" / "index").write_bytes(b"not an index")
+            git_dir = repo / ".git"
 
-            error = await _policy_error(
-                _policy(root),
-                _request(
-                    command=ShellGitCommandName.DIFF,
-                    options={"mode": "worktree"},
-                    pathspecs=("src/app.py",),
-                ),
+            self.assertIsNone(
+                await _read_loose_git_object(
+                    git_dir,
+                    "not-an-object-id",
+                    hash_size=20,
+                )
             )
+            missing_oid = "a" * 40
+            (git_dir / "objects" / missing_oid[:2]).mkdir()
+            self.assertIsNone(
+                await _read_loose_git_object(
+                    git_dir,
+                    missing_oid,
+                    hash_size=20,
+                )
+            )
+            self.assertFalse(
+                await _git_tree_has_file_pathspec(
+                    git_dir,
+                    "a" * 40,
+                    b"/",
+                    hash_size=20,
+                )
+            )
+            self.assertFalse(
+                await _git_tree_has_file_pathspec(
+                    git_dir,
+                    "a" * 40,
+                    b"src//deleted.py",
+                    hash_size=20,
+                )
+            )
+
+    def test_safe_loose_object_path_resolution_failures_fail_closed(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            git_dir = repo / ".git"
+            oid = "a" * 40
+            original_resolve = Path.resolve
+
+            def raise_for_object(path: Path, strict: bool = False) -> Path:
+                if path.name == oid[2:]:
+                    raise OSError("object path cannot be resolved")
+                return original_resolve(path, strict=strict)
+
+            with patch.object(Path, "resolve", raise_for_object):
+                self.assertIsNone(_safe_loose_git_object_path(git_dir, oid))
+
+            def escape_for_object(path: Path, strict: bool = False) -> Path:
+                if path.name == oid[2:]:
+                    return root / "outside" / path.name
+                return original_resolve(path, strict=strict)
+
+            with patch.object(Path, "resolve", escape_for_object):
+                self.assertIsNone(_safe_loose_git_object_path(git_dir, oid))
+
+    def test_zlib_and_object_header_parsers_fail_closed(self) -> None:
+        zlib_cases = (
+            b"not-zlib",
+            zlib_compress(b"abc")[:-1],
+            zlib_compress(b"abc") + b"trailing",
+            zlib_compress(b"abc"),
+            zlib_compress(b"x" * 100000),
+        )
+        for data in zlib_cases:
+            with self.subTest(data=data):
+                self.assertIsNone(_zlib_decompress_bounded(data, max_bytes=2))
+
+        object_cases = (
+            b"blob 0",
+            b"blob\0",
+            b"\xff 0\0",
+            b"blob \xff\0",
+            b"blob 1\0",
+            b"blob 12345678901\0",
+        )
+        for data in object_cases:
+            with self.subTest(data=data):
+                self.assertIsNone(_git_object_parts(data))
+
+    def test_commit_and_tree_parsers_handle_malformed_edges(self) -> None:
+        oid = "a" * 40
+        self.assertEqual(
+            _git_commit_tree_oid(
+                f"parent {oid}\ntree {oid.upper()}\n".encode("ascii"),
+                hash_size=20,
+            ),
+            oid,
+        )
+        commit_cases = (
+            b"\n" + f"tree {oid}\n".encode("ascii"),
+            b"author Avalan Test <avalan@example.test> 0 +0000\n",
+            b"tree \xff\n",
+        )
+        for commit in commit_cases:
+            with self.subTest(commit=commit):
+                self.assertIsNone(_git_commit_tree_oid(commit, hash_size=20))
+
+        raw_oid = b"\x01" * 20
+        entry_cases = (
+            b"100644file\0" + raw_oid,
+            b"100644 file" + raw_oid,
+            b"100644 file\0" + raw_oid[:-1],
+            b"100x44 file\0" + raw_oid,
+            b" file\0" + raw_oid,
+            b"100644 other\0" + raw_oid,
+        )
+        for tree in entry_cases:
+            with self.subTest(tree=tree):
+                self.assertIsNone(_git_tree_entry(tree, b"file", hash_size=20))
+
+    async def test_unprovable_current_index_denies_missing_pathspec(
+        self,
+    ) -> None:
+        missing_path = "src/deleted.py"
+        invalid_cases = (
+            ("absent", None),
+            ("directory", "directory"),
+            ("symlink", "symlink"),
+            ("oversize", b"x" * (_GIT_INDEX_MAX_PROBE_BYTES + 1)),
+            ("malformed", b"not an index"),
+            ("v4", _git_index_data(version=4)),
+            (
+                "split",
+                _git_index_data(
+                    _git_index_entry(missing_path),
+                    extensions=((b"link", b""),),
+                ),
+            ),
+            (
+                "sparse",
+                _git_index_data(
+                    _git_index_entry(missing_path),
+                    extensions=((b"sdir", b""),),
+                ),
+            ),
+            (
+                "bad_checksum",
+                _corrupt_git_index_checksum(
+                    _git_index_data(_git_index_entry(missing_path))
+                ),
+            ),
+        )
+
+        for name, index_data in invalid_cases:
+            with self.subTest(name=name):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    repo = _write_minimal_git_repo(root / "repo")
+                    index_path = repo / ".git" / "index"
+                    if index_data == "directory":
+                        index_path.mkdir()
+                    elif index_data == "symlink":
+                        target = repo / ".git" / "index-target"
+                        target.write_bytes(
+                            _git_index_data(_git_index_entry(missing_path))
+                        )
+                        index_path.symlink_to(target)
+                    elif index_data is not None:
+                        assert isinstance(index_data, bytes)
+                        index_path.write_bytes(index_data)
+
+                    error = await _policy_error(
+                        _policy(root),
+                        _request(
+                            command=ShellGitCommandName.DIFF,
+                            options={"mode": "worktree"},
+                            pathspecs=(missing_path,),
+                        ),
+                    )
+
+                self.assertEqual(
+                    error.error_code,
+                    ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                )
+
+    async def test_current_index_read_error_denies_missing_pathspec(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            (repo / ".git" / "index").write_bytes(
+                _git_index_data(_git_index_entry("src/deleted.py"))
+            )
+
+            with patch(
+                "avalan.tool.shell.git_policy._read_bytes",
+                side_effect=_raise_index_read_os_error,
+            ):
+                error = await _policy_error(
+                    _policy(root),
+                    _request(
+                        command=ShellGitCommandName.DIFF,
+                        options={"mode": "worktree"},
+                        pathspecs=("src/deleted.py",),
+                    ),
+                )
 
         self.assertEqual(
             error.error_code,
-            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
         )
-        self.assertEqual(
-            str(error),
-            "Git repository index format is unsupported",
-        )
+
+    async def test_historical_patch_modes_ignore_current_index_deleted_proof(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            (repo / ".git" / "index").write_bytes(
+                _git_index_data(_git_index_entry("src/deleted.py"))
+            )
+            policy = _policy(root)
+
+            cases = (
+                _request(
+                    command=ShellGitCommandName.DIFF,
+                    options={
+                        "mode": "range",
+                        "base_revision": "HEAD~1",
+                        "head_revision": "HEAD",
+                    },
+                    pathspecs=("src/deleted.py",),
+                ),
+                _request(
+                    command=ShellGitCommandName.SHOW,
+                    options={"revision": "HEAD", "mode": "patch"},
+                    pathspecs=("src/deleted.py",),
+                ),
+                _request(
+                    command=ShellGitCommandName.STASH_SHOW,
+                    options={"stash": "stash@{0}", "mode": "patch"},
+                    pathspecs=("src/deleted.py",),
+                ),
+            )
+
+            for request in cases:
+                with self.subTest(
+                    command=request.command.value,
+                    options=request.options,
+                ):
+                    error = await _policy_error(policy, request)
+                    self.assertEqual(
+                        error.error_code,
+                        ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                    )
 
     async def test_git_show_rejects_log_show_signature_config(self) -> None:
         with TemporaryDirectory() as workspace:
@@ -1507,6 +2373,31 @@ class GitContentSmokePhase4Test(IsolatedAsyncioTestCase):
         )
         self.assertIn("deleted file mode", diff.git_result.stdout_snippet)
 
+    async def test_git_diff_staged_allows_deleted_file_pathspec(self) -> None:
+        assert _GIT_BINARY is not None
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_real_git_repo(
+                root,
+                _GIT_BINARY,
+                "https://github.com/acme/public.git",
+            )
+            _git(repo, _GIT_BINARY, "rm", "src/app.py")
+            toolset = _real_git_toolset(root, repo, _GIT_BINARY)
+
+            diff = await _call_tool(
+                toolset,
+                "git_diff",
+                mode="staged",
+                paths=("src/app.py",),
+            )
+
+        self.assertEqual(
+            diff.git_result.status,
+            ShellGitExecutionStatus.SUCCESS,
+        )
+        self.assertIn("deleted file mode", diff.git_result.stdout_snippet)
+
     async def test_git_diff_denies_deleted_file_with_index_v4(self) -> None:
         assert _GIT_BINARY is not None
         with TemporaryDirectory() as workspace:
@@ -1532,15 +2423,11 @@ class GitContentSmokePhase4Test(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             diff.git_result.error_code,
-            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
-        )
-        self.assertNotEqual(
-            diff.git_result.error_code,
             ShellGitExecutionErrorCode.PATHSPEC_DENIED,
         )
         self.assertEqual(
             diff.git_result.error_message,
-            "Git repository index format is unsupported",
+            "Git content pathspec must name a deleted tracked file",
         )
 
     async def test_git_diff_denies_deleted_file_with_split_index(self) -> None:
@@ -1574,15 +2461,11 @@ class GitContentSmokePhase4Test(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             diff.git_result.error_code,
-            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
-        )
-        self.assertNotEqual(
-            diff.git_result.error_code,
             ShellGitExecutionErrorCode.PATHSPEC_DENIED,
         )
         self.assertEqual(
             diff.git_result.error_message,
-            "Git repository index format is unsupported",
+            "Git content pathspec must name a deleted tracked file",
         )
 
     async def test_git_diff_denies_deleted_directory_pathspec(self) -> None:
@@ -1771,11 +2654,153 @@ def _git_prefix() -> tuple[str, str, str]:
     return ("git", "--no-pager", "--no-optional-locks")
 
 
+def _write_head_tree(
+    repo: Path,
+    path: str,
+    *,
+    objects_dir: Path | None = None,
+) -> tuple[str, ...]:
+    pathspec = PurePosixPath(path)
+    blob_oid = _write_loose_object(
+        repo,
+        "blob",
+        b"deleted\n",
+        objects_dir=objects_dir,
+    )
+    leaf_tree = (
+        b"100644 "
+        + pathspec.name.encode("utf-8")
+        + b"\x00"
+        + bytes.fromhex(blob_oid)
+    )
+    leaf_tree_oid = _write_loose_object(
+        repo,
+        "tree",
+        leaf_tree,
+        objects_dir=objects_dir,
+    )
+    root_tree = (
+        b"40000 "
+        + pathspec.parts[0].encode("utf-8")
+        + b"\x00"
+        + bytes.fromhex(leaf_tree_oid)
+    )
+    root_tree_oid = _write_loose_object(
+        repo,
+        "tree",
+        root_tree,
+        objects_dir=objects_dir,
+    )
+    commit = (
+        f"tree {root_tree_oid}\n"
+        "author Avalan Test <avalan@example.test> 0 +0000\n"
+        "committer Avalan Test <avalan@example.test> 0 +0000\n"
+        "\n"
+        "content setup\n"
+    ).encode("utf-8")
+    commit_oid = _write_loose_object(
+        repo,
+        "commit",
+        commit,
+        objects_dir=objects_dir,
+    )
+    _write_head_ref(repo, commit_oid)
+    return (blob_oid, leaf_tree_oid, root_tree_oid, commit_oid)
+
+
+def _write_head_ref(repo: Path, oid: str) -> None:
+    ref = repo / ".git" / "refs" / "heads" / "main"
+    ref.parent.mkdir(parents=True, exist_ok=True)
+    ref.write_text(f"{oid}\n")
+
+
+def _write_head_commit_for_tree(repo: Path, tree_oid: str) -> str:
+    commit = (
+        f"tree {tree_oid}\n"
+        "author Avalan Test <avalan@example.test> 0 +0000\n"
+        "committer Avalan Test <avalan@example.test> 0 +0000\n"
+        "\n"
+        "content setup\n"
+    ).encode("utf-8")
+    commit_oid = _write_loose_object(repo, "commit", commit)
+    _write_head_ref(repo, commit_oid)
+    return commit_oid
+
+
+def _write_loose_object(
+    repo: Path,
+    object_type: str,
+    payload: bytes,
+    *,
+    objects_dir: Path | None = None,
+) -> str:
+    data = f"{object_type} {len(payload)}\0".encode("ascii") + payload
+    oid = sha1(data).hexdigest()
+    object_root = (
+        repo / ".git" / "objects" if objects_dir is None else objects_dir
+    )
+    object_path = object_root / oid[:2] / oid[2:]
+    object_path.parent.mkdir(parents=True, exist_ok=True)
+    object_path.write_bytes(zlib_compress(data))
+    return oid
+
+
+def _write_raw_loose_object(repo: Path, oid: str, data: bytes) -> None:
+    object_path = repo / ".git" / "objects" / oid[:2] / oid[2:]
+    object_path.parent.mkdir(parents=True, exist_ok=True)
+    object_path.write_bytes(data)
+
+
+def _write_malformed_loose_object(
+    repo: Path,
+    object_type: str,
+    payload: bytes,
+    *,
+    size_text: str,
+) -> str:
+    data = f"{object_type} {size_text}\0".encode("ascii") + payload
+    oid = sha1(data).hexdigest()
+    object_path = repo / ".git" / "objects" / oid[:2] / oid[2:]
+    object_path.parent.mkdir(parents=True, exist_ok=True)
+    object_path.write_bytes(zlib_compress(data))
+    return oid
+
+
+def _git_tree_entry_data(mode: int, name: str, oid: str) -> bytes:
+    return f"{mode:o} {name}".encode("utf-8") + b"\0" + bytes.fromhex(oid)
+
+
+def _symlink_loose_object_prefixes(
+    repo: Path,
+    objects_dir: Path,
+    object_ids: tuple[str, ...],
+) -> None:
+    for prefix in sorted({oid[:2] for oid in object_ids}):
+        link = repo / ".git" / "objects" / prefix
+        link.symlink_to(objects_dir / prefix, target_is_directory=True)
+
+
 def _git_index_data(
     *entries: bytes,
     version: int = 3,
     extensions: tuple[tuple[bytes, bytes], ...] = (),
-    checksum: bytes = b"",
+    hash_size: int = 20,
+    checksum: bytes | None = None,
+) -> bytes:
+    body = _git_index_body(
+        *entries,
+        version=version,
+        extensions=extensions,
+    )
+    if checksum is None:
+        return _git_index_signed_body(body, hash_size=hash_size)
+    return body + checksum
+
+
+def _git_index_body(
+    *entries: bytes,
+    version: int = 3,
+    extensions: tuple[tuple[bytes, bytes], ...] = (),
 ) -> bytes:
     return (
         b"DIRC"
@@ -1786,8 +2811,19 @@ def _git_index_data(
             signature + len(data).to_bytes(4, "big") + data
             for signature, data in extensions
         )
-        + checksum
     )
+
+
+def _git_index_signed_body(body: bytes, *, hash_size: int = 20) -> bytes:
+    if hash_size == 32:
+        return body + sha256(body).digest()
+    assert hash_size == 20
+    return body + sha1(body).digest()
+
+
+def _corrupt_git_index_checksum(index: bytes) -> bytes:
+    assert index
+    return index[:-1] + bytes((index[-1] ^ 0x01,))
 
 
 def _git_index_entry(
@@ -1795,6 +2831,7 @@ def _git_index_entry(
     *,
     mode: int = 0o100644,
     extended: bool = False,
+    hash_size: int = 20,
     nul: bool = True,
     pad: bool = True,
 ) -> bytes:
@@ -1802,9 +2839,10 @@ def _git_index_entry(
     flags = len(path_bytes)
     if extended:
         flags |= 0x4000
-    header = bytearray(62)
+    header = bytearray(40 + hash_size + 2)
+    flags_offset = 40 + hash_size
     header[24:28] = mode.to_bytes(4, "big")
-    header[60:62] = flags.to_bytes(2, "big")
+    header[flags_offset : flags_offset + 2] = flags.to_bytes(2, "big")
     entry = bytes(header)
     if extended:
         entry += b"\x00\x00"
@@ -1818,9 +2856,10 @@ def _git_index_entry(
     return entry
 
 
-def _git_index_truncated_extended_entry() -> bytes:
-    entry = bytearray(62)
-    entry[60:62] = (0x4000).to_bytes(2, "big")
+def _git_index_truncated_extended_entry(*, hash_size: int = 20) -> bytes:
+    entry = bytearray(40 + hash_size + 2)
+    flags_offset = 40 + hash_size
+    entry[flags_offset : flags_offset + 2] = (0x4000).to_bytes(2, "big")
     return bytes(entry)
 
 
@@ -1893,6 +2932,12 @@ def _policy(
 async def _fake_executable(search_paths: tuple[str, ...]) -> str | None:
     assert isinstance(search_paths, tuple)
     return "/usr/bin/git"
+
+
+async def _raise_index_read_os_error(path: Path) -> bytes:
+    if path.name == "index":
+        raise OSError("index read failed")
+    return await _git_policy_read_bytes(path)
 
 
 async def _missing_executable(search_paths: tuple[str, ...]) -> str | None:

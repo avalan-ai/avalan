@@ -622,6 +622,11 @@ disabled. `allow_submodule_update = true` is the supported remote submodule
 update gate, and still requires the remote capability, command, protocol, and
 host allowlists.
 
+For staged diffs on deleted pathspecs, Avalan can prove the path from the
+loose HEAD ref and loose commit/tree objects only. Packed refs or packed
+objects are not inspected for this proof; those cases fail closed as denied
+pathspecs.
+
 `agent run`, `task run`, and `flow run` accept the same trusted CLI settings
 with `--tool-shell-git-*` flags:
 
@@ -697,7 +702,10 @@ Hostless local file remotes such as `file:///workspace/repo.git` require
 `allowed_remote_protocols = ["file"]` and
 `allowed_remote_hosts = ["localhost"]`; `localhost` is the authority gate for
 local file remotes even when the URL has no host. The resolved file path must
-be absolute and remain inside the configured Git `workspace_root`.
+be absolute and remain inside the configured Git `workspace_root`. Standard
+percent-encoding and non-canonical path components are allowed when the
+decoded, resolved path stays inside `workspace_root`; Git argv and audit
+redaction keep the caller-supplied URL unchanged.
 
 For capability-gated mutation, opt in to only the required capability and
 command:

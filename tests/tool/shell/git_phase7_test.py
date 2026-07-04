@@ -430,6 +430,56 @@ class GitRemotePolicyPhase7Test(IsolatedAsyncioTestCase):
         self.assertIsNone(spec.metadata["git_remote_host"])
         self.assertEqual(spec.metadata["git_remote_url"], "file:///[redacted]")
 
+    async def test_hostless_file_clone_url_accepts_percent_encoded_space(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            remote = _write_minimal_bare_git_repo(root / "remote repo.git")
+            url = f"file://{remote.resolve().as_posix().replace(' ', '%20')}"
+            spec = await _policy(
+                root,
+                cwd=".",
+                allowed_commands=("clone",),
+            ).normalize(
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": url,
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                )
+            )
+
+        self.assertEqual(spec.argv[-2], url)
+
+    async def test_hostless_file_clone_url_accepts_dot_dot_inside_workspace(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            (root / "remotes").mkdir()
+            _write_minimal_bare_git_repo(root / "remotes" / "remote.git")
+            url_path = root / "remotes" / ".." / "remotes" / "remote.git"
+            url = f"file://{url_path.as_posix()}"
+            spec = await _policy(
+                root,
+                cwd=".",
+                allowed_commands=("clone",),
+            ).normalize(
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": url,
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                )
+            )
+
+        self.assertEqual(spec.argv[-2], url)
+
     async def test_hostless_file_clone_url_rejects_raw_double_slash_path(
         self,
     ) -> None:
@@ -466,6 +516,28 @@ class GitRemotePolicyPhase7Test(IsolatedAsyncioTestCase):
                     command=ShellGitCommandName.CLONE,
                     options={
                         "url": f"file:///%2F{encoded_path}",
+                        "destination": "repo-copy",
+                        "branch": "main",
+                    },
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+        )
+
+    async def test_hostless_file_clone_url_rejects_encoded_control_character(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            error = await _policy_error(
+                _policy(root, cwd=".", allowed_commands=("clone",)),
+                _request(
+                    command=ShellGitCommandName.CLONE,
+                    options={
+                        "url": f"{_hostless_file_url(root / 'remote.git')}%0A",
                         "destination": "repo-copy",
                         "branch": "main",
                     },

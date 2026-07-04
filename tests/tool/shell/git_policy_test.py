@@ -1,9 +1,11 @@
 from ast import AST, Call, Import, ImportFrom, parse, walk
 from asyncio import CancelledError
+from hashlib import sha1
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import patch
 
 from avalan.entities import ToolCallContext
 from avalan.tool.shell import (
@@ -29,6 +31,9 @@ from avalan.tool.shell.git_policy import (
     _redacted_metadata,
     git_remote_audit_metadata,
     redact_git_text,
+)
+from avalan.tool.shell.git_policy import (
+    _read_bytes as _git_policy_read_bytes,
 )
 from avalan.tool.shell.tools import GitStatusTool, _git_policy_denied_result
 
@@ -83,6 +88,58 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
             ).normalize(_status_request())
 
         self.assertEqual(spec.executable, str(git))
+
+    async def test_read_commands_do_not_require_supported_index_form(
+        self,
+    ) -> None:
+        index_cases: tuple[tuple[str, bytes | None], ...] = (
+            ("absent", None),
+            ("huge", b"x" * (8 * 1024 * 1024 + 1)),
+            ("malformed", b"not an index"),
+            ("v4", _git_index_v4_data()),
+        )
+
+        for name, index_data in index_cases:
+            with self.subTest(index=name):
+                with TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    repo = _write_minimal_git_repo(root / "repo")
+                    if index_data is not None:
+                        (repo / ".git" / "index").write_bytes(index_data)
+                    policy = _policy(
+                        root,
+                        allowed_commands=("status", "log"),
+                    )
+
+                    status_spec = await policy.normalize(_status_request())
+                    log_spec = await policy.normalize(
+                        _request(command=ShellGitCommandName.LOG)
+                    )
+
+                self.assertEqual(status_spec.command, "git.status")
+                self.assertEqual(log_spec.command, "git.log")
+
+    async def test_read_commands_do_not_read_index(self) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            (repo / ".git" / "index").write_bytes(_git_index_v4_data())
+            policy = _policy(
+                root,
+                allowed_commands=("status", "log"),
+            )
+
+            with patch(
+                "avalan.tool.shell.git_policy._read_bytes",
+                side_effect=_fail_on_index_read,
+            ):
+                status_spec = await policy.normalize(_status_request())
+                log_spec = await policy.normalize(
+                    _request(command=ShellGitCommandName.LOG)
+                )
+
+        self.assertEqual(status_spec.command, "git.status")
+        self.assertEqual(log_spec.command, "git.log")
 
     def test_display_path_uses_outside_workspace_placeholder(self) -> None:
         with TemporaryDirectory() as workspace:
@@ -1558,6 +1615,12 @@ async def _missing_git(search_paths: tuple[str, ...]) -> str | None:
     return None
 
 
+async def _fail_on_index_read(path: Path) -> bytes:
+    if path.name == "index":
+        raise AssertionError("read-only Git commands must not read index")
+    return await _git_policy_read_bytes(path)
+
+
 def _write_minimal_git_repo(repo: Path) -> Path:
     git_dir = repo / ".git"
     (git_dir / "objects" / "info").mkdir(parents=True)
@@ -1567,6 +1630,11 @@ def _write_minimal_git_repo(repo: Path) -> Path:
         "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
     )
     return repo
+
+
+def _git_index_v4_data() -> bytes:
+    body = b"DIRC" + (4).to_bytes(4, "big") + (0).to_bytes(4, "big")
+    return body + sha1(body).digest()
 
 
 def _status_tool(

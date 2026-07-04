@@ -23,11 +23,15 @@ from .settings import ShellGitToolSettings, ShellToolSettings
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from hashlib import sha1, sha256
+from hmac import compare_digest
 from pathlib import Path, PurePosixPath
 from re import compile as compile_pattern
 from stat import S_IXGRP, S_IXOTH, S_IXUSR
 from typing import NoReturn, cast, final
 from urllib.parse import unquote, urlsplit
+from zlib import decompressobj as zlib_decompressobj
+from zlib import error as ZlibError
 
 GitExecutableLookup = Callable[[tuple[str, ...]], Awaitable[str | None]]
 
@@ -153,11 +157,18 @@ _AUTHOR_PORCELAIN_EMAIL_PATTERN = compile_pattern(
     r"(?im)^((?:author|committer)-mail\s+<)" r"[^<>\r\n]*@[^<>\r\n]*(>)"
 )
 _GIT_INDEX_FILE_MODES = frozenset((0o100644, 0o100755, 0o120000))
-_GIT_INDEX_HASH_SIZES = (20, 32)
+_GIT_INDEX_MAX_PROBE_BYTES = 8 * 1024 * 1024
 _GIT_INDEX_LINK_EXTENSION = b"link"
 _GIT_INDEX_SIGNATURE = b"DIRC"
 _GIT_INDEX_SPARSE_EXTENSION = b"sdir"
 _GIT_INDEX_SUPPORTED_VERSIONS = (2, 3)
+_GIT_LOOSE_OBJECT_MAX_PROBE_BYTES = 8 * 1024 * 1024
+_GIT_OBJECT_SIZE_MAX_DIGITS = 10
+_GIT_OBJECT_FORMAT_SHA1 = "sha1"
+_GIT_OBJECT_FORMAT_SHA256 = "sha256"
+_GIT_OBJECT_HASH_SIZE_SHA1 = 20
+_GIT_OBJECT_HASH_SIZE_SHA256 = 32
+_GIT_TREE_DIRECTORY_MODE = 0o40000
 _CONTROL_CHARACTERS = tuple(chr(value) for value in (*range(0, 32), 127))
 _DANGEROUS_CONFIG_SECTION_NAMES = frozenset(
     (
@@ -817,14 +828,12 @@ def _validate_hostless_file_remote_url(
     *,
     workspace_root: Path | None,
 ) -> None:
-    decoded_value = unquote(value)
-    path = Path(decoded_value)
+    decoded_value = _decoded_file_remote_path(value)
     if (
         not url.startswith("file:///")
         or value.startswith("//")
         or decoded_value.startswith("//")
-        or not path.is_absolute()
-        or url != f"file://{path.resolve().as_posix()}"
+        or not Path(decoded_value).is_absolute()
     ):
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
@@ -838,14 +847,15 @@ def _validated_file_remote_path(
     *,
     workspace_root: Path | None,
 ) -> Path | None:
-    if workspace_root is None:
-        return None
     if not value:
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
             "file remote URL path is unsupported",
         )
-    path = Path(unquote(value))
+    decoded_value = _decoded_file_remote_path(value)
+    if workspace_root is None:
+        return None
+    path = Path(decoded_value)
     if not path.is_absolute():
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.REPO_BOUNDARY_DENIED,
@@ -858,6 +868,16 @@ def _validated_file_remote_path(
             "file remote URL escapes workspace root",
         )
     return resolved
+
+
+def _decoded_file_remote_path(value: str) -> str:
+    decoded_value = unquote(value)
+    if _contains_control(decoded_value) or "\x00" in decoded_value:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REMOTE_PROTOCOL_DENIED,
+            "file remote URL path is unsupported",
+        )
+    return decoded_value
 
 
 async def _validate_file_push_remote_url(
@@ -1755,7 +1775,6 @@ async def _validate_repository_form(
     await _validate_attributes(repo_root / ".gitattributes")
     await _validate_attributes(git_dir / "info" / "attributes")
     await _validate_hooks(git_dir / "hooks")
-    await _validate_repository_index_form(git_dir)
 
 
 async def _validate_alternates(
@@ -1991,45 +2010,59 @@ async def _validate_content_pathspec_scope(
         return
     if request.command is ShellGitCommandName.DIFF:
         mode = _diff_mode_option(request.options)
-        if mode in ("worktree", "staged", "range"):
-            await _validate_file_like_content_pathspecs(
+        if mode == "worktree":
+            await _validate_diff_current_pathspecs(
                 pathspecs,
                 repo_root,
                 git_dir=git_dir,
             )
+        elif mode == "staged":
+            await _validate_staged_diff_pathspecs(
+                pathspecs,
+                repo_root,
+                git_dir=git_dir,
+            )
+        elif mode == "range":
+            _validate_existing_file_content_pathspecs(pathspecs, repo_root)
         return
     if request.command is ShellGitCommandName.SHOW:
         if _show_mode_option(request.options) == "patch":
-            await _validate_file_like_content_pathspecs(
-                pathspecs,
-                repo_root,
-                git_dir=git_dir,
-            )
+            _validate_existing_file_content_pathspecs(pathspecs, repo_root)
         return
     if request.command is ShellGitCommandName.STASH_SHOW:
         if _stash_show_mode_option(request.options) == "patch":
-            await _validate_file_like_content_pathspecs(
-                pathspecs,
-                repo_root,
-                git_dir=git_dir,
-            )
+            _validate_existing_file_content_pathspecs(pathspecs, repo_root)
 
 
-async def _validate_file_like_content_pathspecs(
+async def _validate_diff_current_pathspecs(
     pathspecs: tuple[str, ...],
     repo_root: Path,
     *,
     git_dir: Path,
 ) -> None:
     for value in pathspecs:
-        await _validate_file_like_content_pathspec(
+        await _validate_diff_current_pathspec(
             value,
             repo_root,
             git_dir=git_dir,
         )
 
 
-async def _validate_file_like_content_pathspec(
+async def _validate_staged_diff_pathspecs(
+    pathspecs: tuple[str, ...],
+    repo_root: Path,
+    *,
+    git_dir: Path,
+) -> None:
+    for value in pathspecs:
+        await _validate_staged_diff_pathspec(
+            value,
+            repo_root,
+            git_dir=git_dir,
+        )
+
+
+async def _validate_diff_current_pathspec(
     value: str,
     repo_root: Path,
     *,
@@ -2049,7 +2082,7 @@ async def _validate_file_like_content_pathspec(
         )
     if resolved.exists():
         return
-    if await _is_missing_tracked_file_pathspec(
+    if await _current_index_proves_missing_file_pathspec(
         value,
         git_dir,
     ):
@@ -2060,43 +2093,92 @@ async def _validate_file_like_content_pathspec(
     )
 
 
-async def _is_missing_tracked_file_pathspec(
+async def _validate_staged_diff_pathspec(
+    value: str,
+    repo_root: Path,
+    *,
+    git_dir: Path,
+) -> None:
+    path = PurePosixPath(value)
+    if path.as_posix() == ".":
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git content pathspec must name a file path",
+        )
+    resolved = (repo_root / Path(*path.parts)).resolve()
+    if resolved.exists() and not resolved.is_file():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git content pathspec must name a file path",
+        )
+    if resolved.exists():
+        return
+    if await _head_tree_proves_file_pathspec(value, git_dir):
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        "Git content pathspec must name a deleted tracked file",
+    )
+
+
+async def _current_index_proves_missing_file_pathspec(
     value: str,
     git_dir: Path,
 ) -> bool:
     index_path = git_dir / "index"
-    if not index_path.is_file():
+    index = await _read_bounded_regular_file(
+        index_path,
+        max_bytes=_GIT_INDEX_MAX_PROBE_BYTES,
+    )
+    if index is None:
         return False
-    index = await _read_bytes(index_path)
-    return _git_index_data_has_exact_file_pathspec(index, value)
-
-
-async def _validate_repository_index_form(git_dir: Path) -> None:
-    index_path = git_dir / "index"
-    if not index_path.exists():
-        return
-    if index_path.is_symlink() or not index_path.is_file():
-        _deny_unsafe_git_config("Git repository index is unsafe")
-    index = await _read_bytes(index_path)
-    if not _git_index_form_is_supported(index):
-        _deny_unsafe_git_config("Git repository index format is unsupported")
-
-
-def _git_index_form_is_supported(index: bytes) -> bool:
-    if len(index) < 12 or index[:4] != _GIT_INDEX_SIGNATURE:
+    config = await _read_text(git_dir / "config")
+    hash_size = _git_index_hash_size_from_config(config)
+    if hash_size is None:
         return False
-    version = int.from_bytes(index[4:8], "big")
-    if version not in _GIT_INDEX_SUPPORTED_VERSIONS:
+    return _git_index_data_has_exact_file_pathspec(
+        index,
+        value,
+        hash_size=hash_size,
+    )
+
+
+async def _head_tree_proves_file_pathspec(
+    value: str,
+    git_dir: Path,
+) -> bool:
+    hash_size = await _git_object_hash_size(git_dir)
+    if hash_size is None:
         return False
-    parsed = _parse_git_index_data(index)
-    return parsed is not None and not parsed.split_index
+    commit_oid = await _head_commit_oid(git_dir, hash_size=hash_size)
+    if commit_oid is None:
+        return False
+    commit = await _read_loose_git_object(
+        git_dir,
+        commit_oid,
+        hash_size=hash_size,
+    )
+    if commit is None or commit[0] != "commit":
+        return False
+    tree_oid = _git_commit_tree_oid(commit[1], hash_size=hash_size)
+    if tree_oid is None:
+        return False
+    target = value.encode("utf-8", "surrogateescape")
+    return await _git_tree_has_file_pathspec(
+        git_dir,
+        tree_oid,
+        target,
+        hash_size=hash_size,
+    )
 
 
 def _git_index_data_has_exact_file_pathspec(
     index: bytes,
     value: str,
+    *,
+    hash_size: int,
 ) -> bool:
-    parsed = _parse_git_index_data(index)
+    parsed = _parse_git_index_data_with_hash_size(index, hash_size=hash_size)
     if parsed is None or parsed.sparse or parsed.split_index:
         return False
     target = value.encode("utf-8", "surrogateescape")
@@ -2106,15 +2188,289 @@ def _git_index_data_has_exact_file_pathspec(
     )
 
 
-def _parse_git_index_data(index: bytes) -> _GitIndexData | None:
-    for hash_size in _GIT_INDEX_HASH_SIZES:
-        parsed = _parse_git_index_data_with_hash_size(
-            index,
+async def _git_object_hash_size(git_dir: Path) -> int | None:
+    config = await _read_text(git_dir / "config")
+    return _git_index_hash_size_from_config(config)
+
+
+def _git_index_hash_size_from_config(config: str) -> int | None:
+    hash_size: int | None = _GIT_OBJECT_HASH_SIZE_SHA1
+    for entry in _git_config_entries(config):
+        if (
+            entry.section == "extensions"
+            and entry.subsection is None
+            and entry.key == "objectformat"
+        ):
+            value = _git_config_unquoted_value(entry.value).lower()
+            if value == _GIT_OBJECT_FORMAT_SHA1:
+                hash_size = _GIT_OBJECT_HASH_SIZE_SHA1
+            elif value == _GIT_OBJECT_FORMAT_SHA256:
+                hash_size = _GIT_OBJECT_HASH_SIZE_SHA256
+            else:
+                hash_size = None
+    return hash_size
+
+
+def _git_config_unquoted_value(value: str) -> str:
+    unquoted = _git_config_unquoted_comment_prefix(value).strip()
+    if len(unquoted) < 2 or not (
+        unquoted.startswith('"') and unquoted.endswith('"')
+    ):
+        return unquoted.strip()
+    inner = unquoted[1:-1]
+    result: list[str] = []
+    escaped = False
+    for character in inner:
+        if escaped:
+            if character in ('"', "\\"):
+                result.append(character)
+            else:
+                result.append("\\")
+                result.append(character)
+            escaped = False
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        result.append(character)
+    if escaped:
+        result.append("\\")
+    return "".join(result).strip()
+
+
+async def _head_commit_oid(git_dir: Path, *, hash_size: int) -> str | None:
+    head = await _read_bounded_regular_text(git_dir / "HEAD")
+    if head is None:
+        return None
+    value = head.strip()
+    if value.startswith("ref: "):
+        ref = value.removeprefix("ref: ").strip()
+        ref_path = _safe_head_ref_path(git_dir, ref)
+        if ref_path is None:
+            return None
+        value = (await _read_bounded_regular_text(ref_path) or "").strip()
+    return value.lower() if _is_git_object_oid(value, hash_size) else None
+
+
+def _safe_head_ref_path(git_dir: Path, ref: str) -> Path | None:
+    if not ref.startswith("refs/heads/") or _contains_control(ref):
+        return None
+    relative = PurePosixPath(ref)
+    if (
+        relative.is_absolute()
+        or any(part in ("", ".", "..") for part in relative.parts)
+        or any(part.endswith(".lock") for part in relative.parts)
+    ):
+        return None
+    path = (git_dir / Path(*relative.parts)).resolve()
+    return path if _is_relative_to(path, git_dir) else None
+
+
+def _is_git_object_oid(value: str, hash_size: int) -> bool:
+    if len(value) != hash_size * 2:
+        return False
+    return all(character in "0123456789abcdefABCDEF" for character in value)
+
+
+async def _read_loose_git_object(
+    git_dir: Path,
+    oid: str,
+    *,
+    hash_size: int,
+) -> tuple[str, bytes] | None:
+    if not _is_git_object_oid(oid, hash_size):
+        return None
+    object_path = _safe_loose_git_object_path(git_dir, oid)
+    if object_path is None:
+        return None
+    compressed = await _read_bounded_regular_file(
+        object_path,
+        max_bytes=_GIT_LOOSE_OBJECT_MAX_PROBE_BYTES,
+    )
+    if compressed is None:
+        return None
+    data = _zlib_decompress_bounded(
+        compressed,
+        max_bytes=_GIT_LOOSE_OBJECT_MAX_PROBE_BYTES,
+    )
+    if data is None:
+        return None
+    return _git_object_parts(data)
+
+
+def _safe_loose_git_object_path(git_dir: Path, oid: str) -> Path | None:
+    objects_dir = git_dir / "objects"
+    object_prefix_dir = objects_dir / oid[:2]
+    object_path = object_prefix_dir / oid[2:]
+    if any(
+        component.is_symlink()
+        for component in (objects_dir, object_prefix_dir, object_path)
+    ):
+        return None
+    try:
+        resolved_objects_dir = objects_dir.resolve()
+        resolved_object_path = object_path.resolve()
+    except (OSError, RuntimeError):
+        return None
+    if not _is_relative_to(resolved_object_path, resolved_objects_dir):
+        return None
+    return object_path
+
+
+def _zlib_decompress_bounded(data: bytes, *, max_bytes: int) -> bytes | None:
+    decompressor = zlib_decompressobj()
+    try:
+        result = decompressor.decompress(data, max_bytes + 1)
+        if decompressor.unconsumed_tail:
+            return None
+        result += decompressor.flush()
+    except ZlibError:
+        return None
+    if (
+        len(result) > max_bytes
+        or not decompressor.eof
+        or decompressor.unused_data
+    ):
+        return None
+    return result
+
+
+def _git_object_parts(data: bytes) -> tuple[str, bytes] | None:
+    header_end = data.find(b"\x00")
+    if header_end < 0:
+        return None
+    header = data[:header_end]
+    header_parts = header.split(b" ", maxsplit=1)
+    if len(header_parts) != 2:
+        return None
+    try:
+        object_type = header_parts[0].decode("ascii", errors="strict")
+        size_text = header_parts[1].decode("ascii", errors="strict")
+    except UnicodeDecodeError:
+        return None
+    if (
+        not size_text.isdecimal()
+        or len(size_text) > _GIT_OBJECT_SIZE_MAX_DIGITS
+    ):
+        return None
+    payload = data[header_end + 1 :]
+    if int(size_text) != len(payload):
+        return None
+    return object_type, payload
+
+
+def _git_commit_tree_oid(commit: bytes, *, hash_size: int) -> str | None:
+    for line in commit.splitlines():
+        if not line:
+            return None
+        if not line.startswith(b"tree "):
+            continue
+        try:
+            value = line.removeprefix(b"tree ").decode(
+                "ascii",
+                errors="strict",
+            )
+        except UnicodeDecodeError:
+            return None
+        return value.lower() if _is_git_object_oid(value, hash_size) else None
+    return None
+
+
+async def _git_tree_has_file_pathspec(
+    git_dir: Path,
+    tree_oid: str,
+    target: bytes,
+    *,
+    hash_size: int,
+) -> bool:
+    parts = target.split(b"/")
+    if not parts or any(not part for part in parts):
+        return False
+    oid = tree_oid
+    found = False
+    for index, part in enumerate(parts):
+        tree = await _read_loose_git_object(
+            git_dir,
+            oid,
             hash_size=hash_size,
         )
-        if parsed is not None:
-            return parsed
+        if tree is None or tree[0] != "tree":
+            return False
+        entry = _git_tree_entry(tree[1], part, hash_size=hash_size)
+        if entry is None:
+            return False
+        mode, raw_oid = entry
+        final = index == len(parts) - 1
+        if final:
+            found = mode in _GIT_INDEX_FILE_MODES
+            break
+        if mode != _GIT_TREE_DIRECTORY_MODE:
+            return False
+        oid = raw_oid.hex()
+    return found
+
+
+def _git_tree_entry(
+    tree: bytes,
+    target_name: bytes,
+    *,
+    hash_size: int,
+) -> tuple[int, bytes] | None:
+    offset = 0
+    while offset < len(tree):
+        mode_end = tree.find(b" ", offset)
+        if mode_end < 0:
+            return None
+        name_end = tree.find(b"\x00", mode_end + 1)
+        if name_end < 0:
+            return None
+        oid_offset = name_end + 1
+        next_offset = oid_offset + hash_size
+        if next_offset > len(tree):
+            return None
+        mode_bytes = tree[offset:mode_end]
+        if not mode_bytes or any(
+            byte not in b"01234567" for byte in mode_bytes
+        ):
+            return None
+        name = tree[mode_end + 1 : name_end]
+        if name == target_name:
+            return (
+                int(mode_bytes.decode("ascii"), 8),
+                tree[oid_offset:next_offset],
+            )
+        offset = next_offset
     return None
+
+
+async def _read_bounded_regular_text(path: Path) -> str | None:
+    data = await _read_bounded_regular_file(
+        path,
+        max_bytes=_GIT_LOOSE_OBJECT_MAX_PROBE_BYTES,
+    )
+    if data is None:
+        return None
+    return data.decode("utf-8", errors="replace")
+
+
+async def _read_bounded_regular_file(
+    path: Path,
+    *,
+    max_bytes: int,
+) -> bytes | None:
+    if path.is_symlink():
+        return None
+    try:
+        metadata = await _inspect_path(path)
+    except OSError:
+        return None
+    if not metadata.is_file or metadata.size > max_bytes:
+        return None
+    try:
+        data = await _read_bytes(path)
+    except OSError:
+        return None
+    return data if len(data) <= max_bytes else None
 
 
 def _parse_git_index_data_with_hash_size(
@@ -2122,11 +2478,21 @@ def _parse_git_index_data_with_hash_size(
     *,
     hash_size: int,
 ) -> _GitIndexData | None:
-    if len(index) < 12 or index[:4] != _GIT_INDEX_SIGNATURE:
+    if (
+        hash_size
+        not in (
+            _GIT_OBJECT_HASH_SIZE_SHA1,
+            _GIT_OBJECT_HASH_SIZE_SHA256,
+        )
+        or len(index) < 12 + hash_size
+        or index[:4] != _GIT_INDEX_SIGNATURE
+        or not _git_index_checksum_is_valid(index, hash_size=hash_size)
+    ):
         return None
     version = int.from_bytes(index[4:8], "big")
     if version not in _GIT_INDEX_SUPPORTED_VERSIONS:
         return None
+    content_end = len(index) - hash_size
     count = int.from_bytes(index[8:12], "big")
     entries: list[_GitIndexEntry] = []
     offset = 12
@@ -2134,6 +2500,7 @@ def _parse_git_index_data_with_hash_size(
         entry = _git_index_entry(
             index,
             offset,
+            content_end=content_end,
             hash_size=hash_size,
             version=version,
         )
@@ -2141,17 +2508,10 @@ def _parse_git_index_data_with_hash_size(
             return None
         mode, path, offset = entry
         entries.append(_GitIndexEntry(mode=mode, path=path))
-    extension_end = _git_index_extension_end(
-        index,
-        offset,
-        hash_size=hash_size,
-    )
-    if extension_end is None:
-        return None
     extensions = _git_index_extensions(
         index,
         offset,
-        extension_end,
+        content_end,
     )
     if extensions is None:
         return None
@@ -2164,15 +2524,26 @@ def _parse_git_index_data_with_hash_size(
     )
 
 
+def _git_index_checksum_is_valid(index: bytes, *, hash_size: int) -> bool:
+    payload = index[:-hash_size]
+    expected = index[-hash_size:]
+    if hash_size == _GIT_OBJECT_HASH_SIZE_SHA256:
+        actual = sha256(payload).digest()
+    else:
+        actual = sha1(payload).digest()
+    return compare_digest(actual, expected)
+
+
 def _git_index_entry(
     index: bytes,
     offset: int,
     *,
+    content_end: int,
     hash_size: int,
     version: int,
 ) -> tuple[int, bytes, int] | None:
     flags_offset = offset + 40 + hash_size
-    if flags_offset + 2 > len(index):
+    if flags_offset + 2 > content_end:
         return None
     mode = int.from_bytes(index[offset + 24 : offset + 28], "big")
     flags = int.from_bytes(index[flags_offset : flags_offset + 2], "big")
@@ -2180,35 +2551,22 @@ def _git_index_entry(
     if flags & 0x4000:
         if version < 3:
             return None
-        if path_offset + 2 > len(index):
+        if path_offset + 2 > content_end:
             return None
         path_offset += 2
-    path_end = index.find(b"\x00", path_offset)
+    path_end = index.find(b"\x00", path_offset, content_end)
     if path_end < 0:
         return None
     next_offset = offset + _padded_git_index_entry_size(
         path_end + 1 - offset,
     )
-    if next_offset > len(index):
+    if next_offset > content_end:
         return None
     return (
         mode,
         index[path_offset:path_end],
         next_offset,
     )
-
-
-def _git_index_extension_end(
-    index: bytes,
-    offset: int,
-    *,
-    hash_size: int,
-) -> int | None:
-    if offset == len(index):
-        return offset
-    if offset <= len(index) - hash_size:
-        return len(index) - hash_size
-    return None
 
 
 def _git_index_extensions(
