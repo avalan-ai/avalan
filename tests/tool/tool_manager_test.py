@@ -1514,6 +1514,55 @@ class DummyNamedTool:
         return self.__name__
 
 
+class CompositeSchemaTool(Tool):
+    def __init__(self) -> None:
+        super().__init__()
+        self.__name__ = "composite"
+        self.aliases: list[str] = []
+
+    async def __call__(self, mode: str) -> str:
+        """Return the selected mode."""
+        return mode
+
+    def json_schema(self, prefix: str | None = None) -> dict[str, Any]:
+        name = "composite"
+        if prefix:
+            name = prefix + name
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": "Return the selected mode.",
+                "parameters": {
+                    "type": "object",
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "mode": {"enum": ["search"], "type": "string"}
+                            },
+                            "required": ["mode"],
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "mode": {"enum": ["files"], "type": "string"}
+                            },
+                            "required": ["mode"],
+                        },
+                    ],
+                    "properties": {
+                        "mode": {
+                            "enum": ["search", "files"],
+                            "type": "string",
+                        }
+                    },
+                    "required": ["mode"],
+                },
+            },
+        }
+
+
 class InvalidAliasesTool(DummyAdder):
     def __init__(self) -> None:
         self.__name__ = "invalid_aliases"
@@ -4213,6 +4262,33 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             descriptor.provider_safe_schema["function"]["name"],
             "math_adder",
         )
+
+    def test_provider_json_schemas_remove_top_level_composition(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.composite"],
+            available_toolsets=[
+                ToolSet(namespace="shell", tools=[CompositeSchemaTool()])
+            ],
+            settings=ToolManagerSettings(
+                tool_name_policy=ToolNamePolicySettings(
+                    mode=ToolNamePolicyMode.SANITIZED
+                )
+            ),
+        )
+
+        provider_schemas = manager.provider_json_schemas(
+            provider_family=ProviderFamily.OPENAI.value
+        )
+        descriptor = manager.describe_tool("shell.composite")
+
+        assert provider_schemas is not None
+        assert descriptor is not None
+        assert descriptor.parameter_schema is not None
+        self.assertIn("anyOf", descriptor.parameter_schema)
+        parameters = provider_schemas[0]["function"]["parameters"]
+        self.assertNotIn("anyOf", parameters)
+        self.assertEqual(parameters["type"], "object")
+        self.assertIn("mode", parameters["properties"])
 
     def test_provider_json_schemas_mix_maps_and_policy_fallback(self):
         manager = ToolManager.create_instance(

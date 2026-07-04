@@ -651,6 +651,21 @@ class ToolManager:
             and isinstance(function.get("name"), str)
         ):
             function["name"] = policy.provider_name(function["name"])
+            parameters = function.get("parameters")
+            if isinstance(parameters, dict):
+                function["parameters"] = (
+                    ToolManager._provider_safe_parameter_schema(parameters)
+                )
+        return provider_schema
+
+    @staticmethod
+    def _provider_safe_parameter_schema(
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        provider_schema = deepcopy(schema)
+        for keyword in ("anyOf", "oneOf", "allOf", "not"):
+            provider_schema.pop(keyword, None)
+        provider_schema.setdefault("type", "object")
         return provider_schema
 
     def _canonical_requested_name(
