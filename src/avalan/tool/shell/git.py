@@ -299,6 +299,12 @@ def shell_git_capabilities_for_command(
     ), "command must be a shell Git command"
     if command is ShellGitCommandName.RESET:
         return (ShellGitCapability.WORKTREE, ShellGitCapability.HISTORY)
+    if command is ShellGitCommandName.PULL:
+        return (
+            ShellGitCapability.REMOTE,
+            ShellGitCapability.WORKTREE,
+            ShellGitCapability.HISTORY,
+        )
     return (SHELL_GIT_COMMAND_CAPABILITIES[command],)
 
 

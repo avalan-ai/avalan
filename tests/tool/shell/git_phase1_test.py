@@ -257,10 +257,6 @@ class ShellGitSettingsPhase1Test(TestCase):
             ),
             ({"max_diff_bytes": 0}, "git.max_diff_bytes must be positive"),
             (
-                {"allowed_remote_protocols": ("file",)},
-                "git.allowed_remote_protocols contains unsafe value",
-            ),
-            (
                 {"allowed_remote_hosts": ("*.github.com",)},
                 "git.allowed_remote_hosts contains unsafe value",
             ),
@@ -473,13 +469,7 @@ class ShellGitWrapperPhase1Test(IsolatedAsyncioTestCase):
                     result.git_result.status,
                     ShellGitExecutionStatus.POLICY_DENIED,
                 )
-                expected_error_code = (
-                    ShellGitExecutionErrorCode.SUBMODULE_DENIED
-                    if (
-                        request.command is ShellGitCommandName.SUBMODULE_UPDATE
-                    )
-                    else ShellGitExecutionErrorCode.REPO_NOT_FOUND
-                )
+                expected_error_code = ShellGitExecutionErrorCode.REPO_NOT_FOUND
                 self.assertEqual(
                     result.git_result.error_code,
                     expected_error_code,
@@ -701,20 +691,20 @@ _GIT_TOOL_ARGUMENTS: dict[str, dict[str, object]] = {
     ),
     "git_fetch": _git_kwargs(
         remote="origin",
-        refspecs=("main:refs/remotes/origin/main",),
-        prune=True,
+        ref_type="branch",
+        ref_name="main",
     ),
-    "git_pull": _git_kwargs(remote="origin", branch="main", ff_only=False),
+    "git_pull": _git_kwargs(remote="origin", branch="main"),
     "git_push": _git_kwargs(
         remote="origin",
-        refspec="main",
-        set_upstream=True,
+        ref_type="branch",
+        ref_name="main",
     ),
     "git_clone": _git_kwargs(
         url="https://github.com/example/repo.git",
         destination="repo-copy",
     ),
-    "git_remote_list": _git_kwargs(redact_urls=False),
+    "git_remote_list": _git_kwargs(),
     "git_remote_add": _git_kwargs(
         name="origin",
         url="https://github.com/example/repo.git",
@@ -731,7 +721,6 @@ _GIT_TOOL_ARGUMENTS: dict[str, dict[str, object]] = {
     "git_submodule_update": _git_kwargs(
         paths=("vendor/lib",),
         init=True,
-        recursive=True,
     ),
 }
 

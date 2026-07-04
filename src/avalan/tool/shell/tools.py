@@ -38,7 +38,11 @@ from .git import (
     ShellGitPolicyDenied,
     shell_git_capability_for_request,
 )
-from .git_policy import GitExecutionPolicy, redact_git_text
+from .git_policy import (
+    GitExecutionPolicy,
+    git_remote_audit_metadata,
+    redact_git_text,
+)
 from .policy import ExecutionPolicy
 from .registry import SHELL_COMMAND_DEFINITIONS
 from .settings import ShellGitToolSettings, ShellToolSettings
@@ -2815,15 +2819,15 @@ class GitFetchTool(_ShellGitCommandTool):
 
     Args:
         remote: Remote name to fetch from.
-        refspecs: Bounded refspecs to fetch.
-        prune: Request stale remote ref pruning.
+        ref_type: Typed remote ref form to fetch.
+        ref_name: Branch or tag name selected by ref_type.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -2832,8 +2836,8 @@ class GitFetchTool(_ShellGitCommandTool):
     def _build_request(
         self,
         remote: str = "origin",
-        refspecs: Sequence[str] = (),
-        prune: bool = False,
+        ref_type: Literal["branch", "tag"] = "branch",
+        ref_name: str = "main",
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -2842,8 +2846,8 @@ class GitFetchTool(_ShellGitCommandTool):
         return self._request(
             options={
                 "remote": remote,
-                "refspecs": _string_tuple(refspecs, "refspecs"),
-                "prune": prune,
+                "ref_type": ref_type,
+                "ref_name": ref_name,
             },
             cwd=cwd,
             timeout_seconds=timeout_seconds,
@@ -2854,8 +2858,8 @@ class GitFetchTool(_ShellGitCommandTool):
     async def __call__(
         self,
         remote: str = "origin",
-        refspecs: Sequence[str] = (),
-        prune: bool = False,
+        ref_type: Literal["branch", "tag"] = "branch",
+        ref_name: str = "main",
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -2866,8 +2870,8 @@ class GitFetchTool(_ShellGitCommandTool):
         return await self._execute_request(
             self._build_request(
                 remote=remote,
-                refspecs=refspecs,
-                prune=prune,
+                ref_type=ref_type,
+                ref_name=ref_name,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -2883,14 +2887,13 @@ class GitPullTool(_ShellGitCommandTool):
     Args:
         remote: Remote name to pull from.
         branch: Optional branch name to pull.
-        ff_only: Request fast-forward-only pull behavior.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -2899,15 +2902,14 @@ class GitPullTool(_ShellGitCommandTool):
     def _build_request(
         self,
         remote: str = "origin",
-        branch: str | None = None,
-        ff_only: bool = True,
+        branch: str = "main",
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
     ) -> ShellGitCommandRequest:
         return self._request(
-            options={"remote": remote, "branch": branch, "ff_only": ff_only},
+            options={"remote": remote, "branch": branch},
             cwd=cwd,
             timeout_seconds=timeout_seconds,
             max_stdout_bytes=max_stdout_bytes,
@@ -2917,8 +2919,7 @@ class GitPullTool(_ShellGitCommandTool):
     async def __call__(
         self,
         remote: str = "origin",
-        branch: str | None = None,
-        ff_only: bool = True,
+        branch: str = "main",
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -2930,7 +2931,6 @@ class GitPullTool(_ShellGitCommandTool):
             self._build_request(
                 remote=remote,
                 branch=branch,
-                ff_only=ff_only,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -2945,15 +2945,15 @@ class GitPushTool(_ShellGitCommandTool):
 
     Args:
         remote: Remote name to push to.
-        refspec: Optional bounded refspec to push.
-        set_upstream: Set upstream for the pushed branch.
+        ref_type: Typed remote ref form to push.
+        ref_name: Branch or tag name selected by ref_type.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -2962,8 +2962,8 @@ class GitPushTool(_ShellGitCommandTool):
     def _build_request(
         self,
         remote: str = "origin",
-        refspec: str | None = None,
-        set_upstream: bool = False,
+        ref_type: Literal["branch", "tag"] = "branch",
+        ref_name: str = "main",
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -2972,8 +2972,8 @@ class GitPushTool(_ShellGitCommandTool):
         return self._request(
             options={
                 "remote": remote,
-                "refspec": refspec,
-                "set_upstream": set_upstream,
+                "ref_type": ref_type,
+                "ref_name": ref_name,
             },
             cwd=cwd,
             timeout_seconds=timeout_seconds,
@@ -2984,8 +2984,8 @@ class GitPushTool(_ShellGitCommandTool):
     async def __call__(
         self,
         remote: str = "origin",
-        refspec: str | None = None,
-        set_upstream: bool = False,
+        ref_type: Literal["branch", "tag"] = "branch",
+        ref_name: str = "main",
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -2996,8 +2996,8 @@ class GitPushTool(_ShellGitCommandTool):
         return await self._execute_request(
             self._build_request(
                 remote=remote,
-                refspec=refspec,
-                set_upstream=set_upstream,
+                ref_type=ref_type,
+                ref_name=ref_name,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -3013,13 +3013,14 @@ class GitCloneTool(_ShellGitCommandTool):
     Args:
         url: Remote URL to clone.
         destination: Workspace-relative clone destination.
+        branch: Remote branch to clone.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -3029,14 +3030,14 @@ class GitCloneTool(_ShellGitCommandTool):
         self,
         url: str,
         destination: str,
+        branch: str = "main",
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
     ) -> ShellGitCommandRequest:
         return self._request(
-            options={"url": url, "destination": destination},
-            pathspecs=(destination,),
+            options={"url": url, "destination": destination, "branch": branch},
             cwd=cwd,
             timeout_seconds=timeout_seconds,
             max_stdout_bytes=max_stdout_bytes,
@@ -3047,6 +3048,7 @@ class GitCloneTool(_ShellGitCommandTool):
         self,
         url: str,
         destination: str,
+        branch: str = "main",
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -3058,6 +3060,7 @@ class GitCloneTool(_ShellGitCommandTool):
             self._build_request(
                 url=url,
                 destination=destination,
+                branch=branch,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -3071,14 +3074,13 @@ class GitRemoteListTool(_ShellGitCommandTool):
     """List approved remote entries.
 
     Args:
-        redact_urls: Redact remote URLs in formatted output.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -3089,14 +3091,13 @@ class GitRemoteListTool(_ShellGitCommandTool):
 
     def _build_request(
         self,
-        redact_urls: bool = True,
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
     ) -> ShellGitCommandRequest:
         return self._request(
-            options={"redact_urls": redact_urls},
+            options={},
             cwd=cwd,
             timeout_seconds=timeout_seconds,
             max_stdout_bytes=max_stdout_bytes,
@@ -3105,7 +3106,6 @@ class GitRemoteListTool(_ShellGitCommandTool):
 
     async def __call__(
         self,
-        redact_urls: bool = True,
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -3115,7 +3115,6 @@ class GitRemoteListTool(_ShellGitCommandTool):
     ) -> str:
         return await self._execute_request(
             self._build_request(
-                redact_urls=redact_urls,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -3137,7 +3136,7 @@ class GitRemoteAddTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -3199,7 +3198,7 @@ class GitRemoteSetUrlTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -3260,7 +3259,7 @@ class GitRemoteRemoveTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -3319,7 +3318,7 @@ class GitRemoteRenameTool(_ShellGitCommandTool):
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -3375,14 +3374,13 @@ class GitSubmoduleUpdateTool(_ShellGitCommandTool):
     Args:
         paths: Repo-relative submodule paths to update.
         init: Initialize submodules before updating.
-        recursive: Request recursive submodule updates.
         cwd: Workspace-relative working directory for repository discovery.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
 
     Returns:
-        Stable non-executing shell Git result.
+        Formatted shell Git result.
     """
 
     def __init__(self, *, settings: ShellToolSettings) -> None:
@@ -3393,16 +3391,15 @@ class GitSubmoduleUpdateTool(_ShellGitCommandTool):
 
     def _build_request(
         self,
-        paths: Sequence[str] = (),
+        paths: Sequence[str],
         init: bool = False,
-        recursive: bool = False,
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
     ) -> ShellGitCommandRequest:
         return self._request(
-            options={"init": init, "recursive": recursive},
+            options={"init": init},
             pathspecs=paths,
             cwd=cwd,
             timeout_seconds=timeout_seconds,
@@ -3412,9 +3409,8 @@ class GitSubmoduleUpdateTool(_ShellGitCommandTool):
 
     async def __call__(
         self,
-        paths: Sequence[str] = (),
+        paths: Sequence[str],
         init: bool = False,
-        recursive: bool = False,
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
@@ -3426,7 +3422,6 @@ class GitSubmoduleUpdateTool(_ShellGitCommandTool):
             self._build_request(
                 paths=paths,
                 init=init,
-                recursive=recursive,
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -5507,6 +5502,10 @@ def _git_policy_denied_result(
                 "git_mutation_attempted": True,
                 "git_mutation_scope": "history",
             }
+        )
+    elif capability is ShellGitCapability.REMOTE:
+        audit_metadata.update(
+            git_remote_audit_metadata(request, settings=git_settings)
         )
     return ShellGitCommandResult(
         tool_name=request.tool_name,
