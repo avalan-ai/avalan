@@ -173,6 +173,26 @@ _ALLOWED_GIT_OPTION_KEYS = {
     ShellGitCommandName.GREP: frozenset({"pattern", "case", "max_matches"}),
     ShellGitCommandName.STASH_LIST: frozenset({"max_count"}),
     ShellGitCommandName.STASH_SHOW: frozenset({"stash", "mode"}),
+    ShellGitCommandName.ADD: frozenset({"mode"}),
+    ShellGitCommandName.RESTORE: frozenset(
+        {
+            "source_revision",
+            "staged",
+            "worktree",
+        }
+    ),
+    ShellGitCommandName.CHECKOUT: frozenset({"target"}),
+    ShellGitCommandName.SWITCH: frozenset({"branch"}),
+    ShellGitCommandName.RESET: frozenset({"mode"}),
+    ShellGitCommandName.RM: frozenset({"cached"}),
+    ShellGitCommandName.MV: frozenset({"source", "destination"}),
+    ShellGitCommandName.STASH_PUSH: frozenset(
+        {
+            "message",
+            "include_untracked",
+        }
+    ),
+    ShellGitCommandName.STASH_APPLY: frozenset({"stash"}),
 }
 
 
@@ -228,6 +248,7 @@ class GitExecutionPolicy:
         _validate_revisions(request, git_settings)
         _validate_git_option_values(request.options)
         _validate_content_pathspec_scope(request, pathspecs, repo_root)
+        _validate_mutation_pathspec_scope(request, pathspecs, repo_root)
         argv = _argv_for_request(request, pathspecs, git_settings)
         _validate_argv_budgets(argv, self._settings)
         timeout_seconds = _bounded_float(
@@ -715,6 +736,7 @@ def _needs_file_scoped_content_pathspecs(
         ShellGitCommandName.BLAME,
         ShellGitCommandName.DIFF,
         ShellGitCommandName.GREP,
+        ShellGitCommandName.STASH_APPLY,
         ShellGitCommandName.STASH_SHOW,
     ):
         return True
@@ -722,6 +744,113 @@ def _needs_file_scoped_content_pathspecs(
         mode = request.options.get("mode", "summary")
         return mode in ("stat", "patch")
     return False
+
+
+def _validate_mutation_pathspec_scope(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    repo_root: Path,
+) -> None:
+    if request.command is ShellGitCommandName.MV:
+        _validate_mv_pathspec_scope(request, pathspecs, repo_root)
+        return
+    if request.command not in (
+        ShellGitCommandName.ADD,
+        ShellGitCommandName.RESTORE,
+        ShellGitCommandName.CHECKOUT,
+        ShellGitCommandName.RESET,
+        ShellGitCommandName.RM,
+        ShellGitCommandName.STASH_PUSH,
+        ShellGitCommandName.STASH_APPLY,
+    ):
+        return
+    for value in pathspecs:
+        _validate_file_scoped_mutation_pathspec(value, repo_root)
+
+
+def _validate_file_scoped_mutation_pathspec(
+    value: str,
+    repo_root: Path,
+) -> None:
+    path = PurePosixPath(value)
+    if path.as_posix() == ".":
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git mutation pathspec must name a file path",
+        )
+    resolved = _resolve_repo_path(repo_root, path)
+    if resolved.exists() and resolved.is_dir():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "Git mutation pathspec must not name a directory",
+        )
+
+
+def _validate_mv_pathspec_scope(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    repo_root: Path,
+) -> None:
+    if len(pathspecs) != 2:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git mv requires source and destination paths",
+        )
+    source = _required_string_option(
+        request.options,
+        "source",
+        message="git mv source must be a string",
+    )
+    destination = _required_string_option(
+        request.options,
+        "destination",
+        message="git mv destination must be a string",
+    )
+    if pathspecs != (source, destination):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git mv pathspecs must match source and destination",
+        )
+    source_pathspec = PurePosixPath(source)
+    destination_pathspec = PurePosixPath(destination)
+    _validate_file_scoped_mutation_pathspec(source, repo_root)
+    source_path = _resolve_repo_path(repo_root, source_pathspec)
+    if not source_path.exists() or not source_path.is_file():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git mv source must name an existing file",
+        )
+    _validate_mv_destination_pathspec(destination_pathspec, repo_root)
+
+
+def _validate_mv_destination_pathspec(
+    pathspec: PurePosixPath,
+    repo_root: Path,
+) -> None:
+    if pathspec.as_posix() == ".":
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git mv destination must name a file path",
+        )
+    destination = _resolve_repo_path(repo_root, pathspec)
+    if destination.exists():
+        if destination.is_dir():
+            raise ShellGitPolicyDenied(
+                ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+                "git mv destination must not name a directory",
+            )
+        return
+    parent = _resolve_repo_path(repo_root, PurePosixPath(pathspec.parent))
+    if not _is_relative_to(parent, repo_root):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git mv destination parent escapes repository root",
+        )
+    if parent.exists() and not parent.is_dir():
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git mv destination parent must be a directory",
+        )
 
 
 def _is_unsafe_global_option(value: str) -> bool:
@@ -826,6 +955,24 @@ def _argv_for_request(
         return _stash_list_argv(request, pathspecs, settings)
     if request.command is ShellGitCommandName.STASH_SHOW:
         return _stash_show_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.ADD:
+        return _add_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.RESTORE:
+        return _restore_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.CHECKOUT:
+        return _checkout_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.SWITCH:
+        return _switch_argv(request, pathspecs, settings)
+    if request.command is ShellGitCommandName.RESET:
+        return _reset_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.RM:
+        return _rm_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.MV:
+        return _mv_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.STASH_PUSH:
+        return _stash_push_argv(request, pathspecs)
+    if request.command is ShellGitCommandName.STASH_APPLY:
+        return _stash_apply_argv(request, pathspecs, settings)
     raise ShellGitPolicyDenied(
         ShellGitExecutionErrorCode.COMMAND_DISABLED,
         "shell Git command is not executable in this phase",
@@ -1344,6 +1491,218 @@ def _stash_show_argv(
     return tuple(argv)
 
 
+def _add_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    _require_pathspecs_for_mutation(pathspecs, "git add")
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="normal",
+        allowed_values=("normal", "intent_to_add"),
+        message="git add mode is unsupported",
+    )
+    argv = _base_argv("add")
+    if mode == "intent_to_add":
+        argv.append("--intent-to-add")
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _restore_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    _require_pathspecs_for_mutation(pathspecs, "git restore")
+    staged = _bool_option(
+        request.options,
+        "staged",
+        default_value=False,
+        message="git restore staged must be boolean",
+    )
+    worktree = _bool_option(
+        request.options,
+        "worktree",
+        default_value=True,
+        message="git restore worktree must be boolean",
+    )
+    if not staged and not worktree:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.INVALID_OPTION,
+            "git restore requires staged or worktree mode",
+        )
+    source_revision = _optional_string_option(
+        request.options,
+        "source_revision",
+        message="git restore source revision must be a string",
+    )
+    argv = _base_argv("restore")
+    argv.append("--no-overlay")
+    if staged:
+        argv.append("--staged")
+    if worktree:
+        argv.append("--worktree")
+    if source_revision is not None:
+        argv.extend(("--source", source_revision))
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _checkout_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    target = _optional_string_option(
+        request.options,
+        "target",
+        message="git checkout target must be a string",
+    )
+    _require_pathspecs_for_mutation(pathspecs, "git checkout")
+    argv = _base_argv("checkout")
+    argv.append("--no-recurse-submodules")
+    if target is not None:
+        argv.append(target)
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _switch_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    _reject_pathspecs(pathspecs, "git switch")
+    branch = _required_string_option(
+        request.options,
+        "branch",
+        message="git switch branch must be a string",
+    )
+    _validate_local_branch_target(branch, settings, "switch branch")
+    return (
+        *_base_argv("switch"),
+        "--no-guess",
+        "--no-recurse-submodules",
+        branch,
+    )
+
+
+def _reset_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    mode = _string_option(
+        request.options,
+        "mode",
+        default_value="paths",
+        allowed_values=("paths",),
+        message="git reset mode is unsupported",
+    )
+    assert mode == "paths"
+    _require_pathspecs_for_mutation(pathspecs, "git reset")
+    argv = _base_argv("reset")
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _rm_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    _require_pathspecs_for_mutation(pathspecs, "git rm")
+    cached = _bool_option(
+        request.options,
+        "cached",
+        default_value=False,
+        message="git rm cached must be boolean",
+    )
+    argv = _base_argv("rm")
+    if cached:
+        argv.append("--cached")
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _mv_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    if len(pathspecs) != 2:
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git mv requires source and destination paths",
+        )
+    source = _required_string_option(
+        request.options,
+        "source",
+        message="git mv source must be a string",
+    )
+    destination = _required_string_option(
+        request.options,
+        "destination",
+        message="git mv destination must be a string",
+    )
+    if pathspecs != (source, destination):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+            "git mv pathspecs must match source and destination",
+        )
+    argv = _base_argv("mv")
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _stash_push_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+) -> tuple[str, ...]:
+    _require_pathspecs_for_mutation(pathspecs, "git stash push")
+    message = _optional_string_option(
+        request.options,
+        "message",
+        message="git stash push message must be a string",
+    )
+    include_untracked = _bool_option(
+        request.options,
+        "include_untracked",
+        default_value=False,
+        message="git stash push include_untracked must be boolean",
+    )
+    argv = _base_argv("stash")
+    argv.append("push")
+    if message is not None:
+        argv.extend(("--message", message))
+    if include_untracked:
+        argv.append("--include-untracked")
+    argv.append("--")
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
+def _stash_apply_argv(
+    request: ShellGitCommandRequest,
+    pathspecs: tuple[str, ...],
+    settings: ShellGitToolSettings,
+) -> tuple[str, ...]:
+    stash = _required_string_option(
+        request.options,
+        "stash",
+        message="git stash apply stash reference must be a string",
+    )
+    _validate_stash_ref(stash, settings)
+    _require_pathspecs_for_mutation(pathspecs, "git stash apply")
+    argv = _base_argv("restore")
+    argv.extend(("--no-overlay", "--worktree", "--source", stash, "--"))
+    argv.extend(pathspecs)
+    return tuple(argv)
+
+
 def _reject_revisions_for_mode(
     base_revision: str | None,
     head_revision: str | None,
@@ -1367,6 +1726,18 @@ def _reject_pathspecs(pathspecs: tuple[str, ...], command: str) -> None:
 
 
 def _require_pathspecs_for_content(
+    pathspecs: tuple[str, ...],
+    command: str,
+) -> None:
+    if pathspecs:
+        return
+    raise ShellGitPolicyDenied(
+        ShellGitExecutionErrorCode.PATHSPEC_DENIED,
+        f"{command} requires explicit safe pathspecs",
+    )
+
+
+def _require_pathspecs_for_mutation(
     pathspecs: tuple[str, ...],
     command: str,
 ) -> None:
@@ -1515,6 +1886,27 @@ def _validate_ref_name(
         )
 
 
+def _validate_local_branch_target(
+    value: str,
+    settings: ShellGitToolSettings,
+    field_name: str,
+) -> None:
+    _validate_ref_name(value, settings, field_name)
+    if (
+        value == "HEAD"
+        or value.startswith(".")
+        or value.endswith(".")
+        or value.endswith(".lock")
+        or "~" in value
+        or "^" in value
+        or _HEX_REVISION_PATTERN.match(value)
+    ):
+        raise ShellGitPolicyDenied(
+            ShellGitExecutionErrorCode.REVISION_DENIED,
+            f"Git {field_name} form is unsupported",
+        )
+
+
 def _validate_stash_ref(
     value: str,
     settings: ShellGitToolSettings,
@@ -1617,7 +2009,21 @@ def _metadata(
             request.options,
             settings,
         ),
+        "git_request_pathspecs": _redacted_metadata(
+            request.pathspecs,
+            settings,
+        ),
     }
+    if (
+        SHELL_GIT_COMMAND_CAPABILITIES[request.command]
+        is ShellGitCapability.WORKTREE
+    ):
+        metadata.update(
+            {
+                "git_mutation_attempted": True,
+                "git_mutation_scope": "worktree",
+            }
+        )
     if request.command is ShellGitCommandName.GREP:
         metadata["exit_code_statuses"] = {
             1: ShellExecutionStatus.NO_MATCHES.value,
@@ -1700,6 +2106,10 @@ def _config_declares_bare(config: str) -> bool:
 def _resolve_gitdir_reference(value: str, *, base: Path) -> Path:
     path = Path(value)
     return (path if path.is_absolute() else base / path).resolve()
+
+
+def _resolve_repo_path(repo_root: Path, path: PurePosixPath) -> Path:
+    return (repo_root / Path(*path.parts)).resolve()
 
 
 def _contains_unsafe_path_text(value: str) -> bool:
