@@ -82,6 +82,64 @@ class TrackedAsyncIter:
         self._iter = iter(items)
         self.read_count = 0
         self.close_count = 0
+        self.cancel_count = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        self.read_count += 1
+        try:
+            return next(self._iter)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+    async def cancel(self) -> None:
+        self.cancel_count += 1
+
+
+class CloseOnlyAsyncIter:
+    def __init__(self, items):
+        self._iter = iter(items)
+        self.read_count = 0
+        self.close_count = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        self.read_count += 1
+        try:
+            return next(self._iter)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+    async def close(self) -> None:
+        self.close_count += 1
+
+
+class SyncCloseOnlyAsyncIter(CloseOnlyAsyncIter):
+    def close(self) -> None:
+        self.close_count += 1
+
+
+class FailingCloseOnlyAsyncIter(CloseOnlyAsyncIter):
+    def __init__(self, items, error: BaseException):
+        super().__init__(items)
+        self._error = error
+
+    async def close(self) -> None:
+        raise self._error
+
+
+class AcloseOnlyAsyncIter:
+    def __init__(self, items):
+        self._iter = iter(items)
+        self.read_count = 0
+        self.close_count = 0
 
     def __aiter__(self):
         return self
@@ -1145,6 +1203,277 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             accumulate_canonical_stream_items(items).answer_text,
             "ok",
+        )
+
+    async def test_stream_retry_aclose_closes_active_retried_stream(self):
+        failed_stream = CloseOnlyAsyncIter(
+            [
+                SimpleNamespace(
+                    type="response.failed",
+                    response=SimpleNamespace(
+                        status="failed",
+                        error=None,
+                        output=[],
+                    ),
+                )
+            ]
+        )
+        retried_stream = CloseOnlyAsyncIter(
+            [
+                SimpleNamespace(type="response.output_text.delta", delta="ok"),
+                SimpleNamespace(
+                    type="response.output_text.delta", delta="later"
+                ),
+            ]
+        )
+
+        async def retry_stream():
+            return retried_stream
+
+        stream = self.mod.OpenAIStream(
+            failed_stream,
+            stream_factory=retry_stream,
+            stream_retries=1,
+        )
+        canonical = stream.canonical_stream(
+            stream_session_id="responses-stream",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        delta = await anext(canonical)
+        await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "ok")
+        self.assertEqual(retried_stream.read_count, 1)
+        self.assertGreaterEqual(failed_stream.close_count, 1)
+        self.assertGreaterEqual(retried_stream.close_count, 1)
+
+    async def test_stream_retry_cancel_closes_active_retried_stream(self):
+        failed_stream = CloseOnlyAsyncIter(
+            [
+                SimpleNamespace(
+                    type="response.failed",
+                    response=SimpleNamespace(
+                        status="failed",
+                        error=None,
+                        output=[],
+                    ),
+                )
+            ]
+        )
+        retried_stream = CloseOnlyAsyncIter(
+            [
+                SimpleNamespace(type="response.output_text.delta", delta="ok"),
+                SimpleNamespace(
+                    type="response.output_text.delta", delta="later"
+                ),
+            ]
+        )
+
+        async def retry_stream():
+            return retried_stream
+
+        stream = self.mod.OpenAIStream(
+            failed_stream,
+            stream_factory=retry_stream,
+            stream_retries=1,
+        )
+        canonical = stream.canonical_stream(
+            stream_session_id="responses-stream",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        delta = await anext(canonical)
+        try:
+            await stream.cancel()
+            self.assertEqual(retried_stream.close_count, 1)
+        finally:
+            await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "ok")
+        self.assertEqual(retried_stream.read_count, 1)
+        self.assertGreaterEqual(failed_stream.close_count, 1)
+        self.assertGreaterEqual(retried_stream.close_count, 1)
+
+    async def test_stream_cancel_during_retry_factory_closes_replacement(
+        self,
+    ):
+        factory_started = Event()
+        factory_release = Event()
+        failed_stream = CloseOnlyAsyncIter(
+            [
+                SimpleNamespace(
+                    type="response.failed",
+                    response=SimpleNamespace(
+                        status="failed",
+                        error=None,
+                        output=[],
+                    ),
+                )
+            ]
+        )
+        replacement_stream = CloseOnlyAsyncIter(
+            [
+                SimpleNamespace(
+                    type="response.output_text.delta",
+                    delta="leaked",
+                )
+            ]
+        )
+
+        async def retry_stream():
+            factory_started.set()
+            await factory_release.wait()
+            return replacement_stream
+
+        stream = self.mod.OpenAIStream(
+            failed_stream,
+            stream_factory=retry_stream,
+            stream_retries=1,
+        )
+        canonical = stream.canonical_stream(
+            stream_session_id="responses-stream",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        pull = create_task(anext(canonical))
+        try:
+            await wait_for(factory_started.wait(), 1.0)
+            await stream.cancel()
+            factory_release.set()
+            item = await wait_for(pull, 1.0)
+        finally:
+            factory_release.set()
+            if not pull.done():
+                pull.cancel()
+            await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(item.kind, StreamItemKind.STREAM_CANCELLED)
+        self.assertGreaterEqual(failed_stream.close_count, 1)
+        self.assertEqual(replacement_stream.read_count, 0)
+        self.assertEqual(replacement_stream.close_count, 1)
+
+    async def test_stream_aclose_during_retry_factory_closes_replacement(
+        self,
+    ):
+        factory_started = Event()
+        factory_release = Event()
+        failed_stream = CloseOnlyAsyncIter(
+            [
+                SimpleNamespace(
+                    type="response.failed",
+                    response=SimpleNamespace(
+                        status="failed",
+                        error=None,
+                        output=[],
+                    ),
+                )
+            ]
+        )
+        replacement_stream = CloseOnlyAsyncIter(
+            [
+                SimpleNamespace(
+                    type="response.output_text.delta",
+                    delta="leaked",
+                )
+            ]
+        )
+
+        async def retry_stream():
+            factory_started.set()
+            await factory_release.wait()
+            return replacement_stream
+
+        stream = self.mod.OpenAIStream(
+            failed_stream,
+            stream_factory=retry_stream,
+            stream_retries=1,
+        )
+        canonical = stream.canonical_stream(
+            stream_session_id="responses-stream",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        pull = create_task(anext(canonical))
+        try:
+            await wait_for(factory_started.wait(), 1.0)
+            await stream.aclose()
+            factory_release.set()
+            item = await wait_for(pull, 1.0)
+        finally:
+            factory_release.set()
+            if not pull.done():
+                pull.cancel()
+            await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(item.kind, StreamItemKind.STREAM_CANCELLED)
+        self.assertGreaterEqual(failed_stream.close_count, 1)
+        self.assertEqual(replacement_stream.read_count, 0)
+        self.assertEqual(replacement_stream.close_count, 1)
+
+    async def test_stream_cancel_closes_aclose_only_source(self):
+        source = AcloseOnlyAsyncIter(
+            [SimpleNamespace(type="response.output_text.delta", delta="late")]
+        )
+        stream = self.mod.OpenAIStream(source)
+
+        await stream.cancel()
+
+        self.assertEqual(source.read_count, 0)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_stream_aclose_accepts_sync_close_source(self):
+        source = SyncCloseOnlyAsyncIter(
+            [SimpleNamespace(type="response.output_text.delta", delta="late")]
+        )
+        stream = self.mod.OpenAIStream(source)
+
+        await stream.aclose()
+
+        self.assertEqual(source.read_count, 0)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_stream_aclose_propagates_single_cleanup_error(self):
+        error = RuntimeError("close failed")
+        source = FailingCloseOnlyAsyncIter(
+            [SimpleNamespace(type="response.output_text.delta", delta="late")],
+            error,
+        )
+        stream = self.mod.OpenAIStream(source)
+
+        with self.assertRaises(RuntimeError) as context:
+            await stream.aclose()
+
+        self.assertIs(context.exception, error)
+
+    async def test_stream_aclose_groups_multiple_cleanup_errors(self):
+        first_error = RuntimeError("first")
+        second_error = ValueError("second")
+        first = FailingCloseOnlyAsyncIter([], first_error)
+        second = FailingCloseOnlyAsyncIter([], second_error)
+        stream = self.mod.OpenAIStream(first)
+        stream._stream_sources = (first, second)
+
+        with self.assertRaises(BaseExceptionGroup) as context:
+            await stream.aclose()
+
+        self.assertEqual(
+            context.exception.exceptions,
+            (first_error, second_error),
         )
 
     async def test_client_response_failed_retry_settings_override_defaults(

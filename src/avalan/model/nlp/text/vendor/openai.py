@@ -39,7 +39,7 @@ from . import (
     TextGenerationVendorModel,
 )
 
-from asyncio import sleep
+from asyncio import CancelledError, sleep
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -49,6 +49,7 @@ from collections.abc import (
 )
 from copy import deepcopy
 from importlib import import_module
+from inspect import isawaitable
 from mimetypes import guess_type
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -220,12 +221,17 @@ class OpenAIStream(TextGenerationVendorStream):
                 if not retry:
                     break
                 await self._close_current_stream()
+                await self._raise_if_retry_interrupted()
                 assert self._stream_factory is not None
                 delay = self._stream_retry_delay_seconds * (2**attempts)
                 if delay > 0:
                     await sleep(delay)
+                await self._raise_if_retry_interrupted()
                 attempts += 1
-                self._stream = await self._stream_factory()
+                stream = await self._stream_factory()
+                await self._raise_if_retry_interrupted(stream)
+                self._stream = stream
+                self._stream_sources = (self._stream,)
         finally:
             await self.aclose()
 
@@ -265,9 +271,55 @@ class OpenAIStream(TextGenerationVendorStream):
         } and not is_stream_terminal_kind(event.kind)
 
     async def _close_current_stream(self) -> None:
-        close = getattr(self._stream, "aclose", None)
-        if callable(close):
-            await close()
+        await self._call_stream_source_cleanup(self._stream, "aclose")
+
+    async def _raise_if_retry_interrupted(
+        self,
+        stream: AsyncIterator[Any] | None = None,
+    ) -> None:
+        if not (self._stream_cancelled or self._stream_closed):
+            return
+        if stream is not None:
+            await self._call_stream_source_cleanup(stream, "aclose")
+        raise CancelledError()
+
+    async def _call_stream_cleanup(self, method_name: str) -> None:
+        assert method_name in ("cancel", "aclose")
+        errors: list[BaseException] = []
+        for source in self._cleanup_sources():
+            try:
+                await self._call_stream_source_cleanup(source, method_name)
+            except BaseException as exc:
+                errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("vendor stream cleanup failed", errors)
+
+    @staticmethod
+    async def _call_stream_source_cleanup(
+        source: object,
+        method_name: str,
+    ) -> None:
+        method_names = (
+            ("cancel", "close", "aclose")
+            if method_name == "cancel"
+            else ("aclose", "close")
+        )
+        method = None
+        for cleanup_method_name in method_names:
+            method = getattr(source, cleanup_method_name, None)
+            if method is not None:
+                break
+        else:
+            return
+        assert callable(method)
+        result = method()
+        if isawaitable(result):
+            awaited_result = await cast(Awaitable[object], result)
+            assert awaited_result is None
+        else:
+            assert result is None
 
     def _provider_events_from_event(
         self, event: object
