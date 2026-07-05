@@ -1218,6 +1218,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             run_top_p=0.82,
             run_use_cache=True,
             run_cache_strategy="hybrid",
+            run_openai_response_failed_retries=0,
+            run_openai_response_failed_retry_delay_seconds=0.5,
             run_reasoning_effort="xhigh",
             run_chat_add_generation_prompt=False,
             run_chat_enable_thinking=True,
@@ -1249,6 +1251,11 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("top_p = 0.82", output)
         self.assertIn("use_cache = true", output)
         self.assertIn('cache_strategy = "hybrid"', output)
+        self.assertIn("openai_response_failed_retries = 0", output)
+        self.assertIn(
+            "openai_response_failed_retry_delay_seconds = 0.5",
+            output,
+        )
         self.assertIn("[run.chat]", output)
         self.assertIn("add_generation_prompt = false", output)
         self.assertIn("enable_thinking = true", output)
@@ -4766,6 +4773,8 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.args.run_top_p = 0.9
         self.args.run_top_k = 5
         self.args.run_max_new_tokens = 42
+        self.args.run_openai_response_failed_retries = 0
+        self.args.run_openai_response_failed_retry_delay_seconds = 0.5
         self.args.tool_choice = "mcp.call"
 
         with (
@@ -4797,6 +4806,16 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.call_options["top_p"], 0.9)
         self.assertEqual(settings.call_options["top_k"], 5)
         self.assertEqual(settings.call_options["max_new_tokens"], 42)
+        self.assertEqual(
+            settings.call_options["openai_response_failed_retries"],
+            0,
+        )
+        self.assertEqual(
+            settings.call_options[
+                "openai_response_failed_retry_delay_seconds"
+            ],
+            0.5,
+        )
         self.assertEqual(settings.call_options["tool_choice"], "mcp.call")
 
     async def test_run_engine_uri_use_cache_cli(self):

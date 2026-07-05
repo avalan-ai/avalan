@@ -25,7 +25,11 @@ from .....model.stream import (
     is_stream_terminal_kind,
 )
 from .....tool.manager import ToolManager
-from .....types import LooseJsonValue
+from .....types import (
+    LooseJsonValue,
+    assert_non_negative_int,
+    assert_non_negative_number,
+)
 from .....utils import to_json, tool_call_diagnostic_payload
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -999,6 +1003,8 @@ class OpenAIClient(TextGenerationVendor):
     _client: Any
     _extra_query: dict[str, str] | None
     _is_azure: bool
+    _stream_response_failed_retries: int
+    _stream_response_failed_retry_delay_seconds: float
     _stateless_response_items: list[dict[str, Any]]
 
     def __init__(
@@ -1007,9 +1013,25 @@ class OpenAIClient(TextGenerationVendor):
         base_url: str | None,
         *,
         azure_api_version: str | None = None,
+        stream_response_failed_retries: int = (
+            _STREAM_RESPONSE_FAILED_RETRIES
+        ),
+        stream_response_failed_retry_delay_seconds: int | float = (
+            _STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS
+        ),
     ):
         global Omit
 
+        self._stream_response_failed_retries = (
+            self._normalize_response_failed_retries(
+                stream_response_failed_retries
+            )
+        )
+        self._stream_response_failed_retry_delay_seconds = (
+            self._normalize_response_failed_retry_delay_seconds(
+                stream_response_failed_retry_delay_seconds
+            )
+        )
         self._is_azure = self._is_azure_base_url(base_url)
         self._extra_query = self._azure_extra_query(
             base_url, azure_api_version
@@ -1086,6 +1108,16 @@ class OpenAIClient(TextGenerationVendor):
             )
             if prompt_cache_retention is not None:
                 kwargs["prompt_cache_retention"] = prompt_cache_retention
+        stream_response_failed_retries = OpenAIClient._response_failed_retries(
+            settings,
+            default=self._stream_response_failed_retries,
+        )
+        stream_response_failed_retry_delay_seconds = (
+            OpenAIClient._response_failed_retry_delay_seconds(
+                settings,
+                default=(self._stream_response_failed_retry_delay_seconds),
+            )
+        )
         if tool:
             schemas = OpenAIClient._tool_schemas(tool)
             if schemas:
@@ -1115,9 +1147,9 @@ class OpenAIClient(TextGenerationVendor):
                 output_item_sink=self._record_stateless_response_item,
                 stream_factory=stream_factory,
                 stream_retry_delay_seconds=(
-                    self._STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS
+                    stream_response_failed_retry_delay_seconds
                 ),
-                stream_retries=self._STREAM_RESPONSE_FAILED_RETRIES,
+                stream_retries=stream_response_failed_retries,
                 **stream_kwargs,
             )
 
@@ -1138,6 +1170,66 @@ class OpenAIClient(TextGenerationVendor):
             ProviderFamily.AZURE_OPENAI
             if self._is_azure
             else ProviderFamily.OPENAI
+        )
+
+    @staticmethod
+    def _response_failed_retries(
+        settings: GenerationSettings | None,
+        *,
+        default: int,
+    ) -> int:
+        if settings is None or settings.openai_response_failed_retries is None:
+            return default
+        return OpenAIClient._normalize_response_failed_retries(
+            settings.openai_response_failed_retries
+        )
+
+    @staticmethod
+    def _response_failed_retry_delay_seconds(
+        settings: GenerationSettings | None,
+        *,
+        default: float,
+    ) -> float:
+        if (
+            settings is None
+            or settings.openai_response_failed_retry_delay_seconds is None
+        ):
+            return default
+        return OpenAIClient._normalize_response_failed_retry_delay_seconds(
+            settings.openai_response_failed_retry_delay_seconds
+        )
+
+    @staticmethod
+    def _normalize_response_failed_retries(value: object) -> int:
+        assert_non_negative_int(value, "openai_response_failed_retries")
+        assert isinstance(value, int)
+        return value
+
+    @staticmethod
+    def _normalize_response_failed_retry_delay_seconds(
+        value: object,
+    ) -> float:
+        assert_non_negative_number(
+            value,
+            "openai_response_failed_retry_delay_seconds",
+        )
+        assert isinstance(value, int | float)
+        return float(value)
+
+    @staticmethod
+    def _provider_response_failed_retries(
+        provider_options: Mapping[str, object],
+    ) -> int:
+        return OpenAIClient._normalize_response_failed_retries(
+            provider_options["openai_response_failed_retries"]
+        )
+
+    @staticmethod
+    def _provider_retry_delay_seconds(
+        provider_options: Mapping[str, object],
+    ) -> float:
+        return OpenAIClient._normalize_response_failed_retry_delay_seconds(
+            provider_options["openai_response_failed_retry_delay_seconds"]
         )
 
     def _template_messages(
@@ -1740,12 +1832,33 @@ class OpenAIModel(TextGenerationVendorModel):
             self._settings.provider_options,
             "azure_api_version",
         )
-        client_kwargs: dict[str, str | None] = {
+        client_kwargs: dict[str, Any] = {
             "api_key": self._settings.access_token,
             "base_url": self._settings.base_url,
         }
         if azure_api_version is not None:
             client_kwargs["azure_api_version"] = azure_api_version
+        provider_options = self._settings.provider_options
+        if (
+            provider_options is not None
+            and "openai_response_failed_retries" in provider_options
+        ):
+            client_kwargs["stream_response_failed_retries"] = (
+                OpenAIClient._provider_response_failed_retries(
+                    provider_options
+                )
+            )
+        if (
+            provider_options is not None
+            and "openai_response_failed_retry_delay_seconds"
+            in provider_options
+        ):
+            retry_delay = OpenAIClient._provider_retry_delay_seconds(
+                provider_options
+            )
+            client_kwargs["stream_response_failed_retry_delay_seconds"] = (
+                retry_delay
+            )
         return OpenAIClient(**client_kwargs)
 
     async def __call__(

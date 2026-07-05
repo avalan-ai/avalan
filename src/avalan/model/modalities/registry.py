@@ -163,6 +163,16 @@ class ModalityRegistry:
             max_length=getattr(args, "text_max_length", None),
             min_p=args.min_p,
             num_beams=getattr(args, "text_num_beams", None),
+            openai_response_failed_retries=getattr(
+                args,
+                "openai_response_failed_retries",
+                None,
+            ),
+            openai_response_failed_retry_delay_seconds=getattr(
+                args,
+                "openai_response_failed_retry_delay_seconds",
+                None,
+            ),
             repetition_penalty=args.repetition_penalty,
             temperature=args.temperature,
             top_k=args.top_k,

@@ -95,6 +95,13 @@ top_p = 0.9
 max_new_tokens = 800
 ```
 
+OpenAI Responses empty `response.failed` stream handling defaults to 4 retries
+with a 1.0 second delay. Override them with
+`openai_response_failed_retries` and
+`openai_response_failed_retry_delay_seconds` under `[run]`, or with the
+matching `GenerationSettings` fields in SDK code. Set retries to `0` to
+disable this retry.
+
 For local models, use the model id plus the backend options supported by the
 runtime. See [MODELS.md](MODELS.md) and [ai_uri.md](ai_uri.md).
 

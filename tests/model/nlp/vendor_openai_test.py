@@ -9,6 +9,7 @@ from json import loads
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -843,6 +844,52 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             model._load_model()
 
+    async def test_model_loads_with_provider_retry_options(self):
+        settings = TransformerEngineSettings(
+            auto_load_model=False,
+            auto_load_tokenizer=False,
+            access_token="token",
+            base_url="https://api.openai.com/v1",
+            provider_options={
+                "openai_response_failed_retries": 2,
+                "openai_response_failed_retry_delay_seconds": 0.25,
+            },
+        )
+        model = self.mod.OpenAIModel("deployment", settings)
+        loaded = model._load_model()
+
+        self.openai_stub.AsyncOpenAI.assert_called_once_with(
+            base_url="https://api.openai.com/v1",
+            api_key="token",
+        )
+        self.assertEqual(loaded._stream_response_failed_retries, 2)
+        self.assertEqual(
+            loaded._stream_response_failed_retry_delay_seconds,
+            0.25,
+        )
+
+    async def test_model_rejects_invalid_provider_retry_options(self):
+        cases: list[dict[str, Any]] = [
+            {"openai_response_failed_retries": -1},
+            {"openai_response_failed_retries": 1.5},
+            {"openai_response_failed_retry_delay_seconds": -0.1},
+            {"openai_response_failed_retry_delay_seconds": False},
+        ]
+
+        for provider_options in cases:
+            with self.subTest(provider_options=provider_options):
+                settings = TransformerEngineSettings(
+                    auto_load_model=False,
+                    auto_load_tokenizer=False,
+                    access_token="token",
+                    base_url="https://api.openai.com/v1",
+                    provider_options=provider_options,
+                )
+                model = self.mod.OpenAIModel("deployment", settings)
+
+                with self.assertRaises(AssertionError):
+                    model._load_model()
+
     async def test_stream_event_types(self):
         events = [
             SimpleNamespace(type="response.output_item.added"),
@@ -1098,6 +1145,32 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             accumulate_canonical_stream_items(items).answer_text,
             "ok",
+        )
+
+    async def test_client_response_failed_retry_settings_override_defaults(
+        self,
+    ):
+        stream_instance = AsyncIter([])
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=stream_instance
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        client._template_messages = MagicMock(return_value=[])
+        settings = GenerationSettings(
+            openai_response_failed_retries=0,
+            openai_response_failed_retry_delay_seconds=2.5,
+        )
+
+        with patch.object(self.mod, "OpenAIStream") as stream_mock:
+            await client("m", [], settings=settings)
+
+        stream_mock.assert_called_once_with(
+            stream=stream_instance,
+            provider_family="openai",
+            output_item_sink=client._record_stateless_response_item,
+            stream_factory=ANY,
+            stream_retry_delay_seconds=2.5,
+            stream_retries=0,
         )
 
     async def test_stream_does_not_retry_failed_response_with_error_or_output(
@@ -2976,6 +3049,19 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             tools=[{"type": "function", "name": "avl_cGtnLmZ1bmM"}],
         )
 
+    def test_generation_settings_rejects_invalid_openai_retry_values(self):
+        cases: list[dict[str, Any]] = [
+            {"openai_response_failed_retries": -1},
+            {"openai_response_failed_retries": 1.5},
+            {"openai_response_failed_retry_delay_seconds": -0.1},
+            {"openai_response_failed_retry_delay_seconds": False},
+        ]
+
+        for kwargs in cases:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    GenerationSettings(**kwargs)
+
     async def test_azure_responses_payload_uses_text_format(self):
         response = SimpleNamespace(
             output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
@@ -3992,7 +4078,10 @@ class TemplateAndToolSchemaTestCase(TestCase):
     ):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         client._record_stateless_response_item(
-            {"type": "message", "id": "msg_1"}
+            {
+                "type": "message",
+                "id": "msg_1",
+            }
         )
         client._record_stateless_response_item(
             {

@@ -5029,6 +5029,8 @@ temperature = 0.5
 top_p = 0.9
 top_k = 5
 max_new_tokens = 42
+openai_response_failed_retries = 0
+openai_response_failed_retry_delay_seconds = 0.5
 maximum_tool_cycles = 64
 """
         with TemporaryDirectory() as tmp:
@@ -5057,6 +5059,16 @@ maximum_tool_cycles = 64
                 self.assertEqual(settings.call_options["top_p"], 0.9)
                 self.assertEqual(settings.call_options["top_k"], 5)
                 self.assertEqual(settings.call_options["max_new_tokens"], 42)
+                self.assertEqual(
+                    settings.call_options["openai_response_failed_retries"],
+                    0,
+                )
+                self.assertEqual(
+                    settings.call_options[
+                        "openai_response_failed_retry_delay_seconds"
+                    ],
+                    0.5,
+                )
                 self.assertEqual(
                     settings.call_options["maximum_tool_cycles"], 64
                 )
@@ -5116,6 +5128,7 @@ maximum_tool_cycles = \"unlimited\"
         env.filters["toml_value"] = agent_cmds._toml_template_value
         template = env.get_template("blueprint.toml")
         cases = [(64, 64), (UNLIMITED_TOOL_CYCLES, UNLIMITED_TOOL_CYCLES)]
+        retry_delay_key = "openai_response_failed_retry_delay_seconds"
 
         for value, expected in cases:
             with self.subTest(value=value):
@@ -5133,6 +5146,8 @@ maximum_tool_cycles = \"unlimited\"
                             "max_new_tokens": 42,
                             "skip_special_tokens": False,
                             "maximum_tool_cycles": value,
+                            "openai_response_failed_retries": 0,
+                            retry_delay_key: 0.5,
                         },
                         tools=[],
                     ),
@@ -5154,6 +5169,14 @@ maximum_tool_cycles = \"unlimited\"
 
                 self.assertEqual(
                     config["run"]["maximum_tool_cycles"], expected
+                )
+                self.assertEqual(
+                    config["run"]["openai_response_failed_retries"],
+                    0,
+                )
+                self.assertEqual(
+                    config["run"][retry_delay_key],
+                    0.5,
                 )
 
     async def test_run_response_format_schema_ref_is_resolved(self):

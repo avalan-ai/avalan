@@ -75,6 +75,45 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             },
         )
 
+    def test_openai_response_failed_retry_options(self):
+        args = Namespace(
+            name="a",
+            role="r",
+            task=None,
+            instructions=None,
+            engine_uri="ai://m",
+            backend="transformers",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=False,
+            run_openai_response_failed_retries=None,
+            run_openai_response_failed_retry_delay_seconds=None,
+            memory_recent=None,
+            no_session=False,
+            memory_permanent_message=None,
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=200,
+            memory_engine_overlap=20,
+            memory_engine_window=40,
+            tool=None,
+        )
+        uid = UUID("00000000-0000-0000-0000-000000000013")
+        result = agent_cmds.get_orchestrator_settings(
+            args,
+            agent_id=uid,
+            openai_response_failed_retries=0,
+            openai_response_failed_retry_delay_seconds=0.5,
+        )
+
+        self.assertEqual(
+            result.call_options["openai_response_failed_retries"],
+            0,
+        )
+        self.assertEqual(
+            result.call_options["openai_response_failed_retry_delay_seconds"],
+            0.5,
+        )
+
     def test_unlimited_maximum_tool_cycles(self):
         args = Namespace(
             name="a",

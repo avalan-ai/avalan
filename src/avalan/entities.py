@@ -1,4 +1,9 @@
-from .types import LooseJsonValue, SkillRegistryProtocol
+from .types import (
+    LooseJsonValue,
+    SkillRegistryProtocol,
+    assert_optional_non_negative_int,
+    assert_optional_non_negative_number,
+)
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -535,6 +540,20 @@ class GenerationSettings:
     response_format: dict[str, Any] | None = None
     # Force an available tool by canonical name, when supported.
     tool_choice: str | None = None
+    # OpenAI Responses empty response.failed stream retries. None uses the
+    # provider default.
+    openai_response_failed_retries: int | None = None
+    openai_response_failed_retry_delay_seconds: int | float | None = None
+
+    def __post_init__(self) -> None:
+        assert_optional_non_negative_int(
+            self.openai_response_failed_retries,
+            "openai_response_failed_retries",
+        )
+        assert_optional_non_negative_number(
+            self.openai_response_failed_retry_delay_seconds,
+            "openai_response_failed_retry_delay_seconds",
+        )
 
 
 @final
