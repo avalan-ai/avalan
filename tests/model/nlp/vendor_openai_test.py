@@ -10,7 +10,7 @@ from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
 
 from avalan.agent.orchestrator.response.orchestrator_response import (
@@ -284,6 +284,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         StreamMock.assert_called_once_with(
             stream=stream_instance,
             provider_family="openai",
+            output_item_sink=client._record_stateless_response_item,
+            stream_factory=ANY,
+            stream_retry_delay_seconds=(
+                client._STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS
+            ),
+            stream_retries=client._STREAM_RESPONSE_FAILED_RETRIES,
         )
         self.assertIs(result, StreamMock.return_value)
 
@@ -445,6 +451,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             max_output_tokens=10,
             text={"format": {"type": "json_object"}, "stop": ["END"]},
             reasoning={"effort": "high"},
+            include=["reasoning.encrypted_content"],
             prompt_cache_retention="24h",
             tools=[{"type": "function", "name": "avl_cGtnLmxvb2t1cA"}],
             tool_choice={"type": "function", "name": "avl_cGtnLmxvb2t1cA"},
@@ -452,6 +459,43 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertNotIn(
             "top-level policy", str(create_mock.await_args.kwargs["input"])
         )
+
+    async def test_responses_payload_preserves_tool_history(self):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
+        )
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        call = ToolCall(
+            id="call1",
+            name="shell.rg",
+            arguments={"pattern": "needle"},
+        )
+        result = ToolCallResult(
+            id="result1",
+            name="shell.rg",
+            arguments=call.arguments,
+            call=call,
+            result="match",
+        )
+        messages = [
+            Message(role=MessageRole.USER, content="search"),
+            Message(role=MessageRole.TOOL, tool_call_result=result),
+        ]
+
+        await client("gpt-5", messages, use_async_generator=False)
+
+        kwargs = create_mock.await_args.kwargs
+        self.assertNotIn("truncation", kwargs)
+        self.assertEqual(
+            kwargs["input"][0],
+            {"role": "user", "content": "search"},
+        )
+        self.assertEqual(kwargs["input"][1]["type"], "function_call")
+        self.assertEqual(kwargs["input"][2]["type"], "function_call_output")
 
     async def test_rejects_tool_choice_missing_from_schemas(self):
         create_mock = AsyncMock()
@@ -901,6 +945,228 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             accumulate_canonical_stream_items(items).answer_text,
             "done",
+        )
+
+    async def test_stream_records_stateless_reasoning_output_items(self):
+        collected = []
+        reasoning_item = {
+            "type": "reasoning",
+            "id": "rs_1",
+            "content": [],
+            "encrypted_content": "encrypted",
+            "status": None,
+        }
+        call_item = {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "lookup",
+            "arguments": "{}",
+            "namespace": None,
+            "metadata": {
+                "status": "ignored",
+                "items": [
+                    {"namespace": None, "value": 1},
+                ],
+            },
+            "status": "completed",
+        }
+        expected_reasoning = dict(reasoning_item)
+        expected_reasoning.pop("status")
+        expected_reasoning.pop("content")
+        expected_call = dict(call_item)
+        expected_call.pop("status")
+        expected_call.pop("namespace")
+        expected_call["metadata"] = {"items": [{"value": 1}]}
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    {
+                        "type": "response.output_item.done",
+                        "item": reasoning_item,
+                    },
+                    {
+                        "type": "response.output_item.done",
+                        "item": call_item,
+                    },
+                ]
+            ),
+            output_item_sink=collected.append,
+        )
+
+        await _stream_items(stream)
+
+        self.assertEqual(collected, [expected_reasoning, expected_call])
+
+    async def test_stream_ignores_non_replayable_stateless_output_items(self):
+        collected = []
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    {
+                        "type": "response.output_item.done",
+                        "item": "raw",
+                    },
+                    {
+                        "type": "response.output_item.done",
+                        "item": {"type": "message", "id": "msg_1"},
+                    },
+                ]
+            ),
+            output_item_sink=collected.append,
+        )
+
+        await _stream_items(stream)
+
+        self.assertEqual(collected, [])
+
+    async def test_stream_retries_empty_response_failed_before_output(self):
+        retry_streams = []
+
+        async def retry_stream():
+            retry_streams.append("retry")
+            return AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta="ok"
+                    ),
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(usage={}),
+                    ),
+                ]
+            )
+
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.failed",
+                        response=SimpleNamespace(
+                            status="failed",
+                            error=None,
+                            output=[],
+                        ),
+                    )
+                ]
+            ),
+            stream_factory=retry_stream,
+            stream_retries=1,
+        )
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(retry_streams, ["retry"])
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ok",
+        )
+
+    async def test_client_retry_stream_factory_after_empty_response_failed(
+        self,
+    ):
+        failed_stream = TrackedAsyncIter(
+            [
+                SimpleNamespace(
+                    type="response.failed",
+                    response=SimpleNamespace(
+                        status="failed",
+                        error=None,
+                        output=[],
+                    ),
+                )
+            ]
+        )
+        recovered_stream = AsyncIter(
+            [SimpleNamespace(type="response.output_text.delta", delta="ok")]
+        )
+        create_mock = AsyncMock(side_effect=[failed_stream, recovered_stream])
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        client._template_messages = MagicMock(
+            return_value=[{"role": "user", "content": "hi"}]
+        )
+
+        with patch.object(self.mod, "sleep", new=AsyncMock()) as sleep_mock:
+            stream = await client("m", [])
+            items = await _stream_items(stream)
+
+        self.assertGreaterEqual(failed_stream.close_count, 1)
+        sleep_mock.assert_awaited_once_with(1.0)
+        self.assertEqual(create_mock.await_count, 2)
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ok",
+        )
+
+    async def test_stream_does_not_retry_failed_response_with_error_or_output(
+        self,
+    ):
+        cases = [
+            SimpleNamespace(
+                status="failed",
+                error=SimpleNamespace(message="boom"),
+                output=[],
+            ),
+            SimpleNamespace(
+                status="failed",
+                error=None,
+                output=[{"type": "message"}],
+            ),
+        ]
+
+        for response in cases:
+            with self.subTest(response=response):
+                retry_stream = AsyncMock()
+                stream = self.mod.OpenAIStream(
+                    AsyncIter(
+                        [
+                            SimpleNamespace(
+                                type="response.failed",
+                                response=response,
+                            )
+                        ]
+                    ),
+                    stream_factory=retry_stream,
+                    stream_retries=1,
+                )
+
+                items = await _stream_items(stream)
+
+                retry_stream.assert_not_awaited()
+                self.assertIn(
+                    StreamItemKind.STREAM_ERRORED,
+                    [item.kind for item in items],
+                )
+
+    async def test_stream_does_not_retry_response_failed_after_output(self):
+        retry_stream = AsyncMock()
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta="partial"
+                    ),
+                    SimpleNamespace(
+                        type="response.failed",
+                        response=SimpleNamespace(
+                            status="failed",
+                            error=None,
+                            output=[],
+                        ),
+                    ),
+                ]
+            ),
+            stream_factory=retry_stream,
+            stream_retries=1,
+        )
+
+        items = await _stream_items(stream)
+
+        retry_stream.assert_not_awaited()
+        self.assertIn(
+            StreamItemKind.STREAM_ERRORED, [item.kind for item in items]
         )
 
     async def test_stream_completion_output_emits_structured_answer(self):
@@ -2752,6 +3018,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             max_output_tokens=20,
             text={"format": {"type": "json_object"}, "stop": "END"},
             reasoning={"effort": "high"},
+            include=["reasoning.encrypted_content"],
         )
 
     async def test_azure_legacy_api_version_uses_extra_query(self):
@@ -2865,6 +3132,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
         kwargs = create_mock.await_args.kwargs
         self.assertEqual(kwargs["reasoning"], {"effort": "xhigh"})
+        self.assertEqual(kwargs["include"], ["reasoning.encrypted_content"])
 
     def test_response_text_format_normalizes_supported_shapes(self):
         self.assertEqual(
@@ -3546,6 +3814,219 @@ class TemplateAndToolSchemaTestCase(TestCase):
                     "type": "function_call_output",
                     "call_id": "c2",
                     "output": '{"x": 3}',
+                },
+            ],
+        )
+
+    def test_has_function_call_context(self):
+        self.assertFalse(
+            self.mod.OpenAIClient._has_function_call_context(
+                [{"role": "user", "content": "hi"}]
+            )
+        )
+        self.assertFalse(
+            self.mod.OpenAIClient._has_function_call_context(
+                ["raw", {"role": "user", "content": "hi"}]  # type: ignore[arg-type]
+            )
+        )
+        self.assertTrue(
+            self.mod.OpenAIClient._has_function_call_context(
+                [
+                    {"role": "user", "content": "hi"},
+                    {"type": "function_call_output", "call_id": "c1"},
+                ]
+            )
+        )
+
+    def test_template_messages_ignores_stateless_items_without_tool_outputs(
+        self,
+    ):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        client._record_stateless_response_item(
+            {
+                "type": "reasoning",
+                "id": "rs_1",
+                "encrypted_content": "encrypted",
+            }
+        )
+
+        templated = client._template_messages(
+            [Message(role=MessageRole.USER, content="hi")]
+        )
+
+        self.assertEqual(templated, [{"role": "user", "content": "hi"}])
+
+    def test_template_messages_replays_stateless_reasoning_items(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        reasoning_item = {
+            "type": "reasoning",
+            "id": "rs_1",
+            "encrypted_content": "encrypted",
+        }
+        call_item = {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "rg",
+            "arguments": '{"pattern": "needle"}',
+        }
+        client._record_stateless_response_item(reasoning_item)
+        client._record_stateless_response_item(call_item)
+        call = ToolCall(
+            id="call_1",
+            name="shell.rg",
+            arguments={"pattern": "needle"},
+        )
+        result = ToolCallResult(
+            id="result_1",
+            name="shell.rg",
+            arguments=call.arguments,
+            call=call,
+            result="match",
+        )
+
+        templated = client._template_messages(
+            [
+                Message(role=MessageRole.USER, content="search"),
+                Message(role=MessageRole.TOOL, tool_call_result=result),
+            ]
+        )
+
+        self.assertEqual(
+            templated,
+            [
+                {"role": "user", "content": "search"},
+                reasoning_item,
+                call_item,
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": '"match"',
+                },
+            ],
+        )
+
+    def test_template_messages_omits_stateless_calls_without_outputs(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        reasoning_item = {
+            "type": "reasoning",
+            "id": "rs_1",
+            "encrypted_content": "encrypted",
+        }
+        missing_call_item = {
+            "type": "function_call",
+            "call_id": "call_missing",
+            "name": "rg",
+            "arguments": "{}",
+        }
+        call_item_a = {
+            "type": "function_call",
+            "call_id": "call_a",
+            "name": "rg",
+            "arguments": '{"pattern": "a"}',
+        }
+        call_item_b = {
+            "type": "function_call",
+            "call_id": "call_b",
+            "name": "rg",
+            "arguments": '{"pattern": "b"}',
+        }
+        client._record_stateless_response_item(reasoning_item)
+        client._record_stateless_response_item(missing_call_item)
+        client._record_stateless_response_item(call_item_a)
+        client._record_stateless_response_item(call_item_b)
+        call_a = ToolCall(
+            id="call_a",
+            name="shell.rg",
+            arguments={"pattern": "a"},
+        )
+        call_b = ToolCall(
+            id="call_b",
+            name="shell.rg",
+            arguments={"pattern": "b"},
+        )
+        result_a = ToolCallResult(
+            id="result_a",
+            name="shell.rg",
+            arguments=call_a.arguments,
+            call=call_a,
+            result="match a",
+        )
+        result_b = ToolCallResult(
+            id="result_b",
+            name="shell.rg",
+            arguments=call_b.arguments,
+            call=call_b,
+            result="match b",
+        )
+
+        templated = client._template_messages(
+            [
+                Message(role=MessageRole.USER, content="search"),
+                Message(role=MessageRole.TOOL, tool_call_result=result_b),
+                Message(role=MessageRole.TOOL, tool_call_result=result_a),
+            ]
+        )
+
+        self.assertEqual(
+            templated,
+            [
+                {"role": "user", "content": "search"},
+                reasoning_item,
+                call_item_a,
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_a",
+                    "output": '"match a"',
+                },
+                call_item_b,
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_b",
+                    "output": '"match b"',
+                },
+            ],
+        )
+
+    def test_template_messages_falls_back_after_unmatched_stateless_items(
+        self,
+    ):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        client._record_stateless_response_item(
+            {"type": "message", "id": "msg_1"}
+        )
+        client._record_stateless_response_item(
+            {
+                "type": "function_call",
+                "name": "rg",
+                "arguments": "{}",
+            }
+        )
+        call = ToolCall(id="call_1", name="shell.rg", arguments={})
+        result = ToolCallResult(
+            id="result_1",
+            name="shell.rg",
+            arguments=call.arguments,
+            call=call,
+            result="match",
+        )
+
+        templated = client._template_messages(
+            [Message(role=MessageRole.TOOL, tool_call_result=result)]
+        )
+
+        self.assertEqual(
+            templated,
+            [
+                {
+                    "type": "function_call",
+                    "name": "avl_c2hlbGwucmc",
+                    "call_id": "call_1",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": '"match"',
                 },
             ],
         )
