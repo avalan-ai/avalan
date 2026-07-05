@@ -5,6 +5,7 @@ from uuid import UUID
 from avalan.agent.loader import OrchestratorLoader
 from avalan.cli.commands import agent as agent_cmds
 from avalan.entities import PermanentMemoryStoreSettings
+from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 
 class GetOrchestratorSettingsTestCase(unittest.TestCase):
@@ -72,6 +73,35 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
                 "backend": "transformers",
                 "base_url": "https://tenant.openai.azure.com/openai/v1/",
             },
+        )
+
+    def test_unlimited_maximum_tool_cycles(self):
+        args = Namespace(
+            name="a",
+            role="r",
+            task=None,
+            instructions=None,
+            engine_uri="ai://m",
+            backend="transformers",
+            run_max_new_tokens=10,
+            run_maximum_tool_cycles=UNLIMITED_TOOL_CYCLES,
+            run_skip_special_tokens=False,
+            memory_recent=None,
+            no_session=False,
+            memory_permanent_message=None,
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=200,
+            memory_engine_overlap=20,
+            memory_engine_window=40,
+            tool=None,
+        )
+        uid = UUID("00000000-0000-0000-0000-000000000012")
+        result = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+
+        self.assertEqual(
+            result.call_options["maximum_tool_cycles"],
+            UNLIMITED_TOOL_CYCLES,
         )
 
     def test_system_and_developer(self):

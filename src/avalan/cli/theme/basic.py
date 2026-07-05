@@ -1,4 +1,3 @@
-from ...agent.orchestrator import Orchestrator
 from ...entities import Model, User
 from ...event import EventStats
 from ...tool.display import ToolDisplayProjection
@@ -30,6 +29,7 @@ from json import JSONDecodeError, loads
 from logging import Logger
 from re import IGNORECASE, MULTILINE, Pattern, compile
 from time import perf_counter
+from typing import TYPE_CHECKING, Any
 
 from rich import box
 from rich.console import Group, RenderableType
@@ -43,6 +43,11 @@ _BASIC_DATABASE_SQL_PREVIEW_LIMIT = 72
 _BASIC_TOOL_RUNNING_THRESHOLD_SECONDS = 1.0
 _BASIC_TOOL_DYNAMIC_MAX_SECONDS = 3600.0
 _BASIC_TOOL_RUNNING_STYLE = "cyan"
+
+if TYPE_CHECKING:
+    from ...agent.orchestrator import Orchestrator
+else:
+    Orchestrator = Any
 _BASIC_TOOL_ARGUMENT_STYLE = "dim"
 _BASIC_TOOL_ELAPSED_STYLE = "bold"
 _BASIC_TOOL_NAME_STYLE = "bold"

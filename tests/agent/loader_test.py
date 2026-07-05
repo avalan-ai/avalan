@@ -1,3 +1,4 @@
+import tomllib
 from argparse import Namespace
 from contextlib import AsyncExitStack
 from logging import DEBUG, INFO, Logger
@@ -12,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 from async_helpers import run_async
+from jinja2 import Environment, FileSystemLoader
 
 from avalan.agent.loader import (
     OrchestratorLoader,
@@ -77,6 +79,7 @@ from avalan.tool.shell import (
     ShellToolSet,
     ShellToolSettings,
 )
+from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 
 def _named_toolset(namespace: str) -> MagicMock:
@@ -5058,6 +5061,100 @@ maximum_tool_cycles = 64
                     settings.call_options["maximum_tool_cycles"], 64
                 )
             await stack.aclose()
+
+    async def test_engine_generation_settings_unlimited_tool_cycles(self):
+        config = """
+[agent]
+
+[engine]
+uri = \"ai://local/model\"
+
+[run]
+maximum_tool_cycles = \"unlimited\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=None)
+
+                self.assertEqual(result, "orch")
+                lfs_patch.assert_awaited_once()
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(
+                    settings.call_options["maximum_tool_cycles"],
+                    UNLIMITED_TOOL_CYCLES,
+                )
+            await stack.aclose()
+
+    def test_blueprint_renders_maximum_tool_cycles(self):
+        template_dir = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "avalan"
+            / "agent"
+            / "templates"
+        )
+        env = Environment(
+            loader=FileSystemLoader(template_dir),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+        env.filters["toml_value"] = agent_cmds._toml_template_value
+        template = env.get_template("blueprint.toml")
+        cases = [(64, 64), (UNLIMITED_TOOL_CYCLES, UNLIMITED_TOOL_CYCLES)]
+
+        for value, expected in cases:
+            with self.subTest(value=value):
+                rendered = template.render(
+                    orchestrator=Namespace(
+                        agent_config={},
+                        memory_recent=False,
+                        memory_permanent_message=None,
+                        sentence_model_id="sentence-model",
+                        sentence_model_max_tokens=200,
+                        sentence_model_overlap_size=20,
+                        sentence_model_window_size=40,
+                        uri="ai://local/model",
+                        call_options={
+                            "max_new_tokens": 42,
+                            "skip_special_tokens": False,
+                            "maximum_tool_cycles": value,
+                        },
+                        tools=[],
+                    ),
+                    tool_format=None,
+                    tool_recovery_formats=None,
+                    tool_name_policy=None,
+                    skills_tool=None,
+                    browser_tool=None,
+                    graph_tool=None,
+                    database_tool=None,
+                    container_tool=None,
+                    sandbox_tool=None,
+                    shell_tool=None,
+                    shell_sandbox=None,
+                    shell_container=None,
+                )
+
+                config = tomllib.loads(rendered)
+
+                self.assertEqual(
+                    config["run"]["maximum_tool_cycles"], expected
+                )
 
     async def test_run_response_format_schema_ref_is_resolved(self):
         config = """

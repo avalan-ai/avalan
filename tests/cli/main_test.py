@@ -6,8 +6,11 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from datetime import datetime
 from io import StringIO
+from os import environ, pathsep
 from pathlib import Path
+from subprocess import run
 from tempfile import TemporaryDirectory
+from textwrap import dedent
 from threading import Event as ThreadEvent
 from time import perf_counter
 from types import SimpleNamespace
@@ -29,6 +32,7 @@ from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from avalan.entities import Model
 from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.shell import ShellGitToolSettings, ShellToolSettings
+from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 README_CALCULATOR_ROLE = (
     "You are a helpful assistant named Tool, that can resolve user requests "
@@ -99,6 +103,49 @@ def _find_parser_with_suffix(
 
 
 class CliInitTestCase(TestCase):
+    def test_main_startup_does_not_require_agent_renderer(self):
+        root_path = Path(__file__).resolve().parents[2]
+        source_path = root_path / "src"
+        environment = environ.copy()
+        python_path = str(source_path)
+        if environment.get("PYTHONPATH"):
+            python_path = f"{python_path}{pathsep}{environment['PYTHONPATH']}"
+        environment["PYTHONPATH"] = python_path
+        script = dedent("""
+            import importlib.abc
+            import sys
+
+
+            class BlockJinja2(importlib.abc.MetaPathFinder):
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname == "jinja2" or fullname.startswith("jinja2."):
+                        raise ModuleNotFoundError("No module named 'jinja2'")
+                    return None
+
+
+            sys.meta_path.insert(0, BlockJinja2())
+            import avalan.cli.__main__
+
+            sys.argv = ["avalan", "--help-full"]
+            avalan.cli.__main__.main()
+            assert "avalan.agent.orchestrator" not in sys.modules
+            """)
+
+        result = run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+            cwd=root_path,
+            env=environment,
+            text=True,
+        )
+
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+
     def test_constructor_creates_parser_and_sets_help_full(self):
         logger = MagicMock()
         with (
@@ -262,6 +309,76 @@ class CliThemeOptionTestCase(TestCase):
         self.assertIn("invalid choice", output)
         self.assertIn("fancy", output)
         self.assertIn("basic", output)
+
+
+class CliMaximumToolCyclesOptionTestCase(TestCase):
+    def test_agent_run_accepts_numeric_tool_cycles(self) -> None:
+        cli = CLI(MagicMock())
+
+        args = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--maximum-tool-cycles",
+                "20",
+            ]
+        )
+
+        self.assertEqual(args.run_maximum_tool_cycles, 20)
+
+    def test_agent_run_accepts_unlimited_tool_cycles(self) -> None:
+        cli = CLI(MagicMock())
+
+        args = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--maximum-tool-cycles",
+                UNLIMITED_TOOL_CYCLES,
+            ]
+        )
+
+        self.assertEqual(args.run_maximum_tool_cycles, UNLIMITED_TOOL_CYCLES)
+
+    def test_agent_run_rejects_zero_tool_cycles(self) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "agent",
+                    "run",
+                    "--maximum-tool-cycles",
+                    "0",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("positive integer or 'unlimited'", stderr.getvalue())
+
+    def test_agent_run_rejects_invalid_tool_cycles(self) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "agent",
+                    "run",
+                    "--maximum-tool-cycles",
+                    "forever",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("positive integer or 'unlimited'", stderr.getvalue())
 
 
 class CliParallelOptionTestCase(TestCase):

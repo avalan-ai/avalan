@@ -1,4 +1,3 @@
-from ...agent.orchestrator import Orchestrator
 from ...entities import (
     EngineMessage,
     EngineMessageScored,
@@ -53,8 +52,11 @@ from rich.progress import BarColumn, SpinnerColumn, TimeElapsedColumn
 from rich.spinner import Spinner as RichSpinner
 
 if TYPE_CHECKING:
+    from ...agent.orchestrator import Orchestrator
+
     from numpy import ndarray
 else:
+    Orchestrator = Any
 
     class ndarray:  # noqa: D101
         def __class_getitem__(cls, _: Any) -> Any:

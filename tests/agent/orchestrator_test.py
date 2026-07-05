@@ -32,6 +32,7 @@ from avalan.memory.manager import MemoryManager
 from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import ShellToolSettings
+from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 
 class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
@@ -152,12 +153,34 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp, "resp")
         self.assertEqual(captured["kwargs"]["maximum_tool_cycles"], 32)
 
+    async def test_call_consumes_unlimited_maximum_tool_cycles_option(self):
+        captured = {}
+        self.orch._call_options = {
+            "maximum_tool_cycles": UNLIMITED_TOOL_CYCLES
+        }
+
+        def response_factory(*args, **kwargs):
+            captured["kwargs"] = kwargs
+            return "resp"
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            response_factory,
+        ):
+            resp = await self.orch("hi")
+
+        self.assertEqual(resp, "resp")
+        self.assertEqual(
+            captured["kwargs"]["maximum_tool_cycles"],
+            UNLIMITED_TOOL_CYCLES,
+        )
+
     async def test_call_rejects_invalid_maximum_tool_cycles(self):
         self.orch._call_options = {"maximum_tool_cycles": 0}
 
         with self.assertRaisesRegex(
             AssertionError,
-            "maximum_tool_cycles must be a positive integer",
+            "maximum_tool_cycles must be a positive integer or 'unlimited'",
         ):
             await self.orch("hi")
 

@@ -22,6 +22,11 @@ from ...model.response.text import TextGenerationResponse
 from ...tool.manager import ToolManager
 from ...tool.shell.input_files import shell_input_file_manifest
 from ...tool.shell.settings import ShellToolSettings
+from ...tool_cycles import (
+    DEFAULT_MAXIMUM_TOOL_CYCLES,
+    MaximumToolCycles,
+    validate_maximum_tool_cycles,
+)
 from .. import (
     AgentOperation,
     InputType,
@@ -33,10 +38,7 @@ from .. import (
 )
 from ..engine import EngineAgent
 from ..renderer import Renderer, TemplateEngineAgent
-from .response.orchestrator_response import (
-    DEFAULT_MAXIMUM_TOOL_CYCLES,
-    OrchestratorResponse,
-)
+from .response.orchestrator_response import OrchestratorResponse
 
 import asyncio
 from contextlib import ExitStack
@@ -127,7 +129,9 @@ class Orchestrator:
         self._model_ids = set()
 
     @staticmethod
-    def _pop_maximum_tool_cycles(engine_args: dict[str, Any]) -> int:
+    def _pop_maximum_tool_cycles(
+        engine_args: dict[str, Any],
+    ) -> MaximumToolCycles:
         values: dict[str, Any] = {}
         for key in _MAXIMUM_TOOL_CYCLE_OPTION_KEYS:
             if key in engine_args:
@@ -138,10 +142,7 @@ class Orchestrator:
         if not values:
             return DEFAULT_MAXIMUM_TOOL_CYCLES
         value = next(iter(values.values()))
-        assert (
-            type(value) is int and value > 0
-        ), "maximum_tool_cycles must be a positive integer"
-        return value
+        return validate_maximum_tool_cycles(value)
 
     @property
     def engine_agent(self) -> EngineAgent | None:

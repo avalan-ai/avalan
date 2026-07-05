@@ -644,7 +644,8 @@ inline agent settings:
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
-                        Maximum model/tool result cycles for an agent run
+                        Maximum model/tool result cycles for an agent run,
+                        or 'unlimited'
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -1003,7 +1004,8 @@ inline agent settings:
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
-                        Maximum model/tool result cycles for an agent run
+                        Maximum model/tool result cycles for an agent run,
+                        or 'unlimited'
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -1309,7 +1311,8 @@ inline agent settings:
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
-                        Maximum model/tool result cycles for an agent run
+                        Maximum model/tool result cycles for an agent run,
+                        or 'unlimited'
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -1506,7 +1509,8 @@ inline agent settings:
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
-                        Maximum model/tool result cycles for an agent run
+                        Maximum model/tool result cycles for an agent run,
+                        or 'unlimited'
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -1653,7 +1657,8 @@ inline agent settings:
   --run-max-new-tokens RUN_MAX_NEW_TOKENS
                         Maximum count of tokens on output
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
-                        Maximum model/tool result cycles for an agent run
+                        Maximum model/tool result cycles for an agent run,
+                        or 'unlimited'
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache

@@ -28,7 +28,7 @@ from ..entities import (
 )
 from ..filesystem import read_text
 from ..model.manager import ModelManager
-from ..server.entities import (
+from ..server_output_redaction import (
     SERVER_OUTPUT_REDACTION_CHANNELS,
     SERVER_OUTPUT_REDACTION_PROTOCOLS,
     SERVER_OUTPUT_REDACTION_RULES,
@@ -38,6 +38,10 @@ from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
 from ..tool.graph_settings import GraphToolSettings
 from ..tool.shell import ShellGitToolSettings, ShellToolSettings
+from ..tool_cycles import (
+    UNLIMITED_TOOL_CYCLES,
+    MaximumToolCycles,
+)
 from ..types import assert_positive_int
 from ..utils import logger_replace
 
@@ -832,6 +836,24 @@ class CLI:
             assert_positive_int(parsed, "value")
         except AssertionError as exc:
             raise ArgumentTypeError(str(exc)) from exc
+        return parsed
+
+    @staticmethod
+    def _maximum_tool_cycles(value: str) -> MaximumToolCycles:
+        if value == UNLIMITED_TOOL_CYCLES:
+            return value
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise ArgumentTypeError(
+                f"must be a positive integer or '{UNLIMITED_TOOL_CYCLES}'"
+            ) from exc
+        try:
+            assert_positive_int(parsed, "value")
+        except AssertionError as exc:
+            raise ArgumentTypeError(
+                f"must be a positive integer or '{UNLIMITED_TOOL_CYCLES}'"
+            ) from exc
         return parsed
 
     @staticmethod
@@ -3753,9 +3775,12 @@ class CLI:
         group.add_argument(
             "--maximum-tool-cycles",
             "--run-maximum-tool-cycles",
-            type=int,
+            type=CLI._maximum_tool_cycles,
             dest="run_maximum_tool_cycles",
-            help="Maximum model/tool result cycles for an agent run",
+            help=(
+                "Maximum model/tool result cycles for an agent run, "
+                "or 'unlimited'"
+            ),
             default=None,
         )
         group.add_argument(

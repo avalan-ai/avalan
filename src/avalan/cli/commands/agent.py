@@ -84,6 +84,7 @@ from ...tool.context import ToolSettingsContext
 from ...tool.database.settings import DatabaseToolSettings
 from ...tool.graph_settings import GraphToolSettings
 from ...tool.shell import ShellGitToolSettings, ShellToolSettings
+from ...tool_cycles import MaximumToolCycles
 
 from argparse import Namespace
 from collections.abc import Iterable, Mapping, Sequence
@@ -168,7 +169,7 @@ def get_orchestrator_settings(
     memory_recent: bool | None = None,
     memory_permanent_message: str | None = None,
     memory_permanent: list[str] | None = None,
-    maximum_tool_cycles: int | None = None,
+    maximum_tool_cycles: MaximumToolCycles | None = None,
     max_new_tokens: int | None = None,
     temperature: float | None = None,
     tools: list[str] | None | _Unset = _UNSET,
