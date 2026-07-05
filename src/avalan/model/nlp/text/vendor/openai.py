@@ -285,11 +285,11 @@ class OpenAIStream(TextGenerationVendorStream):
 
     async def _call_stream_cleanup(self, method_name: str) -> None:
         assert method_name in ("cancel", "aclose")
-        errors: list[BaseException] = []
+        errors: list[Exception] = []
         for source in self._cleanup_sources():
             try:
                 await self._call_stream_source_cleanup(source, method_name)
-            except BaseException as exc:
+            except Exception as exc:
                 errors.append(exc)
         if len(errors) == 1:
             raise errors[0]

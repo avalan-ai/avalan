@@ -1460,6 +1460,19 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
         self.assertIs(context.exception, error)
 
+    async def test_stream_aclose_base_exception_skips_later_sources(self):
+        error = BaseException("close interrupted")
+        first = FailingCloseOnlyAsyncIter([], error)
+        second = CloseOnlyAsyncIter([])
+        stream = self.mod.OpenAIStream(first)
+        stream._stream_sources = (first, second)
+
+        with self.assertRaises(BaseException) as context:
+            await stream.aclose()
+
+        self.assertIs(context.exception, error)
+        self.assertEqual(second.close_count, 0)
+
     async def test_stream_aclose_groups_multiple_cleanup_errors(self):
         first_error = RuntimeError("first")
         second_error = ValueError("second")
