@@ -22,6 +22,11 @@ from ...model.response.text import TextGenerationResponse
 from ...tool.manager import ToolManager
 from ...tool.shell.input_files import shell_input_file_manifest
 from ...tool.shell.settings import ShellToolSettings
+from ...tool_cycles import (
+    DEFAULT_MAXIMUM_TOOL_CYCLES,
+    MaximumToolCycles,
+    validate_maximum_tool_cycles,
+)
 from .. import (
     AgentOperation,
     InputType,
@@ -33,11 +38,7 @@ from .. import (
 )
 from ..engine import EngineAgent
 from ..renderer import Renderer, TemplateEngineAgent
-from .response.orchestrator_response import (
-    DEFAULT_MAXIMUM_TOOL_CYCLES,
-    OrchestratorResponse,
-)
-from .tool_cycles import MaximumToolCycles, validate_maximum_tool_cycles
+from .response.orchestrator_response import OrchestratorResponse
 
 import asyncio
 from contextlib import ExitStack

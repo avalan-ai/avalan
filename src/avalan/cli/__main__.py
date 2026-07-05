@@ -1,8 +1,4 @@
 from .. import license, name, site, version
-from ..agent.orchestrator.tool_cycles import (
-    UNLIMITED_TOOL_CYCLES,
-    MaximumToolCycles,
-)
 from ..cli import CommandAbortException, has_input
 from ..cli.commands import is_ds4_backend_selected
 from ..cli.theme_registry import (
@@ -32,7 +28,7 @@ from ..entities import (
 )
 from ..filesystem import read_text
 from ..model.manager import ModelManager
-from ..server.entities import (
+from ..server_output_redaction import (
     SERVER_OUTPUT_REDACTION_CHANNELS,
     SERVER_OUTPUT_REDACTION_PROTOCOLS,
     SERVER_OUTPUT_REDACTION_RULES,
@@ -42,6 +38,10 @@ from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
 from ..tool.graph_settings import GraphToolSettings
 from ..tool.shell import ShellGitToolSettings, ShellToolSettings
+from ..tool_cycles import (
+    UNLIMITED_TOOL_CYCLES,
+    MaximumToolCycles,
+)
 from ..types import assert_positive_int
 from ..utils import logger_replace
 

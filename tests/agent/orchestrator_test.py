@@ -16,7 +16,6 @@ from avalan.agent import (
     Specification,
 )
 from avalan.agent.orchestrator import Orchestrator
-from avalan.agent.orchestrator.tool_cycles import UNLIMITED_TOOL_CYCLES
 from avalan.agent.renderer import Renderer
 from avalan.entities import (
     EngineUri,
@@ -33,6 +32,7 @@ from avalan.memory.manager import MemoryManager
 from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import ShellToolSettings
+from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 
 class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):

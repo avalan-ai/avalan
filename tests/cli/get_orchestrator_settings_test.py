@@ -3,9 +3,9 @@ from argparse import Namespace
 from uuid import UUID
 
 from avalan.agent.loader import OrchestratorLoader
-from avalan.agent.orchestrator.tool_cycles import UNLIMITED_TOOL_CYCLES
 from avalan.cli.commands import agent as agent_cmds
 from avalan.entities import PermanentMemoryStoreSettings
+from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 
 class GetOrchestratorSettingsTestCase(unittest.TestCase):

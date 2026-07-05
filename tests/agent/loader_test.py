@@ -20,7 +20,6 @@ from avalan.agent.loader import (
     _merge_shell_tool_settings,
     _shell_tool_runtime_settings,
 )
-from avalan.agent.orchestrator.tool_cycles import UNLIMITED_TOOL_CYCLES
 from avalan.cli.commands import agent as agent_cmds
 from avalan.container import (
     ContainerProfileSelection,
@@ -80,6 +79,7 @@ from avalan.tool.shell import (
     ShellToolSet,
     ShellToolSettings,
 )
+from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 
 def _named_toolset(namespace: str) -> MagicMock:

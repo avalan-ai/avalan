@@ -47,14 +47,15 @@ from ....tool.display import (
     tool_display_projection_metadata,
 )
 from ....tool.manager import ToolManager
-from ....utils import tool_call_diagnostic_payload
-from ... import AgentOperation
-from ...engine import EngineAgent
-from ..tool_cycles import (
+from ....tool_cycles import (
+    DEFAULT_MAXIMUM_TOOL_CYCLES,
     UNLIMITED_TOOL_CYCLES,
     MaximumToolCycles,
     validate_maximum_tool_cycles,
 )
+from ....utils import tool_call_diagnostic_payload
+from ... import AgentOperation
+from ...engine import EngineAgent
 
 from asyncio import (
     FIRST_COMPLETED,
@@ -111,7 +112,6 @@ _TOOL_CALL_LIFECYCLE_KINDS = frozenset(
     }
 )
 _INVALID_TOOL_CALL_ARGUMENTS = object()
-DEFAULT_MAXIMUM_TOOL_CYCLES = 24
 
 
 class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):

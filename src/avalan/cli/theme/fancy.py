@@ -1,4 +1,3 @@
-from ...agent.orchestrator import Orchestrator
 from ...cli.download import DownloadCompleteColumn
 from ...cli.theme import (
     Data,
@@ -113,8 +112,11 @@ from rich.table import Column, Table
 from rich.text import Text
 
 if TYPE_CHECKING:
+    from ...agent.orchestrator import Orchestrator
+
     from numpy import ndarray
 else:
+    Orchestrator = Any
 
     class ndarray:  # noqa: D101
         def __class_getitem__(cls, _: Any) -> Any:

@@ -6,8 +6,11 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from datetime import datetime
 from io import StringIO
+from os import environ, pathsep
 from pathlib import Path
+from subprocess import run
 from tempfile import TemporaryDirectory
+from textwrap import dedent
 from threading import Event as ThreadEvent
 from time import perf_counter
 from types import SimpleNamespace
@@ -17,7 +20,6 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from rich.console import Console
 
-from avalan.agent.orchestrator.tool_cycles import UNLIMITED_TOOL_CYCLES
 from avalan.cli import CommandAbortException
 from avalan.cli.__main__ import (
     CLI,
@@ -30,6 +32,7 @@ from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from avalan.entities import Model
 from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.shell import ShellGitToolSettings, ShellToolSettings
+from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 README_CALCULATOR_ROLE = (
     "You are a helpful assistant named Tool, that can resolve user requests "
@@ -100,6 +103,49 @@ def _find_parser_with_suffix(
 
 
 class CliInitTestCase(TestCase):
+    def test_main_startup_does_not_require_agent_renderer(self):
+        root_path = Path(__file__).resolve().parents[2]
+        source_path = root_path / "src"
+        environment = environ.copy()
+        python_path = str(source_path)
+        if environment.get("PYTHONPATH"):
+            python_path = f"{python_path}{pathsep}{environment['PYTHONPATH']}"
+        environment["PYTHONPATH"] = python_path
+        script = dedent("""
+            import importlib.abc
+            import sys
+
+
+            class BlockJinja2(importlib.abc.MetaPathFinder):
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname == "jinja2" or fullname.startswith("jinja2."):
+                        raise ModuleNotFoundError("No module named 'jinja2'")
+                    return None
+
+
+            sys.meta_path.insert(0, BlockJinja2())
+            import avalan.cli.__main__
+
+            sys.argv = ["avalan", "--help-full"]
+            avalan.cli.__main__.main()
+            assert "avalan.agent.orchestrator" not in sys.modules
+            """)
+
+        result = run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+            cwd=root_path,
+            env=environment,
+            text=True,
+        )
+
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+
     def test_constructor_creates_parser_and_sets_help_full(self):
         logger = MagicMock()
         with (

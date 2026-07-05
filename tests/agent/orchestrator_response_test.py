@@ -33,7 +33,6 @@ from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
     _ToolExecutionOutcome,
 )
-from avalan.agent.orchestrator.tool_cycles import UNLIMITED_TOOL_CYCLES
 from avalan.cli import CommandAbortException
 from avalan.entities import (
     TOOL_DISPLAY_PROJECTOR_METADATA_KEY,
@@ -100,6 +99,7 @@ from avalan.tool.shell.entities import (
 )
 from avalan.tool.shell.input_files import shell_input_file_filter
 from avalan.tool.shell.settings import ShellToolSettings
+from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 
 class _DummyEngine:

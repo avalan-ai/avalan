@@ -3,7 +3,6 @@ from ...agent.orchestrator import Orchestrator
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
-from ...agent.orchestrator.tool_cycles import MaximumToolCycles
 from ...cli import get_input, has_input
 from ...cli.commands.model import token_generation
 from ...cli.display import cli_stream_display_config
@@ -85,6 +84,7 @@ from ...tool.context import ToolSettingsContext
 from ...tool.database.settings import DatabaseToolSettings
 from ...tool.graph_settings import GraphToolSettings
 from ...tool.shell import ShellGitToolSettings, ShellToolSettings
+from ...tool_cycles import MaximumToolCycles
 
 from argparse import Namespace
 from collections.abc import Iterable, Mapping, Sequence

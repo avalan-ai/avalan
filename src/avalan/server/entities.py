@@ -4,6 +4,24 @@ from ..entities import (
     ReasoningEffort,
     ToolNamePolicySettings,
 )
+from ..server_output_redaction import (
+    SERVER_OUTPUT_REDACTION_CHANNELS as SERVER_OUTPUT_REDACTION_CHANNELS,
+)
+from ..server_output_redaction import (
+    SERVER_OUTPUT_REDACTION_PROTOCOLS as SERVER_OUTPUT_REDACTION_PROTOCOLS,
+)
+from ..server_output_redaction import (
+    SERVER_OUTPUT_REDACTION_RULES as SERVER_OUTPUT_REDACTION_RULES,
+)
+from ..server_output_redaction import (
+    ServerOutputRedactionChannel as ServerOutputRedactionChannel,
+)
+from ..server_output_redaction import (
+    ServerOutputRedactionProtocol as ServerOutputRedactionProtocol,
+)
+from ..server_output_redaction import (
+    ServerOutputRedactionRule as ServerOutputRedactionRule,
+)
 from ..skill import (
     SKILL_MAIN_RESOURCE_FILENAME,
     SkillModelValue,
@@ -34,27 +52,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 JSONType = Literal["bool", "float", "int", "object", "string"]
-ServerOutputRedactionRule = Literal[
-    "host_paths",
-    "skill_body_echoes",
-    "skill_source_paths",
-    "skills_tool_content",
-]
-ServerOutputRedactionProtocol = Literal["openai", "mcp", "a2a"]
-ServerOutputRedactionChannel = Literal["answer", "reasoning"]
-SERVER_OUTPUT_REDACTION_RULES: tuple[ServerOutputRedactionRule, ...] = (
-    "host_paths",
-    "skill_body_echoes",
-    "skill_source_paths",
-    "skills_tool_content",
-)
-SERVER_OUTPUT_REDACTION_PROTOCOLS: tuple[
-    ServerOutputRedactionProtocol, ...
-] = ("openai", "mcp", "a2a")
-SERVER_OUTPUT_REDACTION_CHANNELS: tuple[ServerOutputRedactionChannel, ...] = (
-    "answer",
-    "reasoning",
-)
 MCP_FILE_DATA_KEYS = ("data", "base64", "file_data")
 MCP_FILE_URL_KEYS = ("uri", "url", "file_url")
 MCP_FILE_SOURCE_KEYS = MCP_FILE_DATA_KEYS + MCP_FILE_URL_KEYS
