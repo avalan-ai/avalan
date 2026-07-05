@@ -1,4 +1,8 @@
 from .. import license, name, site, version
+from ..agent.orchestrator.tool_cycles import (
+    UNLIMITED_TOOL_CYCLES,
+    MaximumToolCycles,
+)
 from ..cli import CommandAbortException, has_input
 from ..cli.commands import is_ds4_backend_selected
 from ..cli.theme_registry import (
@@ -832,6 +836,24 @@ class CLI:
             assert_positive_int(parsed, "value")
         except AssertionError as exc:
             raise ArgumentTypeError(str(exc)) from exc
+        return parsed
+
+    @staticmethod
+    def _maximum_tool_cycles(value: str) -> MaximumToolCycles:
+        if value == UNLIMITED_TOOL_CYCLES:
+            return value
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise ArgumentTypeError(
+                f"must be a positive integer or '{UNLIMITED_TOOL_CYCLES}'"
+            ) from exc
+        try:
+            assert_positive_int(parsed, "value")
+        except AssertionError as exc:
+            raise ArgumentTypeError(
+                f"must be a positive integer or '{UNLIMITED_TOOL_CYCLES}'"
+            ) from exc
         return parsed
 
     @staticmethod
@@ -3753,9 +3775,12 @@ class CLI:
         group.add_argument(
             "--maximum-tool-cycles",
             "--run-maximum-tool-cycles",
-            type=int,
+            type=CLI._maximum_tool_cycles,
             dest="run_maximum_tool_cycles",
-            help="Maximum model/tool result cycles for an agent run",
+            help=(
+                "Maximum model/tool result cycles for an agent run, "
+                "or 'unlimited'"
+            ),
             default=None,
         )
         group.add_argument(

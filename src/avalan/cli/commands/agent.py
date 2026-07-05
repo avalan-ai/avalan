@@ -3,6 +3,7 @@ from ...agent.orchestrator import Orchestrator
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
+from ...agent.orchestrator.tool_cycles import MaximumToolCycles
 from ...cli import get_input, has_input
 from ...cli.commands.model import token_generation
 from ...cli.display import cli_stream_display_config
@@ -168,7 +169,7 @@ def get_orchestrator_settings(
     memory_recent: bool | None = None,
     memory_permanent_message: str | None = None,
     memory_permanent: list[str] | None = None,
-    maximum_tool_cycles: int | None = None,
+    maximum_tool_cycles: MaximumToolCycles | None = None,
     max_new_tokens: int | None = None,
     temperature: float | None = None,
     tools: list[str] | None | _Unset = _UNSET,

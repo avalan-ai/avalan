@@ -50,6 +50,11 @@ from ....tool.manager import ToolManager
 from ....utils import tool_call_diagnostic_payload
 from ... import AgentOperation
 from ...engine import EngineAgent
+from ..tool_cycles import (
+    UNLIMITED_TOOL_CYCLES,
+    MaximumToolCycles,
+    validate_maximum_tool_cycles,
+)
 
 from asyncio import (
     FIRST_COMPLETED,
@@ -173,7 +178,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _active_model_continuation_id: str | None
     _response_drained: bool
     _pending_tool_batch_task: Task[list[_ToolExecutionOutcome]] | None
-    _maximum_tool_cycles: int
+    _maximum_tool_cycles: MaximumToolCycles
 
     def __init__(
         self,
@@ -193,12 +198,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             Callable[[ToolCall], _ToolConfirmationAction] | None
         ) = None,
         enable_tool_parsing: bool = True,
-        maximum_tool_cycles: int = DEFAULT_MAXIMUM_TOOL_CYCLES,
+        maximum_tool_cycles: MaximumToolCycles = DEFAULT_MAXIMUM_TOOL_CYCLES,
     ) -> None:
         assert input and response and engine_agent and operation
-        assert (
-            type(maximum_tool_cycles) is int and maximum_tool_cycles > 0
-        ), "maximum_tool_cycles must be a positive integer"
+        maximum_tool_cycles = validate_maximum_tool_cycles(maximum_tool_cycles)
         self._input = input
         self._response = response
         self._engine_agent = engine_agent
@@ -2389,7 +2392,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             )
             return False
 
-        if self._tool_cycle_count >= self._maximum_tool_cycles:
+        if (
+            self._maximum_tool_cycles != UNLIMITED_TOOL_CYCLES
+            and self._tool_cycle_count >= self._maximum_tool_cycles
+        ):
             self._append_canonical_guard_diagnostic(
                 code="orchestrator.tool_cycle.limit_exceeded",
                 message="Tool cycle stopped after reaching the cycle limit.",

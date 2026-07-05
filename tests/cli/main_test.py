@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from rich.console import Console
 
+from avalan.agent.orchestrator.tool_cycles import UNLIMITED_TOOL_CYCLES
 from avalan.cli import CommandAbortException
 from avalan.cli.__main__ import (
     CLI,
@@ -262,6 +263,76 @@ class CliThemeOptionTestCase(TestCase):
         self.assertIn("invalid choice", output)
         self.assertIn("fancy", output)
         self.assertIn("basic", output)
+
+
+class CliMaximumToolCyclesOptionTestCase(TestCase):
+    def test_agent_run_accepts_numeric_tool_cycles(self) -> None:
+        cli = CLI(MagicMock())
+
+        args = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--maximum-tool-cycles",
+                "20",
+            ]
+        )
+
+        self.assertEqual(args.run_maximum_tool_cycles, 20)
+
+    def test_agent_run_accepts_unlimited_tool_cycles(self) -> None:
+        cli = CLI(MagicMock())
+
+        args = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--maximum-tool-cycles",
+                UNLIMITED_TOOL_CYCLES,
+            ]
+        )
+
+        self.assertEqual(args.run_maximum_tool_cycles, UNLIMITED_TOOL_CYCLES)
+
+    def test_agent_run_rejects_zero_tool_cycles(self) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "agent",
+                    "run",
+                    "--maximum-tool-cycles",
+                    "0",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("positive integer or 'unlimited'", stderr.getvalue())
+
+    def test_agent_run_rejects_invalid_tool_cycles(self) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "agent",
+                    "run",
+                    "--maximum-tool-cycles",
+                    "forever",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("positive integer or 'unlimited'", stderr.getvalue())
 
 
 class CliParallelOptionTestCase(TestCase):

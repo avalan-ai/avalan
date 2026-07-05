@@ -925,7 +925,8 @@ local runs often use `harmony`, while DS4 native tool calls use `dsml`.
 - Expose only the tools needed for the task.
 - Use `--tools-confirm` for tools that can mutate state, query sensitive data,
   browse authenticated sessions, call remote services, or spend money.
-- Set `--maximum-tool-cycles` to avoid unbounded model/tool loops.
+- Set `--maximum-tool-cycles N` to cap model/tool loops, or use
+  `--maximum-tool-cycles unlimited` to remove only the numeric cycle cap.
 - Prefer read-only database settings and narrow `allowed_commands`.
 - For read-only database agents, enable explicit database tools and exclude
   `database.kill`.
