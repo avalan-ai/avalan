@@ -414,18 +414,24 @@ class CliOpenAIResponseFailedRetryOptionTestCase(TestCase):
             [
                 "agent",
                 "run",
+                "--run-openai-max-retries",
+                "0",
                 "--run-openai-response-failed-retries",
                 "0",
                 "--run-openai-response-failed-retry-delay-seconds",
                 "0.5",
+                "--run-openai-timeout-seconds",
+                "30",
             ]
         )
 
+        self.assertEqual(args.run_openai_max_retries, 0)
         self.assertEqual(args.run_openai_response_failed_retries, 0)
         self.assertEqual(
             args.run_openai_response_failed_retry_delay_seconds,
             0.5,
         )
+        self.assertEqual(args.run_openai_timeout_seconds, 30)
 
     def test_model_run_accepts_openai_response_failed_retry_options(
         self,
@@ -437,18 +443,24 @@ class CliOpenAIResponseFailedRetryOptionTestCase(TestCase):
                 "model",
                 "run",
                 "ai://env:OPENAI_API_KEY@openai/gpt-4o",
+                "--openai-max-retries",
+                "0",
                 "--openai-response-failed-retries",
                 "0",
                 "--openai-response-failed-retry-delay-seconds",
                 "0.25",
+                "--openai-timeout-seconds",
+                "45",
             ]
         )
 
+        self.assertEqual(args.openai_max_retries, 0)
         self.assertEqual(args.openai_response_failed_retries, 0)
         self.assertEqual(
             args.openai_response_failed_retry_delay_seconds,
             0.25,
         )
+        self.assertEqual(args.openai_timeout_seconds, 45)
 
     def test_model_run_rejects_negative_openai_response_failed_retries(
         self,

@@ -338,7 +338,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             input=[{"c": 1}],
             store=False,
             stream=True,
-            timeout=None,
         )
         StreamMock.assert_called_once_with(
             stream=stream_instance,
@@ -627,7 +626,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             ],
             store=False,
             stream=False,
-            timeout=None,
             instructions="top-level policy",
             max_output_tokens=10,
             text={"format": {"type": "json_object"}, "stop": ["END"]},
@@ -970,7 +968,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             input=[{"c": 1}],
             store=False,
             stream=False,
-            timeout=None,
         )
 
     async def test_model_loads_with_base_url_without_access_token(self):
@@ -1031,8 +1028,10 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             access_token="token",
             base_url="https://api.openai.com/v1",
             provider_options={
+                "openai_max_retries": 0,
                 "openai_response_failed_retries": 2,
                 "openai_response_failed_retry_delay_seconds": 0.25,
+                "openai_timeout_seconds": 45,
             },
         )
         model = self.mod.OpenAIModel("deployment", settings)
@@ -1041,6 +1040,8 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.openai_stub.AsyncOpenAI.assert_called_once_with(
             base_url="https://api.openai.com/v1",
             api_key="token",
+            max_retries=0,
+            timeout=45.0,
         )
         self.assertEqual(loaded._stream_response_failed_retries, 2)
         self.assertEqual(
@@ -1059,10 +1060,15 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
     async def test_model_rejects_invalid_provider_retry_options(self):
         cases: list[dict[str, Any]] = [
+            {"openai_max_retries": -1},
+            {"openai_max_retries": 1.5},
             {"openai_response_failed_retries": -1},
             {"openai_response_failed_retries": 1.5},
             {"openai_response_failed_retry_delay_seconds": -0.1},
             {"openai_response_failed_retry_delay_seconds": False},
+            {"openai_timeout_seconds": 0},
+            {"openai_timeout_seconds": -0.1},
+            {"openai_timeout_seconds": False},
         ]
 
         for provider_options in cases:
@@ -1194,6 +1200,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         }
         call_item = {
             "type": "function_call",
+            "id": "fc_1",
             "call_id": "call_1",
             "name": "lookup",
             "arguments": "{}",
@@ -1207,9 +1214,11 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             "status": "completed",
         }
         expected_reasoning = dict(reasoning_item)
+        expected_reasoning.pop("id")
         expected_reasoning.pop("status")
         expected_reasoning.pop("content")
         expected_call = dict(call_item)
+        expected_call.pop("id")
         expected_call.pop("status")
         expected_call.pop("namespace")
         expected_call["metadata"] = {"items": [{"value": 1}]}
@@ -1296,6 +1305,63 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             accumulate_canonical_stream_items(items).answer_text,
             "ok",
         )
+
+    async def test_stream_retries_response_failed_error_code_before_output(
+        self,
+    ):
+        cases = [
+            SimpleNamespace(
+                type="response.failed",
+                response=SimpleNamespace(
+                    status="failed",
+                    error={
+                        "code": "response_failed",
+                        "message": "response failed",
+                    },
+                    output=[],
+                ),
+            ),
+            SimpleNamespace(
+                type="response.failed",
+                error={
+                    "code": "response_failed",
+                    "message": "response failed",
+                },
+            ),
+        ]
+
+        for failed_event in cases:
+            with self.subTest(failed_event=failed_event):
+                retry_streams = []
+
+                async def retry_stream():
+                    retry_streams.append("retry")
+                    return AsyncIter(
+                        [
+                            SimpleNamespace(
+                                type="response.output_text.delta",
+                                delta="ok",
+                            ),
+                            SimpleNamespace(
+                                type="response.completed",
+                                response=SimpleNamespace(usage={}),
+                            ),
+                        ]
+                    )
+
+                stream = self.mod.OpenAIStream(
+                    AsyncIter([failed_event]),
+                    stream_factory=retry_stream,
+                    stream_retries=1,
+                )
+
+                items = await _stream_items(stream)
+
+                self.assertEqual(retry_streams, ["retry"])
+                self.assertEqual(
+                    accumulate_canonical_stream_items(items).answer_text,
+                    "ok",
+                )
 
     async def test_stream_retries_reasoning_only_response_failed(self):
         retry_streams = []
@@ -1410,7 +1476,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             [
                 {
                     "type": "reasoning",
-                    "id": "rs_1",
                     "encrypted_content": "ciphertext",
                 }
             ],
@@ -1907,6 +1972,39 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             stream_factory=ANY,
             stream_retry_delay_seconds=2.5,
             stream_retries=0,
+        )
+
+    async def test_client_openai_request_settings_override_defaults(self):
+        stream_instance = AsyncIter([])
+        request_client = MagicMock()
+        request_client.responses.create = AsyncMock(
+            return_value=stream_instance
+        )
+        sdk_client = self.openai_stub.AsyncOpenAI.return_value
+        sdk_client.with_options.return_value = request_client
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        client._template_messages = MagicMock(return_value=[{"c": 1}])
+        settings = GenerationSettings(
+            openai_max_retries=0,
+            openai_timeout_seconds=30,
+        )
+
+        with patch.object(self.mod, "OpenAIStream"):
+            await client("m", [], settings=settings)
+
+        sdk_client.with_options.assert_called_once_with(max_retries=0)
+        request_client.responses.create.assert_awaited_once_with(
+            extra_headers={
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            },
+            model="m",
+            input=[{"c": 1}],
+            store=False,
+            stream=True,
+            temperature=1.0,
+            top_p=1.0,
+            timeout=30.0,
         )
 
     async def test_stream_does_not_retry_failed_response_with_error(self):
@@ -3762,7 +3860,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             input=[{"c": 1}],
             store=False,
             stream=True,
-            timeout=None,
             max_output_tokens=10,
             temperature=0.5,
             top_p=0.8,
@@ -3780,10 +3877,15 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
     def test_generation_settings_rejects_invalid_openai_retry_values(self):
         cases: list[dict[str, Any]] = [
+            {"openai_max_retries": -1},
+            {"openai_max_retries": 1.5},
             {"openai_response_failed_retries": -1},
             {"openai_response_failed_retries": 1.5},
             {"openai_response_failed_retry_delay_seconds": -0.1},
             {"openai_response_failed_retry_delay_seconds": False},
+            {"openai_timeout_seconds": 0},
+            {"openai_timeout_seconds": -0.1},
+            {"openai_timeout_seconds": False},
         ]
 
         for kwargs in cases:
@@ -3829,7 +3931,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             input=[{"c": 1}],
             store=False,
             stream=False,
-            timeout=None,
             max_output_tokens=20,
             text={"format": {"type": "json_object"}, "stop": "END"},
             reasoning={"effort": "high"},
@@ -4128,7 +4229,6 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
             input=[{"role": "user", "content": "hi"}],
             store=False,
             stream=False,
-            timeout=None,
             temperature=1.0,
             top_p=1.0,
         )
@@ -4680,6 +4780,7 @@ class TemplateAndToolSchemaTestCase(TestCase):
         }
         call_item = {
             "type": "function_call",
+            "id": "fc_1",
             "call_id": "call_1",
             "name": "rg",
             "arguments": '{"pattern": "needle"}',
@@ -4710,8 +4811,16 @@ class TemplateAndToolSchemaTestCase(TestCase):
             templated,
             [
                 {"role": "user", "content": "search"},
-                reasoning_item,
-                call_item,
+                {
+                    "type": "reasoning",
+                    "encrypted_content": "encrypted",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "rg",
+                    "arguments": '{"pattern": "needle"}',
+                },
                 {
                     "type": "function_call_output",
                     "call_id": "call_1",
@@ -4729,18 +4838,21 @@ class TemplateAndToolSchemaTestCase(TestCase):
         }
         missing_call_item = {
             "type": "function_call",
+            "id": "fc_missing",
             "call_id": "call_missing",
             "name": "rg",
             "arguments": "{}",
         }
         call_item_a = {
             "type": "function_call",
+            "id": "fc_a",
             "call_id": "call_a",
             "name": "rg",
             "arguments": '{"pattern": "a"}',
         }
         call_item_b = {
             "type": "function_call",
+            "id": "fc_b",
             "call_id": "call_b",
             "name": "rg",
             "arguments": '{"pattern": "b"}',
@@ -4786,14 +4898,27 @@ class TemplateAndToolSchemaTestCase(TestCase):
             templated,
             [
                 {"role": "user", "content": "search"},
-                reasoning_item,
-                call_item_a,
+                {
+                    "type": "reasoning",
+                    "encrypted_content": "encrypted",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_a",
+                    "name": "rg",
+                    "arguments": '{"pattern": "a"}',
+                },
                 {
                     "type": "function_call_output",
                     "call_id": "call_a",
                     "output": '"match a"',
                 },
-                call_item_b,
+                {
+                    "type": "function_call",
+                    "call_id": "call_b",
+                    "name": "rg",
+                    "arguments": '{"pattern": "b"}',
+                },
                 {
                     "type": "function_call_output",
                     "call_id": "call_b",

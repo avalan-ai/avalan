@@ -142,8 +142,10 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             backend="transformers",
             run_max_new_tokens=10,
             run_skip_special_tokens=False,
+            run_openai_max_retries=None,
             run_openai_response_failed_retries=None,
             run_openai_response_failed_retry_delay_seconds=None,
+            run_openai_timeout_seconds=None,
             memory_recent=None,
             no_session=False,
             memory_permanent_message=None,
@@ -158,10 +160,13 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         result = agent_cmds.get_orchestrator_settings(
             args,
             agent_id=uid,
+            openai_max_retries=0,
             openai_response_failed_retries=0,
             openai_response_failed_retry_delay_seconds=0.5,
+            openai_timeout_seconds=30,
         )
 
+        self.assertEqual(result.call_options["openai_max_retries"], 0)
         self.assertEqual(
             result.call_options["openai_response_failed_retries"],
             0,
@@ -170,6 +175,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             result.call_options["openai_response_failed_retry_delay_seconds"],
             0.5,
         )
+        self.assertEqual(result.call_options["openai_timeout_seconds"], 30)
 
     def test_unlimited_maximum_tool_cycles(self):
         args = Namespace(

@@ -3,6 +3,7 @@ from .types import (
     SkillRegistryProtocol,
     assert_optional_non_negative_int,
     assert_optional_non_negative_number,
+    assert_optional_positive_number,
 )
 
 from collections.abc import Awaitable, Callable
@@ -542,10 +543,16 @@ class GenerationSettings:
     tool_choice: str | None = None
     # OpenAI Responses pre-output response.failed stream retries. None uses the
     # provider default.
+    openai_max_retries: int | None = None
     openai_response_failed_retries: int | None = None
     openai_response_failed_retry_delay_seconds: int | float | None = None
+    openai_timeout_seconds: int | float | None = None
 
     def __post_init__(self) -> None:
+        assert_optional_non_negative_int(
+            self.openai_max_retries,
+            "openai_max_retries",
+        )
         assert_optional_non_negative_int(
             self.openai_response_failed_retries,
             "openai_response_failed_retries",
@@ -553,6 +560,10 @@ class GenerationSettings:
         assert_optional_non_negative_number(
             self.openai_response_failed_retry_delay_seconds,
             "openai_response_failed_retry_delay_seconds",
+        )
+        assert_optional_positive_number(
+            self.openai_timeout_seconds,
+            "openai_timeout_seconds",
         )
 
 

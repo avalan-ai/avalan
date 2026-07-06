@@ -179,8 +179,10 @@ def get_orchestrator_settings(
     top_p: float | None = None,
     use_cache: bool | None = None,
     cache_strategy: GenerationCacheStrategy | None = None,
+    openai_max_retries: int | None = None,
     openai_response_failed_retries: int | None = None,
     openai_response_failed_retry_delay_seconds: int | float | None = None,
+    openai_timeout_seconds: int | float | None = None,
 ) -> OrchestratorSettings:
     """Create ``OrchestratorSettings`` from CLI arguments."""
     assert not (
@@ -241,6 +243,13 @@ def get_orchestrator_settings(
         call_options["use_cache"] = use_cache
     if cache_strategy is not None:
         call_options["cache_strategy"] = cache_strategy
+    call_openai_max_retries = (
+        openai_max_retries
+        if openai_max_retries is not None
+        else getattr(args, "run_openai_max_retries", None)
+    )
+    if call_openai_max_retries is not None:
+        call_options["openai_max_retries"] = call_openai_max_retries
     call_openai_response_failed_retries = (
         openai_response_failed_retries
         if openai_response_failed_retries is not None
@@ -263,6 +272,13 @@ def get_orchestrator_settings(
         call_options["openai_response_failed_retry_delay_seconds"] = (
             call_openai_response_failed_retry_delay_seconds
         )
+    call_openai_timeout_seconds = (
+        openai_timeout_seconds
+        if openai_timeout_seconds is not None
+        else getattr(args, "run_openai_timeout_seconds", None)
+    )
+    if call_openai_timeout_seconds is not None:
+        call_options["openai_timeout_seconds"] = call_openai_timeout_seconds
     if call_maximum_tool_cycles is not None:
         call_options["maximum_tool_cycles"] = call_maximum_tool_cycles
     if call_block_repeated_tool_calls is not None:
