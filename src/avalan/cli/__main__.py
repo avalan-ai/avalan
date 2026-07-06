@@ -42,7 +42,11 @@ from ..tool_cycles import (
     UNLIMITED_TOOL_CYCLES,
     MaximumToolCycles,
 )
-from ..types import assert_positive_int
+from ..types import (
+    assert_non_negative_int,
+    assert_non_negative_number,
+    assert_positive_int,
+)
 from ..utils import logger_replace
 
 import gettext
@@ -834,6 +838,30 @@ class CLI:
             raise ArgumentTypeError("must be an integer") from exc
         try:
             assert_positive_int(parsed, "value")
+        except AssertionError as exc:
+            raise ArgumentTypeError(str(exc)) from exc
+        return parsed
+
+    @staticmethod
+    def _non_negative_integer(value: str) -> int:
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise ArgumentTypeError("must be an integer") from exc
+        try:
+            assert_non_negative_int(parsed, "value")
+        except AssertionError as exc:
+            raise ArgumentTypeError(str(exc)) from exc
+        return parsed
+
+    @staticmethod
+    def _non_negative_number(value: str) -> float:
+        try:
+            parsed = float(value)
+        except ValueError as exc:
+            raise ArgumentTypeError("must be numeric") from exc
+        try:
+            assert_non_negative_number(parsed, "value")
         except AssertionError as exc:
             raise ArgumentTypeError(str(exc)) from exc
         return parsed
@@ -3137,6 +3165,24 @@ class CLI:
             help="Maximum number of tokens to generate",
         )
         model_run_parser.add_argument(
+            "--openai-response-failed-retries",
+            type=CLI._non_negative_integer,
+            default=None,
+            help=(
+                "OpenAI Responses pre-output response.failed stream retries. "
+                "Set to 0 to disable."
+            ),
+        )
+        model_run_parser.add_argument(
+            "--openai-response-failed-retry-delay-seconds",
+            type=CLI._non_negative_number,
+            default=None,
+            help=(
+                "OpenAI Responses pre-output response.failed retry delay "
+                "in seconds."
+            ),
+        )
+        model_run_parser.add_argument(
             "--modality",
             default=Modality.TEXT_GENERATION,
             type=str,
@@ -3784,6 +3830,14 @@ class CLI:
             default=None,
         )
         group.add_argument(
+            "--block-repeated-tool-calls",
+            "--run-block-repeated-tool-calls",
+            action="store_true",
+            default=None,
+            dest="run_block_repeated_tool_calls",
+            help="Stop repeated same-name/same-argument tool calls.",
+        )
+        group.add_argument(
             "--run-skip-special-tokens",
             action="store_true",
             default=False,
@@ -3802,6 +3856,24 @@ class CLI:
             choices=[c.value for c in GenerationCacheStrategy],
             dest="run_cache_strategy",
             help="Cache implementation to use for generation",
+        )
+        group.add_argument(
+            "--run-openai-response-failed-retries",
+            type=CLI._non_negative_integer,
+            default=None,
+            help=(
+                "OpenAI Responses pre-output response.failed stream retries. "
+                "Set to 0 to disable."
+            ),
+        )
+        group.add_argument(
+            "--run-openai-response-failed-retry-delay-seconds",
+            type=CLI._non_negative_number,
+            default=None,
+            help=(
+                "OpenAI Responses pre-output response.failed retry delay "
+                "in seconds."
+            ),
         )
         group.add_argument(
             "--run-temperature",

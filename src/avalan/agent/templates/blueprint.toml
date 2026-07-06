@@ -74,10 +74,19 @@ use_cache = {{ orchestrator.call_options['use_cache'] | lower }}
 {% if orchestrator.call_options.get('cache_strategy') %}
 cache_strategy = "{{ orchestrator.call_options['cache_strategy'] }}"
 {% endif %}
+{% if orchestrator.call_options.get('openai_response_failed_retries') is not none %}
+openai_response_failed_retries = {{ orchestrator.call_options['openai_response_failed_retries'] }}
+{% endif %}
+{% if orchestrator.call_options.get('openai_response_failed_retry_delay_seconds') is not none %}
+openai_response_failed_retry_delay_seconds = {{ orchestrator.call_options['openai_response_failed_retry_delay_seconds'] }}
+{% endif %}
 {% if orchestrator.call_options.get('maximum_tool_cycles') is not none %}
 {% if orchestrator.call_options['maximum_tool_cycles'] is number %}maximum_tool_cycles = {{ orchestrator.call_options['maximum_tool_cycles'] }}
 {% else %}maximum_tool_cycles = "{{ orchestrator.call_options['maximum_tool_cycles'] }}"
 {% endif %}
+{% endif %}
+{% if orchestrator.call_options.get('block_repeated_tool_calls') is not none %}
+block_repeated_tool_calls = {{ orchestrator.call_options['block_repeated_tool_calls'] | lower }}
 {% endif %}
 {% if orchestrator.call_options.get('chat_settings') %}
 

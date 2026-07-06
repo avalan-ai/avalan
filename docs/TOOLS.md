@@ -927,6 +927,9 @@ local runs often use `harmony`, while DS4 native tool calls use `dsml`.
   browse authenticated sessions, call remote services, or spend money.
 - Set `--maximum-tool-cycles N` to cap model/tool loops, or use
   `--maximum-tool-cycles unlimited` to remove only the numeric cycle cap.
+- Repeated same-name/same-argument tool calls execute by default. Use
+  `--block-repeated-tool-calls` to restore repeated-call and duplicate
+  observation guards.
 - Prefer read-only database settings and narrow `allowed_commands`.
 - For read-only database agents, enable explicit database tools and exclude
   `database.kill`.

@@ -24,7 +24,11 @@ from .....model.stream import (
     TextGenerationStream,
 )
 from .....tool.manager import ToolManager
-from .....types import LooseJsonValue
+from .....types import (
+    LooseJsonValue,
+    assert_non_negative_int,
+    assert_non_negative_number,
+)
 from .....utils import to_json, tool_call_diagnostic_payload
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -34,8 +38,17 @@ from . import (
     TextGenerationVendorModel,
 )
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from asyncio import CancelledError, sleep
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Mapping,
+    Sequence,
+)
+from copy import deepcopy
 from importlib import import_module
+from inspect import isawaitable
 from mimetypes import guess_type
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -49,6 +62,7 @@ Omit: type[Any] = _OmitPlaceholder
 
 
 class OpenAIStream(TextGenerationVendorStream):
+    _STREAM_RETRY_MAX_DELAY_SECONDS = 8.0
     _TEXT_DELTA_EVENTS = {"response.text.delta", "response.output_text.delta"}
     _TEXT_DONE_EVENTS = {"response.text.done", "response.output_text.done"}
     _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
@@ -76,13 +90,28 @@ class OpenAIStream(TextGenerationVendorStream):
     _canonical_done_tool_call_ids: set[str]
     _answer_text_seen: bool
     _answer_done_seen: bool
+    _output_item_sink: Callable[[dict[str, Any]], None] | None
+    _stream_factory: Callable[[], Awaitable[AsyncIterator[Any]]] | None
+    _stream_retry_delay_seconds: float
+    _stream_retries: int
     _tool_manager: ToolManager | None
+    _last_text_delta_alias_key: tuple[object, ...] | None
+    _last_text_delta_alias_event_type: str | None
+    _attempt_output_item_count: int
+    _output_item_rollback: Callable[[int], None] | None
 
     def __init__(
         self,
         stream: AsyncIterator[Any],
         *,
         provider_family: ProviderFamily | str = ProviderFamily.OPENAI,
+        output_item_sink: Callable[[dict[str, Any]], None] | None = None,
+        output_item_rollback: Callable[[int], None] | None = None,
+        stream_factory: (
+            Callable[[], Awaitable[AsyncIterator[Any]]] | None
+        ) = None,
+        stream_retry_delay_seconds: float = 0,
+        stream_retries: int = 0,
         tool: ToolManager | None = None,
     ) -> None:
         self._stream = stream
@@ -92,7 +121,15 @@ class OpenAIStream(TextGenerationVendorStream):
         self._canonical_done_tool_call_ids = set()
         self._answer_text_seen = False
         self._answer_done_seen = False
+        self._output_item_sink = output_item_sink
+        self._output_item_rollback = output_item_rollback
+        self._stream_factory = stream_factory
+        self._stream_retry_delay_seconds = stream_retry_delay_seconds
+        self._stream_retries = stream_retries
         self._tool_manager = tool
+        self._last_text_delta_alias_key = None
+        self._last_text_delta_alias_event_type = None
+        self._attempt_output_item_count = 0
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -128,12 +165,7 @@ class OpenAIStream(TextGenerationVendorStream):
         capabilities: StreamProviderCapabilities | None = None,
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
-        self._canonical_tool_calls = {}
-        self._tool_call_ids_by_item_id = {}
-        self._canonical_ready_tool_call_ids = set()
-        self._canonical_done_tool_call_ids = set()
-        self._answer_text_seen = False
-        self._answer_done_seen = False
+        self._reset_response_attempt_state()
         return self._provider_canonical_stream(
             self._provider_events(),
             stream_session_id=stream_session_id,
@@ -155,25 +187,192 @@ class OpenAIStream(TextGenerationVendorStream):
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
         try:
-            async for event in self._stream:
-                event_type_value = OpenAIClient._response_field(event, "type")
-                provider_event_type = (
-                    event_type_value
-                    if isinstance(event_type_value, str)
-                    else None
+            attempts = 0
+            while True:
+                retry = False
+                output_seen = False
+                async for event in self._stream:
+                    event_type_value = OpenAIClient._response_field(
+                        event, "type"
+                    )
+                    provider_event_type = (
+                        event_type_value
+                        if isinstance(event_type_value, str)
+                        else None
+                    )
+                    try:
+                        provider_events = self._provider_events_from_event(
+                            event
+                        )
+                    except Exception as exc:
+                        raise StreamProviderAdapterError(
+                            exc,
+                            provider_payload=self._provider_payload(event),
+                            provider_event_type=provider_event_type,
+                        ) from exc
+                    if self._should_retry_stream_failure(
+                        event,
+                        provider_events,
+                        output_seen=output_seen,
+                        attempts=attempts,
+                    ):
+                        retry = True
+                        break
+                    for provider_event in provider_events:
+                        if self._is_model_output_event(provider_event):
+                            output_seen = True
+                        yield provider_event
+                if not retry:
+                    break
+                await self._close_current_stream()
+                self._rollback_response_attempt_output_items()
+                self._reset_response_attempt_state()
+                await self._raise_if_retry_interrupted()
+                assert self._stream_factory is not None
+                delay = min(
+                    self._stream_retry_delay_seconds * (2**attempts),
+                    max(
+                        self._stream_retry_delay_seconds,
+                        self._STREAM_RETRY_MAX_DELAY_SECONDS,
+                    ),
                 )
-                try:
-                    provider_events = self._provider_events_from_event(event)
-                except Exception as exc:
-                    raise StreamProviderAdapterError(
-                        exc,
-                        provider_payload=self._provider_payload(event),
-                        provider_event_type=provider_event_type,
-                    ) from exc
-                for provider_event in provider_events:
-                    yield provider_event
+                if delay > 0:
+                    await sleep(delay)
+                await self._raise_if_retry_interrupted()
+                attempts += 1
+                stream = await self._stream_factory()
+                await self._raise_if_retry_interrupted(stream)
+                self._stream = stream
+                self._stream_sources = (self._stream,)
         finally:
             await self.aclose()
+
+    def _should_retry_stream_failure(
+        self,
+        event: object,
+        provider_events: tuple[StreamProviderEvent, ...],
+        *,
+        output_seen: bool,
+        attempts: int,
+    ) -> bool:
+        if (
+            self._stream_factory is None
+            or attempts >= self._stream_retries
+            or output_seen
+        ):
+            return False
+        if OpenAIClient._response_field(event, "type") != "response.failed":
+            return False
+        response = OpenAIClient._response_field(event, "response")
+        if OpenAIClient._response_field(response, "error") is not None:
+            return False
+        return any(
+            provider_event.kind is StreamItemKind.STREAM_ERRORED
+            for provider_event in provider_events
+        )
+
+    @staticmethod
+    def _is_model_output_event(event: StreamProviderEvent) -> bool:
+        return event.kind in {
+            StreamItemKind.ANSWER_DELTA,
+            StreamItemKind.ANSWER_DONE,
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            StreamItemKind.TOOL_CALL_READY,
+            StreamItemKind.TOOL_CALL_DONE,
+        }
+
+    def _is_duplicate_text_delta_alias(
+        self,
+        event: object,
+        event_type: str,
+        delta: str,
+    ) -> bool:
+        key = (
+            delta,
+            OpenAIClient._response_field(event, "item_id"),
+            OpenAIClient._response_field(event, "output_index"),
+            OpenAIClient._response_field(event, "content_index"),
+            OpenAIClient._response_field(event, "sequence_number"),
+        )
+        duplicate = (
+            self._last_text_delta_alias_key == key
+            and self._last_text_delta_alias_event_type != event_type
+            and self._last_text_delta_alias_event_type
+            in self._TEXT_DELTA_EVENTS
+        )
+        self._last_text_delta_alias_key = key
+        self._last_text_delta_alias_event_type = event_type
+        return duplicate
+
+    def _reset_response_attempt_state(self) -> None:
+        self._canonical_tool_calls = {}
+        self._tool_call_ids_by_item_id = {}
+        self._canonical_ready_tool_call_ids = set()
+        self._canonical_done_tool_call_ids = set()
+        self._answer_text_seen = False
+        self._answer_done_seen = False
+        self._last_text_delta_alias_key = None
+        self._last_text_delta_alias_event_type = None
+        self._attempt_output_item_count = 0
+
+    def _rollback_response_attempt_output_items(self) -> None:
+        if self._attempt_output_item_count <= 0:
+            return
+        rollback = self._output_item_rollback
+        if rollback is None:
+            return
+        rollback(self._attempt_output_item_count)
+
+    async def _close_current_stream(self) -> None:
+        await self._call_stream_source_cleanup(self._stream, "aclose")
+
+    async def _raise_if_retry_interrupted(
+        self,
+        stream: AsyncIterator[Any] | None = None,
+    ) -> None:
+        if not (self._stream_cancelled or self._stream_closed):
+            return
+        if stream is not None:
+            await self._call_stream_source_cleanup(stream, "aclose")
+        raise CancelledError()
+
+    async def _call_stream_cleanup(self, method_name: str) -> None:
+        assert method_name in ("cancel", "aclose")
+        errors: list[Exception] = []
+        for source in self._cleanup_sources():
+            try:
+                await self._call_stream_source_cleanup(source, method_name)
+            except Exception as exc:
+                errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("vendor stream cleanup failed", errors)
+
+    @staticmethod
+    async def _call_stream_source_cleanup(
+        source: object,
+        method_name: str,
+    ) -> None:
+        method_names = (
+            ("cancel", "close", "aclose")
+            if method_name == "cancel"
+            else ("aclose", "close")
+        )
+        method = None
+        for cleanup_method_name in method_names:
+            method = getattr(source, cleanup_method_name, None)
+            if method is not None:
+                break
+        else:
+            return
+        assert callable(method)
+        result = method()
+        if isawaitable(result):
+            awaited_result = await cast(Awaitable[object], result)
+            assert awaited_result is None
+        else:
+            assert result is None
 
     def _provider_events_from_event(
         self, event: object
@@ -220,18 +419,27 @@ class OpenAIStream(TextGenerationVendorStream):
         if event_type == "response.completed":
             return self._completion_events(event, provider_payload, event_type)
         if event_type in self._TEXT_DELTA_EVENTS:
+            if self._answer_done_seen:
+                return ()
+            delta = self._response_string_field(event, "delta", event_type)
+            if self._is_duplicate_text_delta_alias(
+                event,
+                event_type,
+                delta,
+            ):
+                return ()
             self._answer_text_seen = True
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.ANSWER_DELTA,
-                    text_delta=self._response_string_field(
-                        event, "delta", event_type
-                    ),
+                    text_delta=delta,
                     provider_payload=provider_payload,
                     provider_event_type=event_type,
                 ),
             )
         if event_type in self._TEXT_DONE_EVENTS:
+            if self._answer_done_seen:
+                return ()
             text = self._response_optional_string_field(
                 event, event_type, "text", "delta"
             )
@@ -292,8 +500,49 @@ class OpenAIStream(TextGenerationVendorStream):
         if event_type in self._TOOL_ARGUMENT_DONE_EVENTS:
             return self._tool_ready_events(event, provider_payload, event_type)
         if event_type == "response.output_item.done":
+            self._record_done_output_item(event)
             return self._tool_done_events(event, provider_payload, event_type)
         return ()
+
+    def _record_done_output_item(self, event: object) -> None:
+        if self._output_item_sink is None:
+            return
+        item = OpenAIClient._response_field(event, "item")
+        payload = self._provider_payload(item)
+        if not isinstance(payload, dict):
+            return
+        payload = self._response_input_item_payload(payload)
+        item_type = payload.get("type")
+        if item_type not in {"function_call", "reasoning"}:
+            return
+        self._output_item_sink(cast(dict[str, Any], payload))
+        self._attempt_output_item_count += 1
+
+    @classmethod
+    def _response_input_item_payload(
+        cls,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        cleaned: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key == "status" or value is None:
+                continue
+            if (
+                payload.get("type") == "reasoning"
+                and key == "content"
+                and value == []
+            ):
+                continue
+            cleaned[key] = cls._response_input_item_value(value)
+        return cleaned
+
+    @classmethod
+    def _response_input_item_value(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return cls._response_input_item_payload(value)
+        if isinstance(value, list):
+            return [cls._response_input_item_value(item) for item in value]
+        return value
 
     def _incomplete_events(
         self,
@@ -864,9 +1113,14 @@ class OpenAIStream(TextGenerationVendorStream):
 
 class OpenAIClient(TextGenerationVendor):
     _DEFAULT_MODEL_ID = "default"
+    _STREAM_RESPONSE_FAILED_RETRIES = 24
+    _STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS = 1.0
     _client: Any
     _extra_query: dict[str, str] | None
     _is_azure: bool
+    _stream_response_failed_retries: int
+    _stream_response_failed_retry_delay_seconds: float
+    _stateless_response_items: list[dict[str, Any]]
 
     def __init__(
         self,
@@ -874,13 +1128,30 @@ class OpenAIClient(TextGenerationVendor):
         base_url: str | None,
         *,
         azure_api_version: str | None = None,
+        stream_response_failed_retries: int = (
+            _STREAM_RESPONSE_FAILED_RETRIES
+        ),
+        stream_response_failed_retry_delay_seconds: int | float = (
+            _STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS
+        ),
     ):
         global Omit
 
+        self._stream_response_failed_retries = (
+            self._normalize_response_failed_retries(
+                stream_response_failed_retries
+            )
+        )
+        self._stream_response_failed_retry_delay_seconds = (
+            self._normalize_response_failed_retry_delay_seconds(
+                stream_response_failed_retry_delay_seconds
+            )
+        )
         self._is_azure = self._is_azure_base_url(base_url)
         self._extra_query = self._azure_extra_query(
             base_url, azure_api_version
         )
+        self._stateless_response_items = []
         if self._is_azure and api_key is None:
             raise AssertionError(
                 "Azure OpenAI Responses requires api-key authentication"
@@ -912,6 +1183,8 @@ class OpenAIClient(TextGenerationVendor):
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
         template_messages = self._template_messages(messages, tool=tool)
+        if not self._has_function_call_context(template_messages):
+            self._stateless_response_items.clear()
         use_reasoning_profile = self._uses_reasoning_profile(model_id)
         kwargs: dict[str, Any] = {
             "extra_headers": {
@@ -944,11 +1217,22 @@ class OpenAIClient(TextGenerationVendor):
             reasoning = OpenAIClient._reasoning_config(settings)
             if reasoning:
                 kwargs["reasoning"] = reasoning
+                kwargs["include"] = ["reasoning.encrypted_content"]
             prompt_cache_retention = (
                 OpenAIClient._prompt_cache_retention_config(settings)
             )
             if prompt_cache_retention is not None:
                 kwargs["prompt_cache_retention"] = prompt_cache_retention
+        stream_response_failed_retries = OpenAIClient._response_failed_retries(
+            settings,
+            default=self._stream_response_failed_retries,
+        )
+        stream_response_failed_retry_delay_seconds = (
+            OpenAIClient._response_failed_retry_delay_seconds(
+                settings,
+                default=(self._stream_response_failed_retry_delay_seconds),
+            )
+        )
         if tool:
             schemas = OpenAIClient._tool_schemas(tool)
             if schemas:
@@ -959,15 +1243,29 @@ class OpenAIClient(TextGenerationVendor):
                         schemas,
                         tool=tool,
                     )
-        client_stream = await self._client.responses.create(**kwargs)
+
+        async def create_response() -> Any:
+            return await self._client.responses.create(**kwargs)
+
+        async def stream_factory() -> AsyncIterator[Any]:
+            return cast(AsyncIterator[Any], await create_response())
+
+        client_stream = await create_response()
 
         if use_async_generator:
             stream_kwargs: dict[str, Any] = {}
             if isinstance(tool, ToolManager):
                 stream_kwargs["tool"] = tool
             return OpenAIStream(
-                stream=client_stream,
+                stream=cast(AsyncIterator[Any], client_stream),
                 provider_family=self._usage_provider_family.value,
+                output_item_sink=self._record_stateless_response_item,
+                output_item_rollback=(self._rollback_stateless_response_items),
+                stream_factory=stream_factory,
+                stream_retry_delay_seconds=(
+                    stream_response_failed_retry_delay_seconds
+                ),
+                stream_retries=stream_response_failed_retries,
                 **stream_kwargs,
             )
 
@@ -988,6 +1286,66 @@ class OpenAIClient(TextGenerationVendor):
             ProviderFamily.AZURE_OPENAI
             if self._is_azure
             else ProviderFamily.OPENAI
+        )
+
+    @staticmethod
+    def _response_failed_retries(
+        settings: GenerationSettings | None,
+        *,
+        default: int,
+    ) -> int:
+        if settings is None or settings.openai_response_failed_retries is None:
+            return default
+        return OpenAIClient._normalize_response_failed_retries(
+            settings.openai_response_failed_retries
+        )
+
+    @staticmethod
+    def _response_failed_retry_delay_seconds(
+        settings: GenerationSettings | None,
+        *,
+        default: float,
+    ) -> float:
+        if (
+            settings is None
+            or settings.openai_response_failed_retry_delay_seconds is None
+        ):
+            return default
+        return OpenAIClient._normalize_response_failed_retry_delay_seconds(
+            settings.openai_response_failed_retry_delay_seconds
+        )
+
+    @staticmethod
+    def _normalize_response_failed_retries(value: object) -> int:
+        assert_non_negative_int(value, "openai_response_failed_retries")
+        assert isinstance(value, int)
+        return value
+
+    @staticmethod
+    def _normalize_response_failed_retry_delay_seconds(
+        value: object,
+    ) -> float:
+        assert_non_negative_number(
+            value,
+            "openai_response_failed_retry_delay_seconds",
+        )
+        assert isinstance(value, int | float)
+        return float(value)
+
+    @staticmethod
+    def _provider_response_failed_retries(
+        provider_options: Mapping[str, object],
+    ) -> int:
+        return OpenAIClient._normalize_response_failed_retries(
+            provider_options["openai_response_failed_retries"]
+        )
+
+    @staticmethod
+    def _provider_retry_delay_seconds(
+        provider_options: Mapping[str, object],
+    ) -> float:
+        return OpenAIClient._normalize_response_failed_retry_delay_seconds(
+            provider_options["openai_response_failed_retry_delay_seconds"]
         )
 
     def _template_messages(
@@ -1031,47 +1389,117 @@ class OpenAIClient(TextGenerationVendor):
                     for block in content
                     if isinstance(block, dict)
                 ]
+        response_item_messages = self._response_item_tool_messages(
+            tool_messages,
+            tool=tool,
+        )
+        if response_item_messages is not None:
+            messages_out.extend(response_item_messages)
+            return messages_out
+
         for tool_message in tool_messages:
-            outcome = (
-                tool_message.tool_call_result
-                or tool_message.tool_call_error
-                or tool_message.tool_call_diagnostic
+            messages_out.extend(
+                self._synthetic_tool_messages(tool_message, tool=tool)
             )
-            assert outcome is not None
+        return messages_out
 
-            output: Any
-            if isinstance(outcome, ToolCallDiagnostic):
-                call_id_value = outcome.call_id
-                if call_id_value is None:
-                    messages_out.append(
-                        {
-                            "role": str(MessageRole.ASSISTANT),
-                            "content": to_json(
-                                tool_call_diagnostic_payload(outcome)
-                            ),
-                        }
-                    )
-                    continue
-                call_id = str(call_id_value)
-                name = (
-                    tool_message.name
-                    or outcome.canonical_name
-                    or outcome.requested_name
-                    or "tool"
-                )
-                arguments = tool_message.arguments
-                output = tool_call_diagnostic_payload(outcome)
-            else:
-                call_id = str(outcome.call.id)
-                name = outcome.call.name
-                arguments = outcome.call.arguments
-                output = (
-                    outcome.result
-                    if isinstance(outcome, ToolCallResult)
-                    else {"error": outcome.message}
-                )
+    def _response_item_tool_messages(
+        self,
+        tool_messages: list[Message],
+        *,
+        tool: ToolManager | None = None,
+    ) -> list[dict[str, Any]] | None:
+        if not self._stateless_response_items:
+            return None
 
-            call_message = {
+        synthetic_records: list[tuple[str | None, list[dict[str, Any]]]] = []
+        outputs_by_call_id: dict[str, dict[str, Any]] = {}
+        for tool_message in tool_messages:
+            synthetic = self._synthetic_tool_messages(
+                tool_message,
+                tool=tool,
+            )
+            call_id: str | None = None
+            if len(synthetic) == 2:
+                synthetic_call_id = synthetic[0].get("call_id")
+                if isinstance(synthetic_call_id, str) and synthetic_call_id:
+                    call_id = synthetic_call_id
+                    outputs_by_call_id[call_id] = synthetic[1]
+            synthetic_records.append((call_id, synthetic))
+
+        if not synthetic_records:
+            return []
+
+        messages: list[dict[str, Any]] = []
+        matched_call_ids: set[str] = set()
+        for response_item in self._stateless_response_items:
+            item_type = response_item.get("type")
+            if item_type == "reasoning":
+                messages.append(deepcopy(response_item))
+                continue
+            if item_type != "function_call":
+                continue
+            call_id = response_item.get("call_id")
+            if not isinstance(call_id, str):
+                continue
+            result_message = outputs_by_call_id.get(call_id)
+            if result_message is not None:
+                messages.append(deepcopy(response_item))
+                messages.append(deepcopy(result_message))
+                matched_call_ids.add(call_id)
+
+        for call_id, synthetic in synthetic_records:
+            if call_id is not None and call_id in matched_call_ids:
+                continue
+            messages.extend(deepcopy(synthetic))
+        return messages
+
+    def _synthetic_tool_messages(
+        self,
+        tool_message: Message,
+        *,
+        tool: ToolManager | None = None,
+    ) -> list[dict[str, Any]]:
+        outcome = (
+            tool_message.tool_call_result
+            or tool_message.tool_call_error
+            or tool_message.tool_call_diagnostic
+        )
+        assert outcome is not None
+
+        output: Any
+        if isinstance(outcome, ToolCallDiagnostic):
+            call_id_value = outcome.call_id
+            if call_id_value is None:
+                return [
+                    {
+                        "role": str(MessageRole.ASSISTANT),
+                        "content": to_json(
+                            tool_call_diagnostic_payload(outcome)
+                        ),
+                    }
+                ]
+            call_id = str(call_id_value)
+            name = (
+                tool_message.name
+                or outcome.canonical_name
+                or outcome.requested_name
+                or "tool"
+            )
+            arguments = tool_message.arguments
+            output = tool_call_diagnostic_payload(outcome)
+        else:
+            call_id = str(outcome.call.id)
+            name = outcome.call.name
+            arguments = outcome.call.arguments
+            output = (
+                outcome.result
+                if isinstance(outcome, ToolCallResult)
+                else {"error": outcome.message}
+            )
+
+        return [
+            {
                 "type": "function_call",
                 "name": TextGenerationVendor.provider_tool_name(
                     name,
@@ -1080,16 +1508,35 @@ class OpenAIClient(TextGenerationVendor):
                 ),
                 "call_id": call_id,
                 "arguments": to_json(arguments),
-            }
-            messages_out.append(call_message)
-
-            result_message = {
+            },
+            {
                 "type": "function_call_output",
                 "call_id": call_id,
                 "output": to_json(output),
-            }
-            messages_out.append(result_message)
-        return messages_out
+            },
+        ]
+
+    def _record_stateless_response_item(self, item: dict[str, Any]) -> None:
+        self._stateless_response_items.append(deepcopy(item))
+
+    def _rollback_stateless_response_items(self, count: int) -> None:
+        assert isinstance(count, int)
+        assert count > 0
+        del self._stateless_response_items[-count:]
+
+    @staticmethod
+    def _has_function_call_context(
+        messages: list[TemplateMessage] | list[dict[str, Any]],
+    ) -> bool:
+        for message in messages:
+            if not isinstance(message, Mapping):
+                continue
+            if message.get("type") in {
+                "function_call",
+                "function_call_output",
+            }:
+                return True
+        return False
 
     @staticmethod
     def _reasoning_config(
@@ -1506,12 +1953,33 @@ class OpenAIModel(TextGenerationVendorModel):
             self._settings.provider_options,
             "azure_api_version",
         )
-        client_kwargs: dict[str, str | None] = {
+        client_kwargs: dict[str, Any] = {
             "api_key": self._settings.access_token,
             "base_url": self._settings.base_url,
         }
         if azure_api_version is not None:
             client_kwargs["azure_api_version"] = azure_api_version
+        provider_options = self._settings.provider_options
+        if (
+            provider_options is not None
+            and "openai_response_failed_retries" in provider_options
+        ):
+            client_kwargs["stream_response_failed_retries"] = (
+                OpenAIClient._provider_response_failed_retries(
+                    provider_options
+                )
+            )
+        if (
+            provider_options is not None
+            and "openai_response_failed_retry_delay_seconds"
+            in provider_options
+        ):
+            retry_delay = OpenAIClient._provider_retry_delay_seconds(
+                provider_options
+            )
+            client_kwargs["stream_response_failed_retry_delay_seconds"] = (
+                retry_delay
+            )
         return OpenAIClient(**client_kwargs)
 
     async def __call__(

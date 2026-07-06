@@ -36,6 +36,8 @@ def test_get_operation_from_arguments_maps_reasoning_effort():
         max_new_tokens=32,
         min_p=None,
         no_reasoning=False,
+        openai_response_failed_retries=0,
+        openai_response_failed_retry_delay_seconds=0.5,
         reasoning_effort="xhigh",
         reasoning_max_new_tokens=12,
         reasoning_stop_on_max_new_tokens=True,
@@ -58,4 +60,9 @@ def test_get_operation_from_arguments_maps_reasoning_effort():
     assert reasoning.stop_on_max_new_tokens is True
     assert reasoning.tag == ReasoningTag.THINK
     assert operation.generation_settings.chat_settings.enable_thinking is False
+    assert operation.generation_settings.openai_response_failed_retries == 0
+    assert (
+        operation.generation_settings.openai_response_failed_retry_delay_seconds
+        == 0.5
+    )
     assert operation.input == "hi"

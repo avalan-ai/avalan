@@ -2546,6 +2546,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             tool=tool,
+            block_repeated_tool_calls=True,
         )
         context = ToolCallContext(input=response._input, calls=[])
 

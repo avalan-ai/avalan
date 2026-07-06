@@ -170,6 +170,7 @@ def get_orchestrator_settings(
     memory_permanent_message: str | None = None,
     memory_permanent: list[str] | None = None,
     maximum_tool_cycles: MaximumToolCycles | None = None,
+    block_repeated_tool_calls: bool | None = None,
     max_new_tokens: int | None = None,
     temperature: float | None = None,
     tools: list[str] | None | _Unset = _UNSET,
@@ -178,6 +179,8 @@ def get_orchestrator_settings(
     top_p: float | None = None,
     use_cache: bool | None = None,
     cache_strategy: GenerationCacheStrategy | None = None,
+    openai_response_failed_retries: int | None = None,
+    openai_response_failed_retry_delay_seconds: int | float | None = None,
 ) -> OrchestratorSettings:
     """Create ``OrchestratorSettings`` from CLI arguments."""
     assert not (
@@ -203,6 +206,11 @@ def get_orchestrator_settings(
         maximum_tool_cycles
         if maximum_tool_cycles is not None
         else getattr(args, "run_maximum_tool_cycles", None)
+    )
+    call_block_repeated_tool_calls = (
+        block_repeated_tool_calls
+        if block_repeated_tool_calls is not None
+        else getattr(args, "run_block_repeated_tool_calls", None)
     )
     call_tool_choice = (
         tool_choice
@@ -233,8 +241,34 @@ def get_orchestrator_settings(
         call_options["use_cache"] = use_cache
     if cache_strategy is not None:
         call_options["cache_strategy"] = cache_strategy
+    call_openai_response_failed_retries = (
+        openai_response_failed_retries
+        if openai_response_failed_retries is not None
+        else getattr(args, "run_openai_response_failed_retries", None)
+    )
+    if call_openai_response_failed_retries is not None:
+        call_options["openai_response_failed_retries"] = (
+            call_openai_response_failed_retries
+        )
+    call_openai_response_failed_retry_delay_seconds = (
+        openai_response_failed_retry_delay_seconds
+        if openai_response_failed_retry_delay_seconds is not None
+        else getattr(
+            args,
+            "run_openai_response_failed_retry_delay_seconds",
+            None,
+        )
+    )
+    if call_openai_response_failed_retry_delay_seconds is not None:
+        call_options["openai_response_failed_retry_delay_seconds"] = (
+            call_openai_response_failed_retry_delay_seconds
+        )
     if call_maximum_tool_cycles is not None:
         call_options["maximum_tool_cycles"] = call_maximum_tool_cycles
+    if call_block_repeated_tool_calls is not None:
+        call_options["block_repeated_tool_calls"] = (
+            call_block_repeated_tool_calls
+        )
     if call_tool_choice is not None:
         call_options["tool_choice"] = call_tool_choice
     engine_config: dict[str, Any] = {

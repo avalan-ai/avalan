@@ -312,6 +312,29 @@ class CliThemeOptionTestCase(TestCase):
 
 
 class CliMaximumToolCyclesOptionTestCase(TestCase):
+    def test_agent_run_repeated_tool_calls_default_to_unspecified(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+
+        args = cli._parser.parse_args(["agent", "run"])
+
+        self.assertIsNone(args.run_block_repeated_tool_calls)
+
+    def test_agent_run_accepts_block_repeated_tool_calls_aliases(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+
+        for flag in (
+            "--block-repeated-tool-calls",
+            "--run-block-repeated-tool-calls",
+        ):
+            with self.subTest(flag=flag):
+                args = cli._parser.parse_args(["agent", "run", flag])
+
+                self.assertTrue(args.run_block_repeated_tool_calls)
+
     def test_agent_run_accepts_numeric_tool_cycles(self) -> None:
         cli = CLI(MagicMock())
 
@@ -379,6 +402,143 @@ class CliMaximumToolCyclesOptionTestCase(TestCase):
 
         self.assertEqual(exit_context.exception.code, 2)
         self.assertIn("positive integer or 'unlimited'", stderr.getvalue())
+
+
+class CliOpenAIResponseFailedRetryOptionTestCase(TestCase):
+    def test_agent_run_accepts_openai_response_failed_retry_options(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+
+        args = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--run-openai-response-failed-retries",
+                "0",
+                "--run-openai-response-failed-retry-delay-seconds",
+                "0.5",
+            ]
+        )
+
+        self.assertEqual(args.run_openai_response_failed_retries, 0)
+        self.assertEqual(
+            args.run_openai_response_failed_retry_delay_seconds,
+            0.5,
+        )
+
+    def test_model_run_accepts_openai_response_failed_retry_options(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+
+        args = cli._parser.parse_args(
+            [
+                "model",
+                "run",
+                "ai://env:OPENAI_API_KEY@openai/gpt-4o",
+                "--openai-response-failed-retries",
+                "0",
+                "--openai-response-failed-retry-delay-seconds",
+                "0.25",
+            ]
+        )
+
+        self.assertEqual(args.openai_response_failed_retries, 0)
+        self.assertEqual(
+            args.openai_response_failed_retry_delay_seconds,
+            0.25,
+        )
+
+    def test_model_run_rejects_negative_openai_response_failed_retries(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "model",
+                    "run",
+                    "ai://env:OPENAI_API_KEY@openai/gpt-4o",
+                    "--openai-response-failed-retries",
+                    "-1",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("must not be negative", stderr.getvalue())
+
+    def test_agent_run_rejects_invalid_openai_response_failed_retries(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "agent",
+                    "run",
+                    "--run-openai-response-failed-retries",
+                    "many",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("must be an integer", stderr.getvalue())
+
+    def test_agent_run_rejects_negative_openai_response_failed_delay(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "agent",
+                    "run",
+                    "--run-openai-response-failed-retry-delay-seconds",
+                    "-0.1",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("must not be negative", stderr.getvalue())
+
+    def test_model_run_rejects_invalid_openai_response_failed_delay(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "model",
+                    "run",
+                    "ai://env:OPENAI_API_KEY@openai/gpt-4o",
+                    "--openai-response-failed-retry-delay-seconds",
+                    "soon",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("must be numeric", stderr.getvalue())
 
 
 class CliParallelOptionTestCase(TestCase):

@@ -53,6 +53,7 @@ from uuid import UUID, uuid4
 
 _INPUT_TEMPLATE_REFERENCE_PATTERN = compile_regex(r"{{\s*input\b")
 _MAXIMUM_TOOL_CYCLE_OPTION_KEYS = ("maximum_tool_cycles", "max_tool_cycles")
+_BLOCK_REPEATED_TOOL_CALLS_OPTION_KEY = "block_repeated_tool_calls"
 
 
 class Orchestrator:
@@ -143,6 +144,14 @@ class Orchestrator:
             return DEFAULT_MAXIMUM_TOOL_CYCLES
         value = next(iter(values.values()))
         return validate_maximum_tool_cycles(value)
+
+    @staticmethod
+    def _pop_block_repeated_tool_calls(engine_args: dict[str, Any]) -> bool:
+        if _BLOCK_REPEATED_TOOL_CALLS_OPTION_KEY not in engine_args:
+            return False
+        value = engine_args.pop(_BLOCK_REPEATED_TOOL_CALLS_OPTION_KEY)
+        assert type(value) is bool, "block_repeated_tool_calls must be a bool"
+        return value
 
     @property
     def engine_agent(self) -> EngineAgent | None:
@@ -262,6 +271,9 @@ class Orchestrator:
         # Execute operation
         engine_args = {**(self._call_options or {}), **kwargs}
         maximum_tool_cycles = self._pop_maximum_tool_cycles(engine_args)
+        block_repeated_tool_calls = self._pop_block_repeated_tool_calls(
+            engine_args
+        )
         start = perf_counter()
         await self._event_manager.trigger(
             Event(
@@ -325,6 +337,7 @@ class Orchestrator:
             agent_id=self._id,
             participant_id=participant_id,
             session_id=session_id,
+            block_repeated_tool_calls=block_repeated_tool_calls,
             maximum_tool_cycles=maximum_tool_cycles,
         )
 
