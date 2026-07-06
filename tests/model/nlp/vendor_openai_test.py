@@ -344,6 +344,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             stream=stream_instance,
             provider_family="openai",
             output_item_sink=client._record_stateless_response_item,
+            output_item_rollback=client._rollback_stateless_response_items,
             stream_factory=ANY,
             stream_retry_delay_seconds=(
                 client._STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS
@@ -377,6 +378,127 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(items[1].text_delta, "hi")
         self.assertEqual({item.provider_family for item in items}, {"openai"})
+
+    async def test_stream_ignores_text_events_after_answer_done(self):
+        late_events = [
+            SimpleNamespace(type="response.output_text.delta", delta="late"),
+            SimpleNamespace(type="response.output_text.done", text="late"),
+        ]
+
+        for late_event in late_events:
+            with self.subTest(late_event=late_event.type):
+                stream = self.mod.OpenAIStream(
+                    AsyncIter(
+                        [
+                            SimpleNamespace(
+                                type="response.output_text.delta",
+                                delta="done",
+                            ),
+                            SimpleNamespace(type="response.output_text.done"),
+                            late_event,
+                        ]
+                    )
+                )
+
+                items = await _stream_items(stream)
+
+                self.assertEqual(
+                    [
+                        item.kind
+                        for item in items
+                        if item.kind
+                        in {
+                            StreamItemKind.ANSWER_DELTA,
+                            StreamItemKind.ANSWER_DONE,
+                        }
+                    ],
+                    [
+                        StreamItemKind.ANSWER_DELTA,
+                        StreamItemKind.ANSWER_DONE,
+                    ],
+                )
+                self.assertEqual(
+                    accumulate_canonical_stream_items(items).answer_text,
+                    "done",
+                )
+
+    async def test_stream_deduplicates_text_delta_alias_events(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_text.delta",
+                        delta="{",
+                        item_id="msg_1",
+                        output_index=0,
+                        content_index=0,
+                        sequence_number=1,
+                    ),
+                    SimpleNamespace(
+                        type="response.text.delta",
+                        delta="{",
+                        item_id="msg_1",
+                        output_index=0,
+                        content_index=0,
+                        sequence_number=1,
+                    ),
+                    SimpleNamespace(
+                        type="response.output_text.delta",
+                        delta="x",
+                        item_id="msg_1",
+                        output_index=0,
+                        content_index=0,
+                        sequence_number=2,
+                    ),
+                    SimpleNamespace(
+                        type="response.text.delta",
+                        delta="x",
+                        item_id="msg_1",
+                        output_index=0,
+                        content_index=0,
+                        sequence_number=2,
+                    ),
+                ]
+            )
+        )
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "{x",
+        )
+
+    async def test_stream_preserves_repeated_text_delta_tokens(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_text.delta",
+                        delta="0",
+                        item_id="msg_1",
+                        output_index=0,
+                        content_index=0,
+                        sequence_number=1,
+                    ),
+                    SimpleNamespace(
+                        type="response.output_text.delta",
+                        delta="0",
+                        item_id="msg_1",
+                        output_index=0,
+                        content_index=0,
+                        sequence_number=2,
+                    ),
+                ]
+            )
+        )
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "00",
+        )
 
     async def test_stream_direct_anext_yields_canonical_items(self):
         stream = self.mod.OpenAIStream(
@@ -926,6 +1048,15 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             0.25,
         )
 
+    async def test_client_response_failed_retry_default_budget(self):
+        client = self.mod.OpenAIClient(api_key="token", base_url="b")
+
+        self.assertEqual(client._stream_response_failed_retries, 24)
+        self.assertEqual(
+            client._stream_response_failed_retry_delay_seconds,
+            1.0,
+        )
+
     async def test_model_rejects_invalid_provider_retry_options(self):
         cases: list[dict[str, Any]] = [
             {"openai_response_failed_retries": -1},
@@ -1166,6 +1297,179 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             "ok",
         )
 
+    async def test_stream_retries_reasoning_only_response_failed(self):
+        retry_streams = []
+        collected: list[dict[str, Any]] = []
+        reasoning_item = {
+            "type": "reasoning",
+            "id": "rs_1",
+            "encrypted_content": "ciphertext",
+            "content": [],
+        }
+
+        def rollback(count: int) -> None:
+            del collected[-count:]
+
+        async def retry_stream():
+            retry_streams.append("retry")
+            return AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta="ok"
+                    ),
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(usage={}),
+                    ),
+                ]
+            )
+
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item=reasoning_item,
+                    ),
+                    SimpleNamespace(
+                        type="response.failed",
+                        response=SimpleNamespace(
+                            status="failed",
+                            error=None,
+                            output=[reasoning_item],
+                        ),
+                    ),
+                ]
+            ),
+            output_item_sink=collected.append,
+            output_item_rollback=rollback,
+            stream_factory=retry_stream,
+            stream_retries=1,
+        )
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(retry_streams, ["retry"])
+        self.assertEqual(collected, [])
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ok",
+        )
+
+    async def test_stream_retry_keeps_output_items_without_rollback(self):
+        retry_streams = []
+        collected: list[dict[str, Any]] = []
+        reasoning_item = {
+            "type": "reasoning",
+            "id": "rs_1",
+            "encrypted_content": "ciphertext",
+            "content": [],
+        }
+
+        async def retry_stream():
+            retry_streams.append("retry")
+            return AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta="ok"
+                    ),
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(usage={}),
+                    ),
+                ]
+            )
+
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item=reasoning_item,
+                    ),
+                    SimpleNamespace(
+                        type="response.failed",
+                        response=SimpleNamespace(
+                            status="failed",
+                            error=None,
+                            output=[reasoning_item],
+                        ),
+                    ),
+                ]
+            ),
+            output_item_sink=collected.append,
+            stream_factory=retry_stream,
+            stream_retries=1,
+        )
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(retry_streams, ["retry"])
+        self.assertEqual(
+            collected,
+            [
+                {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "encrypted_content": "ciphertext",
+                }
+            ],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ok",
+        )
+
+    async def test_stream_retries_unstreamed_failed_response_output(self):
+        cases = [
+            [{"type": "message", "id": "msg_1"}],
+            [{"type": "function_call", "call_id": "call_1"}],
+        ]
+
+        for output in cases:
+            with self.subTest(output=output):
+                retry_streams = []
+
+                async def retry_stream():
+                    retry_streams.append("retry")
+                    return AsyncIter(
+                        [
+                            SimpleNamespace(
+                                type="response.output_text.delta",
+                                delta="ok",
+                            ),
+                            SimpleNamespace(
+                                type="response.completed",
+                                response=SimpleNamespace(usage={}),
+                            ),
+                        ]
+                    )
+
+                stream = self.mod.OpenAIStream(
+                    AsyncIter(
+                        [
+                            SimpleNamespace(
+                                type="response.failed",
+                                response=SimpleNamespace(
+                                    status="failed",
+                                    error=None,
+                                    output=output,
+                                ),
+                            ),
+                        ]
+                    ),
+                    stream_factory=retry_stream,
+                    stream_retries=1,
+                )
+
+                items = await _stream_items(stream)
+
+                self.assertEqual(retry_streams, ["retry"])
+                self.assertEqual(
+                    accumulate_canonical_stream_items(items).answer_text,
+                    "ok",
+                )
+
     async def test_client_retry_stream_factory_after_empty_response_failed(
         self,
     ):
@@ -1200,6 +1504,95 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertGreaterEqual(failed_stream.close_count, 1)
         sleep_mock.assert_awaited_once_with(1.0)
         self.assertEqual(create_mock.await_count, 2)
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ok",
+        )
+
+    async def test_stream_retry_delay_caps_exponential_backoff(self):
+        failed_streams = [
+            TrackedAsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.failed",
+                        response=SimpleNamespace(
+                            status="failed",
+                            error=None,
+                            output=[],
+                        ),
+                    )
+                ]
+            )
+            for _ in range(5)
+        ]
+        recovered_stream = AsyncIter(
+            [SimpleNamespace(type="response.output_text.delta", delta="ok")]
+        )
+        streams = [*failed_streams, recovered_stream]
+
+        async def retry_stream() -> AsyncIter | TrackedAsyncIter:
+            return streams.pop(0)
+
+        stream = self.mod.OpenAIStream(
+            streams.pop(0),
+            stream_factory=retry_stream,
+            stream_retries=5,
+            stream_retry_delay_seconds=1,
+        )
+
+        with patch.object(self.mod, "sleep", new=AsyncMock()) as sleep_mock:
+            items = await _stream_items(stream)
+
+        self.assertEqual(
+            [call.args[0] for call in sleep_mock.await_args_list],
+            [1, 2, 4, 8, 8],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ok",
+        )
+
+    async def test_client_retry_rolls_back_failed_reasoning_items(self):
+        reasoning_item = {
+            "type": "reasoning",
+            "id": "rs_1",
+            "encrypted_content": "ciphertext",
+            "content": [],
+        }
+        failed_stream = TrackedAsyncIter(
+            [
+                SimpleNamespace(
+                    type="response.output_item.done",
+                    item=reasoning_item,
+                ),
+                SimpleNamespace(
+                    type="response.failed",
+                    response=SimpleNamespace(
+                        status="failed",
+                        error=None,
+                        output=[reasoning_item],
+                    ),
+                ),
+            ]
+        )
+        recovered_stream = AsyncIter(
+            [SimpleNamespace(type="response.output_text.delta", delta="ok")]
+        )
+        create_mock = AsyncMock(side_effect=[failed_stream, recovered_stream])
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        client._template_messages = MagicMock(
+            return_value=[{"role": "user", "content": "hi"}]
+        )
+
+        with patch.object(self.mod, "sleep", new=AsyncMock()):
+            stream = await client("m", [])
+            items = await _stream_items(stream)
+
+        self.assertEqual(create_mock.await_count, 2)
+        self.assertEqual(client._stateless_response_items, [])
         self.assertEqual(
             accumulate_canonical_stream_items(items).answer_text,
             "ok",
@@ -1510,24 +1903,18 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             stream=stream_instance,
             provider_family="openai",
             output_item_sink=client._record_stateless_response_item,
+            output_item_rollback=client._rollback_stateless_response_items,
             stream_factory=ANY,
             stream_retry_delay_seconds=2.5,
             stream_retries=0,
         )
 
-    async def test_stream_does_not_retry_failed_response_with_error_or_output(
-        self,
-    ):
+    async def test_stream_does_not_retry_failed_response_with_error(self):
         cases = [
             SimpleNamespace(
                 status="failed",
                 error=SimpleNamespace(message="boom"),
                 output=[],
-            ),
-            SimpleNamespace(
-                status="failed",
-                error=None,
-                output=[{"type": "message"}],
             ),
         ]
 

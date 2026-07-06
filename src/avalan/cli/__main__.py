@@ -3169,7 +3169,7 @@ class CLI:
             type=CLI._non_negative_integer,
             default=None,
             help=(
-                "OpenAI Responses empty response.failed stream retries. "
+                "OpenAI Responses pre-output response.failed stream retries. "
                 "Set to 0 to disable."
             ),
         )
@@ -3178,7 +3178,7 @@ class CLI:
             type=CLI._non_negative_number,
             default=None,
             help=(
-                "OpenAI Responses empty response.failed retry delay "
+                "OpenAI Responses pre-output response.failed retry delay "
                 "in seconds."
             ),
         )
@@ -3862,7 +3862,7 @@ class CLI:
             type=CLI._non_negative_integer,
             default=None,
             help=(
-                "OpenAI Responses empty response.failed stream retries. "
+                "OpenAI Responses pre-output response.failed stream retries. "
                 "Set to 0 to disable."
             ),
         )
@@ -3871,7 +3871,7 @@ class CLI:
             type=CLI._non_negative_number,
             default=None,
             help=(
-                "OpenAI Responses empty response.failed retry delay "
+                "OpenAI Responses pre-output response.failed retry delay "
                 "in seconds."
             ),
         )

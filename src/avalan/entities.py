@@ -540,7 +540,7 @@ class GenerationSettings:
     response_format: dict[str, Any] | None = None
     # Force an available tool by canonical name, when supported.
     tool_choice: str | None = None
-    # OpenAI Responses empty response.failed stream retries. None uses the
+    # OpenAI Responses pre-output response.failed stream retries. None uses the
     # provider default.
     openai_response_failed_retries: int | None = None
     openai_response_failed_retry_delay_seconds: int | float | None = None

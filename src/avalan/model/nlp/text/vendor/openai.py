@@ -22,7 +22,6 @@ from .....model.stream import (
     StreamVisibility,
     TextGenerationSingleStream,
     TextGenerationStream,
-    is_stream_terminal_kind,
 )
 from .....tool.manager import ToolManager
 from .....types import (
@@ -63,6 +62,7 @@ Omit: type[Any] = _OmitPlaceholder
 
 
 class OpenAIStream(TextGenerationVendorStream):
+    _STREAM_RETRY_MAX_DELAY_SECONDS = 8.0
     _TEXT_DELTA_EVENTS = {"response.text.delta", "response.output_text.delta"}
     _TEXT_DONE_EVENTS = {"response.text.done", "response.output_text.done"}
     _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
@@ -95,6 +95,10 @@ class OpenAIStream(TextGenerationVendorStream):
     _stream_retry_delay_seconds: float
     _stream_retries: int
     _tool_manager: ToolManager | None
+    _last_text_delta_alias_key: tuple[object, ...] | None
+    _last_text_delta_alias_event_type: str | None
+    _attempt_output_item_count: int
+    _output_item_rollback: Callable[[int], None] | None
 
     def __init__(
         self,
@@ -102,6 +106,7 @@ class OpenAIStream(TextGenerationVendorStream):
         *,
         provider_family: ProviderFamily | str = ProviderFamily.OPENAI,
         output_item_sink: Callable[[dict[str, Any]], None] | None = None,
+        output_item_rollback: Callable[[int], None] | None = None,
         stream_factory: (
             Callable[[], Awaitable[AsyncIterator[Any]]] | None
         ) = None,
@@ -117,10 +122,14 @@ class OpenAIStream(TextGenerationVendorStream):
         self._answer_text_seen = False
         self._answer_done_seen = False
         self._output_item_sink = output_item_sink
+        self._output_item_rollback = output_item_rollback
         self._stream_factory = stream_factory
         self._stream_retry_delay_seconds = stream_retry_delay_seconds
         self._stream_retries = stream_retries
         self._tool_manager = tool
+        self._last_text_delta_alias_key = None
+        self._last_text_delta_alias_event_type = None
+        self._attempt_output_item_count = 0
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -156,12 +165,7 @@ class OpenAIStream(TextGenerationVendorStream):
         capabilities: StreamProviderCapabilities | None = None,
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
-        self._canonical_tool_calls = {}
-        self._tool_call_ids_by_item_id = {}
-        self._canonical_ready_tool_call_ids = set()
-        self._canonical_done_tool_call_ids = set()
-        self._answer_text_seen = False
-        self._answer_done_seen = False
+        self._reset_response_attempt_state()
         return self._provider_canonical_stream(
             self._provider_events(),
             stream_session_id=stream_session_id,
@@ -221,9 +225,17 @@ class OpenAIStream(TextGenerationVendorStream):
                 if not retry:
                     break
                 await self._close_current_stream()
+                self._rollback_response_attempt_output_items()
+                self._reset_response_attempt_state()
                 await self._raise_if_retry_interrupted()
                 assert self._stream_factory is not None
-                delay = self._stream_retry_delay_seconds * (2**attempts)
+                delay = min(
+                    self._stream_retry_delay_seconds * (2**attempts),
+                    max(
+                        self._stream_retry_delay_seconds,
+                        self._STREAM_RETRY_MAX_DELAY_SECONDS,
+                    ),
+                )
                 if delay > 0:
                     await sleep(delay)
                 await self._raise_if_retry_interrupted()
@@ -254,9 +266,6 @@ class OpenAIStream(TextGenerationVendorStream):
         response = OpenAIClient._response_field(event, "response")
         if OpenAIClient._response_field(response, "error") is not None:
             return False
-        output = OpenAIClient._response_field(response, "output")
-        if isinstance(output, Sequence) and output:
-            return False
         return any(
             provider_event.kind is StreamItemKind.STREAM_ERRORED
             for provider_event in provider_events
@@ -264,11 +273,55 @@ class OpenAIStream(TextGenerationVendorStream):
 
     @staticmethod
     def _is_model_output_event(event: StreamProviderEvent) -> bool:
-        return event.kind not in {
-            StreamItemKind.STREAM_COMPLETED,
-            StreamItemKind.STREAM_DIAGNOSTIC,
-            StreamItemKind.USAGE_COMPLETED,
-        } and not is_stream_terminal_kind(event.kind)
+        return event.kind in {
+            StreamItemKind.ANSWER_DELTA,
+            StreamItemKind.ANSWER_DONE,
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            StreamItemKind.TOOL_CALL_READY,
+            StreamItemKind.TOOL_CALL_DONE,
+        }
+
+    def _is_duplicate_text_delta_alias(
+        self,
+        event: object,
+        event_type: str,
+        delta: str,
+    ) -> bool:
+        key = (
+            delta,
+            OpenAIClient._response_field(event, "item_id"),
+            OpenAIClient._response_field(event, "output_index"),
+            OpenAIClient._response_field(event, "content_index"),
+            OpenAIClient._response_field(event, "sequence_number"),
+        )
+        duplicate = (
+            self._last_text_delta_alias_key == key
+            and self._last_text_delta_alias_event_type != event_type
+            and self._last_text_delta_alias_event_type
+            in self._TEXT_DELTA_EVENTS
+        )
+        self._last_text_delta_alias_key = key
+        self._last_text_delta_alias_event_type = event_type
+        return duplicate
+
+    def _reset_response_attempt_state(self) -> None:
+        self._canonical_tool_calls = {}
+        self._tool_call_ids_by_item_id = {}
+        self._canonical_ready_tool_call_ids = set()
+        self._canonical_done_tool_call_ids = set()
+        self._answer_text_seen = False
+        self._answer_done_seen = False
+        self._last_text_delta_alias_key = None
+        self._last_text_delta_alias_event_type = None
+        self._attempt_output_item_count = 0
+
+    def _rollback_response_attempt_output_items(self) -> None:
+        if self._attempt_output_item_count <= 0:
+            return
+        rollback = self._output_item_rollback
+        if rollback is None:
+            return
+        rollback(self._attempt_output_item_count)
 
     async def _close_current_stream(self) -> None:
         await self._call_stream_source_cleanup(self._stream, "aclose")
@@ -366,18 +419,27 @@ class OpenAIStream(TextGenerationVendorStream):
         if event_type == "response.completed":
             return self._completion_events(event, provider_payload, event_type)
         if event_type in self._TEXT_DELTA_EVENTS:
+            if self._answer_done_seen:
+                return ()
+            delta = self._response_string_field(event, "delta", event_type)
+            if self._is_duplicate_text_delta_alias(
+                event,
+                event_type,
+                delta,
+            ):
+                return ()
             self._answer_text_seen = True
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.ANSWER_DELTA,
-                    text_delta=self._response_string_field(
-                        event, "delta", event_type
-                    ),
+                    text_delta=delta,
                     provider_payload=provider_payload,
                     provider_event_type=event_type,
                 ),
             )
         if event_type in self._TEXT_DONE_EVENTS:
+            if self._answer_done_seen:
+                return ()
             text = self._response_optional_string_field(
                 event, event_type, "text", "delta"
             )
@@ -454,6 +516,7 @@ class OpenAIStream(TextGenerationVendorStream):
         if item_type not in {"function_call", "reasoning"}:
             return
         self._output_item_sink(cast(dict[str, Any], payload))
+        self._attempt_output_item_count += 1
 
     @classmethod
     def _response_input_item_payload(
@@ -1050,7 +1113,7 @@ class OpenAIStream(TextGenerationVendorStream):
 
 class OpenAIClient(TextGenerationVendor):
     _DEFAULT_MODEL_ID = "default"
-    _STREAM_RESPONSE_FAILED_RETRIES = 4
+    _STREAM_RESPONSE_FAILED_RETRIES = 24
     _STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS = 1.0
     _client: Any
     _extra_query: dict[str, str] | None
@@ -1197,6 +1260,7 @@ class OpenAIClient(TextGenerationVendor):
                 stream=cast(AsyncIterator[Any], client_stream),
                 provider_family=self._usage_provider_family.value,
                 output_item_sink=self._record_stateless_response_item,
+                output_item_rollback=(self._rollback_stateless_response_items),
                 stream_factory=stream_factory,
                 stream_retry_delay_seconds=(
                     stream_response_failed_retry_delay_seconds
@@ -1454,6 +1518,11 @@ class OpenAIClient(TextGenerationVendor):
 
     def _record_stateless_response_item(self, item: dict[str, Any]) -> None:
         self._stateless_response_items.append(deepcopy(item))
+
+    def _rollback_stateless_response_items(self, count: int) -> None:
+        assert isinstance(count, int)
+        assert count > 0
+        del self._stateless_response_items[-count:]
 
     @staticmethod
     def _has_function_call_context(
