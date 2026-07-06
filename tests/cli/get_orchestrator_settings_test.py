@@ -36,6 +36,7 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.uri, "ai://m")
         self.assertEqual(result.call_options["max_new_tokens"], 10)
         self.assertEqual(result.call_options["maximum_tool_cycles"], 64)
+        self.assertNotIn("block_repeated_tool_calls", result.call_options)
         self.assertEqual(result.engine_config, {"backend": "transformers"})
         self.assertEqual(result.agent_config, {"name": "a", "role": "r"})
         self.assertEqual(result.tools, [])
@@ -43,6 +44,62 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             result.sentence_model_id,
             OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
         )
+
+    def test_block_repeated_tool_calls_from_cli(self):
+        args = Namespace(
+            name="a",
+            role="r",
+            task=None,
+            instructions=None,
+            engine_uri="ai://m",
+            backend="transformers",
+            run_max_new_tokens=10,
+            run_block_repeated_tool_calls=True,
+            run_skip_special_tokens=False,
+            memory_recent=None,
+            no_session=False,
+            memory_permanent_message=None,
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=200,
+            memory_engine_overlap=20,
+            memory_engine_window=40,
+            tool=None,
+        )
+        uid = UUID("00000000-0000-0000-0000-000000000014")
+        result = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+
+        self.assertTrue(result.call_options["block_repeated_tool_calls"])
+
+    def test_block_repeated_tool_calls_from_kwarg(self):
+        args = Namespace(
+            name="a",
+            role="r",
+            task=None,
+            instructions=None,
+            engine_uri="ai://m",
+            backend="transformers",
+            run_max_new_tokens=10,
+            run_block_repeated_tool_calls=None,
+            run_skip_special_tokens=False,
+            memory_recent=None,
+            no_session=False,
+            memory_permanent_message=None,
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=200,
+            memory_engine_overlap=20,
+            memory_engine_window=40,
+            tool=None,
+        )
+        uid = UUID("00000000-0000-0000-0000-000000000015")
+        result = agent_cmds.get_orchestrator_settings(
+            args,
+            agent_id=uid,
+            block_repeated_tool_calls=True,
+        )
+
+        self.assertTrue(result.call_options["block_repeated_tool_calls"])
 
     def test_engine_base_url(self):
         args = Namespace(

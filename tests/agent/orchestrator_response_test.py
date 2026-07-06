@@ -11005,6 +11005,51 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         self.assertIs(tool_result_messages[0].tool_call_result, result)
         validate_canonical_stream_items(resp.canonical_items)
 
+    async def test_repeated_tool_attempt_executes_by_default(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id="call1", name="calc", arguments={"value": 1})
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.return_value = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="ok",
+        )
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("call", async_gen=False),
+            agent,
+            operation,
+            {},
+            tool=tool,
+        )
+        context = ToolCallContext(input=resp._input, calls=[])
+
+        first = await resp._execute_tool_call(
+            call,
+            context,
+            confirm=False,
+        )
+        second = await resp._execute_tool_call(
+            call,
+            context,
+            confirm=False,
+        )
+
+        self.assertIsInstance(first, ToolCallResult)
+        self.assertIsInstance(second, ToolCallResult)
+        self.assertEqual(tool.await_count, 2)
+        self.assertEqual(
+            resp._attempted_call_signature_details(),
+            [resp._call_signature(call)],
+        )
+
     async def test_repeated_tool_attempt_returns_guard_diagnostic(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
@@ -11028,6 +11073,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             tool=tool,
+            block_repeated_tool_calls=True,
         )
         context = ToolCallContext(input=resp._input, calls=[])
 
@@ -11074,6 +11120,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             tool=tool,
+            block_repeated_tool_calls=True,
         )
         context = ToolCallContext(input=resp._input, calls=[])
 
@@ -11143,7 +11190,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         )
         validate_canonical_stream_items(resp.canonical_items)
 
-    async def test_tool_cycle_guard_rejects_duplicate_and_maximum_cycles(
+    async def test_tool_cycle_guard_allows_duplicate_observation_by_default(
         self,
     ):
         engine = _DummyEngine()
@@ -11171,6 +11218,45 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(resp._should_continue_tool_cycle(messages, [result]))
+        self.assertTrue(resp._should_continue_tool_cycle(messages, [result]))
+        self.assertEqual(resp._tool_cycle_count, 2)
+        self.assertFalse(
+            any(
+                item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+                and item.data
+                and item.data.get("code")
+                == "orchestrator.tool_cycle.duplicate_observation"
+                for item in resp.canonical_items
+            )
+        )
+
+    async def test_tool_cycle_guard_rejects_duplicate_when_enabled(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id="call1", name="calc", arguments={"value": 1})
+        result = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="ok",
+        )
+        messages = OrchestratorResponse._tool_observation_messages(
+            result,
+            json_output=False,
+        )
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("call", async_gen=False),
+            agent,
+            operation,
+            {},
+            block_repeated_tool_calls=True,
+        )
+
+        self.assertTrue(resp._should_continue_tool_cycle(messages, [result]))
         self.assertFalse(resp._should_continue_tool_cycle(messages, [result]))
         self.assertEqual(
             resp.canonical_items[-1].data["code"],
@@ -11179,6 +11265,24 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             resp.canonical_items[-1].data["stage"],
             ToolCallDiagnosticStage.GUARD.value,
+        )
+
+    async def test_tool_cycle_guard_rejects_maximum_cycles(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id="call1", name="calc", arguments={"value": 1})
+        result = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="ok",
+        )
+        messages = OrchestratorResponse._tool_observation_messages(
+            result,
+            json_output=False,
         )
 
         limited = _make_response(
@@ -11717,6 +11821,92 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         validate_canonical_stream_items(resp.canonical_items)
         validate_tool_lifecycle_items(resp.canonical_items)
 
+    async def test_iteration_repeated_tool_call_executes_by_default(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        call = ToolCall(
+            id="call1",
+            name="calc",
+            arguments={"expression": "25 * 2"},
+        )
+        repeated_call = ToolCall(
+            id="call2",
+            name="calc",
+            arguments={"expression": "25 * 2"},
+        )
+        agent.side_effect = [
+            _tool_call_response(repeated_call),
+            _string_response("done", async_gen=True),
+        ]
+
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+
+        async def execute(
+            requested_call: ToolCall, _: ToolCallContext
+        ) -> ToolCallResult:
+            return ToolCallResult(
+                id=f"result-{requested_call.id}",
+                call=requested_call,
+                name=requested_call.name,
+                arguments=requested_call.arguments,
+                result="50",
+            )
+
+        tool.side_effect = execute
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(call),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        items = await _collect_stream_items(resp)
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertEqual(tool.await_count, 2)
+        self.assertEqual(agent.await_count, 2)
+
+        first_context = agent.await_args_list[0].args[0]
+        second_context = agent.await_args_list[1].args[0]
+        assert isinstance(first_context.input, list)
+        assert isinstance(second_context.input, list)
+        first_tool_messages = [
+            message
+            for message in first_context.input
+            if message.role is MessageRole.TOOL
+        ]
+        second_tool_messages = [
+            message
+            for message in second_context.input
+            if message.role is MessageRole.TOOL
+        ]
+        self.assertEqual(len(first_tool_messages), 1)
+        self.assertEqual(len(second_tool_messages), 2)
+        self.assertIsNotNone(second_tool_messages[-1].tool_call_result)
+        self.assertIsNone(second_tool_messages[-1].tool_call_diagnostic)
+        self.assertFalse(
+            any(
+                item.kind is StreamItemKind.TOOL_EXECUTION_ERROR
+                and item.data
+                and item.data.get("code")
+                == ToolCallDiagnosticCode.REPEATED_CALL.value
+                for item in resp.canonical_items
+            )
+        )
+
+        validate_canonical_stream_items(resp.canonical_items)
+        validate_tool_lifecycle_items(resp.canonical_items)
+
     async def test_iteration_repeated_tool_skip_continues_to_model(self):
         engine = _DummyEngine()
         agent = AsyncMock(spec=EngineAgent)
@@ -11758,6 +11948,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            block_repeated_tool_calls=True,
         )
 
         items = await _collect_stream_items(resp)

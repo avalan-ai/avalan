@@ -312,6 +312,29 @@ class CliThemeOptionTestCase(TestCase):
 
 
 class CliMaximumToolCyclesOptionTestCase(TestCase):
+    def test_agent_run_repeated_tool_calls_default_to_unspecified(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+
+        args = cli._parser.parse_args(["agent", "run"])
+
+        self.assertIsNone(args.run_block_repeated_tool_calls)
+
+    def test_agent_run_accepts_block_repeated_tool_calls_aliases(
+        self,
+    ) -> None:
+        cli = CLI(MagicMock())
+
+        for flag in (
+            "--block-repeated-tool-calls",
+            "--run-block-repeated-tool-calls",
+        ):
+            with self.subTest(flag=flag):
+                args = cli._parser.parse_args(["agent", "run", flag])
+
+                self.assertTrue(args.run_block_repeated_tool_calls)
+
     def test_agent_run_accepts_numeric_tool_cycles(self) -> None:
         cli = CLI(MagicMock())
 

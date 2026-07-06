@@ -533,7 +533,7 @@ plicate}]
                                    [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
                                    [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
                                    [--memory-engine-window MEMORY_ENGINE_WINDOW] [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
-                                   [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--run-skip-special-tokens]
+                                   [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--block-repeated-tool-calls] [--run-skip-special-tokens]
                                    [--run-disable-cache]
                                    [--run-cache-strategy 
 {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
@@ -646,6 +646,8 @@ inline agent settings:
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
                         Maximum model/tool result cycles for an agent run,
                         or 'unlimited'
+  --block-repeated-tool-calls, --run-block-repeated-tool-calls
+                        Stop repeated same-name/same-argument tool calls.
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -743,7 +745,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--memory-engine-window MEMORY_ENGINE_WINDOW]
                         [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
                         [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES]
-                        [--run-skip-special-tokens] [--run-disable-cache]
+                        [--block-repeated-tool-calls] [--run-skip-special-tokens] [--run-disable-cache]
                         [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                         [--run-temperature RUN_TEMPERATURE]
                         [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
@@ -1006,6 +1008,8 @@ inline agent settings:
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
                         Maximum model/tool result cycles for an agent run,
                         or 'unlimited'
+  --block-repeated-tool-calls, --run-block-repeated-tool-calls
+                        Stop repeated same-name/same-argument tool calls.
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -1182,7 +1186,7 @@ plicate}]
                           [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
                           [--memory-engine-overlap MEMORY_ENGINE_OVERLAP] [--memory-engine-window MEMORY_ENGINE_WINDOW]
                           [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
-                          [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--run-skip-special-tokens]
+                          [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--block-repeated-tool-calls] [--run-skip-special-tokens]
                           [--run-disable-cache]
                           [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                           [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P] [--tool TOOL]
@@ -1313,6 +1317,8 @@ inline agent settings:
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
                         Maximum model/tool result cycles for an agent run,
                         or 'unlimited'
+  --block-repeated-tool-calls, --run-block-repeated-tool-calls
+                        Stop repeated same-name/same-argument tool calls.
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -1380,7 +1386,7 @@ plicate}]
                           [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
                           [--memory-engine-overlap MEMORY_ENGINE_OVERLAP] [--memory-engine-window MEMORY_ENGINE_WINDOW]
                           [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
-                          [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--run-skip-special-tokens]
+                          [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--block-repeated-tool-calls] [--run-skip-special-tokens]
                           [--run-disable-cache]
                           [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                           [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P] [--tool TOOL]
@@ -1511,6 +1517,8 @@ inline agent settings:
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
                         Maximum model/tool result cycles for an agent run,
                         or 'unlimited'
+  --block-repeated-tool-calls, --run-block-repeated-tool-calls
+                        Stop repeated same-name/same-argument tool calls.
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache
@@ -1572,7 +1580,7 @@ plicate}]
                          [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                          [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS] [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
                          [--memory-engine-window MEMORY_ENGINE_WINDOW] [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
-                         [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--run-skip-special-tokens]
+                         [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--block-repeated-tool-calls] [--run-skip-special-tokens]
                          [--run-disable-cache]
                          [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
                          [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P] [--tool TOOL]
@@ -1659,6 +1667,8 @@ inline agent settings:
   --maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES, --run-maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES
                         Maximum model/tool result cycles for an agent run,
                         or 'unlimited'
+  --block-repeated-tool-calls, --run-block-repeated-tool-calls
+                        Stop repeated same-name/same-argument tool calls.
   --run-skip-special-tokens
                         Skip special tokens on output
   --run-disable-cache   Disable generation cache

@@ -85,6 +85,9 @@ openai_response_failed_retry_delay_seconds = {{ orchestrator.call_options['opena
 {% else %}maximum_tool_cycles = "{{ orchestrator.call_options['maximum_tool_cycles'] }}"
 {% endif %}
 {% endif %}
+{% if orchestrator.call_options.get('block_repeated_tool_calls') is not none %}
+block_repeated_tool_calls = {{ orchestrator.call_options['block_repeated_tool_calls'] | lower }}
+{% endif %}
 {% if orchestrator.call_options.get('chat_settings') %}
 
 [run.chat]

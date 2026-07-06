@@ -3830,6 +3830,14 @@ class CLI:
             default=None,
         )
         group.add_argument(
+            "--block-repeated-tool-calls",
+            "--run-block-repeated-tool-calls",
+            action="store_true",
+            default=None,
+            dest="run_block_repeated_tool_calls",
+            help="Stop repeated same-name/same-argument tool calls.",
+        )
+        group.add_argument(
             "--run-skip-special-tokens",
             action="store_true",
             default=False,

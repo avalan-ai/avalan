@@ -113,6 +113,7 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(resp, "resp")
         self.assertEqual(captured["kwargs"]["maximum_tool_cycles"], 24)
+        self.assertFalse(captured["kwargs"]["block_repeated_tool_calls"])
 
     async def test_call_consumes_maximum_tool_cycles_option(self):
         captured = {}
@@ -152,6 +153,61 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(resp, "resp")
         self.assertEqual(captured["kwargs"]["maximum_tool_cycles"], 32)
+
+    async def test_call_consumes_block_repeated_tool_calls_option(self):
+        captured = {}
+        self.orch._call_options = {
+            "max_new_tokens": 10,
+            "block_repeated_tool_calls": True,
+        }
+
+        def response_factory(*args, **kwargs):
+            captured["kwargs"] = kwargs
+            return "resp"
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            response_factory,
+        ):
+            resp = await self.orch("hi")
+
+        self.assertEqual(resp, "resp")
+        self.assertTrue(captured["kwargs"]["block_repeated_tool_calls"])
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(context.engine_args, {"max_new_tokens": 10})
+
+    async def test_call_consumes_block_repeated_tool_calls_kwarg(self):
+        captured = {}
+
+        def response_factory(*args, **kwargs):
+            captured["kwargs"] = kwargs
+            return "resp"
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            response_factory,
+        ):
+            resp = await self.orch(
+                "hi",
+                block_repeated_tool_calls=True,
+                max_new_tokens=10,
+            )
+
+        self.assertEqual(resp, "resp")
+        self.assertTrue(captured["kwargs"]["block_repeated_tool_calls"])
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(context.engine_args, {"max_new_tokens": 10})
+
+    async def test_call_rejects_invalid_block_repeated_tool_calls(self):
+        self.orch._call_options = {"block_repeated_tool_calls": "true"}
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "block_repeated_tool_calls must be a bool",
+        ):
+            await self.orch("hi")
+
+        self.engine_agent.assert_not_awaited()
 
     async def test_call_consumes_unlimited_maximum_tool_cycles_option(self):
         captured = {}

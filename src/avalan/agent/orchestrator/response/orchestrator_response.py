@@ -179,6 +179,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _response_drained: bool
     _pending_tool_batch_task: Task[list[_ToolExecutionOutcome]] | None
     _maximum_tool_cycles: MaximumToolCycles
+    _block_repeated_tool_calls: bool
 
     def __init__(
         self,
@@ -197,10 +198,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         tool_confirm: (
             Callable[[ToolCall], _ToolConfirmationAction] | None
         ) = None,
+        block_repeated_tool_calls: bool = False,
         enable_tool_parsing: bool = True,
         maximum_tool_cycles: MaximumToolCycles = DEFAULT_MAXIMUM_TOOL_CYCLES,
     ) -> None:
         assert input and response and engine_agent and operation
+        assert type(block_repeated_tool_calls) is bool
         maximum_tool_cycles = validate_maximum_tool_cycles(maximum_tool_cycles)
         self._input = input
         self._response = response
@@ -265,6 +268,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._response_drained = False
         self._pending_tool_batch_task = None
         self._maximum_tool_cycles = maximum_tool_cycles
+        self._block_repeated_tool_calls = block_repeated_tool_calls
 
     @property
     def input_token_count(self) -> int:
@@ -2246,9 +2250,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     ) -> ToolCallOutcome | None:
         if self._tool_manager is None:
             return None
-        repeated_diagnostic = self._repeated_call_diagnostic(call)
-        if repeated_diagnostic is not None:
-            return repeated_diagnostic
+        if self._block_repeated_tool_calls:
+            repeated_diagnostic = self._repeated_call_diagnostic(call)
+            if repeated_diagnostic is not None:
+                return repeated_diagnostic
 
         self._attempted_call_signatures.add(self._call_signature(call))
         if type(self._tool_manager) is ToolManager:
@@ -2378,7 +2383,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             return False
 
         cycle_signature = self._tool_cycle_signature(tool_messages)
-        if cycle_signature in self._tool_cycle_signatures:
+        if (
+            self._block_repeated_tool_calls
+            and cycle_signature in self._tool_cycle_signatures
+        ):
             self._append_canonical_guard_diagnostic(
                 code="orchestrator.tool_cycle.duplicate_observation",
                 message="Tool cycle stopped after repeated observations.",

@@ -170,6 +170,7 @@ def get_orchestrator_settings(
     memory_permanent_message: str | None = None,
     memory_permanent: list[str] | None = None,
     maximum_tool_cycles: MaximumToolCycles | None = None,
+    block_repeated_tool_calls: bool | None = None,
     max_new_tokens: int | None = None,
     temperature: float | None = None,
     tools: list[str] | None | _Unset = _UNSET,
@@ -205,6 +206,11 @@ def get_orchestrator_settings(
         maximum_tool_cycles
         if maximum_tool_cycles is not None
         else getattr(args, "run_maximum_tool_cycles", None)
+    )
+    call_block_repeated_tool_calls = (
+        block_repeated_tool_calls
+        if block_repeated_tool_calls is not None
+        else getattr(args, "run_block_repeated_tool_calls", None)
     )
     call_tool_choice = (
         tool_choice
@@ -259,6 +265,10 @@ def get_orchestrator_settings(
         )
     if call_maximum_tool_cycles is not None:
         call_options["maximum_tool_cycles"] = call_maximum_tool_cycles
+    if call_block_repeated_tool_calls is not None:
+        call_options["block_repeated_tool_calls"] = (
+            call_block_repeated_tool_calls
+        )
     if call_tool_choice is not None:
         call_options["tool_choice"] = call_tool_choice
     engine_config: dict[str, Any] = {
