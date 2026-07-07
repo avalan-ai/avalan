@@ -462,6 +462,47 @@ class CliOpenAIResponseFailedRetryOptionTestCase(TestCase):
         )
         self.assertEqual(args.openai_timeout_seconds, 45)
 
+    def test_agent_run_rejects_invalid_openai_timeout(self) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "agent",
+                    "run",
+                    "--run-openai-timeout-seconds",
+                    "soon",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("must be numeric", stderr.getvalue())
+
+    def test_model_run_rejects_non_positive_openai_timeout(self) -> None:
+        cli = CLI(MagicMock())
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(
+                [
+                    "model",
+                    "run",
+                    "ai://env:OPENAI_API_KEY@openai/gpt-4o",
+                    "--openai-timeout-seconds",
+                    "0",
+                ]
+            )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("must be positive", stderr.getvalue())
+
     def test_model_run_rejects_negative_openai_response_failed_retries(
         self,
     ) -> None:
