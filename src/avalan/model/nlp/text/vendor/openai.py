@@ -28,6 +28,7 @@ from .....types import (
     LooseJsonValue,
     assert_non_negative_int,
     assert_non_negative_number,
+    assert_positive_number,
 )
 from .....utils import to_json, tool_call_diagnostic_payload
 from ....message import TemplateMessage, TemplateMessageRole
@@ -264,11 +265,29 @@ class OpenAIStream(TextGenerationVendorStream):
         if OpenAIClient._response_field(event, "type") != "response.failed":
             return False
         response = OpenAIClient._response_field(event, "response")
-        if OpenAIClient._response_field(response, "error") is not None:
+        response_error = OpenAIClient._response_field(response, "error")
+        event_error = OpenAIClient._response_field(event, "error")
+        if not self._is_retryable_response_failed_error_pair(
+            response_error,
+            event_error,
+        ):
             return False
         return any(
             provider_event.kind is StreamItemKind.STREAM_ERRORED
             for provider_event in provider_events
+        )
+
+    @staticmethod
+    def _is_retryable_response_failed_error_pair(
+        response_error: object,
+        event_error: object,
+    ) -> bool:
+        if response_error is None and event_error is None:
+            return True
+        return any(
+            OpenAIClient._response_field(error, "code") == "response_failed"
+            for error in (response_error, event_error)
+            if error is not None
         )
 
     @staticmethod
@@ -524,14 +543,13 @@ class OpenAIStream(TextGenerationVendorStream):
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         cleaned: dict[str, Any] = {}
+        item_type = payload.get("type")
         for key, value in payload.items():
             if key == "status" or value is None:
                 continue
-            if (
-                payload.get("type") == "reasoning"
-                and key == "content"
-                and value == []
-            ):
+            if key == "id" and item_type == "function_call":
+                continue
+            if item_type == "reasoning" and key == "content" and value == []:
                 continue
             cleaned[key] = cls._response_input_item_value(value)
         return cleaned
@@ -1128,12 +1146,14 @@ class OpenAIClient(TextGenerationVendor):
         base_url: str | None,
         *,
         azure_api_version: str | None = None,
+        max_retries: int | None = None,
         stream_response_failed_retries: int = (
             _STREAM_RESPONSE_FAILED_RETRIES
         ),
         stream_response_failed_retry_delay_seconds: int | float = (
             _STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS
         ),
+        timeout_seconds: int | float | None = None,
     ):
         global Omit
 
@@ -1169,6 +1189,14 @@ class OpenAIClient(TextGenerationVendor):
             )
         else:
             client_kwargs["api_key"] = api_key
+        if max_retries is not None:
+            client_kwargs["max_retries"] = self._normalize_max_retries(
+                max_retries
+            )
+        if timeout_seconds is not None:
+            client_kwargs["timeout"] = self._normalize_timeout_seconds(
+                timeout_seconds
+            )
         self._client = async_openai_type(**client_kwargs)
 
     async def __call__(
@@ -1178,7 +1206,7 @@ class OpenAIClient(TextGenerationVendor):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        timeout: int | None = None,
+        timeout: int | float | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
@@ -1195,8 +1223,10 @@ class OpenAIClient(TextGenerationVendor):
             "input": template_messages,
             "store": False,
             "stream": use_async_generator,
-            "timeout": timeout,
         }
+        request_client = self._client
+        request_timeout = timeout
+        request_max_retries: int | None = None
         if instructions is not None:
             assert isinstance(
                 instructions, str
@@ -1223,6 +1253,20 @@ class OpenAIClient(TextGenerationVendor):
             )
             if prompt_cache_retention is not None:
                 kwargs["prompt_cache_retention"] = prompt_cache_retention
+            if settings.openai_max_retries is not None:
+                request_max_retries = OpenAIClient._normalize_max_retries(
+                    settings.openai_max_retries
+                )
+            if settings.openai_timeout_seconds is not None:
+                request_timeout = OpenAIClient._normalize_timeout_seconds(
+                    settings.openai_timeout_seconds
+                )
+        if request_timeout is not None:
+            kwargs["timeout"] = request_timeout
+        if request_max_retries is not None:
+            request_client = self._client.with_options(
+                max_retries=request_max_retries
+            )
         stream_response_failed_retries = OpenAIClient._response_failed_retries(
             settings,
             default=self._stream_response_failed_retries,
@@ -1245,7 +1289,7 @@ class OpenAIClient(TextGenerationVendor):
                     )
 
         async def create_response() -> Any:
-            return await self._client.responses.create(**kwargs)
+            return await request_client.responses.create(**kwargs)
 
         async def stream_factory() -> AsyncIterator[Any]:
             return cast(AsyncIterator[Any], await create_response())
@@ -1322,6 +1366,12 @@ class OpenAIClient(TextGenerationVendor):
         return value
 
     @staticmethod
+    def _normalize_max_retries(value: object) -> int:
+        assert_non_negative_int(value, "openai_max_retries")
+        assert isinstance(value, int)
+        return value
+
+    @staticmethod
     def _normalize_response_failed_retry_delay_seconds(
         value: object,
     ) -> float:
@@ -1329,6 +1379,12 @@ class OpenAIClient(TextGenerationVendor):
             value,
             "openai_response_failed_retry_delay_seconds",
         )
+        assert isinstance(value, int | float)
+        return float(value)
+
+    @staticmethod
+    def _normalize_timeout_seconds(value: object) -> float:
+        assert_positive_number(value, "openai_timeout_seconds")
         assert isinstance(value, int | float)
         return float(value)
 
@@ -1341,11 +1397,27 @@ class OpenAIClient(TextGenerationVendor):
         )
 
     @staticmethod
+    def _provider_max_retries(
+        provider_options: Mapping[str, object],
+    ) -> int:
+        return OpenAIClient._normalize_max_retries(
+            provider_options["openai_max_retries"]
+        )
+
+    @staticmethod
     def _provider_retry_delay_seconds(
         provider_options: Mapping[str, object],
     ) -> float:
         return OpenAIClient._normalize_response_failed_retry_delay_seconds(
             provider_options["openai_response_failed_retry_delay_seconds"]
+        )
+
+    @staticmethod
+    def _provider_timeout_seconds(
+        provider_options: Mapping[str, object],
+    ) -> float:
+        return OpenAIClient._normalize_timeout_seconds(
+            provider_options["openai_timeout_seconds"]
         )
 
     def _template_messages(
@@ -1517,7 +1589,9 @@ class OpenAIClient(TextGenerationVendor):
         ]
 
     def _record_stateless_response_item(self, item: dict[str, Any]) -> None:
-        self._stateless_response_items.append(deepcopy(item))
+        self._stateless_response_items.append(
+            OpenAIStream._response_input_item_payload(deepcopy(item))
+        )
 
     def _rollback_stateless_response_items(self, count: int) -> None:
         assert isinstance(count, int)
@@ -1962,6 +2036,13 @@ class OpenAIModel(TextGenerationVendorModel):
         provider_options = self._settings.provider_options
         if (
             provider_options is not None
+            and "openai_max_retries" in provider_options
+        ):
+            client_kwargs["max_retries"] = OpenAIClient._provider_max_retries(
+                provider_options
+            )
+        if (
+            provider_options is not None
             and "openai_response_failed_retries" in provider_options
         ):
             client_kwargs["stream_response_failed_retries"] = (
@@ -1979,6 +2060,13 @@ class OpenAIModel(TextGenerationVendorModel):
             )
             client_kwargs["stream_response_failed_retry_delay_seconds"] = (
                 retry_delay
+            )
+        if (
+            provider_options is not None
+            and "openai_timeout_seconds" in provider_options
+        ):
+            client_kwargs["timeout_seconds"] = (
+                OpenAIClient._provider_timeout_seconds(provider_options)
             )
         return OpenAIClient(**client_kwargs)
 

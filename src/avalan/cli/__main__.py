@@ -46,6 +46,7 @@ from ..types import (
     assert_non_negative_int,
     assert_non_negative_number,
     assert_positive_int,
+    assert_positive_number,
 )
 from ..utils import logger_replace
 
@@ -862,6 +863,18 @@ class CLI:
             raise ArgumentTypeError("must be numeric") from exc
         try:
             assert_non_negative_number(parsed, "value")
+        except AssertionError as exc:
+            raise ArgumentTypeError(str(exc)) from exc
+        return parsed
+
+    @staticmethod
+    def _positive_number(value: str) -> float:
+        try:
+            parsed = float(value)
+        except ValueError as exc:
+            raise ArgumentTypeError("must be numeric") from exc
+        try:
+            assert_positive_number(parsed, "value")
         except AssertionError as exc:
             raise ArgumentTypeError(str(exc)) from exc
         return parsed
@@ -3165,6 +3178,12 @@ class CLI:
             help="Maximum number of tokens to generate",
         )
         model_run_parser.add_argument(
+            "--openai-max-retries",
+            type=CLI._non_negative_integer,
+            default=None,
+            help="OpenAI SDK request retries. Set to 0 to disable.",
+        )
+        model_run_parser.add_argument(
             "--openai-response-failed-retries",
             type=CLI._non_negative_integer,
             default=None,
@@ -3181,6 +3200,12 @@ class CLI:
                 "OpenAI Responses pre-output response.failed retry delay "
                 "in seconds."
             ),
+        )
+        model_run_parser.add_argument(
+            "--openai-timeout-seconds",
+            type=CLI._positive_number,
+            default=None,
+            help="OpenAI SDK request timeout in seconds.",
         )
         model_run_parser.add_argument(
             "--modality",
@@ -3858,6 +3883,12 @@ class CLI:
             help="Cache implementation to use for generation",
         )
         group.add_argument(
+            "--run-openai-max-retries",
+            type=CLI._non_negative_integer,
+            default=None,
+            help="OpenAI SDK request retries. Set to 0 to disable.",
+        )
+        group.add_argument(
             "--run-openai-response-failed-retries",
             type=CLI._non_negative_integer,
             default=None,
@@ -3874,6 +3905,12 @@ class CLI:
                 "OpenAI Responses pre-output response.failed retry delay "
                 "in seconds."
             ),
+        )
+        group.add_argument(
+            "--run-openai-timeout-seconds",
+            type=CLI._positive_number,
+            default=None,
+            help="OpenAI SDK request timeout in seconds.",
         )
         group.add_argument(
             "--run-temperature",

@@ -163,6 +163,7 @@ class ModalityRegistry:
             max_length=getattr(args, "text_max_length", None),
             min_p=args.min_p,
             num_beams=getattr(args, "text_num_beams", None),
+            openai_max_retries=getattr(args, "openai_max_retries", None),
             openai_response_failed_retries=getattr(
                 args,
                 "openai_response_failed_retries",
@@ -171,6 +172,11 @@ class ModalityRegistry:
             openai_response_failed_retry_delay_seconds=getattr(
                 args,
                 "openai_response_failed_retry_delay_seconds",
+                None,
+            ),
+            openai_timeout_seconds=getattr(
+                args,
+                "openai_timeout_seconds",
                 None,
             ),
             repetition_penalty=args.repetition_penalty,

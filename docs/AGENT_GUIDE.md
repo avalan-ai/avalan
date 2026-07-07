@@ -102,6 +102,11 @@ retries with a 1.0 second delay. Override them with
 matching `GenerationSettings` fields in SDK code. Set retries to `0` to
 disable this retry.
 
+OpenAI SDK request retries and request timeout can be bounded separately with
+`openai_max_retries` and `openai_timeout_seconds` under `[run]`, or with the
+matching `GenerationSettings` fields. Use `openai_max_retries = 0` to disable
+SDK request retries for diagnostic runs.
+
 For local models, use the model id plus the backend options supported by the
 runtime. See [MODELS.md](MODELS.md) and [ai_uri.md](ai_uri.md).
 
