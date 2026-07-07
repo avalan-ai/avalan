@@ -547,7 +547,7 @@ class OpenAIStream(TextGenerationVendorStream):
         for key, value in payload.items():
             if key == "status" or value is None:
                 continue
-            if key == "id" and item_type in {"function_call", "reasoning"}:
+            if key == "id" and item_type == "function_call":
                 continue
             if item_type == "reasoning" and key == "content" and value == []:
                 continue

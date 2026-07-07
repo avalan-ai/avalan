@@ -1214,7 +1214,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             "status": "completed",
         }
         expected_reasoning = dict(reasoning_item)
-        expected_reasoning.pop("id")
         expected_reasoning.pop("status")
         expected_reasoning.pop("content")
         expected_call = dict(call_item)
@@ -1476,6 +1475,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             [
                 {
                     "type": "reasoning",
+                    "id": "rs_1",
                     "encrypted_content": "ciphertext",
                 }
             ],
@@ -4813,6 +4813,7 @@ class TemplateAndToolSchemaTestCase(TestCase):
                 {"role": "user", "content": "search"},
                 {
                     "type": "reasoning",
+                    "id": "rs_1",
                     "encrypted_content": "encrypted",
                 },
                 {
@@ -4900,6 +4901,7 @@ class TemplateAndToolSchemaTestCase(TestCase):
                 {"role": "user", "content": "search"},
                 {
                     "type": "reasoning",
+                    "id": "rs_1",
                     "encrypted_content": "encrypted",
                 },
                 {
