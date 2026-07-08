@@ -1643,6 +1643,9 @@ def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
         "(version 1)",
         "(deny default)",
         "(allow process*)",
+        # Rust-based tools such as ripgrep query stack limits during thread
+        # setup. Without sysctl-read they can abort before user code runs.
+        "(allow sysctl-read)",
         "(allow file-read-metadata)",
         # dyld may need unscoped data reads before the target executable
         # reaches user code on recent macOS releases.
@@ -2275,9 +2278,19 @@ def _execution_path_candidates(
 ) -> tuple[str, ...]:
     candidates = [plan.request.command, plan.request.cwd]
     for argument in plan.request.argv:
-        if argument.startswith("/"):
+        if _argument_is_existing_absolute_path(argument):
             candidates.append(argument)
     return tuple(candidates)
+
+
+def _argument_is_existing_absolute_path(argument: str) -> bool:
+    path = Path(argument)
+    if not path.is_absolute():
+        return False
+    try:
+        return path.exists()
+    except OSError:
+        return True
 
 
 def _real_roots(roots: Sequence[str], field_name: str) -> tuple[str, ...]:

@@ -1,5 +1,6 @@
 from ...container import ContainerProfileSelection
 from ...isolation import SandboxProfileSelection
+from ...types import assert_absolute_path as _assert_absolute_path
 from ...types import (
     assert_absolute_path_mapping as _assert_absolute_path_mapping,
 )
@@ -71,6 +72,7 @@ class ShellGitToolSettings:
     CLI_SCALAR_FIELDS: ClassVar[tuple[str, ...]] = (
         "workspace_root",
         "cwd",
+        "executable_path",
         "default_timeout_seconds",
         "max_timeout_seconds",
         "max_stdout_bytes",
@@ -101,6 +103,7 @@ class ShellGitToolSettings:
 
     workspace_root: str = "."
     cwd: str = "."
+    executable_path: str | None = None
     capabilities: Sequence[str] = field(
         default_factory=lambda: (ShellGitCapability.READ.value,),
     )
@@ -139,6 +142,11 @@ class ShellGitToolSettings:
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.workspace_root, "git.workspace_root")
         _assert_non_empty_string(self.cwd, "git.cwd")
+        if self.executable_path is not None:
+            _assert_absolute_path(
+                self.executable_path,
+                "git.executable_path",
+            )
         object.__setattr__(
             self,
             "capabilities",
@@ -436,9 +444,9 @@ class ShellToolSettings:
             "executable_paths",
         )
         for command in self.executable_paths:
-            assert (
-                command in SHELL_COMMAND_IDS
-            ), "executable_paths must be known"
+            assert command in SHELL_COMMAND_IDS, (
+                "executable_paths must be known"
+            )
         _assert_absolute_path_sequence(
             self.executable_search_paths,
             "executable_search_paths",
@@ -607,9 +615,9 @@ def _normalized_execution_mode(
     if execution_mode is None:
         execution_mode = backend
     elif backend is not None:
-        assert (
-            execution_mode == backend
-        ), "execution_mode and backend must match"
+        assert execution_mode == backend, (
+            "execution_mode and backend must match"
+        )
     assert isinstance(
         execution_mode,
         str,
@@ -642,9 +650,9 @@ def _assert_positive_timeout_order(
     )
     assert isinstance(default_value, int | float)
     assert isinstance(max_value, int | float)
-    assert (
-        default_value <= max_value
-    ), f"{default_field_name} must not exceed {max_field_name}"
+    assert default_value <= max_value, (
+        f"{default_field_name} must not exceed {max_field_name}"
+    )
 
 
 def _assert_relative_path(value: str, field_name: str) -> None:
@@ -672,9 +680,9 @@ def _assert_non_empty_known_values(
 
 def _assert_pipeline_transport(value: object) -> None:
     _assert_non_empty_string(value, "pipeline_transport")
-    assert (
-        value in _PIPELINE_TRANSPORTS
-    ), "pipeline_transport must be buffered or native"
+    assert value in _PIPELINE_TRANSPORTS, (
+        "pipeline_transport must be buffered or native"
+    )
 
 
 def _coerce_git_settings(value: object) -> ShellGitToolSettings:
@@ -692,18 +700,18 @@ def _normalized_git_capabilities(value: object) -> tuple[str, ...]:
         capability = (
             item.value if isinstance(item, ShellGitCapability) else item
         )
-        assert (
-            capability in SHELL_GIT_CAPABILITY_IDS
-        ), f"git.capabilities contains unsupported value: {item!r}"
+        assert capability in SHELL_GIT_CAPABILITY_IDS, (
+            f"git.capabilities contains unsupported value: {item!r}"
+        )
         if capability not in capabilities:
             capabilities.append(capability)
     return tuple(capabilities)
 
 
 def _normalized_git_commands(value: object) -> tuple[str, ...]:
-    assert isinstance(
-        value, Sequence
-    ), "git.allowed_commands must be a sequence"
+    assert isinstance(value, Sequence), (
+        "git.allowed_commands must be a sequence"
+    )
     assert not isinstance(
         value,
         str | bytes,
@@ -715,12 +723,12 @@ def _normalized_git_commands(value: object) -> tuple[str, ...]:
             command,
             str,
         ), "git.allowed_commands must contain strings"
-        assert (
-            command.strip()
-        ), "git.allowed_commands must not contain empty values"
-        assert (
-            command in SHELL_GIT_COMMAND_IDS
-        ), f"git.allowed_commands contains unsupported value: {item!r}"
+        assert command.strip(), (
+            "git.allowed_commands must not contain empty values"
+        )
+        assert command in SHELL_GIT_COMMAND_IDS, (
+            f"git.allowed_commands contains unsupported value: {item!r}"
+        )
         if command not in commands:
             commands.append(command)
     return tuple(commands)
@@ -740,9 +748,9 @@ def _normalized_git_remote_protocols(value: object) -> tuple[str, ...]:
         _assert_non_empty_string(item, "git.allowed_remote_protocols")
         assert isinstance(item, str)
         protocol = item.lower()
-        assert (
-            protocol in _GIT_REMOTE_PROTOCOLS
-        ), f"git.allowed_remote_protocols contains unsafe value: {item!r}"
+        assert protocol in _GIT_REMOTE_PROTOCOLS, (
+            f"git.allowed_remote_protocols contains unsafe value: {item!r}"
+        )
         if protocol not in protocols:
             protocols.append(protocol)
     return tuple(protocols)
@@ -761,9 +769,9 @@ def _normalized_git_remote_hosts(value: object) -> tuple[str, ...]:
     for item in value:
         _assert_non_empty_string(item, "git.allowed_remote_hosts")
         assert isinstance(item, str)
-        assert not any(
-            marker in item for marker in (":", "/", "@", "*")
-        ), "git.allowed_remote_hosts contains unsafe value"
+        assert not any(marker in item for marker in (":", "/", "@", "*")), (
+            "git.allowed_remote_hosts contains unsafe value"
+        )
         assert _GIT_HOST_PATTERN.match(
             item,
         ), "git.allowed_remote_hosts contains unsafe value"
@@ -775,9 +783,9 @@ def _normalized_git_remote_hosts(value: object) -> tuple[str, ...]:
 
 def _assert_git_credential_policy(value: object) -> None:
     _assert_non_empty_string(value, "git.credential_policy")
-    assert (
-        value in _GIT_CREDENTIAL_POLICIES
-    ), "git.credential_policy must be deny or allow_explicit"
+    assert value in _GIT_CREDENTIAL_POLICIES, (
+        "git.credential_policy must be deny or allow_explicit"
+    )
 
 
 def _assert_tesseract_languages(value: object) -> None:

@@ -35,6 +35,7 @@ from avalan.sandbox import (
 )
 from avalan.sandbox import backend as backend_module
 from avalan.sandbox.backend import (
+    _argument_is_existing_absolute_path,
     _cleanup_with_budget,
     _collect_real_outputs,
     _default_cleanup_handler,
@@ -64,6 +65,7 @@ class SandboxPhase6Test(TestCase):
             self.assertEqual(profile, equivalent)
             self.assertIn("(version 1)", profile)
             self.assertIn("(deny default)", profile)
+            self.assertIn("(allow sysctl-read)", profile)
             self.assertIn("(allow file-read-data)", profile)
             self.assertIn(
                 f'(allow file-read* (subpath "{roots["workspace"]}"))',
@@ -780,6 +782,38 @@ class SandboxPhase6Test(TestCase):
                 SandboxBackendDiagnosticCode.PATH_DENIED,
             )
             self.assertFalse(Path(roots["temp_dir"]).exists())
+
+    def test_seatbelt_allows_slash_prefixed_nonpath_arguments(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            roots = _roots(tmpdir)
+            runner = _RecordingRunner()
+            backend = SeatbeltSandboxBackend(
+                sandbox_executable="/fake/sandbox-exec",
+                host_os="darwin",
+                executable_available=True,
+                command_runner=runner,
+            )
+
+            result = run_async(
+                backend.execute(
+                    _plan(
+                        "seatbelt",
+                        roots,
+                        argv=("/bin/sh", "-lc", "/tool-skills-file/p"),
+                        network="none",
+                        pids=None,
+                        child_processes="deny",
+                        inherited_fds="stdio",
+                    )
+                )
+            )
+
+            self.assertTrue(result.ok)
+            self.assertTrue(runner.has_request("seatbelt_execute"))
+
+    def test_absolute_argument_path_exists_error_is_conservative(self) -> None:
+        with patch.object(Path, "exists", side_effect=OSError("denied")):
+            self.assertTrue(_argument_is_existing_absolute_path("/maybe/path"))
 
     def test_symlinked_write_root_is_denied_and_cleans_temp(self) -> None:
         with TemporaryDirectory() as tmpdir:

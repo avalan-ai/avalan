@@ -639,6 +639,35 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             "top-level policy", str(create_mock.await_args.kwargs["input"])
         )
 
+    async def test_reasoning_profile_tools_request_encrypted_reasoning_content(
+        self,
+    ):
+        response = SimpleNamespace(output=[])
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        tool = MagicMock()
+        tool.json_schemas.return_value = [
+            {"type": "function", "function": {"name": "pkg.lookup"}}
+        ]
+
+        await client(
+            "gpt-5",
+            [Message(role=MessageRole.USER, content="hi")],
+            tool=tool,
+            use_async_generator=False,
+        )
+
+        kwargs = create_mock.await_args.kwargs
+        self.assertNotIn("reasoning", kwargs)
+        self.assertEqual(kwargs["include"], ["reasoning.encrypted_content"])
+        self.assertEqual(
+            kwargs["tools"],
+            [{"type": "function", "name": "avl_cGtnLmxvb2t1cA"}],
+        )
+
     async def test_responses_payload_preserves_tool_history(self):
         response = SimpleNamespace(
             output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
@@ -1191,6 +1220,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
     async def test_stream_records_stateless_reasoning_output_items(self):
         collected = []
+        unreplayable_reasoning_item = {
+            "type": "reasoning",
+            "id": "rs_unstored",
+            "content": [],
+            "status": "completed",
+        }
         reasoning_item = {
             "type": "reasoning",
             "id": "rs_1",
@@ -1224,6 +1259,10 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         stream = self.mod.OpenAIStream(
             AsyncIter(
                 [
+                    {
+                        "type": "response.output_item.done",
+                        "item": unreplayable_reasoning_item,
+                    },
                     {
                         "type": "response.output_item.done",
                         "item": reasoning_item,
@@ -4770,6 +4809,17 @@ class TemplateAndToolSchemaTestCase(TestCase):
         )
 
         self.assertEqual(templated, [{"role": "user", "content": "hi"}])
+
+    def test_record_stateless_response_item_skips_unencrypted_reasoning(
+        self,
+    ):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+
+        client._record_stateless_response_item(
+            {"type": "reasoning", "id": "rs_1"}
+        )
+
+        self.assertEqual(client._stateless_response_items, [])
 
     def test_template_messages_replays_stateless_reasoning_items(self):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")

@@ -89,7 +89,7 @@ from ...tool_cycles import MaximumToolCycles
 from argparse import Namespace
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import fields
+from dataclasses import fields, replace
 from importlib import import_module
 from json import dumps as json_dumps
 from logging import Logger
@@ -130,12 +130,10 @@ _SKILL_BOOTSTRAP_PROMPT_OMIT_FIELDS = {
     "check_guidance": "include_check_guidance",
     "behavior_guidance": "include_behavior_guidance",
 }
-_SHELL_GIT_CLI_FIELD_NAMES = frozenset(
-    (
-        *ShellGitToolSettings.CLI_SCALAR_FIELDS,
-        *ShellGitToolSettings.CLI_SEQUENCE_FIELDS,
-    )
-)
+_SHELL_GIT_CLI_FIELD_NAMES = frozenset((
+    *ShellGitToolSettings.CLI_SCALAR_FIELDS,
+    *ShellGitToolSettings.CLI_SEQUENCE_FIELDS,
+))
 
 
 def _parse_permanent_memory_items(
@@ -424,7 +422,13 @@ def _tool_settings_from_mapping(
             values[field.name] = value
 
     if settings_cls is ShellToolSettings:
+        git_executable_path = _pop_shell_git_executable_path(values)
         git_settings = _shell_git_settings_from_mapping(mapping)
+        if git_executable_path is not None:
+            git_settings = _shell_git_settings_with_executable_path(
+                git_settings,
+                git_executable_path,
+            )
         if git_settings is not None:
             values["git"] = git_settings
 
@@ -468,6 +472,10 @@ def _tool_settings_explicit_fields_from_mapping(
         ):
             explicit_fields.add(field.name)
     if settings_cls is ShellToolSettings:
+        _adjust_shell_executable_path_explicit_fields(
+            explicit_fields,
+            mapping,
+        )
         explicit_fields.update(
             _shell_git_explicit_fields_from_mapping(mapping)
         )
@@ -567,6 +575,75 @@ def _coerce_shell_executable_paths(value: object) -> object:
     for command, executable in cast(Sequence[tuple[str, str]], value):
         executable_paths[command] = executable
     return executable_paths
+
+
+def _pop_shell_git_executable_path(
+    values: dict[str, object],
+) -> str | None:
+    executable_paths = values.get("executable_paths")
+    if not isinstance(executable_paths, Mapping):
+        return None
+    if "git" not in executable_paths:
+        return None
+    git_executable = executable_paths["git"]
+    remaining_paths = {
+        command: executable
+        for command, executable in executable_paths.items()
+        if command != "git"
+    }
+    if remaining_paths:
+        values["executable_paths"] = remaining_paths
+    else:
+        del values["executable_paths"]
+    assert isinstance(git_executable, str), (
+        "git executable path must be a string"
+    )
+    return git_executable
+
+
+def _shell_git_settings_with_executable_path(
+    settings: ShellGitToolSettings | None,
+    executable_path: str,
+) -> ShellGitToolSettings:
+    if settings is None:
+        return ShellGitToolSettings(executable_path=executable_path)
+    if settings.executable_path is not None:
+        assert settings.executable_path == executable_path, (
+            "git executable path settings conflict"
+        )
+    return replace(settings, executable_path=executable_path)
+
+
+def _adjust_shell_executable_path_explicit_fields(
+    explicit_fields: set[str],
+    mapping: Mapping[str, object] | Namespace,
+) -> None:
+    executable_paths = _shell_executable_paths_from_mapping(mapping)
+    if not executable_paths or "git" not in executable_paths:
+        return
+    explicit_fields.add("git.executable_path")
+    if len(executable_paths) == 1:
+        explicit_fields.discard("executable_paths")
+
+
+def _shell_executable_paths_from_mapping(
+    mapping: Mapping[str, object] | Namespace,
+) -> Mapping[str, str] | None:
+    key = "tool_shell_executable_paths"
+    if isinstance(mapping, Namespace):
+        if not hasattr(mapping, key):
+            return None
+        value = getattr(mapping, key)
+    else:
+        value = mapping.get(key)
+        if value is None:
+            value = mapping.get("executable_paths")
+    if value is None:
+        return None
+    coerced = _coerce_shell_executable_paths(value)
+    if isinstance(coerced, Mapping):
+        return cast(Mapping[str, str], coerced)
+    return None
 
 
 def _is_tuple_pair_sequence(
@@ -893,9 +970,9 @@ def _shell_container_template_settings(
         rendered["required"] = True
     if not rendered:
         return None
-    assert (
-        _shell_execution_mode_from_args(args) == "container"
-    ), "tool.shell.container requires tool.shell backend container"
+    assert _shell_execution_mode_from_args(args) == "container", (
+        "tool.shell.container requires tool.shell backend container"
+    )
     container_config = _agent_container_config_from_args(args)
     assert container_config is not None, "container backend is required"
     return rendered
@@ -936,9 +1013,9 @@ def _shell_sandbox_template_settings(
         rendered["required"] = True
     if not rendered:
         return None
-    assert (
-        _shell_execution_mode_from_args(args) == "sandbox"
-    ), "tool.shell.sandbox requires tool.shell backend sandbox"
+    assert _shell_execution_mode_from_args(args) == "sandbox", (
+        "tool.shell.sandbox requires tool.shell backend sandbox"
+    )
     sandbox_config = _agent_sandbox_config_from_args(args)
     assert sandbox_config is not None, "sandbox backend is required"
     return rendered
@@ -1182,9 +1259,9 @@ def _agent_container_runtime_settings(
         shell_settings,
     )
     if container_config is None:
-        assert (
-            shell_selection is None or shell_selection.profile is None
-        ), "required container profile unavailable"
+        assert shell_selection is None or shell_selection.profile is None, (
+            "required container profile unavailable"
+        )
         return None
     runtime = trusted_container_runtime_from_mapping(
         container_config,
@@ -1274,9 +1351,9 @@ def _agent_container_config_from_args(
     if backend is None and not _has_container_profile_args(args):
         return None
     assert backend is not None, "container backend is required"
-    assert (
-        backend in _SUPPORTED_CONTAINER_BACKENDS
-    ), "container backend is unsupported"
+    assert backend in _SUPPORTED_CONTAINER_BACKENDS, (
+        "container backend is unsupported"
+    )
     profile_name = getattr(args, "tool_container_profile", None) or (
         getattr(args, "tool_shell_container_profile", None)
         or "workspace-readonly"
@@ -1344,9 +1421,9 @@ def _agent_shell_container_selection_from_args(
         shell_settings is not None and shell_settings.backend == "container"
     )
     if explicit_selection:
-        assert (
-            shell_backend_container
-        ), "tool.shell.container requires tool.shell backend container"
+        assert shell_backend_container, (
+            "tool.shell.container requires tool.shell backend container"
+        )
     if required is None and shell_settings is not None:
         required = shell_settings.backend == "container"
     if profile is None and not required:
@@ -1382,9 +1459,9 @@ def _agent_isolation_runtime_settings(
         shell_settings,
     )
     if sandbox_config is None:
-        assert (
-            shell_selection is None or shell_selection.profile is None
-        ), "required sandbox profile unavailable"
+        assert shell_selection is None or shell_selection.profile is None, (
+            "required sandbox profile unavailable"
+        )
         return None
     runtime = trusted_isolation_runtime_from_mapping(
         {
@@ -1424,9 +1501,9 @@ def _agent_sandbox_config_from_args(
     if backend is None and not _has_sandbox_profile_args(args):
         return None
     assert backend is not None, "sandbox backend is required"
-    assert (
-        backend in _SUPPORTED_SANDBOX_BACKENDS
-    ), "sandbox backend is unsupported"
+    assert backend in _SUPPORTED_SANDBOX_BACKENDS, (
+        "sandbox backend is unsupported"
+    )
     profile_name = getattr(args, "tool_sandbox_profile", None) or (
         getattr(args, "tool_shell_sandbox_profile", None) or "host-tools"
     )
@@ -1519,9 +1596,9 @@ def _agent_shell_sandbox_selection_from_args(
         shell_settings is not None and shell_settings.backend == "sandbox"
     )
     if explicit_selection:
-        assert (
-            shell_backend_sandbox
-        ), "tool.shell.sandbox requires tool.shell backend sandbox"
+        assert shell_backend_sandbox, (
+            "tool.shell.sandbox requires tool.shell backend sandbox"
+        )
     if required is None and shell_settings is not None:
         required = shell_settings.backend == "sandbox"
     if profile is None and not required:
@@ -1598,9 +1675,9 @@ def _agent_skills_settings(args: Namespace) -> TrustedSkillSettings | None:
         "--tool-skills-file",
     )
     duplicate_source_labels = set(source_roots) & set(manifest_paths)
-    assert (
-        not duplicate_source_labels
-    ), "skills source and file labels must be unique"
+    assert not duplicate_source_labels, (
+        "skills source and file labels must be unique"
+    )
     source_authorities = _skills_source_authority_map(
         getattr(args, "tool_skills_source_authority", None),
     )
@@ -1618,9 +1695,9 @@ def _agent_skills_settings(args: Namespace) -> TrustedSkillSettings | None:
     ) - known_source_labels
     assert not unknown_labels, "skills source options reference unknown labels"
     unknown_package_labels = set(source_packages) - set(source_roots)
-    assert (
-        not unknown_package_labels
-    ), "skills source package options reference unknown labels"
+    assert not unknown_package_labels, (
+        "skills source package options reference unknown labels"
+    )
 
     sources = tuple(
         SkillSourceConfig(
@@ -1765,9 +1842,9 @@ def _skills_label_tuple(
         label = value.strip()
         assert label, f"{option_name} label must be non-empty"
         labels.append(label)
-    assert len(set(labels)) == len(
-        labels
-    ), f"{option_name} labels must be unique"
+    assert len(set(labels)) == len(labels), (
+        f"{option_name} labels must be unique"
+    )
     return tuple(labels)
 
 
@@ -1780,9 +1857,9 @@ def _skills_source_authority_map(
             item,
             "--tool-skills-source-authority",
         )
-        assert (
-            label not in values
-        ), "--tool-skills-source-authority labels must be unique"
+        assert label not in values, (
+            "--tool-skills-source-authority labels must be unique"
+        )
         values[label] = _skills_source_authority(value)
     return values
 
@@ -1809,9 +1886,9 @@ def _skills_source_authority(value: str) -> SkillSourceAuthority:
         assert identity, "plugin_provided skills authority requires plugin id"
         return PluginProvidedSkillSourceAuthority(plugin_id=identity)
     if kind is SkillSourceAuthorityKind.PREINSTALLED_REMOTE:
-        assert (
-            identity
-        ), "preinstalled_remote skills authority requires registry id"
+        assert identity, (
+            "preinstalled_remote skills authority requires registry id"
+        )
         return PreinstalledRemoteSkillSourceAuthority(registry_id=identity)
     raise AssertionError("unsupported skills source authority")
 
@@ -1910,14 +1987,12 @@ def _skills_observability_settings(
     diagnostics = getattr(args, "tool_skills_diagnostics", None)
     values: dict[str, object] = {}
     if observability == "off":
-        values.update(
-            {
-                "enabled": False,
-                "emit_events": False,
-                "include_diagnostics": False,
-                "include_byte_counts": False,
-            }
-        )
+        values.update({
+            "enabled": False,
+            "emit_events": False,
+            "include_diagnostics": False,
+            "include_byte_counts": False,
+        })
     elif observability == "verbose":
         values["include_byte_counts"] = True
     if diagnostics == "off":
@@ -2053,12 +2128,12 @@ async def agent_message_search(
 
     specs_path = args.specifications_file
     engine_uri = getattr(args, "engine_uri", None)
-    assert not (
-        specs_path and engine_uri
-    ), "specifications file and --engine-uri are mutually exclusive"
-    assert (
-        specs_path or engine_uri
-    ), "specifications file or --engine-uri must be specified"
+    assert not (specs_path and engine_uri), (
+        "specifications file and --engine-uri are mutually exclusive"
+    )
+    assert specs_path or engine_uri, (
+        "specifications file or --engine-uri must be specified"
+    )
     agent_id = args.id
     participant_id = args.participant
     session_id = args.session
@@ -2106,9 +2181,9 @@ async def agent_message_search(
                     event_manager_mode=EventManagerMode.CLI,
                 )
             else:
-                assert (
-                    args.engine_uri
-                ), "--engine-uri required when no specifications file"
+                assert args.engine_uri, (
+                    "--engine-uri required when no specifications file"
+                )
                 logger.debug("Loading agent from inline settings")
                 tool_settings = _agent_tool_settings(args)
                 memory_recent = (
@@ -2193,12 +2268,12 @@ async def agent_run(
 
     specs_path = args.specifications_file
     engine_uri = getattr(args, "engine_uri", None)
-    assert not (
-        specs_path and engine_uri
-    ), "specifications file and --engine-uri are mutually exclusive"
-    assert (
-        specs_path or engine_uri
-    ), "specifications file or --engine-uri must be specified"
+    assert not (specs_path and engine_uri), (
+        "specifications file and --engine-uri are mutually exclusive"
+    )
+    assert specs_path or engine_uri, (
+        "specifications file or --engine-uri must be specified"
+    )
     use_async_generator = not args.use_sync_generator
     display_tokens = display_config.display_tokens
     dtokens_pick = 10 if display_tokens > 0 else 0
@@ -2259,9 +2334,9 @@ async def agent_run(
                 event_manager_mode=EventManagerMode.CLI,
             )
         else:
-            assert (
-                args.engine_uri
-            ), "--engine-uri required when no specifications file"
+            assert args.engine_uri, (
+                "--engine-uri required when no specifications file"
+            )
             assert not args.specifications_file or not args.engine_uri
             tool_settings = _agent_tool_settings(args)
             memory_recent = (
@@ -2333,9 +2408,9 @@ async def agent_run(
         orchestrator = await stack.enter_async_context(orchestrator)
 
         if args.tools_confirm:
-            assert (
-                not orchestrator.tool.is_empty
-            ), "--tools-confirm requires tools"
+            assert not orchestrator.tool.is_empty, (
+                "--tools-confirm requires tools"
+            )
 
         logger.debug(
             "Agent loaded from %s, models used: %s, with recent message "
@@ -2529,12 +2604,12 @@ async def agent_serve(
     agent_id = getattr(args, "id", None)
     participant_id = args.participant
     engine_uri = getattr(args, "engine_uri", None)
-    assert not (
-        specs_path and engine_uri
-    ), "specifications file and --engine-uri are mutually exclusive"
-    assert (
-        specs_path or engine_uri
-    ), "specifications file or --engine-uri must be specified"
+    assert not (specs_path and engine_uri), (
+        "specifications file and --engine-uri are mutually exclusive"
+    )
+    assert specs_path or engine_uri, (
+        "specifications file or --engine-uri must be specified"
+    )
 
     settings: OrchestratorSettings | None = None
     tool_settings = _agent_tool_settings(args)
