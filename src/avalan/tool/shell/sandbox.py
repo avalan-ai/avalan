@@ -663,9 +663,11 @@ async def _ensure_directory(path: Path) -> None:
         try:
             await _make_directory(path)
         except FileExistsError:
-            pass
+            # Concurrent directory creation satisfies this request.
+            return
     except FileExistsError:
-        pass
+        # Pre-existing directories are acceptable for idempotent setup.
+        return
 
 
 async def _make_directory_tree(path: Path, *, stop_at: Path) -> None:
@@ -680,9 +682,11 @@ async def _make_directory_tree(path: Path, *, stop_at: Path) -> None:
         try:
             await _make_directory(path)
         except FileExistsError:
-            pass
+            # Concurrent directory creation satisfies this request.
+            return
     except FileExistsError:
-        pass
+        # Pre-existing directories are acceptable for idempotent setup.
+        return
 
 
 def _safe_materialized_filename(filename: str) -> str:
