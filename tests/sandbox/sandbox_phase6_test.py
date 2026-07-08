@@ -98,11 +98,17 @@ class SandboxPhase6Test(TestCase):
                 '(allow file-write* (subpath "/tmp/avalan-seatbelt-session"))',
                 profile,
             )
-            self.assertIn(
-                "(allow file-write* (subpath "
-                '"/private/tmp/avalan-seatbelt-session"))',
-                profile,
+            resolved_output_dir = (
+                Path("/tmp/avalan-seatbelt-session").resolve().as_posix()
             )
+            if _system_prefix_resolves_equivalently(
+                "/tmp/avalan-seatbelt-session",
+                resolved_output_dir,
+            ):
+                self.assertIn(
+                    f'(allow file-write* (subpath "{resolved_output_dir}"))',
+                    profile,
+                )
 
     def test_bubblewrap_argument_generation_is_policy_derived(self) -> None:
         with TemporaryDirectory() as tmpdir:
