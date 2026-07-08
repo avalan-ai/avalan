@@ -964,14 +964,15 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
         self.assertIs(resolved_container, container_runtime)
         self.assertIsNone(resolved_isolation)
 
-        resolved_container, resolved_isolation = _shell_tool_runtime_settings(
-            ShellToolSettings(execution_mode="sandbox"),
-            None,
-            isolation_runtime,
-        )
-
-        self.assertIsNone(resolved_container)
-        self.assertIsNone(resolved_isolation)
+        with self.assertRaisesRegex(
+            AssertionError,
+            "tool.shell backend sandbox requires tool.sandbox settings",
+        ):
+            _shell_tool_runtime_settings(
+                ShellToolSettings(execution_mode="sandbox"),
+                None,
+                isolation_runtime,
+            )
 
     async def test_empty_shell_section_enables_default_shell_settings(self):
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
@@ -5458,6 +5459,18 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(_shell_namespaces(kwargs), ["shell"])
         self.assertIsNone(kwargs["enable_tools"])
+
+    async def test_sandbox_shell_requires_isolation_runtime(self):
+        with self.assertRaisesRegex(
+            AssertionError,
+            "tool.shell backend sandbox requires tool.sandbox settings",
+        ):
+            await _from_settings_tool_manager_kwargs(
+                _orchestrator_settings(tools=["shell.pdfinfo"]),
+                tool_settings=ToolSettingsContext(
+                    shell=ShellToolSettings(execution_mode="sandbox"),
+                ),
+            )
 
     async def test_mcp_toolset_is_not_registered_without_mcp_opt_in(self):
         cases = (

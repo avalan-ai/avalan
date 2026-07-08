@@ -22,6 +22,7 @@ from .container import (
     lower_shell_execution_spec,
 )
 from .entities import (
+    GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY,
     ExecutionResult,
     ExecutionSpec,
     GeneratedFile,
@@ -31,13 +32,18 @@ from .entities import (
     ShellOutputKind,
 )
 from .executor import CommandExecutor, _status_for_exit_code
+from .filesystem import make_directory as _make_directory
+from .filesystem import private_temp_directory
+from .filesystem import write_bytes as _write_bytes
+from .settings import ShellToolSettings
 
 from base64 import b64encode
 from collections.abc import Awaitable, Callable, Sequence
 from hashlib import sha256
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from time import perf_counter
 from typing import cast, final
+from uuid import uuid4
 
 
 @final
@@ -45,9 +51,11 @@ class ShellSandboxCommandExecutor(CommandExecutor):
     def __init__(
         self,
         *,
+        settings: ShellToolSettings | None = None,
         sandbox_settings: SandboxEffectiveSettings | None,
         sandbox_backend: SandboxAsyncBackend | None = None,
     ) -> None:
+        self._settings = settings or ShellToolSettings()
         if sandbox_settings is not None:
             assert isinstance(sandbox_settings, SandboxEffectiveSettings)
         if sandbox_backend is not None:
@@ -86,10 +94,73 @@ class ShellSandboxCommandExecutor(CommandExecutor):
                 ),
                 backend="sandbox",
             )
+        if spec.output_kind is ShellOutputKind.GENERATED_FILES:
+            return await self._execute_with_private_output_dir(
+                spec,
+                start_time=start_time,
+                stream=stream,
+            )
+        return await self._execute_with_sandbox_output_dir(
+            spec,
+            start_time=start_time,
+            stream=stream,
+        )
+
+    async def _execute_with_private_output_dir(
+        self,
+        spec: ExecutionSpec,
+        *,
+        start_time: float,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ExecutionResult:
+        assert self._sandbox_settings is not None
+        output_roots = self._sandbox_settings.profile.output_roots
+        if not output_roots:
+            return await self._execute_with_sandbox_output_dir(
+                spec,
+                start_time=start_time,
+                stream=stream,
+            )
+        try:
+            await _ensure_directory(Path(output_roots[0]))
+            async with private_temp_directory(
+                directory=output_roots[0],
+            ) as output_dir:
+                return await self._execute_with_sandbox_output_dir(
+                    spec,
+                    start_time=start_time,
+                    stream=stream,
+                    sandbox_output_dir=str(output_dir),
+                )
+        except OSError:
+            return _closed_result(
+                spec,
+                start_time=start_time,
+                status=ShellExecutionStatus.TOOL_ERROR,
+                error_code=(
+                    ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED
+                ),
+                error_message="generated output preparation failed",
+                backend="sandbox",
+            )
+
+    async def _execute_with_sandbox_output_dir(
+        self,
+        spec: ExecutionSpec,
+        *,
+        start_time: float,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+        sandbox_output_dir: str | None = None,
+    ) -> ExecutionResult:
         try:
             plan = lower_shell_execution_spec(
                 spec,
                 sandbox_settings=self._sandbox_settings,
+                sandbox_output_dir=sandbox_output_dir,
             )
         except AssertionError as error:
             status, error_code = _lowering_error_status(str(error))
@@ -177,12 +248,13 @@ class ShellSandboxCommandExecutor(CommandExecutor):
         stdout = _scrub_capture(stdout, generated_output_replacements)
         stderr = _scrub_capture(stderr, generated_output_replacements)
         await _emit_sandbox_streams(stream, result, stdout, stderr)
-        return _sandbox_result_to_shell_result(
+        return await _sandbox_result_to_shell_result(
             spec,
             plan,
             result,
             stdout=stdout,
             stderr=stderr,
+            settings=self._settings,
             start_time=start_time,
         )
 
@@ -216,22 +288,24 @@ def _backend_exception_diagnostics(
     return (cast(SandboxBackendDiagnostic, diagnostic),)
 
 
-def _sandbox_result_to_shell_result(
+async def _sandbox_result_to_shell_result(
     spec: ExecutionSpec,
     plan: ShellExecutionPlan,
     result: SandboxExecutionResult,
     *,
     stdout: tuple[str, int, bool],
     stderr: tuple[str, int, bool],
+    settings: ShellToolSettings,
     start_time: float,
 ) -> ExecutionResult:
     generated_files: tuple[GeneratedFile, ...] = ()
     generated_error: _SandboxGeneratedOutputError | None = None
     if spec.output_kind is ShellOutputKind.GENERATED_FILES:
         try:
-            generated_files = _generated_files(
+            generated_files = await _generated_files(
                 result.output_artifacts,
                 spec.output_plan,
+                settings=settings,
             )
         except _SandboxGeneratedOutputError as error:
             generated_error = error
@@ -502,9 +576,11 @@ def _stream_kind(stream: SandboxBackendStream) -> ToolExecutionStreamKind:
     return ToolExecutionStreamKind.STDERR
 
 
-def _generated_files(
+async def _generated_files(
     artifacts: Sequence[SandboxOutputArtifact],
     plan: GeneratedOutputPlan | None,
+    *,
+    settings: ShellToolSettings | None = None,
 ) -> tuple[GeneratedFile, ...]:
     if plan is None:
         raise _SandboxGeneratedOutputError(
@@ -530,6 +606,20 @@ def _generated_files(
         if total_bytes > plan.max_total_bytes:
             raise _generated_output_too_large()
         display_path = _display_generated_path(path, plan)
+        metadata: dict[str, object] = {}
+        content_base64 = (
+            b64encode(content).decode("ascii")
+            if len(content) <= plan.max_inline_bytes
+            else None
+        )
+        if content_base64 is None:
+            metadata[GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY] = (
+                await _materialize_generated_output_content(
+                    content,
+                    display_path,
+                    settings,
+                )
+            )
         files.append(
             GeneratedFile(
                 display_path=display_path,
@@ -537,15 +627,75 @@ def _generated_files(
                 suffix=suffix,
                 bytes=len(content),
                 sha256=sha256(content).hexdigest(),
-                content_base64=(
-                    b64encode(content).decode("ascii")
-                    if len(content) <= plan.max_inline_bytes
-                    else None
-                ),
+                content_base64=content_base64,
                 truncated=False,
+                metadata=metadata,
             )
         )
     return tuple(files)
+
+
+async def _materialize_generated_output_content(
+    content: bytes,
+    display_path: str,
+    settings: ShellToolSettings | None,
+) -> str:
+    settings = settings or ShellToolSettings()
+    workspace_root = Path(settings.workspace_root).resolve()
+    materialized_root = workspace_root / settings.materialized_input_files_dir
+    await _make_directory_tree(materialized_root, stop_at=workspace_root)
+    target_dir = materialized_root / uuid4().hex
+    await _make_directory(target_dir)
+    target_path = target_dir / _safe_materialized_filename(
+        Path(display_path).name
+    )
+    await _write_bytes(target_path, content)
+    return str(target_path.resolve())
+
+
+async def _ensure_directory(path: Path) -> None:
+    try:
+        await _make_directory(path)
+    except FileNotFoundError:
+        if path.parent == path:
+            raise
+        await _ensure_directory(path.parent)
+        try:
+            await _make_directory(path)
+        except FileExistsError:
+            pass
+    except FileExistsError:
+        pass
+
+
+async def _make_directory_tree(path: Path, *, stop_at: Path) -> None:
+    if path == stop_at:
+        return
+    try:
+        await _make_directory(path)
+    except FileNotFoundError:
+        if path.parent == path or not _is_relative_to(path.parent, stop_at):
+            raise
+        await _make_directory_tree(path.parent, stop_at=stop_at)
+        try:
+            await _make_directory(path)
+        except FileExistsError:
+            pass
+    except FileExistsError:
+        pass
+
+
+def _safe_materialized_filename(filename: str) -> str:
+    safe = filename.lstrip(".")
+    return safe or "generated"
+
+
+def _is_relative_to(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return False
+    return True
 
 
 def _safe_artifact_path(path: str) -> PurePosixPath:

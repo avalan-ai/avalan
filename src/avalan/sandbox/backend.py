@@ -1644,8 +1644,11 @@ def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
         "(deny default)",
         "(allow process*)",
         "(allow file-read-metadata)",
+        # dyld may need unscoped data reads before the target executable
+        # reaches user code on recent macOS releases.
+        "(allow file-read-data)",
     ]
-    for path in _ordered_unique(
+    for path in _seatbelt_ordered_paths(
         tuple(profile.executable_search_roots)
         + tuple(profile.trusted_executables)
         + tuple(profile.read_roots)
@@ -1654,13 +1657,13 @@ def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
         + _optional_path_tuple(plan.output_dir)
     ):
         lines.append(_seatbelt_allow_read(path))
-    for path in _ordered_unique(
+    for path in _seatbelt_ordered_paths(
         tuple(profile.write_roots)
         + _optional_path_tuple(plan.temp_dir)
         + _optional_path_tuple(plan.output_dir)
     ):
         lines.append(_seatbelt_allow_write(path))
-    for path in _ordered_unique(profile.deny_roots):
+    for path in _seatbelt_ordered_paths(profile.deny_roots):
         lines.append(_seatbelt_deny_read(path))
         lines.append(_seatbelt_deny_write(path))
     network_mode = cast(SandboxNetworkMode, profile.network.mode)
@@ -1676,7 +1679,7 @@ def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
         case SandboxNetworkMode.FULL:
             raise AssertionError("seatbelt full network is unsupported")
     if profile.child_processes is SandboxChildProcessPolicy.DENY:
-        lines.append("(deny process-fork*)")
+        lines.append("(deny process-fork)")
     return "\n".join(lines) + "\n"
 
 
@@ -2086,6 +2089,24 @@ def _optional_path_tuple(path: str | None) -> tuple[str, ...]:
     if path is None:
         return ()
     return (path,)
+
+
+def _seatbelt_ordered_paths(paths: Sequence[str]) -> tuple[str, ...]:
+    expanded: list[str] = []
+    for path in paths:
+        expanded.extend(_seatbelt_path_aliases(path))
+    return _ordered_unique(tuple(expanded))
+
+
+def _seatbelt_path_aliases(path: str) -> tuple[str, ...]:
+    normalized = normalize_posix_path(path)
+    resolved = _real_path(normalized)
+    if normalized != resolved and _system_prefix_resolves_equivalently(
+        normalized,
+        resolved,
+    ):
+        return normalized, resolved
+    return (normalized,)
 
 
 def _seatbelt_allow_read(path: str) -> str:

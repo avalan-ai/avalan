@@ -64,6 +64,7 @@ class SandboxPhase6Test(TestCase):
             self.assertEqual(profile, equivalent)
             self.assertIn("(version 1)", profile)
             self.assertIn("(deny default)", profile)
+            self.assertIn("(allow file-read-data)", profile)
             self.assertIn(
                 f'(allow file-read* (subpath "{roots["workspace"]}"))',
                 profile,
@@ -77,9 +78,29 @@ class SandboxPhase6Test(TestCase):
                 profile,
             )
             self.assertIn("(deny network*)", profile)
-            self.assertIn("(deny process-fork*)", profile)
+            self.assertIn("(deny process-fork)", profile)
             with self.assertRaises(AssertionError):
                 generate_seatbelt_profile(cast(SandboxExecutionPlan, "raw"))
+
+    def test_seatbelt_profile_adds_safe_system_prefix_aliases(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            roots = _roots(tmpdir)
+            roots["output_root"] = "/tmp"
+            roots["output_dir"] = "/tmp/avalan-seatbelt-session"
+
+            profile = generate_seatbelt_profile(
+                _plan("seatbelt", roots, network="none")
+            )
+
+            self.assertIn(
+                '(allow file-write* (subpath "/tmp/avalan-seatbelt-session"))',
+                profile,
+            )
+            self.assertIn(
+                "(allow file-write* (subpath "
+                '"/private/tmp/avalan-seatbelt-session"))',
+                profile,
+            )
 
     def test_bubblewrap_argument_generation_is_policy_derived(self) -> None:
         with TemporaryDirectory() as tmpdir:
