@@ -1,9 +1,11 @@
 from asyncio import create_task, gather, sleep, wait_for
+from asyncio import run as async_run
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import patch
 
 from avalan.entities import (
     ToolCallContext,
@@ -45,7 +47,9 @@ from avalan.tool.shell import (
     lower_shell_execution_spec,
     normalize_shell_execution_request,
 )
+from avalan.tool.shell import sandbox as shell_sandbox_module
 from avalan.tool.shell.entities import (
+    GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY,
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
     ShellFormattedCompositionResult,
     ShellFormattedResult,
@@ -214,33 +218,7 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
     async def test_sandbox_collects_generated_outputs(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            runtime_path = (
-                root.resolve() / "outputs" / "shell-output.txt"
-            ).as_posix()
-            backend = sandbox_backend_module.SandboxFakeBackend(
-                sandbox_backend_module.SandboxFakeBackendScript(
-                    capabilities=_capabilities(),
-                    stream_chunks=(
-                        sandbox_backend_module.SandboxStreamChunk(
-                            stream=(
-                                sandbox_backend_module.SandboxBackendStream.STDOUT
-                            ),
-                            content=(
-                                f'{{"output": "{runtime_path}"}}\n'.encode()
-                            ),
-                            sequence=0,
-                        ),
-                        sandbox_backend_module.SandboxStreamChunk(
-                            stream=(
-                                sandbox_backend_module.SandboxBackendStream.STDERR
-                            ),
-                            content=f"wrote {runtime_path}\n".encode(),
-                            sequence=1,
-                        ),
-                    ),
-                    output_files={"shell-output.txt": b"value"},
-                )
-            )
+            backend = _PlanAwareGeneratedSandboxBackend(b"value")
             events: list[ToolExecutionStreamEvent] = []
 
             async def record(event: ToolExecutionStreamEvent) -> None:
@@ -256,6 +234,8 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
                 ),
                 stream=record,
             )
+            runtime_path = backend.runtime_prefix or ""
+            output_dir = backend.output_dir
 
         self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
         self.assertEqual(result.output_kind, ShellOutputKind.GENERATED_FILES)
@@ -265,42 +245,114 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
         self.assertEqual(generated.media_type, "text/plain")
         self.assertEqual(generated.bytes, 5)
         self.assertEqual(generated.content_base64, "dmFsdWU=")
-        self.assertIn("GENERATED_PREFIX.txt", result.stdout)
-        self.assertIn("GENERATED_PREFIX.txt", result.stderr)
+        self.assertIn("GENERATED_PREFIX", result.stdout)
+        self.assertIn("GENERATED_PREFIX", result.stderr)
         self.assertNotIn(runtime_path, result.stdout)
         self.assertNotIn(runtime_path, result.stderr)
+        self.assertIsNotNone(output_dir)
+        assert output_dir is not None
+        self.assertFalse(output_dir.exists())
+        self.assertEqual(output_dir.parent, root.resolve() / "outputs")
+        self.assertTrue(output_dir.name.startswith("avalan-shell-"))
         self.assertTrue(events)
         for event in events:
             self.assertNotIn(runtime_path, event.content)
-        self.assertIn(
-            sandbox_backend_module.SandboxBackendOperation.COLLECT_OUTPUTS,
-            backend.operations,
+
+    async def test_generated_outputs_without_output_root_fail_closed(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            result = await ShellSandboxCommandExecutor(
+                sandbox_settings=_sandbox_settings(root, output=False),
+                sandbox_backend=None,
+            ).execute(_direct_generated_spec(root))
+
+        self.assertEqual(result.backend, "sandbox")
+        self.assertEqual(result.status, ShellExecutionStatus.TOOL_ERROR)
+        self.assertEqual(
+            result.error_code,
+            ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED,
         )
+        self.assertIn("output root", result.error_message or "")
+
+    async def test_generated_output_preparation_failure_fails_closed(
+        self,
+    ) -> None:
+        async def fail_ensure_directory(path: Path) -> None:
+            raise OSError(path)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            with patch.object(
+                shell_sandbox_module,
+                "_ensure_directory",
+                fail_ensure_directory,
+            ):
+                result = await ShellSandboxCommandExecutor(
+                    sandbox_settings=_sandbox_settings(root),
+                    sandbox_backend=None,
+                ).execute(_direct_generated_spec(root))
+
+        self.assertEqual(result.backend, "sandbox")
+        self.assertEqual(result.status, ShellExecutionStatus.TOOL_ERROR)
+        self.assertEqual(
+            result.error_code,
+            ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED,
+        )
+        self.assertEqual(
+            result.error_message,
+            "generated output preparation failed",
+        )
+
+    async def test_sandbox_materializes_non_inline_generated_outputs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            backend = _PlanAwareGeneratedSandboxBackend(b"larger")
+
+            result = await ShellSandboxCommandExecutor(
+                settings=ShellToolSettings(
+                    workspace_root=str(root),
+                    materialized_input_files_dir="generated-files",
+                ),
+                sandbox_settings=_sandbox_settings(root, output=True),
+                sandbox_backend=backend,
+            ).execute(
+                _direct_generated_spec(
+                    root,
+                    display_prefix="GENERATED_PREFIX",
+                    max_inline_bytes=1,
+                ),
+            )
+
+            generated = result.generated_files[0]
+            materialized_path = Path(
+                str(
+                    generated.metadata[
+                        GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY
+                    ]
+                )
+            )
+            self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
+            self.assertIsNone(generated.content_base64)
+            self.assertEqual(materialized_path.read_bytes(), b"larger")
+            self.assertTrue(
+                materialized_path.is_relative_to(
+                    (root / "generated-files").resolve(),
+                )
+            )
 
     async def test_sandbox_scrubs_truncated_generated_output_path(
         self,
     ) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            runtime_path = (
-                root.resolve() / "outputs" / "shell-output.txt"
-            ).as_posix()
-            stream_content = f'{{"output": "{runtime_path}"}}\n'.encode()
             cap = len('{"output": "') + len("GENERATED_PREFIX")
-            backend = sandbox_backend_module.SandboxFakeBackend(
-                sandbox_backend_module.SandboxFakeBackendScript(
-                    capabilities=_capabilities(),
-                    stream_chunks=(
-                        sandbox_backend_module.SandboxStreamChunk(
-                            stream=(
-                                sandbox_backend_module.SandboxBackendStream.STDOUT
-                            ),
-                            content=stream_content,
-                            sequence=0,
-                        ),
-                    ),
-                    output_files={"shell-output.txt": b"value"},
-                )
+            backend = _PlanAwareGeneratedSandboxBackend(
+                b"value",
+                stderr=False,
             )
             events: list[ToolExecutionStreamEvent] = []
 
@@ -728,6 +780,10 @@ class ShellSandboxExecutorTest(IsolatedAsyncioTestCase):
             for name, output_files, spec, expected_status in cases:
                 with self.subTest(name=name):
                     result = await ShellSandboxCommandExecutor(
+                        settings=ShellToolSettings(
+                            workspace_root=str(root),
+                            materialized_input_files_dir="generated-files",
+                        ),
                         sandbox_settings=_sandbox_settings(root),
                         sandbox_backend=sandbox_backend_module.SandboxFakeBackend(
                             sandbox_backend_module.SandboxFakeBackendScript(
@@ -1231,7 +1287,7 @@ class ShellSandboxValueTest(TestCase):
         for artifacts, output_plan in cases:
             with self.subTest(artifacts=artifacts, output_plan=output_plan):
                 with self.assertRaises(Exception):
-                    _sandbox_generated_files(artifacts, output_plan)
+                    async_run(_sandbox_generated_files(artifacts, output_plan))
 
     def test_sandbox_scrub_capture_preserves_byte_cap(self) -> None:
         scrubbed = _sandbox_scrub_capture(
@@ -1258,6 +1314,140 @@ class ShellSandboxValueTest(TestCase):
             _sandbox_diagnostic_summary(()),
             "sandbox execution failed",
         )
+
+    def test_generated_sandbox_plan_uses_profile_output_root(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            plan = lower_shell_execution_spec(
+                _direct_generated_spec(root),
+                sandbox_settings=_sandbox_settings(root),
+            )
+
+        self.assertIsNotNone(plan.sandbox_plan)
+        assert plan.sandbox_plan is not None
+        self.assertEqual(
+            plan.sandbox_plan.output_dir,
+            str((root / "outputs").resolve()),
+        )
+
+    def test_sandbox_directory_helpers_cover_recursive_edges(self) -> None:
+        async def fail_root(path: str | Path, *, mode: int = 0o700) -> Path:
+            del mode
+            raise FileNotFoundError(path)
+
+        async def retry_existing(
+            path: str | Path,
+            *,
+            mode: int = 0o700,
+        ) -> Path:
+            del mode
+            calls.append(Path(path))
+            if len(calls) == 1:
+                raise FileNotFoundError(path)
+            if len(calls) == 3:
+                raise FileExistsError(path)
+            return Path(path)
+
+        async def retry_tree_existing(
+            path: str | Path,
+            *,
+            mode: int = 0o700,
+        ) -> Path:
+            del mode
+            calls.append(Path(path))
+            if len(calls) == 1:
+                raise FileNotFoundError(path)
+            if len(calls) == 2:
+                raise FileExistsError(path)
+            return Path(path)
+
+        async def already_exists(
+            path: str | Path,
+            *,
+            mode: int = 0o700,
+        ) -> Path:
+            del mode
+            raise FileExistsError(path)
+
+        with patch.object(
+            shell_sandbox_module,
+            "_make_directory",
+            fail_root,
+        ):
+            with self.assertRaises(FileNotFoundError):
+                async_run(shell_sandbox_module._ensure_directory(Path("/")))
+
+        calls: list[Path] = []
+        with patch.object(
+            shell_sandbox_module,
+            "_make_directory",
+            retry_existing,
+        ):
+            async_run(
+                shell_sandbox_module._ensure_directory(
+                    Path("/workspace/output")
+                )
+            )
+        self.assertEqual(
+            calls,
+            [
+                Path("/workspace/output"),
+                Path("/workspace"),
+                Path("/workspace/output"),
+            ],
+        )
+
+        async_run(
+            shell_sandbox_module._make_directory_tree(
+                Path("/workspace"),
+                stop_at=Path("/workspace"),
+            )
+        )
+
+        calls = []
+        with patch.object(
+            shell_sandbox_module,
+            "_make_directory",
+            retry_tree_existing,
+        ):
+            async_run(
+                shell_sandbox_module._make_directory_tree(
+                    Path("/workspace/output"),
+                    stop_at=Path("/workspace"),
+                )
+            )
+        self.assertEqual(
+            calls,
+            [
+                Path("/workspace/output"),
+                Path("/workspace/output"),
+            ],
+        )
+
+        with patch.object(
+            shell_sandbox_module,
+            "_make_directory",
+            already_exists,
+        ):
+            async_run(
+                shell_sandbox_module._make_directory_tree(
+                    Path("/workspace/output"),
+                    stop_at=Path("/workspace"),
+                )
+            )
+
+        with patch.object(
+            shell_sandbox_module,
+            "_make_directory",
+            fail_root,
+        ):
+            with self.assertRaises(FileNotFoundError):
+                async_run(
+                    shell_sandbox_module._make_directory_tree(
+                        Path("/other/output"),
+                        stop_at=Path("/workspace"),
+                    )
+                )
 
 
 def _cat_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
@@ -1470,6 +1660,61 @@ def _tool_by_name(toolset: ShellToolSet, command_id: str) -> Tool:
             assert isinstance(tool, Tool), "shell command must be a tool"
             return tool
     raise AssertionError(f"missing shell tool {command_id}")
+
+
+class _PlanAwareGeneratedSandboxBackend:
+    def __init__(self, content: bytes, *, stderr: bool = True) -> None:
+        self.content = content
+        self.stderr = stderr
+        self.runtime_prefix: str | None = None
+        self.output_dir: Path | None = None
+
+    async def probe(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> sandbox_backend_module.SandboxBackendProbeResult:
+        return sandbox_backend_module.SandboxBackendProbeResult(
+            backend=SandboxBackend.SEATBELT,
+            available=True,
+            capabilities=_capabilities(),
+        )
+
+    async def execute(
+        self,
+        plan: sandbox_backend_module.SandboxExecutionPlan,
+    ) -> sandbox_backend_module.SandboxExecutionResult:
+        assert plan.output_dir is not None
+        self.output_dir = Path(plan.output_dir)
+        self.runtime_prefix = f"{plan.output_dir}/shell-output"
+        chunks = [
+            sandbox_backend_module.SandboxStreamChunk(
+                stream=sandbox_backend_module.SandboxBackendStream.STDOUT,
+                content=f'{{"output": "{self.runtime_prefix}"}}\n'.encode(),
+                sequence=0,
+            )
+        ]
+        if self.stderr:
+            chunks.append(
+                sandbox_backend_module.SandboxStreamChunk(
+                    stream=sandbox_backend_module.SandboxBackendStream.STDERR,
+                    content=f"wrote {self.runtime_prefix}\n".encode(),
+                    sequence=1,
+                )
+            )
+        return sandbox_backend_module.SandboxExecutionResult(
+            status=sandbox_backend_module.SandboxResultStatus.COMPLETED,
+            exit_code=0,
+            stream_chunks=tuple(chunks),
+            stdout=chunks[0].content,
+            stderr=chunks[1].content if len(chunks) > 1 else b"",
+            output_artifacts=(
+                sandbox_backend_module.SandboxOutputArtifact(
+                    path="shell-output.txt",
+                    content=self.content,
+                ),
+            ),
+        )
 
 
 class _AllResolved:

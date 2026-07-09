@@ -532,10 +532,20 @@ class OpenAIStream(TextGenerationVendorStream):
             return
         payload = self._response_input_item_payload(payload)
         item_type = payload.get("type")
-        if item_type not in {"function_call", "reasoning"}:
+        if item_type == "reasoning":
+            if not self._is_replayable_reasoning_item(payload):
+                return
+        elif item_type != "function_call":
             return
         self._output_item_sink(cast(dict[str, Any], payload))
         self._attempt_output_item_count += 1
+
+    @staticmethod
+    def _is_replayable_reasoning_item(
+        payload: Mapping[str, Any],
+    ) -> bool:
+        encrypted_content = payload.get("encrypted_content")
+        return isinstance(encrypted_content, str) and bool(encrypted_content)
 
     @classmethod
     def _response_input_item_payload(
@@ -1227,6 +1237,7 @@ class OpenAIClient(TextGenerationVendor):
         request_client = self._client
         request_timeout = timeout
         request_max_retries: int | None = None
+        include_reasoning_encrypted_content = False
         if instructions is not None:
             assert isinstance(
                 instructions, str
@@ -1247,7 +1258,7 @@ class OpenAIClient(TextGenerationVendor):
             reasoning = OpenAIClient._reasoning_config(settings)
             if reasoning:
                 kwargs["reasoning"] = reasoning
-                kwargs["include"] = ["reasoning.encrypted_content"]
+                include_reasoning_encrypted_content = True
             prompt_cache_retention = (
                 OpenAIClient._prompt_cache_retention_config(settings)
             )
@@ -1281,12 +1292,16 @@ class OpenAIClient(TextGenerationVendor):
             schemas = OpenAIClient._tool_schemas(tool)
             if schemas:
                 kwargs["tools"] = schemas
+                if use_reasoning_profile:
+                    include_reasoning_encrypted_content = True
                 if settings and settings.tool_choice is not None:
                     kwargs["tool_choice"] = OpenAIClient._tool_choice(
                         settings.tool_choice,
                         schemas,
                         tool=tool,
                     )
+        if include_reasoning_encrypted_content:
+            kwargs["include"] = ["reasoning.encrypted_content"]
 
         async def create_response() -> Any:
             return await request_client.responses.create(**kwargs)
@@ -1507,7 +1522,8 @@ class OpenAIClient(TextGenerationVendor):
         for response_item in self._stateless_response_items:
             item_type = response_item.get("type")
             if item_type == "reasoning":
-                messages.append(deepcopy(response_item))
+                if OpenAIStream._is_replayable_reasoning_item(response_item):
+                    messages.append(deepcopy(response_item))
                 continue
             if item_type != "function_call":
                 continue
@@ -1589,9 +1605,13 @@ class OpenAIClient(TextGenerationVendor):
         ]
 
     def _record_stateless_response_item(self, item: dict[str, Any]) -> None:
-        self._stateless_response_items.append(
-            OpenAIStream._response_input_item_payload(deepcopy(item))
-        )
+        payload = OpenAIStream._response_input_item_payload(deepcopy(item))
+        if (
+            payload.get("type") == "reasoning"
+            and not OpenAIStream._is_replayable_reasoning_item(payload)
+        ):
+            return
+        self._stateless_response_items.append(payload)
 
     def _rollback_stateless_response_items(self, count: int) -> None:
         assert isinstance(count, int)

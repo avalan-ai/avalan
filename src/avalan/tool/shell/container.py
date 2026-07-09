@@ -181,6 +181,7 @@ def lower_shell_execution_spec(
     spec: ExecutionSpec,
     *,
     sandbox_settings: SandboxEffectiveSettings | None = None,
+    sandbox_output_dir: str | None = None,
     container_settings: ContainerEffectiveSettings | None = None,
 ) -> ShellExecutionPlan:
     assert isinstance(spec, ExecutionSpec)
@@ -189,6 +190,9 @@ def lower_shell_execution_spec(
     ), "shell execution cannot mix sandbox and container settings"
     if spec.backend == ShellExecutionMode.LOCAL.value:
         assert sandbox_settings is None, "local shell plans cannot use sandbox"
+        assert (
+            sandbox_output_dir is None
+        ), "local shell plans cannot use sandbox output dirs"
         assert (
             container_settings is None
         ), "local shell plans cannot use container settings"
@@ -209,6 +213,9 @@ def lower_shell_execution_spec(
             sandbox_settings is None
         ), "container shell plans cannot use sandbox settings"
         assert (
+            sandbox_output_dir is None
+        ), "container shell plans cannot use sandbox output dirs"
+        assert (
             container_settings is not None
         ), "container execution is selected but no settings are configured"
     if sandbox_settings is not None:
@@ -216,7 +223,11 @@ def lower_shell_execution_spec(
         return ShellExecutionPlan(
             mode=ShellExecutionMode.SANDBOX,
             local_spec=spec,
-            sandbox_plan=_sandbox_plan_from_spec(spec, sandbox_settings),
+            sandbox_plan=_sandbox_plan_from_spec(
+                spec,
+                sandbox_settings,
+                output_dir=sandbox_output_dir,
+            ),
         )
     assert isinstance(container_settings, ContainerEffectiveSettings)
     if not container_settings.enabled:
@@ -244,10 +255,16 @@ def lower_shell_execution_spec(
 def _sandbox_plan_from_spec(
     spec: ExecutionSpec,
     sandbox_settings: SandboxEffectiveSettings,
+    *,
+    output_dir: str | None = None,
 ) -> SandboxExecutionPlan:
     assert spec.executable is not None, "sandbox execution requires executable"
     effective_settings = _narrow_sandbox_settings(spec, sandbox_settings)
-    output_dir = _sandbox_output_dir(spec, effective_settings)
+    output_dir = _sandbox_output_dir(
+        spec,
+        effective_settings,
+        output_dir=output_dir,
+    )
     return SandboxExecutionPlan(
         request=SandboxPlanRequest(
             request_kind=SandboxPlanRequestKind.TYPED_TOOL,
@@ -331,10 +348,17 @@ def _sandbox_output_policy(
 def _sandbox_output_dir(
     spec: ExecutionSpec,
     sandbox_settings: SandboxEffectiveSettings,
+    *,
+    output_dir: str | None = None,
 ) -> str | None:
     if spec.output_kind is not ShellOutputKind.GENERATED_FILES:
+        assert (
+            output_dir is None
+        ), "sandbox output dirs require generated outputs"
         return None
     assert spec.output_plan is not None, "generated outputs require a plan"
+    if output_dir is not None:
+        return output_dir
     output_roots = sandbox_settings.profile.output_roots
     assert output_roots, "sandbox generated outputs require an output root"
     return output_roots[0]

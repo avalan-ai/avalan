@@ -53,6 +53,12 @@ ResourceSetLimit = Callable[[int, tuple[int, int]], None]
 _RESOURCE_RLIMIT_NPROC: int
 _RESOURCE_GETRLIMIT: ResourceGetLimit | None
 _RESOURCE_SETRLIMIT: ResourceSetLimit | None
+_SEATBELT_SYSTEM_READ_DATA_PATHS = (
+    "/System/Library/dyld",
+    "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld",
+    "/private/var/db/dyld",
+    "/usr/lib/dyld",
+)
 
 try:
     from resource import RLIMIT_NPROC as _IMPORTED_RLIMIT_NPROC
@@ -1643,9 +1649,17 @@ def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
         "(version 1)",
         "(deny default)",
         "(allow process*)",
+        # Rust-based tools such as ripgrep query stack limits during thread
+        # setup. Without sysctl-read they can abort before user code runs.
+        "(allow sysctl-read)",
         "(allow file-read-metadata)",
     ]
-    for path in _ordered_unique(
+    # dyld may need data reads before the target executable reaches user
+    # code on recent macOS releases. Keep those grants scoped to system
+    # loader/cache paths so policy read_roots still constrain user data.
+    for path in _seatbelt_ordered_paths(_SEATBELT_SYSTEM_READ_DATA_PATHS):
+        lines.append(_seatbelt_allow_read_data(path))
+    for path in _seatbelt_ordered_paths(
         tuple(profile.executable_search_roots)
         + tuple(profile.trusted_executables)
         + tuple(profile.read_roots)
@@ -1654,13 +1668,13 @@ def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
         + _optional_path_tuple(plan.output_dir)
     ):
         lines.append(_seatbelt_allow_read(path))
-    for path in _ordered_unique(
+    for path in _seatbelt_ordered_paths(
         tuple(profile.write_roots)
         + _optional_path_tuple(plan.temp_dir)
         + _optional_path_tuple(plan.output_dir)
     ):
         lines.append(_seatbelt_allow_write(path))
-    for path in _ordered_unique(profile.deny_roots):
+    for path in _seatbelt_ordered_paths(profile.deny_roots):
         lines.append(_seatbelt_deny_read(path))
         lines.append(_seatbelt_deny_write(path))
     network_mode = cast(SandboxNetworkMode, profile.network.mode)
@@ -1676,7 +1690,7 @@ def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
         case SandboxNetworkMode.FULL:
             raise AssertionError("seatbelt full network is unsupported")
     if profile.child_processes is SandboxChildProcessPolicy.DENY:
-        lines.append("(deny process-fork*)")
+        lines.append("(deny process-fork)")
     return "\n".join(lines) + "\n"
 
 
@@ -2088,8 +2102,30 @@ def _optional_path_tuple(path: str | None) -> tuple[str, ...]:
     return (path,)
 
 
+def _seatbelt_ordered_paths(paths: Sequence[str]) -> tuple[str, ...]:
+    expanded: list[str] = []
+    for path in paths:
+        expanded.extend(_seatbelt_path_aliases(path))
+    return _ordered_unique(tuple(expanded))
+
+
+def _seatbelt_path_aliases(path: str) -> tuple[str, ...]:
+    normalized = normalize_posix_path(path)
+    resolved = _real_path(normalized)
+    if normalized != resolved and _system_prefix_resolves_equivalently(
+        normalized,
+        resolved,
+    ):
+        return normalized, resolved
+    return (normalized,)
+
+
 def _seatbelt_allow_read(path: str) -> str:
     return f"(allow file-read* (subpath {_seatbelt_string(path)}))"
+
+
+def _seatbelt_allow_read_data(path: str) -> str:
+    return f"(allow file-read-data (subpath {_seatbelt_string(path)}))"
 
 
 def _seatbelt_allow_write(path: str) -> str:
@@ -2254,9 +2290,19 @@ def _execution_path_candidates(
 ) -> tuple[str, ...]:
     candidates = [plan.request.command, plan.request.cwd]
     for argument in plan.request.argv:
-        if argument.startswith("/"):
+        if _argument_is_existing_absolute_path(argument):
             candidates.append(argument)
     return tuple(candidates)
+
+
+def _argument_is_existing_absolute_path(argument: str) -> bool:
+    path = Path(argument)
+    if not path.is_absolute():
+        return False
+    try:
+        return path.exists()
+    except OSError:
+        return True
 
 
 def _real_roots(roots: Sequence[str], field_name: str) -> tuple[str, ...]:

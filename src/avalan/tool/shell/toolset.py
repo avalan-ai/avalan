@@ -232,6 +232,7 @@ class ShellToolSet(ToolSet):
             )
             if execution_mode == "sandbox":
                 executor = ShellSandboxCommandExecutor(
+                    settings=self._settings,
                     sandbox_settings=sandbox_settings,
                     sandbox_backend=sandbox_backend,
                 )

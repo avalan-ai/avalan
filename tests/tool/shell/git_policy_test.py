@@ -89,6 +89,24 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(spec.executable, str(git))
 
+    async def test_configured_git_executable_path_skips_lookup(self) -> None:
+        async def fail_lookup(_search_paths: tuple[str, ...]) -> str | None:
+            raise AssertionError("lookup should not be called")
+
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            _write_minimal_git_repo(root / "repo")
+
+            spec = await GitExecutionPolicy(
+                settings=_settings(
+                    root,
+                    git_executable_path="/usr/bin/git",
+                ),
+                executable_lookup=fail_lookup,
+            ).normalize(_status_request())
+
+        self.assertEqual(spec.executable, "/usr/bin/git")
+
     async def test_read_commands_do_not_require_supported_index_form(
         self,
     ) -> None:
@@ -1520,6 +1538,7 @@ def _settings(
     max_argument_bytes: int = 8192,
     max_command_bytes: int = 32768,
     executable_search_paths: tuple[str, ...] = (),
+    git_executable_path: str | None = None,
 ) -> ShellToolSettings:
     return ShellToolSettings(
         max_arguments=max_arguments,
@@ -1531,6 +1550,7 @@ def _settings(
             cwd=cwd,
             capabilities=git_capabilities,
             allowed_commands=git_allowed_commands,
+            executable_path=git_executable_path,
             default_timeout_seconds=default_timeout_seconds,
             max_timeout_seconds=max_timeout_seconds,
             max_stdout_bytes=max_stdout_bytes,

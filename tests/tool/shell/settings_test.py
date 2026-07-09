@@ -233,6 +233,7 @@ class ShellToolSettingsTest(TestCase):
 
         self.assertEqual(settings.workspace_root, ".")
         self.assertEqual(settings.cwd, ".")
+        self.assertIsNone(settings.executable_path)
         self.assertEqual(settings.capabilities, ("read",))
         self.assertEqual(
             settings.allowed_commands,
@@ -264,6 +265,18 @@ class ShellToolSettingsTest(TestCase):
         self.assertTrue(settings.redact_remote_urls)
         self.assertTrue(settings.redact_credentials)
         self.assertFalse(settings.redact_author_emails)
+
+    def test_git_settings_accept_absolute_executable_path(self) -> None:
+        settings = ShellGitToolSettings(executable_path="/usr/bin/git")
+
+        self.assertEqual(settings.executable_path, "/usr/bin/git")
+
+    def test_git_settings_reject_relative_executable_path(self) -> None:
+        with self.assertRaisesRegex(
+            AssertionError,
+            "git.executable_path must be absolute",
+        ):
+            ShellGitToolSettings(executable_path="git")
 
     def test_git_settings_accept_reserved_false_values(self) -> None:
         settings = ShellGitToolSettings(

@@ -427,6 +427,9 @@ def _shell_tool_runtime_settings(
         and isolation_runtime.mode is IsolationMode.SANDBOX
     ):
         return None, isolation_runtime
+    assert (
+        execution_mode != "sandbox"
+    ), "tool.shell backend sandbox requires tool.sandbox settings"
     return None, None
 
 

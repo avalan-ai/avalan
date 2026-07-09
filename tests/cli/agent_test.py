@@ -523,16 +523,12 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
 
         gos.assert_called_once()
         self.assertIsNone(gos.call_args.kwargs["tools"])
-        gts.assert_has_calls(
-            [
-                call(args, prefix="browser", settings_cls=BrowserToolSettings),
-                call(
-                    args, prefix="database", settings_cls=DatabaseToolSettings
-                ),
-                call(args, prefix="graph", settings_cls=GraphToolSettings),
-                call(args, prefix="shell", settings_cls=ShellToolSettings),
-            ]
-        )
+        gts.assert_has_calls([
+            call(args, prefix="browser", settings_cls=BrowserToolSettings),
+            call(args, prefix="database", settings_cls=DatabaseToolSettings),
+            call(args, prefix="graph", settings_cls=GraphToolSettings),
+            call(args, prefix="shell", settings_cls=ShellToolSettings),
+        ])
         asrv.assert_called_once_with(
             hub=hub,
             name="name",
@@ -676,17 +672,115 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(git_settings.max_diff_bytes, 8192)
         self.assertEqual(
             settings.shell_explicit_fields,
-            frozenset(
-                {
-                    "git.workspace_root",
-                    "git.cwd",
-                    "git.capabilities",
-                    "git.allowed_commands",
-                    "git.max_log_count",
-                    "git.max_diff_bytes",
-                }
-            ),
+            frozenset({
+                "git.workspace_root",
+                "git.cwd",
+                "git.capabilities",
+                "git.allowed_commands",
+                "git.max_log_count",
+                "git.max_diff_bytes",
+            }),
         )
+
+    def test_agent_tool_settings_routes_git_executable_path_mapping(
+        self,
+    ) -> None:
+        settings = agent_cmds._agent_tool_settings(
+            Namespace(
+                tool_shell_executable_paths=[
+                    ("git", "/usr/bin/git"),
+                    ("rg", "/opt/homebrew/bin/rg"),
+                ],
+            )
+        )
+
+        self.assertIsInstance(settings.shell, ShellToolSettings)
+        assert settings.shell is not None
+        self.assertEqual(
+            settings.shell.executable_paths,
+            {"rg": "/opt/homebrew/bin/rg"},
+        )
+        git_settings = settings.shell.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.executable_path, "/usr/bin/git")
+        self.assertEqual(
+            settings.shell_explicit_fields,
+            frozenset({"executable_paths", "git.executable_path"}),
+        )
+
+    def test_agent_tool_settings_routes_only_git_executable_path_mapping(
+        self,
+    ) -> None:
+        settings = agent_cmds._agent_tool_settings(
+            Namespace(
+                tool_shell_executable_paths=[
+                    ("git", "/usr/bin/git"),
+                ],
+            )
+        )
+
+        self.assertIsInstance(settings.shell, ShellToolSettings)
+        assert settings.shell is not None
+        self.assertEqual(settings.shell.executable_paths, {})
+        git_settings = settings.shell.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.executable_path, "/usr/bin/git")
+        self.assertEqual(
+            settings.shell_explicit_fields,
+            frozenset({"git.executable_path"}),
+        )
+
+    def test_agent_tool_settings_merges_matching_git_executable_path(
+        self,
+    ) -> None:
+        settings = agent_cmds._agent_tool_settings(
+            Namespace(
+                tool_shell_executable_paths=[
+                    ("git", "/usr/bin/git"),
+                ],
+                tool_shell_git_executable_path="/usr/bin/git",
+                tool_shell_git_allowed_commands=["status"],
+            )
+        )
+
+        self.assertIsInstance(settings.shell, ShellToolSettings)
+        assert settings.shell is not None
+        git_settings = settings.shell.git
+        self.assertIsInstance(git_settings, ShellGitToolSettings)
+        assert isinstance(git_settings, ShellGitToolSettings)
+        self.assertEqual(git_settings.executable_path, "/usr/bin/git")
+        self.assertEqual(git_settings.allowed_commands, ("status",))
+
+    def test_agent_tool_settings_rejects_conflicting_git_executable_path(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            AssertionError,
+            "git executable path settings conflict",
+        ):
+            agent_cmds._agent_tool_settings(
+                Namespace(
+                    tool_shell_executable_paths=[
+                        ("git", "/usr/bin/git"),
+                    ],
+                    tool_shell_git_executable_path="/opt/homebrew/bin/git",
+                )
+            )
+
+    def test_shell_executable_path_explicit_fields_ignores_invalid_shape(
+        self,
+    ) -> None:
+        explicit_fields = (
+            agent_cmds._tool_settings_explicit_fields_from_mapping(
+                {"tool_shell_executable_paths": "git=/usr/bin/git"},
+                prefix="shell",
+                settings_cls=ShellToolSettings,
+            )
+        )
+
+        self.assertEqual(explicit_fields, frozenset({"executable_paths"}))
 
     def test_shell_git_tool_settings_track_mapping_inputs(self) -> None:
         mapping = {
