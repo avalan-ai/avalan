@@ -7,6 +7,7 @@ by Avalan's common read-only shell tools:
 - `cat`
 - `file`
 - `find`
+- `git`
 - `head`
 - `jq`
 - `ls`
@@ -74,6 +75,8 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool shell.cat \
       --tool shell.file \
       --tool shell.find \
+      --tool shell.git_log \
+      --tool shell.git_status \
       --tool shell.head \
       --tool shell.jq \
       --tool shell.ls \

@@ -523,12 +523,16 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
 
         gos.assert_called_once()
         self.assertIsNone(gos.call_args.kwargs["tools"])
-        gts.assert_has_calls([
-            call(args, prefix="browser", settings_cls=BrowserToolSettings),
-            call(args, prefix="database", settings_cls=DatabaseToolSettings),
-            call(args, prefix="graph", settings_cls=GraphToolSettings),
-            call(args, prefix="shell", settings_cls=ShellToolSettings),
-        ])
+        gts.assert_has_calls(
+            [
+                call(args, prefix="browser", settings_cls=BrowserToolSettings),
+                call(
+                    args, prefix="database", settings_cls=DatabaseToolSettings
+                ),
+                call(args, prefix="graph", settings_cls=GraphToolSettings),
+                call(args, prefix="shell", settings_cls=ShellToolSettings),
+            ]
+        )
         asrv.assert_called_once_with(
             hub=hub,
             name="name",
@@ -672,14 +676,16 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(git_settings.max_diff_bytes, 8192)
         self.assertEqual(
             settings.shell_explicit_fields,
-            frozenset({
-                "git.workspace_root",
-                "git.cwd",
-                "git.capabilities",
-                "git.allowed_commands",
-                "git.max_log_count",
-                "git.max_diff_bytes",
-            }),
+            frozenset(
+                {
+                    "git.workspace_root",
+                    "git.cwd",
+                    "git.capabilities",
+                    "git.allowed_commands",
+                    "git.max_log_count",
+                    "git.max_diff_bytes",
+                }
+            ),
         )
 
     def test_agent_tool_settings_routes_git_executable_path_mapping(

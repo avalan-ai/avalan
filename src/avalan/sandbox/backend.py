@@ -54,10 +54,16 @@ _RESOURCE_RLIMIT_NPROC: int
 _RESOURCE_GETRLIMIT: ResourceGetLimit | None
 _RESOURCE_SETRLIMIT: ResourceSetLimit | None
 _SEATBELT_SYSTEM_READ_DATA_PATHS = (
+    "/",
     "/System/Library/dyld",
     "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld",
     "/private/var/db/dyld",
     "/usr/lib/dyld",
+)
+_SEATBELT_SYSTEM_MACH_LOOKUP_SERVICES = (
+    "com.apple.logd",
+    "com.apple.system.notification_center",
+    "com.apple.system.opendirectoryd.libinfo",
 )
 
 try:
@@ -1657,8 +1663,14 @@ def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
     # dyld may need data reads before the target executable reaches user
     # code on recent macOS releases. Keep those grants scoped to system
     # loader/cache paths so policy read_roots still constrain user data.
+    # The literal root grant covers root-directory bootstrap reads only; it
+    # does not allow reading arbitrary paths below /.
     for path in _seatbelt_ordered_paths(_SEATBELT_SYSTEM_READ_DATA_PATHS):
         lines.append(_seatbelt_allow_read_data(path))
+    # CoreFoundation/libsystem startup may query these bootstrap services
+    # before CLI tools reach user code. Keep grants service-specific.
+    for service in _SEATBELT_SYSTEM_MACH_LOOKUP_SERVICES:
+        lines.append(_seatbelt_allow_mach_lookup(service))
     for path in _seatbelt_ordered_paths(
         tuple(profile.executable_search_roots)
         + tuple(profile.trusted_executables)
@@ -2125,7 +2137,14 @@ def _seatbelt_allow_read(path: str) -> str:
 
 
 def _seatbelt_allow_read_data(path: str) -> str:
+    if normalize_posix_path(path) == "/":
+        return f"(allow file-read-data (literal {_seatbelt_string(path)}))"
     return f"(allow file-read-data (subpath {_seatbelt_string(path)}))"
+
+
+def _seatbelt_allow_mach_lookup(service: str) -> str:
+    _assert_non_empty_string(service, "seatbelt mach service")
+    return f"(allow mach-lookup (global-name {_seatbelt_string(service)}))"
 
 
 def _seatbelt_allow_write(path: str) -> str:

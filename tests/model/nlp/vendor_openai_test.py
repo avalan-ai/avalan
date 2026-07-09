@@ -4816,7 +4816,10 @@ class TemplateAndToolSchemaTestCase(TestCase):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
 
         client._record_stateless_response_item(
-            {"type": "reasoning", "id": "rs_1"}
+            {
+                "type": "reasoning",
+                "id": "rs_1",
+            }
         )
 
         self.assertEqual(client._stateless_response_items, [])

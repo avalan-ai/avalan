@@ -9,6 +9,7 @@ RUN apk add --no-cache \
     file \
     findutils \
     gawk \
+    git \
     jq \
     ripgrep \
     sed
