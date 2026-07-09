@@ -1606,9 +1606,10 @@ class OpenAIClient(TextGenerationVendor):
 
     def _record_stateless_response_item(self, item: dict[str, Any]) -> None:
         payload = OpenAIStream._response_input_item_payload(deepcopy(item))
-        if (
-            payload.get("type") == "reasoning"
-            and not OpenAIStream._is_replayable_reasoning_item(payload)
+        if payload.get(
+            "type"
+        ) == "reasoning" and not OpenAIStream._is_replayable_reasoning_item(
+            payload
         ):
             return
         self._stateless_response_items.append(payload)

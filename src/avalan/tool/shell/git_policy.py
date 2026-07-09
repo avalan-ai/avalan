@@ -170,45 +170,54 @@ _GIT_OBJECT_HASH_SIZE_SHA1 = 20
 _GIT_OBJECT_HASH_SIZE_SHA256 = 32
 _GIT_TREE_DIRECTORY_MODE = 0o40000
 _CONTROL_CHARACTERS = tuple(chr(value) for value in (*range(0, 32), 127))
-_DANGEROUS_CONFIG_SECTION_NAMES = frozenset((
-    "credential",
-    "diff",
-    "filter",
-    "gpg",
-    "hook",
-    "include",
-    "includeif",
-    "merge",
-    "pager",
-))
+_DANGEROUS_CONFIG_SECTION_NAMES = frozenset(
+    (
+        "credential",
+        "diff",
+        "filter",
+        "gpg",
+        "hook",
+        "include",
+        "includeif",
+        "merge",
+        "pager",
+    )
+)
 _DANGEROUS_CONFIG_SECTION_PREFIXES = frozenset(
     f"{section}." for section in _DANGEROUS_CONFIG_SECTION_NAMES
 )
-_DANGEROUS_CONFIG_KEY_NAMES = frozenset((
-    "askpass",
-    "editor",
-    "external",
-    "fsmonitor",
-    "gpgsign",
-    "hookspath",
-    "ignorerevsfile",
-    "insteadof",
-    "pager",
-    "pushinsteadof",
-    "receivepack",
-    "showsignature",
-    "sshcommand",
-    "textconv",
-    "uploadpack",
-    "worktree",
-    "worktreeconfig",
-))
+_DANGEROUS_CONFIG_KEY_NAMES = frozenset(
+    (
+        "askpass",
+        "editor",
+        "external",
+        "fsmonitor",
+        "gpgsign",
+        "hookspath",
+        "ignorerevsfile",
+        "insteadof",
+        "pager",
+        "pushinsteadof",
+        "receivepack",
+        "showsignature",
+        "sshcommand",
+        "textconv",
+        "uploadpack",
+        "worktree",
+        "worktreeconfig",
+    )
+)
 _DANGEROUS_CONFIG_KEY_MARKERS = (
     "credential",
     "gpg",
     "proxy",
     "signing",
 )
+_SIGNING_ONLY_CONFIG_SECTION_NAMES = frozenset(("gpg",))
+_SIGNING_ONLY_CONFIG_SECTION_PREFIXES = frozenset(
+    f"{section}." for section in _SIGNING_ONLY_CONFIG_SECTION_NAMES
+)
+_SIGNING_ONLY_CONFIG_KEY_NAMES = frozenset(("gpgsign",))
 _DANGEROUS_ATTRIBUTES_MARKERS = (
     "filter",
     "merge=",
@@ -234,11 +243,13 @@ _ALLOWED_GIT_OPTION_KEYS = {
     ShellGitCommandName.STASH_LIST: frozenset({"max_count"}),
     ShellGitCommandName.STASH_SHOW: frozenset({"stash", "mode"}),
     ShellGitCommandName.ADD: frozenset({"mode"}),
-    ShellGitCommandName.RESTORE: frozenset({
-        "source_revision",
-        "staged",
-        "worktree",
-    }),
+    ShellGitCommandName.RESTORE: frozenset(
+        {
+            "source_revision",
+            "staged",
+            "worktree",
+        }
+    ),
     ShellGitCommandName.CHECKOUT: frozenset({"target"}),
     ShellGitCommandName.SWITCH: frozenset({"branch"}),
     ShellGitCommandName.RESET: frozenset(
@@ -246,10 +257,12 @@ _ALLOWED_GIT_OPTION_KEYS = {
     ),
     ShellGitCommandName.RM: frozenset({"cached"}),
     ShellGitCommandName.MV: frozenset({"source", "destination"}),
-    ShellGitCommandName.STASH_PUSH: frozenset({
-        "message",
-        "include_untracked",
-    }),
+    ShellGitCommandName.STASH_PUSH: frozenset(
+        {
+            "message",
+            "include_untracked",
+        }
+    ),
     ShellGitCommandName.STASH_APPLY: frozenset({"stash"}),
     ShellGitCommandName.COMMIT: frozenset({"message"}),
     ShellGitCommandName.BRANCH_CREATE: frozenset(
@@ -299,93 +312,113 @@ _ALLOWED_GIT_OPTION_KEYS = {
     ShellGitCommandName.REMOTE_RENAME: frozenset({"old_name", "new_name"}),
     ShellGitCommandName.SUBMODULE_UPDATE: frozenset({"init"}),
 }
-_REMOTE_REPOSITORY_COMMANDS = frozenset((
-    ShellGitCommandName.FETCH,
-    ShellGitCommandName.PULL,
-    ShellGitCommandName.PUSH,
-    ShellGitCommandName.REMOTE_LIST,
-    ShellGitCommandName.REMOTE_ADD,
-    ShellGitCommandName.REMOTE_SET_URL,
-    ShellGitCommandName.REMOTE_REMOVE,
-    ShellGitCommandName.REMOTE_RENAME,
-    ShellGitCommandName.SUBMODULE_UPDATE,
-))
-_REMOTE_NETWORK_COMMANDS = frozenset((
-    ShellGitCommandName.FETCH,
-    ShellGitCommandName.PULL,
-    ShellGitCommandName.PUSH,
-    ShellGitCommandName.CLONE,
-    ShellGitCommandName.SUBMODULE_UPDATE,
-))
+_REMOTE_REPOSITORY_COMMANDS = frozenset(
+    (
+        ShellGitCommandName.FETCH,
+        ShellGitCommandName.PULL,
+        ShellGitCommandName.PUSH,
+        ShellGitCommandName.REMOTE_LIST,
+        ShellGitCommandName.REMOTE_ADD,
+        ShellGitCommandName.REMOTE_SET_URL,
+        ShellGitCommandName.REMOTE_REMOVE,
+        ShellGitCommandName.REMOTE_RENAME,
+        ShellGitCommandName.SUBMODULE_UPDATE,
+    )
+)
+_REMOTE_NETWORK_COMMANDS = frozenset(
+    (
+        ShellGitCommandName.FETCH,
+        ShellGitCommandName.PULL,
+        ShellGitCommandName.PUSH,
+        ShellGitCommandName.CLONE,
+        ShellGitCommandName.SUBMODULE_UPDATE,
+    )
+)
 _PULL_REQUIRED_CAPABILITIES = (
     ShellGitCapability.REMOTE,
     ShellGitCapability.WORKTREE,
     ShellGitCapability.HISTORY,
 )
 _REMOTE_STATE_MUTATING_COMMANDS = frozenset((ShellGitCommandName.PUSH,))
-_SERVER_SIDE_PUSH_HOOK_NAMES = frozenset((
-    "pre-receive",
-    "update",
-    "post-receive",
-    "post-update",
-    "proc-receive",
-    "reference-transaction",
-    "push-to-checkout",
-))
+_SERVER_SIDE_PUSH_HOOK_NAMES = frozenset(
+    (
+        "pre-receive",
+        "update",
+        "post-receive",
+        "post-update",
+        "proc-receive",
+        "reference-transaction",
+        "push-to-checkout",
+    )
+)
 _EXECUTABLE_PERMISSION_BITS = S_IXUSR | S_IXGRP | S_IXOTH
-_LOCAL_REMOTE_CONFIG_MUTATING_COMMANDS = frozenset((
-    ShellGitCommandName.REMOTE_ADD,
-    ShellGitCommandName.REMOTE_SET_URL,
-    ShellGitCommandName.REMOTE_REMOVE,
-    ShellGitCommandName.REMOTE_RENAME,
-))
-_REMOTE_CONFIG_DENIED_KEYS = frozenset((
-    "pushurl",
-    "receivepack",
-    "serveroption",
-    "uploadpack",
-    "vcs",
-))
-_REMOTE_CONFIG_DENIED_BOOL_KEYS = frozenset((
-    "mirror",
-    "prune",
-    "prunetags",
-))
-_HTTP_CREDENTIAL_CONFIG_KEYS = frozenset((
-    "cookiefile",
-    "delegation",
-    "emptyauth",
-    "extraheader",
-    "savecookies",
-    "sslcert",
-    "sslcertpasswordprotected",
-    "sslkey",
-))
-_HTTP_TLS_CONFIG_KEYS = frozenset((
-    "pinnedpubkey",
-    "schannelcheckrevoke",
-    "schannelusesslcainfo",
-    "sslbackend",
-    "sslcainfo",
-    "sslcapath",
-    "sslcipherlist",
-    "ssltry",
-    "sslverify",
-    "sslversion",
-))
+_LOCAL_REMOTE_CONFIG_MUTATING_COMMANDS = frozenset(
+    (
+        ShellGitCommandName.REMOTE_ADD,
+        ShellGitCommandName.REMOTE_SET_URL,
+        ShellGitCommandName.REMOTE_REMOVE,
+        ShellGitCommandName.REMOTE_RENAME,
+    )
+)
+_REMOTE_CONFIG_DENIED_KEYS = frozenset(
+    (
+        "pushurl",
+        "receivepack",
+        "serveroption",
+        "uploadpack",
+        "vcs",
+    )
+)
+_REMOTE_CONFIG_DENIED_BOOL_KEYS = frozenset(
+    (
+        "mirror",
+        "prune",
+        "prunetags",
+    )
+)
+_HTTP_CREDENTIAL_CONFIG_KEYS = frozenset(
+    (
+        "cookiefile",
+        "delegation",
+        "emptyauth",
+        "extraheader",
+        "savecookies",
+        "sslcert",
+        "sslcertpasswordprotected",
+        "sslkey",
+    )
+)
+_HTTP_TLS_CONFIG_KEYS = frozenset(
+    (
+        "pinnedpubkey",
+        "schannelcheckrevoke",
+        "schannelusesslcainfo",
+        "sslbackend",
+        "sslcainfo",
+        "sslcapath",
+        "sslcipherlist",
+        "ssltry",
+        "sslverify",
+        "sslversion",
+    )
+)
 _FETCH_CONFIG_DENIED_BOOL_KEYS = frozenset(("prune", "prunetags"))
-_PULL_CONFIG_DENIED_KEYS = frozenset((
-    "ff",
-    "octopus",
-    "rebase",
-    "twohead",
-))
-_PUSH_CONFIG_DENIED_KEYS = frozenset((
-    "default",
-    "followtags",
-    "gpgsign",
-    "pushoption",
-))
+_PULL_CONFIG_DENIED_KEYS = frozenset(
+    (
+        "ff",
+        "octopus",
+        "rebase",
+        "twohead",
+    )
+)
+_PUSH_CONFIG_DENIED_KEYS = frozenset(
+    (
+        "default",
+        "followtags",
+        "gpgsign",
+        "pushoption",
+    )
+)
 _GIT_CONFIG_EXPLICIT_FALSE_VALUES = frozenset(("false", "no", "off", "0"))
 _GIT_CONFIG_EXPLICIT_TRUE_VALUES = frozenset(("true", "yes", "on", "1"))
 _REMOTE_NAME_PATTERN = compile_pattern(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -454,6 +487,7 @@ class GitExecutionPolicy:
         git_settings = self._git_settings()
         _validate_tool_name(request)
         _validate_authorization(request, git_settings)
+        capability = shell_git_capability_for_request(request)
         workspace_root = _resolve_workspace_root(git_settings.workspace_root)
         if request.command is ShellGitCommandName.CLONE:
             effective_cwd = _resolve_workspace_cwd(
@@ -496,6 +530,7 @@ class GitExecutionPolicy:
                 git_dir,
                 workspace_root=workspace_root,
                 settings=git_settings,
+                capability=capability,
             )
             pathspecs = _validated_pathspecs(
                 request.pathspecs,
@@ -543,7 +578,6 @@ class GitExecutionPolicy:
             request.max_stderr_bytes,
             git_settings.max_stderr_bytes,
         )
-        capability = shell_git_capability_for_request(request)
         display_argv = _redacted_argv(
             argv,
             git_settings,
@@ -1479,8 +1513,9 @@ def _validate_submodule_effective_config(
             _deny_unsafe_git_config(
                 "Git effective submodule configuration is unsafe"
             )
-        if entry.key == "recurse" and not _git_config_bool_explicitly_disabled(
-            entry.value
+        if (
+            entry.key == "recurse"
+            and not _git_config_bool_explicitly_disabled(entry.value)
         ):
             _deny_unsafe_git_config(
                 "Git effective submodule configuration is unsafe"
@@ -1714,9 +1749,10 @@ async def _validate_repository_form(
     *,
     workspace_root: Path,
     settings: ShellGitToolSettings,
+    capability: ShellGitCapability | None = None,
 ) -> None:
     config = await _read_text(git_dir / "config")
-    _validate_git_config(config)
+    _validate_git_config(config, capability=capability)
     if _config_declares_bare(config) and not settings.allow_bare_repositories:
         raise ShellGitPolicyDenied(
             ShellGitExecutionErrorCode.BARE_REPO_DENIED,
@@ -1774,27 +1810,67 @@ async def _validate_alternates(
             )
 
 
-def _validate_git_config(config: str) -> None:
+def _validate_git_config(
+    config: str,
+    *,
+    capability: ShellGitCapability | None = None,
+) -> None:
     for section in _git_config_section_names(config):
-        if _git_config_section_is_dangerous(section):
+        if _git_config_section_is_dangerous(section, capability):
             _deny_unsafe_git_config("Git repository configuration is unsafe")
     for entry in _git_config_entries(config):
-        if _git_config_entry_is_dangerous(entry):
+        if _git_config_entry_is_dangerous(entry, capability):
             _deny_unsafe_git_config("Git repository configuration is unsafe")
 
 
-def _git_config_entry_is_dangerous(entry: _GitConfigEntry) -> bool:
+def _git_config_entry_is_dangerous(
+    entry: _GitConfigEntry,
+    capability: ShellGitCapability | None,
+) -> bool:
+    if _git_config_signing_only_entry(
+        entry
+    ) and _git_config_signing_is_ignored(capability):
+        return False
     key = entry.key.replace("-", "")
     return key in _DANGEROUS_CONFIG_KEY_NAMES or any(
         marker in key for marker in _DANGEROUS_CONFIG_KEY_MARKERS
     )
 
 
-def _git_config_section_is_dangerous(section: str) -> bool:
+def _git_config_section_is_dangerous(
+    section: str,
+    capability: ShellGitCapability | None,
+) -> bool:
+    if _git_config_signing_only_section(
+        section
+    ) and _git_config_signing_is_ignored(capability):
+        return False
     return section in _DANGEROUS_CONFIG_SECTION_NAMES or any(
         section.startswith(prefix)
         for prefix in _DANGEROUS_CONFIG_SECTION_PREFIXES
     )
+
+
+def _git_config_signing_only_entry(entry: _GitConfigEntry) -> bool:
+    key = entry.key.replace("-", "")
+    return (
+        _git_config_signing_only_section(entry.section)
+        or key in _SIGNING_ONLY_CONFIG_KEY_NAMES
+        or (entry.section == "user" and key == "signingkey")
+    )
+
+
+def _git_config_signing_only_section(section: str) -> bool:
+    return section in _SIGNING_ONLY_CONFIG_SECTION_NAMES or any(
+        section.startswith(prefix)
+        for prefix in _SIGNING_ONLY_CONFIG_SECTION_PREFIXES
+    )
+
+
+def _git_config_signing_is_ignored(
+    capability: ShellGitCapability | None,
+) -> bool:
+    return capability is ShellGitCapability.READ
 
 
 async def _validate_attributes(path: Path) -> None:
@@ -4224,13 +4300,15 @@ def _merge_argv(
         message="git merge mode is unsupported",
     )
     argv = _base_argv("merge")
-    argv.extend((
-        "--no-verify",
-        "--no-gpg-sign",
-        "--no-stat",
-        "--no-edit",
-        "--no-autostash",
-    ))
+    argv.extend(
+        (
+            "--no-verify",
+            "--no-gpg-sign",
+            "--no-stat",
+            "--no-edit",
+            "--no-autostash",
+        )
+    )
     argv.append("--ff-only" if mode == "ff_only" else "--no-ff")
     argv.append(revision)
     return tuple(argv)
@@ -4261,15 +4339,17 @@ def _rebase_argv(
     if branch is not None:
         _validate_local_branch_target(branch, settings, "rebase branch")
     argv = _base_argv("rebase")
-    argv.extend((
-        "--no-verify",
-        "--no-gpg-sign",
-        "--no-stat",
-        "--no-autostash",
-        "--no-rebase-merges",
-        "--empty=stop",
-        upstream,
-    ))
+    argv.extend(
+        (
+            "--no-verify",
+            "--no-gpg-sign",
+            "--no-stat",
+            "--no-autostash",
+            "--no-rebase-merges",
+            "--empty=stop",
+            upstream,
+        )
+    )
     if branch is not None:
         argv.append(branch)
     return tuple(argv)
@@ -4413,13 +4493,15 @@ def _fetch_argv(
     remote = _remote_option(request.options)
     refspecs = _fetch_refspecs(request, remote, git_dir, settings)
     argv = _base_argv("fetch")
-    argv.extend((
-        "--no-tags",
-        "--no-prune",
-        "--no-recurse-submodules",
-        "--no-write-fetch-head",
-        remote,
-    ))
+    argv.extend(
+        (
+            "--no-tags",
+            "--no-prune",
+            "--no-recurse-submodules",
+            "--no-write-fetch-head",
+            remote,
+        )
+    )
     argv.extend(refspecs)
     return tuple(argv)
 
@@ -4436,15 +4518,17 @@ def _pull_argv(
     )
     _validate_remote_ref(branch, settings, "pull branch")
     argv = _base_argv("pull")
-    argv.extend((
-        "--ff-only",
-        "--no-verify",
-        "--no-tags",
-        "--no-prune",
-        "--no-recurse-submodules",
-        remote,
-        branch,
-    ))
+    argv.extend(
+        (
+            "--ff-only",
+            "--no-verify",
+            "--no-tags",
+            "--no-prune",
+            "--no-recurse-submodules",
+            remote,
+            branch,
+        )
+    )
     return tuple(argv)
 
 
@@ -5016,15 +5100,19 @@ def _metadata(
         ),
     }
     if capability is ShellGitCapability.WORKTREE:
-        metadata.update({
-            "git_mutation_attempted": True,
-            "git_mutation_scope": "worktree",
-        })
+        metadata.update(
+            {
+                "git_mutation_attempted": True,
+                "git_mutation_scope": "worktree",
+            }
+        )
     elif capability is ShellGitCapability.HISTORY:
-        metadata.update({
-            "git_mutation_attempted": True,
-            "git_mutation_scope": "history",
-        })
+        metadata.update(
+            {
+                "git_mutation_attempted": True,
+                "git_mutation_scope": "history",
+            }
+        )
     if request.command is ShellGitCommandName.GREP:
         metadata["exit_code_statuses"] = {
             1: ShellExecutionStatus.NO_MATCHES.value,
@@ -5134,17 +5222,19 @@ def git_remote_audit_metadata(
     }
     if request.command is ShellGitCommandName.SUBMODULE_UPDATE:
         submodule_parts = tuple(_remote_url_parts(url) for url in url_values)
-        metadata.update({
-            "git_submodule_protocols": tuple(
-                protocol or None for protocol, _, _ in submodule_parts
-            ),
-            "git_submodule_hosts": tuple(
-                host or None for _, host, _ in submodule_parts
-            ),
-            "git_submodule_urls": tuple(
-                _redact_text(url, settings) for url in url_values
-            ),
-        })
+        metadata.update(
+            {
+                "git_submodule_protocols": tuple(
+                    protocol or None for protocol, _, _ in submodule_parts
+                ),
+                "git_submodule_hosts": tuple(
+                    host or None for _, host, _ in submodule_parts
+                ),
+                "git_submodule_urls": tuple(
+                    _redact_text(url, settings) for url in url_values
+                ),
+            }
+        )
     return metadata
 
 

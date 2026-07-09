@@ -633,17 +633,45 @@ def _container_argv(spec: ExecutionSpec) -> tuple[str, ...]:
             for argv_item, display_item in zip(spec.argv, spec.display_argv)
         )
     replacement = f"{_CONTAINER_OUTPUT_ROOT}/{spec.command}"
-    return tuple(
+    argv = tuple(
         replacement if item == GENERATED_OUTPUT_PREFIX_PLACEHOLDER else item
         for item in spec.display_argv
     )
+    return _container_git_argv(spec, argv)
+
+
+def _container_git_argv(
+    spec: ExecutionSpec,
+    argv: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not spec.command.startswith("git."):
+        return argv
+    assert argv, "container git argv must not be empty"
+    safe_directory = _container_git_safe_directory(spec)
+    if safe_directory is None:
+        return argv
+    return (argv[0], "-c", f"safe.directory={safe_directory}", *argv[1:])
+
+
+def _container_git_safe_directory(spec: ExecutionSpec) -> str | None:
+    repo_root = spec.metadata.get("git_repo_root")
+    if repo_root is None:
+        return None
+    assert isinstance(repo_root, str), "git repo root metadata must be text"
+    return _container_workspace_path(repo_root, "git repo root")
 
 
 def _container_cwd(display_cwd: str) -> str:
-    if display_cwd == ".":
+    return _container_workspace_path(display_cwd, "display cwd")
+
+
+def _container_workspace_path(display_path: str, name: str) -> str:
+    assert display_path, f"{name} must not be empty"
+    if display_path == ".":
         return "/workspace"
-    path = PurePosixPath(display_cwd)
-    assert not path.is_absolute(), "display cwd must be workspace-relative"
+    path = PurePosixPath(display_path)
+    assert not path.is_absolute(), f"{name} must be workspace-relative"
+    assert ".." not in path.parts, f"{name} must stay within workspace"
     return PurePosixPath("/workspace", path).as_posix()
 
 

@@ -771,7 +771,7 @@ class GitExecutionPolicyRepositoryTest(IsolatedAsyncioTestCase):
             '[filter "secret"]\n\tclean = secret-clean\n',
             "[diff]\n\texternal = secret-diff\n",
             '[diff "secret"]\n\ttextconv = secret-textconv\n',
-            "[commit]\n\tgpgSign = true\n",
+            "[log]\n\tshowSignature = true\n",
         )
         for config in unsafe_configs:
             with self.subTest(config=config):

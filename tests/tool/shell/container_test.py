@@ -196,6 +196,61 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_git_container_plan_trusts_mounted_repo_root(self) -> None:
+        spec = _direct_git_spec(repo_root=".")
+        plan = lower_shell_execution_spec(
+            spec,
+            container_settings=_effective_settings(),
+        )
+
+        self.assertIsNotNone(plan.container_plan)
+        assert plan.container_plan is not None
+        self.assertEqual(
+            plan.container_plan.run_plan.command.argv,
+            (
+                "git",
+                "-c",
+                "safe.directory=/workspace",
+                "--no-pager",
+                "--no-optional-locks",
+                "log",
+            ),
+        )
+        self.assertEqual(
+            spec.display_argv,
+            ("git", "--no-pager", "--no-optional-locks", "log"),
+        )
+
+    async def test_git_container_plan_trusts_nested_repo_root(self) -> None:
+        spec = _direct_git_spec(repo_root="vendor/repo")
+        plan = lower_shell_execution_spec(
+            spec,
+            container_settings=_effective_settings(),
+        )
+
+        self.assertIsNotNone(plan.container_plan)
+        assert plan.container_plan is not None
+        self.assertEqual(
+            plan.container_plan.run_plan.command.argv[2],
+            "safe.directory=/workspace/vendor/repo",
+        )
+
+    async def test_git_container_plan_without_repo_root_is_unchanged(
+        self,
+    ) -> None:
+        spec = _direct_git_spec(repo_root=None)
+        plan = lower_shell_execution_spec(
+            spec,
+            container_settings=_effective_settings(),
+        )
+
+        self.assertIsNotNone(plan.container_plan)
+        assert plan.container_plan is not None
+        self.assertEqual(
+            plan.container_plan.run_plan.command.argv,
+            ("git", "--no-pager", "--no-optional-locks", "log"),
+        )
+
     async def test_nl_container_plan_uses_cwd_relative_path(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -1712,6 +1767,35 @@ def _direct_text_spec(
         timeout_seconds=10,
         max_stdout_bytes=max_stdout_bytes,
         max_stderr_bytes=max_stderr_bytes,
+        metadata=metadata,
+    )
+
+
+def _direct_git_spec(
+    *,
+    repo_root: str | None = ".",
+) -> ExecutionSpec:
+    metadata: dict[str, object] = {}
+    if repo_root is not None:
+        metadata["git_repo_root"] = repo_root
+    return ExecutionPolicy().create_execution_spec(
+        backend="container",
+        tool_name="shell.git_log",
+        command="git.log",
+        executable=None,
+        argv=("git", "--no-pager", "--no-optional-locks", "log"),
+        display_argv=("git", "--no-pager", "--no-optional-locks", "log"),
+        cwd=str(Path.cwd()),
+        display_cwd=".",
+        env={"LC_ALL": "C"},
+        stdin=None,
+        stdout_media_type="text/plain",
+        output_kind=ShellOutputKind.TEXT,
+        resource_class="standard",
+        output_plan=None,
+        timeout_seconds=10,
+        max_stdout_bytes=1024,
+        max_stderr_bytes=1024,
         metadata=metadata,
     )
 

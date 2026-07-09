@@ -182,6 +182,16 @@ def test_make_coverage_gate_detection_requires_precision() -> None:
     assert not _makefile_enforces_coverage_fail_under(makefile)
 
 
+def test_shell_code_container_documents_git_support() -> None:
+    dockerfile = _read_repository_text("docs/containers/shell-code/Dockerfile")
+    readme = _read_repository_text("docs/containers/shell-code/README.md")
+
+    assert re.search(r"(?m)^\s+git\s*\\?$", dockerfile)
+    assert "- `git`" in readme
+    assert "--tool shell.git_log" in readme
+    assert "--tool shell.git_status" in readme
+
+
 def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
     optional_deps = _optional_dependencies()
     selected_extras = ("agent", "server", "tool", "vendors")

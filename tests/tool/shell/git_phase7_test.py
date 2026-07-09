@@ -1813,6 +1813,58 @@ class GitRemotePolicyPhase7Test(IsolatedAsyncioTestCase):
                         ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
                     )
 
+    async def test_read_commands_ignore_signing_only_git_config(self) -> None:
+        signing_configs = (
+            "[gpg]\n\tformat = ssh\n",
+            "[commit]\n\tgpgSign = true\n",
+            "[tag]\n\tgpgSign = true\n",
+            "[user]\n\tsigningKey = /Users/example/.ssh/id.pub\n",
+        )
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            repo = _write_minimal_git_repo(root / "repo")
+            (repo / "tracked.txt").write_text("needle\n")
+            base_config = (repo / ".git" / "config").read_text()
+            policy = _policy(
+                root,
+                capabilities=("read",),
+                allowed_commands=("grep",),
+            )
+
+            for config in signing_configs:
+                with self.subTest(config=config):
+                    (repo / ".git" / "config").write_text(base_config + config)
+                    spec = await policy.normalize(
+                        ShellGitCommandRequest(
+                            tool_name="shell.git_grep",
+                            command=ShellGitCommandName.GREP,
+                            capability_required=ShellGitCapability.READ,
+                            options={"pattern": "needle"},
+                            pathspecs=("tracked.txt",),
+                        )
+                    )
+                    self.assertEqual(spec.command, "git.grep")
+                    self.assertIn("--no-textconv", spec.argv)
+
+            (repo / ".git" / "config").write_text(
+                base_config + "[core]\n\tfsmonitor = .git/watch\n"
+            )
+            error = await _policy_error(
+                policy,
+                ShellGitCommandRequest(
+                    tool_name="shell.git_grep",
+                    command=ShellGitCommandName.GREP,
+                    capability_required=ShellGitCapability.READ,
+                    options={"pattern": "needle"},
+                    pathspecs=("tracked.txt",),
+                ),
+            )
+
+        self.assertEqual(
+            error.error_code,
+            ShellGitExecutionErrorCode.UNSAFE_GIT_CONFIG,
+        )
+
     async def test_read_command_skips_remote_repository_state(self) -> None:
         with TemporaryDirectory() as workspace:
             root = Path(workspace)

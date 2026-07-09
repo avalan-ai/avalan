@@ -68,6 +68,14 @@ class SandboxPhase6Test(TestCase):
             self.assertIn("(deny default)", profile)
             self.assertIn("(allow sysctl-read)", profile)
             self.assertNotIn("(allow file-read-data)", profile_lines)
+            self.assertIn(
+                '(allow file-read-data (literal "/"))',
+                profile,
+            )
+            self.assertNotIn(
+                '(allow file-read-data (subpath "/"))',
+                profile,
+            )
             for path in (
                 "/System/Library/dyld",
                 "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld",
@@ -78,12 +86,23 @@ class SandboxPhase6Test(TestCase):
                     f'(allow file-read-data (subpath "{path}"))',
                     profile,
                 )
+            self.assertNotIn("(allow mach*)", profile)
+            for service in (
+                "com.apple.logd",
+                "com.apple.system.notification_center",
+                "com.apple.system.opendirectoryd.libinfo",
+            ):
+                self.assertIn(
+                    f'(allow mach-lookup (global-name "{service}"))',
+                    profile,
+                )
             self.assertEqual(
                 [
                     line
                     for line in profile_lines
                     if line.startswith("(allow file-read")
                     and line != "(allow file-read-metadata)"
+                    and line != '(allow file-read-data (literal "/"))'
                     and "(subpath " not in line
                 ],
                 [],
