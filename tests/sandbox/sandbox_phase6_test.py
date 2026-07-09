@@ -61,12 +61,33 @@ class SandboxPhase6Test(TestCase):
 
             profile = generate_seatbelt_profile(plan)
             equivalent = generate_seatbelt_profile(plan)
+            profile_lines = profile.splitlines()
 
             self.assertEqual(profile, equivalent)
             self.assertIn("(version 1)", profile)
             self.assertIn("(deny default)", profile)
             self.assertIn("(allow sysctl-read)", profile)
-            self.assertIn("(allow file-read-data)", profile)
+            self.assertNotIn("(allow file-read-data)", profile_lines)
+            for path in (
+                "/System/Library/dyld",
+                "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld",
+                "/private/var/db/dyld",
+                "/usr/lib/dyld",
+            ):
+                self.assertIn(
+                    f'(allow file-read-data (subpath "{path}"))',
+                    profile,
+                )
+            self.assertEqual(
+                [
+                    line
+                    for line in profile_lines
+                    if line.startswith("(allow file-read")
+                    and line != "(allow file-read-metadata)"
+                    and "(subpath " not in line
+                ],
+                [],
+            )
             self.assertIn(
                 f'(allow file-read* (subpath "{roots["workspace"]}"))',
                 profile,

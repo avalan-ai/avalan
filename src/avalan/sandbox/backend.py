@@ -53,6 +53,12 @@ ResourceSetLimit = Callable[[int, tuple[int, int]], None]
 _RESOURCE_RLIMIT_NPROC: int
 _RESOURCE_GETRLIMIT: ResourceGetLimit | None
 _RESOURCE_SETRLIMIT: ResourceSetLimit | None
+_SEATBELT_SYSTEM_READ_DATA_PATHS = (
+    "/System/Library/dyld",
+    "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld",
+    "/private/var/db/dyld",
+    "/usr/lib/dyld",
+)
 
 try:
     from resource import RLIMIT_NPROC as _IMPORTED_RLIMIT_NPROC
@@ -1647,10 +1653,12 @@ def generate_seatbelt_profile(plan: SandboxExecutionPlan) -> str:
         # setup. Without sysctl-read they can abort before user code runs.
         "(allow sysctl-read)",
         "(allow file-read-metadata)",
-        # dyld may need unscoped data reads before the target executable
-        # reaches user code on recent macOS releases.
-        "(allow file-read-data)",
     ]
+    # dyld may need data reads before the target executable reaches user
+    # code on recent macOS releases. Keep those grants scoped to system
+    # loader/cache paths so policy read_roots still constrain user data.
+    for path in _seatbelt_ordered_paths(_SEATBELT_SYSTEM_READ_DATA_PATHS):
+        lines.append(_seatbelt_allow_read_data(path))
     for path in _seatbelt_ordered_paths(
         tuple(profile.executable_search_roots)
         + tuple(profile.trusted_executables)
@@ -2114,6 +2122,10 @@ def _seatbelt_path_aliases(path: str) -> tuple[str, ...]:
 
 def _seatbelt_allow_read(path: str) -> str:
     return f"(allow file-read* (subpath {_seatbelt_string(path)}))"
+
+
+def _seatbelt_allow_read_data(path: str) -> str:
+    return f"(allow file-read-data (subpath {_seatbelt_string(path)}))"
 
 
 def _seatbelt_allow_write(path: str) -> str:
