@@ -59,6 +59,7 @@ _EXPECTED_SCHEMA_NAMES = (
     "shell.cat",
     "shell.nl",
     "shell.pgrep",
+    "shell.ps",
     "shell.file",
     "shell.find",
     "shell.wc",
@@ -232,7 +233,7 @@ class ShellToolSetAssemblyTest(TestCase):
             with self.subTest(tool=getattr(tool, "__name__", "")):
                 self.assertIs(
                     getattr(tool, "supports_streaming"),
-                    getattr(tool, "__name__") != "pgrep",
+                    getattr(tool, "__name__") not in {"pgrep", "ps"},
                 )
 
 
@@ -266,8 +267,8 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
                 )
                 self.assertIn("error_code: command_unavailable", output)
                 expected_message = (
-                    "pgrep is unavailable"
-                    if command_id == "pgrep"
+                    f"{command_id} is unavailable"
+                    if command_id in {"pgrep", "ps"}
                     else "command is unavailable"
                 )
                 self.assertIn(f"error_message: {expected_message}", output)
@@ -827,6 +828,10 @@ async def _call_pgrep(tool: Tool) -> str:
     return await _call_tool(tool, "avalan-pgrep-missing-binary")
 
 
+async def _call_ps(tool: Tool) -> str:
+    return await _call_tool(tool, (1,))
+
+
 async def _call_file(tool: Tool) -> str:
     return await _call_tool(tool, ("filesystem/visible.txt",))
 
@@ -901,6 +906,7 @@ _TOOL_CALLS: dict[str, Callable[[Tool], Awaitable[str]]] = {
     "cat": _call_cat,
     "nl": _call_nl,
     "pgrep": _call_pgrep,
+    "ps": _call_ps,
     "file": _call_file,
     "find": _call_find,
     "wc": _call_wc,

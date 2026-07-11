@@ -48,6 +48,7 @@ class ShellRegistryTest(TestCase):
                 "cat",
                 "nl",
                 "pgrep",
+                "ps",
                 "file",
                 "find",
                 "wc",
@@ -116,6 +117,7 @@ class ShellRegistryTest(TestCase):
         self.assertEqual(groups_by_id["rg"], ShellDependencyGroup.CORE)
         self.assertEqual(groups_by_id["nl"], ShellDependencyGroup.CORE)
         self.assertEqual(groups_by_id["pgrep"], ShellDependencyGroup.PROCESS)
+        self.assertEqual(groups_by_id["ps"], ShellDependencyGroup.PROCESS)
         self.assertEqual(
             groups_by_id["awk"], ShellDependencyGroup.TEXT_FILTERS
         )
@@ -203,7 +205,7 @@ class ShellRegistryTest(TestCase):
                 "tesseract",
             },
         )
-        self.assertEqual(process_commands, {"pgrep"})
+        self.assertEqual(process_commands, {"pgrep", "ps"})
         self.assertEqual(
             no_double_dash_commands,
             {

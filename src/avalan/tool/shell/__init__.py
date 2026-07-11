@@ -142,6 +142,7 @@ from .resolver import (
 from .sandbox import ShellSandboxCommandExecutor as ShellSandboxCommandExecutor
 from .settings import ShellGitToolSettings as ShellGitToolSettings
 from .settings import ShellToolSettings as ShellToolSettings
+from .tools import PsTool as PsTool
 from .toolset import ShellToolSet as ShellToolSet
 
 SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS = _GIT_DEFAULT_ALLOWED_COMMAND_IDS

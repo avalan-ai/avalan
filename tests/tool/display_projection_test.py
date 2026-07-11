@@ -85,6 +85,7 @@ EXPECTED_BUILT_IN_TOOL_NAMES = {
     "shell.ls",
     "shell.nl",
     "shell.pgrep",
+    "shell.ps",
     "shell.pdfinfo",
     "shell.pdfplumber",
     "shell.pdftoppm",
