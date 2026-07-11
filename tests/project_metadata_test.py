@@ -198,7 +198,9 @@ def test_shell_code_container_includes_process_tool_support() -> None:
 
     assert re.search(r"(?m)^\s+procps-ng\s*\\?$", dockerfile)
     assert "- `pgrep`" in readme
+    assert "- `ps`" in readme
     assert "--tool shell.pgrep" in readme
+    assert "--tool shell.ps" in readme
     assert "--tool-shell-allow-process-tools" in readme
 
 

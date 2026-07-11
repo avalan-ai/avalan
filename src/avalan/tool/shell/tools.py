@@ -46,6 +46,8 @@ from .git_policy import (
 from .pgrep import pid_only_stdout as _pgrep_pid_only_stdout
 from .pgrep import redacted_stderr as _redacted_pgrep_stderr
 from .policy import ExecutionPolicy
+from .ps import process_rows_stdout as _ps_process_rows_stdout
+from .ps import redacted_stderr as _redacted_ps_stderr
 from .registry import SHELL_COMMAND_DEFINITIONS
 from .settings import ShellGitToolSettings, ShellToolSettings
 
@@ -123,6 +125,19 @@ class _ShellCommandTool(Tool, ABC):
             spec = await self._policy.normalize(request)
         except ShellPolicyDenied as error:
             result = _policy_denied_result(request, error)
+            if request.command == "ps":
+                result = _ps_public_result(
+                    result,
+                    backend=result.backend,
+                    tool_name=result.tool_name,
+                    command=result.command,
+                    display_argv=result.display_argv,
+                    cwd=result.cwd,
+                    display_cwd=result.display_cwd,
+                    stdout_media_type=result.stdout_media_type,
+                    output_kind=result.output_kind,
+                    requested_pids=(),
+                )
             return ShellFormattedResult(self._formatter(result), result)
         if self.supports_streaming and context.stream_event is not None:
             result = await self._executor.execute(
@@ -142,6 +157,19 @@ class _ShellCommandTool(Tool, ABC):
                 display_cwd=spec.display_cwd,
                 stdout_media_type=spec.stdout_media_type,
                 output_kind=spec.output_kind,
+            )
+        elif spec.command == "ps":
+            result = _ps_public_result(
+                result,
+                backend=spec.backend,
+                tool_name=spec.tool_name,
+                command=spec.command,
+                display_argv=spec.display_argv,
+                cwd=spec.cwd,
+                display_cwd=spec.display_cwd,
+                stdout_media_type=spec.stdout_media_type,
+                output_kind=spec.output_kind,
+                requested_pids=_ps_requested_pids(spec.metadata),
             )
         return ShellFormattedResult(self._formatter(result), result)
 
@@ -4241,6 +4269,98 @@ class PgrepTool(_ShellCommandTool):
         )
 
 
+class PsTool(_ShellCommandTool):
+    """Inspect fixed process metadata for one selected process identifier.
+
+    Args:
+        pids: A sequence containing exactly one process identifier to inspect.
+        cwd: Workspace-relative working directory for the command.
+        timeout_seconds: Optional execution timeout in seconds.
+        max_stdout_bytes: Optional stdout byte cap.
+        max_stderr_bytes: Optional stderr byte cap.
+
+    Returns:
+        Formatted shell result containing PID, parent PID, state, elapsed
+        time, and command name rows only.
+    """
+
+    supports_streaming = False
+
+    def __init__(
+        self,
+        *,
+        settings: ShellToolSettings,
+        policy: ExecutionPolicy,
+        executor: CommandExecutor,
+        formatter: ShellResultFormatter | None = None,
+    ) -> None:
+        super().__init__(
+            command="ps",
+            settings=settings,
+            policy=policy,
+            executor=executor,
+            formatter=formatter,
+        )
+
+    def json_schema(self, prefix: str | None = None) -> dict[str, Any]:
+        schema = super().json_schema(prefix)
+        parameters = schema["function"]["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters["properties"]
+        assert isinstance(properties, dict)
+        pids_schema = properties["pids"]
+        assert isinstance(pids_schema, dict)
+        pids_schema["minItems"] = 1
+        pids_schema["maxItems"] = 1
+        pids_schema["uniqueItems"] = True
+        items = pids_schema["items"]
+        assert isinstance(items, dict)
+        items["minimum"] = 1
+        items["maximum"] = 2**31 - 1
+        return schema
+
+    def _build_request(
+        self,
+        pids: Sequence[int],
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        _assert_int_sequence(pids, "pids")
+        return ShellCommandRequest(
+            tool_name="shell.ps",
+            command="ps",
+            options={"pids": tuple(pids)},
+            paths=(),
+            cwd=_optional_cwd(cwd),
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
+    async def __call__(
+        self,
+        pids: Sequence[int],
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+        *,
+        context: ToolCallContext,
+    ) -> str:
+        return await self._execute_request(
+            self._build_request(
+                pids=pids,
+                cwd=_optional_cwd(cwd),
+                timeout_seconds=timeout_seconds,
+                max_stdout_bytes=max_stdout_bytes,
+                max_stderr_bytes=max_stderr_bytes,
+            ),
+            context=context,
+        )
+
+
 class FileTool(_ShellCommandTool):
     """Identify workspace file types.
 
@@ -6122,6 +6242,73 @@ def _pgrep_public_error_message(result: ExecutionResult) -> str | None:
         ShellExecutionStatus.NONZERO_EXIT: "pgrep exited non-zero",
     }
     return messages.get(result.status, "pgrep execution failed")
+
+
+def _ps_public_result(
+    result: ExecutionResult,
+    *,
+    backend: str,
+    tool_name: str,
+    command: str,
+    display_argv: tuple[str, ...],
+    cwd: str,
+    display_cwd: str,
+    stdout_media_type: str,
+    output_kind: ShellOutputKind,
+    requested_pids: tuple[int, ...],
+) -> ExecutionResult:
+    safe_stdout = _ps_process_rows_stdout(
+        result.stdout,
+        requested_pids=requested_pids,
+        stdout_truncated=result.stdout_truncated,
+    )
+    safe_stderr = _redacted_ps_stderr(result.stderr)
+    return replace(
+        result,
+        backend=backend,
+        tool_name=tool_name,
+        command=command,
+        argv=display_argv,
+        display_argv=display_argv,
+        cwd=cwd,
+        display_cwd=display_cwd,
+        stdout=safe_stdout,
+        stderr=safe_stderr,
+        stdout_media_type=stdout_media_type,
+        output_kind=output_kind,
+        generated_files=(),
+        stdout_bytes=len(safe_stdout.encode("utf-8")),
+        stderr_bytes=len(safe_stderr.encode("utf-8")),
+        error_message=_ps_public_error_message(result),
+        metadata={},
+    )
+
+
+def _ps_requested_pids(metadata: Mapping[str, object]) -> tuple[int, ...]:
+    value = metadata.get("_ps_requested_pids")
+    assert isinstance(value, tuple), "ps execution requires requested PIDs"
+    assert len(value) == 1, "ps execution requires exactly one requested PID"
+    assert all(
+        isinstance(pid, int) and not isinstance(pid, bool) for pid in value
+    ), "ps requested PIDs must be integers"
+    return cast(tuple[int, ...], value)
+
+
+def _ps_public_error_message(result: ExecutionResult) -> str | None:
+    if result.status in {
+        ShellExecutionStatus.COMPLETED,
+        ShellExecutionStatus.NO_MATCHES,
+    }:
+        return None
+    messages = {
+        ShellExecutionStatus.POLICY_DENIED: "ps was denied by policy",
+        ShellExecutionStatus.COMMAND_UNAVAILABLE: "ps is unavailable",
+        ShellExecutionStatus.SPAWN_FAILED: "ps failed to start",
+        ShellExecutionStatus.TIMEOUT: "ps timed out",
+        ShellExecutionStatus.CANCELLED: "ps was cancelled",
+        ShellExecutionStatus.NONZERO_EXIT: "ps exited non-zero",
+    }
+    return messages.get(result.status, "ps execution failed")
 
 
 def _policy_denied_result(

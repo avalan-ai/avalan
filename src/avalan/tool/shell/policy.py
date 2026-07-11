@@ -157,10 +157,11 @@ class ExecutionPolicy:
             request,
             ShellCompositionRequest,
         ), "request must be a shell composition request"
-        if any(step.command == "pgrep" for step in request.steps):
+        process_commands = {"pgrep", "ps"}
+        if any(step.command in process_commands for step in request.steps):
             raise _policy_denied(
                 ShellExecutionErrorCode.DENIED_COMMAND,
-                "pgrep is disabled in shell compositions",
+                "process tools are disabled in shell compositions",
             )
         if not self._settings.allow_pipelines:
             raise _policy_denied(
@@ -307,10 +308,10 @@ class ExecutionPolicy:
                 ShellExecutionErrorCode.DENIED_COMMAND,
                 "process tools are disabled",
             )
-        if request.command == "pgrep" and request.paths:
+        if request.command in {"pgrep", "ps"} and request.paths:
             raise _policy_denied(
                 ShellExecutionErrorCode.INVALID_OPTION,
-                "pgrep does not accept paths",
+                "process tools do not accept paths",
             )
         if stdin_mode:
             _validate_stdin_mode(

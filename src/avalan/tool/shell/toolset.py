@@ -99,6 +99,7 @@ from .tools import (
     PdfToTextTool,
     PgrepTool,
     PipelineTool,
+    PsTool,
     PyPdfTool,
     ReportLabTool,
     RgTool,
@@ -321,6 +322,12 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
             PgrepTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            PsTool(
                 settings=self._settings,
                 policy=policy,
                 executor=executor,

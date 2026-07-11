@@ -25,6 +25,7 @@ SHELL_COMMANDS = (
     "cat",
     "nl",
     "pgrep",
+    "ps",
     "file",
     "find",
     "wc",

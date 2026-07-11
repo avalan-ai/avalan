@@ -12,6 +12,7 @@ by Avalan's common read-only shell tools:
 - `jq`
 - `ls`
 - `pgrep`
+- `ps`
 - `rg`
 - `sed`
 - `tail`
@@ -83,6 +84,7 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool shell.ls \
       --tool shell.nl \
       --tool shell.pgrep \
+      --tool shell.ps \
       --tool shell.rg \
       --tool shell.sed \
       --tool shell.tail \
