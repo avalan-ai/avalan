@@ -712,7 +712,11 @@ def _provider_safe_name(manager: ToolManager, name: str) -> str:
 
 
 def _tools_tree():
-    return parse(Path("src/avalan/tool/shell/tools.py").read_text())
+    tools_directory = Path("src/avalan/tool/shell/tools")
+    source = "\n".join(
+        path.read_text() for path in sorted(tools_directory.rglob("*.py"))
+    )
+    return parse(source)
 
 
 def _call_name(node: Call) -> str | None:
