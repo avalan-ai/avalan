@@ -83,6 +83,7 @@ EXPECTED_BUILT_IN_TOOL_NAMES = {
     "shell.head",
     "shell.jq",
     "shell.ls",
+    "shell.lsof",
     "shell.nl",
     "shell.pgrep",
     "shell.ps",

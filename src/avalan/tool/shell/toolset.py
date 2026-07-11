@@ -92,6 +92,7 @@ from .tools import (
     HeadTool,
     JqTool,
     KillTool,
+    LsofTool,
     LsTool,
     NlTool,
     PdfInfoTool,
@@ -329,6 +330,12 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
             PsTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            LsofTool(
                 settings=self._settings,
                 policy=policy,
                 executor=executor,

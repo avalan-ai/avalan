@@ -12,6 +12,7 @@ by Avalan's common read-only shell tools:
 - `jq`
 - `kill`
 - `ls`
+- `lsof`
 - `pgrep`
 - `ps`
 - `rg`
@@ -84,6 +85,7 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool shell.jq \
       --tool shell.ls \
       --tool shell.nl \
+      --tool shell.lsof \
       --tool shell.pgrep \
       --tool shell.ps \
       --tool shell.rg \
@@ -95,6 +97,8 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool-shell-executable-search-path /opt/homebrew/opt/coreutils/libexec/gnubin \
       --tool-shell-executable-search-path /bin \
       --tool-shell-executable-search-path /usr/bin \
+      --tool-shell-executable-search-path /usr/sbin \
+      --tool-shell-executable-search-path /sbin \
       --tool-shell-backend container \
       --tool-shell-workspace-root . \
       --tool-shell-cwd . \
@@ -121,6 +125,22 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
 `container`, the selected image, or the workspace mount is unavailable. Shell
 tool execution does not fall back to the host when the container profile is
 required.
+
+`shell.lsof` requires `--tool-shell-allow-process-tools` and inspects exactly
+one PID. It returns only bounded numeric-descriptor metadata with canonical
+type categories (`regular`, `directory`, `character`, `block`, `pipe`, `ipv4`,
+`ipv6`, `unix_socket`, `socket`, `event`, or `other`) and protocol categories
+(`tcp`, `udp`, `udplite`, `other`, or `-`). It does not expose filenames,
+paths, command names, users, or network endpoints. Its row limit is applied
+after bounded output capture and does not stop the underlying kernel scan. The
+stdout-byte cap bounds retained subprocess capture and complete public rows;
+it does not bound kernel scan duration or execution. The timeout is the
+execution-duration bound. Process visibility is relative to the selected
+backend: a host PID is not a container PID, and this one-shot container does
+not preserve process identity between calls. The image installs the separate
+Alpine `lsof` package. Some platform builds can use a per-user device cache;
+keep the filesystem read-only and verify the behavior of any replacement
+package.
 
 The image includes the `kill` binary for completeness, but `shell.kill` uses a
 local-only identity contract and fails closed under container execution.

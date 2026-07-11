@@ -13,6 +13,7 @@ from .entities import (
     ShellCompositionMode,
     ShellCompositionRequest,
     ShellCompositionResult,
+    ShellExecutionErrorCode,
     ShellExecutionStatus,
     ShellExecutionStepResult,
     ShellFormattedCompositionResult,
@@ -44,6 +45,9 @@ from .git_policy import (
     redact_git_text,
 )
 from .kill import redacted_stderr as _redacted_kill_stderr
+from .lsof import LSOF_DEFAULT_LIMIT, LSOF_MAX_LIMIT, LSOF_MAX_PID
+from .lsof import open_file_rows_stdout as _lsof_open_file_rows_stdout
+from .lsof import redacted_stderr as _redacted_lsof_stderr
 from .pgrep import pid_only_stdout as _pgrep_pid_only_stdout
 from .pgrep import redacted_stderr as _redacted_pgrep_stderr
 from .policy import ExecutionPolicy
@@ -127,7 +131,22 @@ class _ShellCommandTool(Tool, ABC):
             spec = await self._policy.normalize(request)
         except ShellPolicyDenied as error:
             result = _policy_denied_result(request, error)
-            if request.command == "ps":
+            if request.command == "lsof":
+                result = _lsof_public_result(
+                    result,
+                    backend=result.backend,
+                    tool_name=result.tool_name,
+                    command=result.command,
+                    display_argv=result.display_argv,
+                    cwd=result.cwd,
+                    display_cwd=result.display_cwd,
+                    stdout_media_type=result.stdout_media_type,
+                    output_kind=result.output_kind,
+                    requested_pid=None,
+                    limit=LSOF_DEFAULT_LIMIT,
+                    max_stdout_bytes=0,
+                )
+            elif request.command == "ps":
                 result = _ps_public_result(
                     result,
                     backend=result.backend,
@@ -161,7 +180,22 @@ class _ShellCommandTool(Tool, ABC):
             )
         else:
             result = await self._executor.execute(spec)
-        if spec.command == "pgrep":
+        if spec.command == "lsof":
+            result = _lsof_public_result(
+                result,
+                backend=spec.backend,
+                tool_name=spec.tool_name,
+                command=spec.command,
+                display_argv=spec.display_argv,
+                cwd=spec.cwd,
+                display_cwd=spec.display_cwd,
+                stdout_media_type=spec.stdout_media_type,
+                output_kind=spec.output_kind,
+                requested_pid=_lsof_requested_pid(spec.metadata),
+                limit=_lsof_requested_limit(spec.metadata),
+                max_stdout_bytes=spec.max_stdout_bytes,
+            )
+        elif spec.command == "pgrep":
             result = _pgrep_public_result(
                 result,
                 backend=spec.backend,
@@ -4395,6 +4429,99 @@ class PsTool(_ShellCommandTool):
         )
 
 
+class LsofTool(_ShellCommandTool):
+    """Inspect bounded open descriptor metadata for one process.
+
+    Args:
+        pid: Process identifier to inspect.
+        limit: Maximum number of numeric file descriptor rows to return.
+        cwd: Workspace-relative working directory for the command.
+        timeout_seconds: Optional execution timeout in seconds.
+        max_stdout_bytes: Optional stdout byte cap.
+        max_stderr_bytes: Optional stderr byte cap.
+
+    Returns:
+        Formatted shell result containing bounded descriptor metadata rows.
+    """
+
+    supports_streaming = False
+
+    def __init__(
+        self,
+        *,
+        settings: ShellToolSettings,
+        policy: ExecutionPolicy,
+        executor: CommandExecutor,
+        formatter: ShellResultFormatter | None = None,
+    ) -> None:
+        super().__init__(
+            command="lsof",
+            settings=settings,
+            policy=policy,
+            executor=executor,
+            formatter=formatter,
+        )
+
+    def json_schema(self, prefix: str | None = None) -> dict[str, Any]:
+        schema = super().json_schema(prefix)
+        parameters = schema["function"]["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters["properties"]
+        assert isinstance(properties, dict)
+        pid_schema = properties["pid"]
+        assert isinstance(pid_schema, dict)
+        pid_schema["minimum"] = 1
+        pid_schema["maximum"] = LSOF_MAX_PID
+        limit_schema = properties["limit"]
+        assert isinstance(limit_schema, dict)
+        limit_schema["minimum"] = 1
+        limit_schema["maximum"] = LSOF_MAX_LIMIT
+        return schema
+
+    def _build_request(
+        self,
+        pid: int,
+        limit: int = LSOF_DEFAULT_LIMIT,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.lsof",
+            command="lsof",
+            options={"pid": pid, "limit": limit},
+            paths=(),
+            cwd=_optional_cwd(cwd),
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
+    async def __call__(
+        self,
+        pid: int,
+        limit: int = LSOF_DEFAULT_LIMIT,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+        *,
+        context: ToolCallContext,
+    ) -> str:
+        return await self._execute_request(
+            self._build_request(
+                pid=pid,
+                limit=limit,
+                cwd=_optional_cwd(cwd),
+                timeout_seconds=timeout_seconds,
+                max_stdout_bytes=max_stdout_bytes,
+                max_stderr_bytes=max_stderr_bytes,
+            ),
+            context=context,
+        )
+
+
 class KillTool(_ShellCommandTool):
     """Send a bounded signal to one selected local process identifier.
 
@@ -6309,6 +6436,126 @@ def _scalar_text(value: object) -> str:
 
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _lsof_public_result(
+    result: ExecutionResult,
+    *,
+    backend: str,
+    tool_name: str,
+    command: str,
+    display_argv: tuple[str, ...],
+    cwd: str,
+    display_cwd: str,
+    stdout_media_type: str,
+    output_kind: ShellOutputKind,
+    requested_pid: int | None,
+    limit: int,
+    max_stdout_bytes: int,
+) -> ExecutionResult:
+    no_matches = (
+        result.status is ShellExecutionStatus.NONZERO_EXIT
+        and result.exit_code == 1
+        and not result.stdout
+        and not result.stderr
+        and not result.stdout_truncated
+        and not result.stderr_truncated
+    )
+    status = ShellExecutionStatus.NO_MATCHES if no_matches else result.status
+    error_code = (
+        ShellExecutionErrorCode.NO_MATCHES if no_matches else result.error_code
+    )
+    safe_stdout = ""
+    row_limit_truncated = False
+    byte_limit_truncated = False
+    malformed = False
+    if requested_pid is not None:
+        output = _lsof_open_file_rows_stdout(
+            result.stdout,
+            requested_pid=requested_pid,
+            limit=limit,
+            max_stdout_bytes=max_stdout_bytes,
+            stdout_truncated=result.stdout_truncated,
+        )
+        safe_stdout = output.stdout
+        row_limit_truncated = output.row_limit_truncated
+        byte_limit_truncated = output.byte_limit_truncated
+        malformed = output.malformed
+    malformed_completed = (
+        status is ShellExecutionStatus.COMPLETED and malformed
+    )
+    if malformed_completed:
+        status = ShellExecutionStatus.TOOL_ERROR
+        error_code = ShellExecutionErrorCode.TOOL_ERROR
+        safe_stdout = ""
+    safe_stderr = _redacted_lsof_stderr(result.stderr)
+    return replace(
+        result,
+        backend=backend,
+        tool_name=tool_name,
+        command=command,
+        argv=display_argv,
+        display_argv=display_argv,
+        cwd=cwd,
+        display_cwd=display_cwd,
+        status=status,
+        stdout=safe_stdout,
+        stderr=safe_stderr,
+        stdout_media_type=stdout_media_type,
+        output_kind=output_kind,
+        generated_files=(),
+        stdout_bytes=len(safe_stdout.encode("utf-8")),
+        stderr_bytes=len(safe_stderr.encode("utf-8")),
+        stdout_truncated=(
+            result.stdout_truncated
+            or row_limit_truncated
+            or byte_limit_truncated
+        ),
+        error_code=error_code,
+        error_message=(
+            "lsof output was malformed"
+            if malformed_completed
+            else _lsof_public_error_message(status)
+        ),
+        metadata={},
+    )
+
+
+def _lsof_requested_pid(metadata: Mapping[str, object]) -> int:
+    value = metadata.get("_lsof_requested_pid")
+    assert isinstance(value, int) and not isinstance(
+        value, bool
+    ), "lsof execution requires a requested PID"
+    assert 1 <= value <= LSOF_MAX_PID, "lsof requested PID is invalid"
+    return value
+
+
+def _lsof_requested_limit(metadata: Mapping[str, object]) -> int:
+    value = metadata.get("_lsof_limit")
+    assert isinstance(value, int) and not isinstance(
+        value, bool
+    ), "lsof execution requires a result limit"
+    assert 1 <= value <= LSOF_MAX_LIMIT, "lsof result limit is invalid"
+    return value
+
+
+def _lsof_public_error_message(
+    status: ShellExecutionStatus,
+) -> str | None:
+    if status in {
+        ShellExecutionStatus.COMPLETED,
+        ShellExecutionStatus.NO_MATCHES,
+    }:
+        return None
+    messages = {
+        ShellExecutionStatus.POLICY_DENIED: "lsof was denied by policy",
+        ShellExecutionStatus.COMMAND_UNAVAILABLE: "lsof is unavailable",
+        ShellExecutionStatus.SPAWN_FAILED: "lsof failed to start",
+        ShellExecutionStatus.TIMEOUT: "lsof timed out",
+        ShellExecutionStatus.CANCELLED: "lsof was cancelled",
+        ShellExecutionStatus.NONZERO_EXIT: "lsof exited non-zero",
+    }
+    return messages.get(status, "lsof execution failed")
 
 
 def _pgrep_public_result(

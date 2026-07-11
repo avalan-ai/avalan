@@ -143,6 +143,7 @@ from .sandbox import ShellSandboxCommandExecutor as ShellSandboxCommandExecutor
 from .settings import ShellGitToolSettings as ShellGitToolSettings
 from .settings import ShellToolSettings as ShellToolSettings
 from .tools import KillTool as KillTool
+from .tools import LsofTool as LsofTool
 from .tools import PsTool as PsTool
 from .toolset import ShellToolSet as ShellToolSet
 

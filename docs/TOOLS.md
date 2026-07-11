@@ -105,7 +105,7 @@ enabled.
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
 | `skills` | `skills.list`, `skills.match`, `skills.read`, `skills.check` | Discover and read trusted instruction resources through a registry. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `pgrep`, `ps`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline`, `git_*` | Read, inspect, search, transform, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep` and `shell.ps` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `pgrep`, `ps`, `lsof`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline`, `git_*` | Read, inspect, search, transform, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep`, `shell.ps`, and `shell.lsof` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -451,8 +451,9 @@ image must make both `avalan` and the target PDF library importable to that
 Python interpreter. Absolute paths, symlinks, hidden files, and executable
 search paths are also opt-in.
 
-`shell.pgrep` and `shell.ps` require trusted `allow_process_tools = true`
-configuration. `shell.ps` accepts exactly one PID. Its default `summary` view
+`shell.pgrep`, `shell.ps`, and `shell.lsof` require trusted
+`allow_process_tools = true` configuration. `shell.ps` accepts exactly one PID.
+Its default `summary` view
 returns the fixed fields PID, parent PID, state, elapsed time, and command
 name. Its `resources` view returns PID, CPU percent, memory percent, resident
 memory in KiB, virtual memory in KiB, CPU time, and nice value, in that order.
@@ -461,14 +462,27 @@ CPU percent is not a portable instantaneous-load metric: Darwin reports a
 recent decaying average, while procps reports a lifetime CPU-time ratio. CPU
 and memory percentages are nonnegative values with one fractional digit. CPU
 time retains the backend's bounded Darwin `MINUTES:SS.cc` or procps
-`[D-]HH:MM:SS` representation.
-`shell.pgrep`
+`[D-]HH:MM:SS` representation. `shell.lsof` also accepts exactly one PID and
+returns at most 64 descriptor rows by default, with a caller-selectable limit
+from 1 through 256. Each tab-separated row contains only PID, numeric file
+descriptor, access mode, canonical file type, and canonical protocol. File
+type is one of `regular`, `directory`, `character`, `block`, `pipe`, `ipv4`,
+`ipv6`, `unix_socket`, `socket`, `event`, or `other`; protocol is `tcp`, `udp`,
+`udplite`, `other`, or `-`. Unknown identifier-shaped backend values map to
+`other`; punctuation-bearing values fail closed as malformed. It excludes
+pseudo descriptors, filenames, command names, users, paths, and network
+endpoints. The limit is applied after bounded subprocess capture and does not
+make the underlying `lsof` kernel scan stop early. The stdout-byte cap bounds
+retained subprocess capture and the complete public rows derived from it; it
+does not bound kernel scan duration or execution. The timeout is the
+execution-duration bound. `shell.pgrep`
 accepts a bounded pattern and structured flags, exposes a redacted display
 argument, and returns process identifiers only. Process-table visibility is
 relative to the selected local, sandbox, or container backend. Trusted
 execution specifications and backend plans retain the raw query; formatted
-tool output and display projections do not. Both process tools are denied in
-structured shell compositions. `shell.kill` additionally requires trusted
+tool output and display projections do not. All three read-only process tools
+are denied in structured shell compositions. `shell.kill` additionally
+requires trusted
 `allow_process_control = true`, accepts exactly one positive local PID, rejects
 PID 1 plus the current Avalan and parent PIDs, and permits only `TERM`, `INT`,
 or `KILL` with `TERM` as the default. It exposes no subprocess stdout and
@@ -477,8 +491,15 @@ contract and fails closed for all sandbox and container execution. Bubblewrap
 and one-shot containers do not preserve PID identity across calls; Seatbelt
 may share the host PID namespace, but remains denied for consistent behavior.
 Local execution can signal same-user processes, and PID reuse creates a race
-between inspecting a PID and signaling it. All three process tools are denied
-in structured shell compositions.
+between inspecting a PID and signaling it. All four process tools are denied
+in structured shell compositions. Process visibility for `shell.pgrep`,
+`shell.ps`, and `shell.lsof` is backend-relative. A PID observed locally is not
+automatically meaningful in a sandbox or container, and a one-shot container
+does not preserve PID identity between calls. The `lsof` package is a separate
+container dependency. Some platform builds can use a per-user device cache;
+Avalan supplies a sanitized, non-existent home and cache environment, but
+operators should still verify the behavior of the packaged binary and keep
+container filesystems read-only where possible.
 
 Attached and generated files that need to be exposed to shell tools are
 materialized under `workspace_root / materialized_input_files_dir`. The

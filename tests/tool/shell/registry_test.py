@@ -49,6 +49,7 @@ class ShellRegistryTest(TestCase):
                 "nl",
                 "pgrep",
                 "ps",
+                "lsof",
                 "kill",
                 "file",
                 "find",
@@ -119,7 +120,12 @@ class ShellRegistryTest(TestCase):
         self.assertEqual(groups_by_id["nl"], ShellDependencyGroup.CORE)
         self.assertEqual(groups_by_id["pgrep"], ShellDependencyGroup.PROCESS)
         self.assertEqual(groups_by_id["ps"], ShellDependencyGroup.PROCESS)
+        self.assertEqual(groups_by_id["lsof"], ShellDependencyGroup.PROCESS)
         self.assertEqual(groups_by_id["kill"], ShellDependencyGroup.PROCESS)
+        self.assertEqual(
+            SHELL_COMMAND_DEFINITIONS["lsof"].container_package_hints,
+            ("lsof",),
+        )
         self.assertEqual(
             groups_by_id["awk"], ShellDependencyGroup.TEXT_FILTERS
         )
@@ -207,7 +213,10 @@ class ShellRegistryTest(TestCase):
                 "tesseract",
             },
         )
-        self.assertEqual(process_commands, {"kill", "pgrep", "ps"})
+        self.assertEqual(
+            process_commands,
+            {"kill", "lsof", "pgrep", "ps"},
+        )
         self.assertEqual(
             no_double_dash_commands,
             {

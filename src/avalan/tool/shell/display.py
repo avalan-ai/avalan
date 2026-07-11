@@ -42,6 +42,7 @@ _REQUEST_ACTIONS = {
     "nl": "number",
     "pgrep": "find",
     "ps": "inspect",
+    "lsof": "inspect",
     "file": "identify",
     "find": "find",
     "wc": "count",
@@ -66,6 +67,7 @@ _REQUEST_SUMMARIES = {
     "nl": "Number file lines.",
     "pgrep": "Find matching process identifiers.",
     "ps": "Inspect selected process metadata.",
+    "lsof": "Inspect selected process descriptor metadata.",
     "file": "Identify file types.",
     "find": "Find workspace entries.",
     "wc": "Count file content.",
@@ -785,6 +787,11 @@ def _request_target(
         case "ps":
             pids = _sequence_option(request.options, "pids")
             return pids or "selected processes", False
+        case "lsof":
+            pid = request.options.get("pid")
+            return (
+                str(pid) if isinstance(pid, int) else "selected process"
+            ), False
         case "kill":
             pid = request.options.get("pid")
             return (
@@ -841,6 +848,8 @@ def _request_details(
     if paths is not None:
         details.append(_detail("paths", paths, redacted=paths_redacted))
     match request.command:
+        case "lsof":
+            _append_option(details, request.options, "limit")
         case "ps":
             _append_option(details, request.options, "view")
         case "rg":

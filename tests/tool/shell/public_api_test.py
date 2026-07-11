@@ -41,6 +41,7 @@ from avalan.tool.shell import (
     KillTool,
     LocalCommandExecutor,
     LocalCompositionExecutor,
+    LsofTool,
     PathOperand,
     PsTool,
     ShellCommandDefinition,
@@ -101,6 +102,7 @@ class ShellPublicApiTest(TestCase):
             ShellToolSet, import_module("avalan.tool.shell").ShellToolSet
         )
         self.assertIs(KillTool, import_module("avalan.tool.shell").KillTool)
+        self.assertIs(LsofTool, import_module("avalan.tool.shell").LsofTool)
         self.assertIs(PsTool, import_module("avalan.tool.shell").PsTool)
         self.assertIs(
             ExecutionPolicy, import_module("avalan.tool.shell").ExecutionPolicy
@@ -375,6 +377,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.commands.jq",
             "avalan.tool.shell.commands.kill",
             "avalan.tool.shell.commands.ls",
+            "avalan.tool.shell.commands.lsof",
             "avalan.tool.shell.commands.nl",
             "avalan.tool.shell.commands.pdfinfo",
             "avalan.tool.shell.commands.pgrep",
@@ -397,6 +400,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.formatting",
             "avalan.tool.shell.git",
             "avalan.tool.shell.kill",
+            "avalan.tool.shell.lsof",
             "avalan.tool.shell.opt_in",
             "avalan.tool.shell.pgrep",
             "avalan.tool.shell.ps",
@@ -438,6 +442,23 @@ class ShellPublicApiTest(TestCase):
             ),
         )
         self.assertEqual(parameters["view"].default, "summary")
+
+    def test_lsof_limit_follows_required_pid_in_public_contract(self) -> None:
+        parameters = signature(LsofTool.__call__).parameters
+
+        self.assertEqual(
+            tuple(parameters)[:7],
+            (
+                "self",
+                "pid",
+                "limit",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+            ),
+        )
+        self.assertEqual(parameters["limit"].default, 64)
 
     def test_shell_toolset_is_namespaced_with_available_tools(
         self,
