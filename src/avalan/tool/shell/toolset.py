@@ -97,6 +97,7 @@ from .tools import (
     PdfPlumberTool,
     PdfToPpmTool,
     PdfToTextTool,
+    PgrepTool,
     PipelineTool,
     PyPdfTool,
     ReportLabTool,
@@ -314,6 +315,12 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
             NlTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            PgrepTool(
                 settings=self._settings,
                 policy=policy,
                 executor=executor,

@@ -160,6 +160,7 @@ class GetToolSettingsTestCase(unittest.TestCase):
     def test_shell_settings(self):
         args = Namespace(
             tool_shell_allow_media_tools=True,
+            tool_shell_allow_process_tools=True,
             tool_shell_allow_pipelines=True,
             tool_shell_max_pipeline_stages=3,
             tool_shell_max_pipeline_bytes=1024,
@@ -171,6 +172,7 @@ class GetToolSettingsTestCase(unittest.TestCase):
         )
         self.assertIsInstance(settings, ShellToolSettings)
         self.assertTrue(settings.allow_media_tools)
+        self.assertTrue(settings.allow_process_tools)
         self.assertTrue(settings.allow_pipelines)
         self.assertEqual(settings.max_pipeline_stages, 3)
         self.assertEqual(settings.max_pipeline_bytes, 1024)

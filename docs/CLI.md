@@ -203,6 +203,12 @@ avalan agent run \
   --tool-shell-max-stdout-bytes 65536
 ```
 
+Process-table tools are a separate trusted opt-in:
+
+| Flag | Effect |
+| --- | --- |
+| `--tool-shell-allow-process-tools` | Permit process-risk wrappers such as `shell.pgrep`; disabled by default. |
+
 Structured shell pipelines are a separate explicit opt-in. The model receives
 `shell.pipeline` as a typed tool with `steps` objects, not as a shell string.
 Use these flags only from trusted operator configuration:
@@ -286,6 +292,7 @@ Public shell tools:
 | `shell.ls` | List a directory or file path. | core | `coreutils` |
 | `shell.cat` | Read a bounded text file. | core | `coreutils` |
 | `shell.nl` | Number lines in a bounded text file. | core | `coreutils` |
+| `shell.pgrep` | Find matching process identifiers without returning process text. | process | `procps-ng` or `procps` |
 | `shell.file` | Identify regular file types. | core | `file` |
 | `shell.find` | Find entries with constrained selectors. | core | `findutils` |
 | `shell.wc` | Count lines, words, or bytes. | core | `coreutils` |
@@ -309,6 +316,13 @@ Python PDF tools resolve a trusted Python executable and also report
 `command_unavailable` when the required package cannot be imported. In
 container mode, the selected image must make both `avalan` and the target PDF
 library importable to that Python interpreter.
+
+`shell.pgrep` additionally requires `allow_process_tools = true`. It accepts
+only bounded structured matching options, redacts the pattern from display
+arguments, and returns PID lines rather than process names or command lines.
+Process visibility follows the selected local, sandbox, or container backend.
+The raw query remains inside trusted execution specifications and backend
+plans. `shell.pgrep` is not supported inside `shell.pipeline` compositions.
 
 The shell toolset does not provide generic shell execution. It never evaluates
 model-supplied shell strings, never accepts arbitrary executable paths from

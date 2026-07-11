@@ -615,6 +615,8 @@ def _container_request_from_spec(spec: ExecutionSpec) -> ContainerPlanRequest:
 
 
 def _container_argv(spec: ExecutionSpec) -> tuple[str, ...]:
+    if spec.command == "pgrep":
+        return spec.argv
     if spec.output_kind is ShellOutputKind.GENERATED_FILES:
         assert spec.output_plan is not None, "generated outputs require a plan"
         assert len(spec.argv) == len(

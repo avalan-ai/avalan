@@ -11,6 +11,7 @@ by Avalan's common read-only shell tools:
 - `head`
 - `jq`
 - `ls`
+- `pgrep`
 - `rg`
 - `sed`
 - `tail`
@@ -81,6 +82,7 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool shell.jq \
       --tool shell.ls \
       --tool shell.nl \
+      --tool shell.pgrep \
       --tool shell.rg \
       --tool shell.sed \
       --tool shell.tail \
@@ -103,6 +105,7 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool-container-timeout-seconds 30 \
       --tool-shell-container-profile workspace-readonly \
       --tool-shell-container-required \
+      --tool-shell-allow-process-tools \
       --memory-recent \
       --run-max-new-tokens 8192 \
       --maximum-tool-cycles 64 \

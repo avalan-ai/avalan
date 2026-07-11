@@ -72,6 +72,7 @@ _CALL_ARGUMENTS: dict[str, dict[str, object]] = {
     "shell.ls": {"path": "filesystem"},
     "shell.cat": {"path": "filesystem/visible.txt"},
     "shell.nl": {"path": "filesystem/visible.txt"},
+    "shell.pgrep": {"pattern": "private-worker-pattern"},
     "shell.file": {"paths": ["filesystem/visible.txt"]},
     "shell.find": {"paths": ["filesystem"], "name": "visible.txt"},
     "shell.wc": {"paths": ["filesystem/visible.txt"], "words": True},
@@ -100,6 +101,7 @@ _EXPECTED_ACTIONS = {
     "shell.ls": "list",
     "shell.cat": "read",
     "shell.nl": "number",
+    "shell.pgrep": "find",
     "shell.file": "identify",
     "shell.find": "find",
     "shell.wc": "count",
@@ -117,6 +119,31 @@ _EXPECTED_ACTIONS = {
 
 
 class ShellDisplayProjectionCallTest(TestCase):
+    def test_pgrep_call_projection_always_redacts_pattern(self) -> None:
+        manager = _shell_manager(["shell.pgrep"])
+        pattern = "private-worker-pattern"
+        for arguments in (
+            {"pattern": pattern, "full": True},
+            {"pattern": pattern, "unknown": True},
+        ):
+            with self.subTest(arguments=arguments):
+                call = ToolCall(
+                    id="call-pgrep",
+                    name="shell.pgrep",
+                    arguments=arguments,
+                )
+                descriptor = manager.describe_tool_call(call)
+
+                assert descriptor is not None
+                projection = descriptor.project_display(call)
+
+                self.assertIsInstance(projection, ToolDisplayProjection)
+                assert isinstance(projection, ToolDisplayProjection)
+                payload = dumps(projection.to_payload(), sort_keys=True)
+                self.assertTrue(projection.redacted)
+                self.assertEqual(projection.target, "[redacted]")
+                self.assertNotIn(pattern, payload)
+
     def test_invalid_call_arguments_do_not_project(self) -> None:
         manager = _shell_manager(["shell.cat"])
         call = ToolCall(
@@ -1196,6 +1223,45 @@ class ShellDisplayProjectionCallTest(TestCase):
 
 
 class ShellDisplayProjectionTerminalTest(IsolatedAsyncioTestCase):
+    def test_pgrep_terminal_projection_uses_redacted_argv(self) -> None:
+        manager = _shell_manager(["shell.pgrep"])
+        pattern = "private-worker-pattern"
+        call = ToolCall(
+            id="call-pgrep",
+            name="shell.pgrep",
+            arguments={"pattern": pattern},
+        )
+        result = ExecutionResult(
+            backend="local",
+            tool_name="shell.pgrep",
+            command="pgrep",
+            argv=("pgrep", "--", "[redacted]"),
+            display_argv=("pgrep", "--", "[redacted]"),
+            cwd=".",
+            display_cwd=".",
+            status=ShellExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout="4242\n",
+            stderr="",
+            stdout_media_type="text/plain",
+            output_kind=ShellOutputKind.TEXT,
+            error_code=ShellExecutionErrorCode.COMPLETED,
+        )
+        outcome = ToolCallResult(
+            id="result-pgrep",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=ShellFormattedResult("formatted", result),
+        )
+
+        projection = _terminal_projection(manager, outcome)
+        payload = dumps(projection.to_payload(), sort_keys=True)
+
+        self.assertTrue(projection.redacted)
+        self.assertEqual(projection.target, "pgrep -- '[redacted]'")
+        self.assertNotIn(pattern, payload)
+
     def test_formatted_result_supports_copy_and_asdict(self) -> None:
         call = ToolCall(
             id="call-cat",

@@ -157,6 +157,11 @@ class ExecutionPolicy:
             request,
             ShellCompositionRequest,
         ), "request must be a shell composition request"
+        if any(step.command == "pgrep" for step in request.steps):
+            raise _policy_denied(
+                ShellExecutionErrorCode.DENIED_COMMAND,
+                "pgrep is disabled in shell compositions",
+            )
         if not self._settings.allow_pipelines:
             raise _policy_denied(
                 ShellExecutionErrorCode.POLICY_DENIED,
@@ -293,6 +298,19 @@ class ExecutionPolicy:
             raise _policy_denied(
                 ShellExecutionErrorCode.DENIED_COMMAND,
                 "media tools are disabled",
+            )
+        if (
+            command_definition.process_risk
+            and not self._settings.allow_process_tools
+        ):
+            raise _policy_denied(
+                ShellExecutionErrorCode.DENIED_COMMAND,
+                "process tools are disabled",
+            )
+        if request.command == "pgrep" and request.paths:
+            raise _policy_denied(
+                ShellExecutionErrorCode.INVALID_OPTION,
+                "pgrep does not accept paths",
             )
         if stdin_mode:
             _validate_stdin_mode(
@@ -1304,9 +1322,15 @@ def _validate_argument_fragments(
             ShellExecutionErrorCode.TOO_MANY_ARGUMENTS,
             f"{label} has too many arguments",
         )
-    encoded_fragments = tuple(
-        fragment.encode("utf-8") for fragment in fragments
-    )
+    try:
+        encoded_fragments = tuple(
+            fragment.encode("utf-8") for fragment in fragments
+        )
+    except UnicodeEncodeError as error:
+        raise _policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            f"{label} must contain valid Unicode",
+        ) from error
     if any(
         len(encoded_fragment) > settings.max_argument_bytes
         for encoded_fragment in encoded_fragments
