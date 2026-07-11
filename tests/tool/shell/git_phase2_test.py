@@ -792,10 +792,11 @@ def _write_unsafe_attributes_repo(repo: Path) -> None:
 
 def _git_sources() -> tuple[Path, ...]:
     root = Path(__file__).parents[3]
+    tools_directory = root / "src" / "avalan" / "tool" / "shell" / "tools"
     return (
         root / "src" / "avalan" / "tool" / "shell" / "git.py",
         root / "src" / "avalan" / "tool" / "shell" / "git_policy.py",
-        root / "src" / "avalan" / "tool" / "shell" / "tools.py",
+        *sorted(tools_directory.rglob("*.py")),
         root / "src" / "avalan" / "tool" / "shell" / "toolset.py",
     )
 

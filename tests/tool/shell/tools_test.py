@@ -1,4 +1,5 @@
-from typing import Any, cast
+from importlib import import_module
+from typing import Any, cast, get_type_hints
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.entities import ToolCallContext, ToolExecutionStreamEvent
@@ -37,6 +38,39 @@ from avalan.tool.shell.tools import (
     WcTool,
     _ShellCommandTool,
 )
+
+
+class ShellToolPackageCompatibilityTest(TestCase):
+    def test_facade_preserves_existing_imports(self) -> None:
+        facade = import_module("avalan.tool.shell.tools")
+        cases = (
+            ("RgTool", "avalan.tool.shell.tools.rg"),
+            ("PipelineTool", "avalan.tool.shell.tools.pipeline"),
+            ("GitStatusTool", "avalan.tool.shell.tools.git_read"),
+            ("_ShellCommandTool", "avalan.tool.shell.tools._base"),
+            ("_ShellGitCommandTool", "avalan.tool.shell.tools.git_base"),
+            ("_git_policy_denied_result", "avalan.tool.shell.tools.git_base"),
+        )
+
+        for name, module_name in cases:
+            with self.subTest(name=name):
+                self.assertIs(
+                    getattr(facade, name),
+                    getattr(import_module(module_name), name),
+                )
+
+    def test_leaf_tool_annotations_resolve_at_runtime(self) -> None:
+        facade = import_module("avalan.tool.shell.tools")
+        tool_classes = (
+            value
+            for name, value in vars(facade).items()
+            if name.endswith("Tool") and isinstance(value, type)
+        )
+
+        for tool_class in tool_classes:
+            with self.subTest(tool_class=tool_class.__name__):
+                get_type_hints(tool_class.__init__)
+                get_type_hints(tool_class.__call__)
 
 
 class ShellToolWrapperTest(IsolatedAsyncioTestCase):
