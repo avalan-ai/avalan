@@ -73,7 +73,7 @@ _CALL_ARGUMENTS: dict[str, dict[str, object]] = {
     "shell.cat": {"path": "filesystem/visible.txt"},
     "shell.nl": {"path": "filesystem/visible.txt"},
     "shell.pgrep": {"pattern": "private-worker-pattern"},
-    "shell.ps": {"pids": [1]},
+    "shell.ps": {"pids": [1], "view": "resources"},
     "shell.kill": {"pid": 42},
     "shell.file": {"paths": ["filesystem/visible.txt"]},
     "shell.find": {"paths": ["filesystem"], "name": "visible.txt"},
@@ -147,6 +147,17 @@ class ShellDisplayProjectionCallTest(TestCase):
                 self.assertTrue(projection.redacted)
                 self.assertEqual(projection.target, "[redacted]")
                 self.assertNotIn(pattern, payload)
+
+    def test_ps_call_projection_identifies_selected_view(self) -> None:
+        resources = _call_projection(
+            "shell.ps",
+            {"pids": [42], "view": "resources"},
+        )
+        summary = _call_projection("shell.ps", {"pids": [42]})
+
+        self.assertEqual(resources.target, "42")
+        self.assertEqual(_detail_value(resources, "view"), "resources")
+        self.assertEqual(_detail_value(summary, "view"), "summary")
 
     def test_invalid_call_arguments_do_not_project(self) -> None:
         manager = _shell_manager(["shell.cat"])

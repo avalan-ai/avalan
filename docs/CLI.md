@@ -294,7 +294,7 @@ Public shell tools:
 | `shell.cat` | Read a bounded text file. | core | `coreutils` |
 | `shell.nl` | Number lines in a bounded text file. | core | `coreutils` |
 | `shell.pgrep` | Find matching process identifiers without returning process text. | process | `procps-ng` or `procps` |
-| `shell.ps` | Inspect fixed metadata for exactly one selected process identifier. | process | `procps-ng` or `procps` |
+| `shell.ps` | Inspect a fixed summary or resource view for exactly one selected process identifier. | process | `procps-ng` or `procps` |
 | `shell.kill` | Send TERM, INT, or KILL to exactly one selected process identifier. | process | `procps-ng` or `procps` |
 | `shell.file` | Identify regular file types. | core | `file` |
 | `shell.find` | Find entries with constrained selectors. | core | `findutils` |
@@ -326,9 +326,15 @@ only bounded structured matching options, redacts the pattern from display
 arguments, and returns PID lines rather than process names or command lines.
 Process visibility follows the selected local, sandbox, or container backend.
 The raw query remains inside trusted execution specifications and backend
-plans. `shell.ps` requires exactly one PID and returns only PID, parent
-PID, state, elapsed time, and command name. Neither process tool is supported
-inside `shell.pipeline` compositions.
+plans. `shell.ps` requires exactly one PID. Its default `summary` view returns
+only PID, parent PID, state, elapsed time, and command name. Its `resources`
+view returns only PID, CPU percent, memory percent, resident memory in KiB,
+virtual memory in KiB, CPU time, and nice value, in that order. Neither process
+tool is supported inside `shell.pipeline` compositions. CPU percent is not a
+portable instantaneous-load metric: Darwin reports a recent decaying average,
+while procps reports a lifetime CPU-time ratio. CPU and memory percentages are
+nonnegative values with one fractional digit. CPU time retains the backend's
+bounded Darwin `MINUTES:SS.cc` or procps `[D-]HH:MM:SS` representation.
 
 `shell.kill` requires both `allow_process_tools = true` and the separate
 `allow_process_control = true` trusted opt-in. It rejects PID 1, the current

@@ -47,6 +47,7 @@ from .kill import redacted_stderr as _redacted_kill_stderr
 from .pgrep import pid_only_stdout as _pgrep_pid_only_stdout
 from .pgrep import redacted_stderr as _redacted_pgrep_stderr
 from .policy import ExecutionPolicy
+from .ps import PsView
 from .ps import process_rows_stdout as _ps_process_rows_stdout
 from .ps import redacted_stderr as _redacted_ps_stderr
 from .registry import SHELL_COMMAND_DEFINITIONS
@@ -138,6 +139,7 @@ class _ShellCommandTool(Tool, ABC):
                     stdout_media_type=result.stdout_media_type,
                     output_kind=result.output_kind,
                     requested_pids=(),
+                    view="summary",
                 )
             elif request.command == "kill":
                 result = _kill_public_result(
@@ -183,6 +185,7 @@ class _ShellCommandTool(Tool, ABC):
                 stdout_media_type=spec.stdout_media_type,
                 output_kind=spec.output_kind,
                 requested_pids=_ps_requested_pids(spec.metadata),
+                view=_ps_requested_view(spec.metadata),
             )
         elif spec.command == "kill":
             result = _kill_public_result(
@@ -4295,7 +4298,7 @@ class PgrepTool(_ShellCommandTool):
 
 
 class PsTool(_ShellCommandTool):
-    """Inspect fixed process metadata for one selected process identifier.
+    """Inspect one fixed view of a selected process identifier.
 
     Args:
         pids: A sequence containing exactly one process identifier to inspect.
@@ -4303,10 +4306,13 @@ class PsTool(_ShellCommandTool):
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
         max_stderr_bytes: Optional stderr byte cap.
+        view: Fixed process fields to return. Summary returns PID, parent PID,
+            state, elapsed time, and command name. Resources returns PID, CPU
+            percent, memory percent, resident and virtual memory in KiB, CPU
+            time, and nice value.
 
     Returns:
-        Formatted shell result containing PID, parent PID, state, elapsed
-        time, and command name rows only.
+        Formatted shell result containing only fields from the selected view.
     """
 
     supports_streaming = False
@@ -4351,12 +4357,13 @@ class PsTool(_ShellCommandTool):
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
+        view: Literal["summary", "resources"] = "summary",
     ) -> ShellCommandRequest:
         _assert_int_sequence(pids, "pids")
         return ShellCommandRequest(
             tool_name="shell.ps",
             command="ps",
-            options={"pids": tuple(pids)},
+            options={"pids": tuple(pids), "view": view},
             paths=(),
             cwd=_optional_cwd(cwd),
             timeout_seconds=timeout_seconds,
@@ -4371,12 +4378,14 @@ class PsTool(_ShellCommandTool):
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
+        view: Literal["summary", "resources"] = "summary",
         *,
         context: ToolCallContext,
     ) -> str:
         return await self._execute_request(
             self._build_request(
                 pids=pids,
+                view=view,
                 cwd=_optional_cwd(cwd),
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
@@ -6419,10 +6428,12 @@ def _ps_public_result(
     stdout_media_type: str,
     output_kind: ShellOutputKind,
     requested_pids: tuple[int, ...],
+    view: PsView,
 ) -> ExecutionResult:
     safe_stdout = _ps_process_rows_stdout(
         result.stdout,
         requested_pids=requested_pids,
+        view=view,
         stdout_truncated=result.stdout_truncated,
     )
     safe_stderr = _redacted_ps_stderr(result.stderr)
@@ -6455,6 +6466,12 @@ def _ps_requested_pids(metadata: Mapping[str, object]) -> tuple[int, ...]:
         isinstance(pid, int) and not isinstance(pid, bool) for pid in value
     ), "ps requested PIDs must be integers"
     return cast(tuple[int, ...], value)
+
+
+def _ps_requested_view(metadata: Mapping[str, object]) -> PsView:
+    value = metadata.get("_ps_view")
+    assert value in {"summary", "resources"}, "ps view must be supported"
+    return cast(PsView, value)
 
 
 def _ps_public_error_message(result: ExecutionResult) -> str | None:

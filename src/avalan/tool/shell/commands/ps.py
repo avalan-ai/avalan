@@ -1,5 +1,5 @@
 from ..entities import ShellExecutionErrorCode
-from ..ps import PS_MAX_PID
+from ..ps import PS_MAX_PID, PS_VIEWS
 from .base import (
     ShellCommandDefinition,
     ShellCommandPolicyContext,
@@ -9,7 +9,9 @@ from .helpers import _validate_known_options, policy_denied
 
 from collections.abc import Sequence
 
-_PS_OPTIONS = {"pids"}
+_PS_OPTIONS = {"pids", "view"}
+_PS_SUMMARY_FIELDS = ("pid", "ppid", "state", "etime", "comm")
+_PS_RESOURCE_FIELDS = ("pid", "pcpu", "pmem", "rss", "vsz", "time", "nice")
 
 
 def build_argv(
@@ -23,22 +25,18 @@ def build_argv(
         include_option_name=True,
     )
     pids = _validated_pids(request.options.get("pids"))
+    view = _validated_view(request.options.get("view", "summary"))
     context.metadata["_ps_requested_pids"] = pids
-    argv = (
+    context.metadata["_ps_view"] = view
+    fields = _PS_SUMMARY_FIELDS if view == "summary" else _PS_RESOURCE_FIELDS
+    argv_parts = [
         context.executable_name,
         "-p",
         ",".join(str(pid) for pid in pids),
-        "-o",
-        "pid=",
-        "-o",
-        "ppid=",
-        "-o",
-        "state=",
-        "-o",
-        "etime=",
-        "-o",
-        "comm=",
-    )
+    ]
+    for field in fields:
+        argv_parts.extend(("-o", f"{field}="))
+    argv = tuple(argv_parts)
     context.metadata["exit_code_statuses"] = {1: "no_matches"}
     return argv, argv, None
 
@@ -71,6 +69,15 @@ def _validated_pids(value: object) -> tuple[int, ...]:
             )
         pids.append(pid)
     return tuple(pids)
+
+
+def _validated_view(value: object) -> str:
+    if not isinstance(value, str) or value not in PS_VIEWS:
+        raise policy_denied(
+            ShellExecutionErrorCode.INVALID_OPTION,
+            "view is not supported",
+        )
+    return value
 
 
 COMMAND_DEFINITION = ShellCommandDefinition(

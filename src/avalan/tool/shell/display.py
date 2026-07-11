@@ -841,6 +841,8 @@ def _request_details(
     if paths is not None:
         details.append(_detail("paths", paths, redacted=paths_redacted))
     match request.command:
+        case "ps":
+            _append_option(details, request.options, "view")
         case "rg":
             _append_option(details, request.options, "mode")
             if not _rg_files_mode(request):

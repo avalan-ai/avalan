@@ -280,6 +280,20 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
             any(row.split(maxsplit=1)[0] == str(getpid()) for row in rows)
         )
 
+        resources = await _call(
+            _tool_by_name(self._toolset, "ps"),
+            (getpid(),),
+            view="resources",
+        )
+
+        self.assertIsInstance(resources, ShellFormattedResult)
+        assert isinstance(resources, ShellFormattedResult)
+        _assert_completed(self, resources, "ps")
+        resource_rows = resources.execution_result.stdout.splitlines()
+        self.assertEqual(len(resource_rows), 1)
+        self.assertEqual(resource_rows[0].split()[0], str(getpid()))
+        self.assertEqual(len(resource_rows[0].split()), 7)
+
         no_match = await _call(
             _tool_by_name(self._toolset, "ps"),
             (2**31 - 1,),

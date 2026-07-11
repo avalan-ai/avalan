@@ -42,6 +42,7 @@ from avalan.tool.shell import (
     LocalCommandExecutor,
     LocalCompositionExecutor,
     PathOperand,
+    PsTool,
     ShellCommandDefinition,
     ShellCommandRequest,
     ShellCommandStepRequest,
@@ -100,6 +101,7 @@ class ShellPublicApiTest(TestCase):
             ShellToolSet, import_module("avalan.tool.shell").ShellToolSet
         )
         self.assertIs(KillTool, import_module("avalan.tool.shell").KillTool)
+        self.assertIs(PsTool, import_module("avalan.tool.shell").PsTool)
         self.assertIs(
             ExecutionPolicy, import_module("avalan.tool.shell").ExecutionPolicy
         )
@@ -419,6 +421,23 @@ class ShellPublicApiTest(TestCase):
 
         with self.assertRaises(FrozenInstanceError):
             settings.backend = "remote"
+
+    def test_ps_view_appends_to_legacy_positional_contract(self) -> None:
+        parameters = signature(PsTool.__call__).parameters
+
+        self.assertEqual(
+            tuple(parameters)[:7],
+            (
+                "self",
+                "pids",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+                "view",
+            ),
+        )
+        self.assertEqual(parameters["view"].default, "summary")
 
     def test_shell_toolset_is_namespaced_with_available_tools(
         self,

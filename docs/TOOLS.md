@@ -452,9 +452,16 @@ Python interpreter. Absolute paths, symlinks, hidden files, and executable
 search paths are also opt-in.
 
 `shell.pgrep` and `shell.ps` require trusted `allow_process_tools = true`
-configuration. `shell.ps` accepts exactly one PID and returns the
-fixed fields PID, parent PID, state, elapsed time, and command name. It
-cannot list all processes or request command arguments or environment data.
+configuration. `shell.ps` accepts exactly one PID. Its default `summary` view
+returns the fixed fields PID, parent PID, state, elapsed time, and command
+name. Its `resources` view returns PID, CPU percent, memory percent, resident
+memory in KiB, virtual memory in KiB, CPU time, and nice value, in that order.
+It cannot list all processes or request command arguments or environment data.
+CPU percent is not a portable instantaneous-load metric: Darwin reports a
+recent decaying average, while procps reports a lifetime CPU-time ratio. CPU
+and memory percentages are nonnegative values with one fractional digit. CPU
+time retains the backend's bounded Darwin `MINUTES:SS.cc` or procps
+`[D-]HH:MM:SS` representation.
 `shell.pgrep`
 accepts a bounded pattern and structured flags, exposes a redacted display
 argument, and returns process identifiers only. Process-table visibility is
