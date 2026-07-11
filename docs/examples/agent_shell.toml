@@ -16,6 +16,7 @@ max_stderr_bytes = 32768
 max_head_lines = 120
 allow_media_tools = false
 allow_process_tools = false
+allow_process_control = false
 
 [memory]
 recent = true

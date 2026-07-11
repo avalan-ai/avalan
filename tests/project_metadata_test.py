@@ -199,9 +199,11 @@ def test_shell_code_container_includes_process_tool_support() -> None:
     assert re.search(r"(?m)^\s+procps-ng\s*\\?$", dockerfile)
     assert "- `pgrep`" in readme
     assert "- `ps`" in readme
+    assert "- `kill`" in readme
     assert "--tool shell.pgrep" in readme
     assert "--tool shell.ps" in readme
     assert "--tool-shell-allow-process-tools" in readme
+    assert "--tool-shell-allow-process-control" in readme
 
 
 def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:

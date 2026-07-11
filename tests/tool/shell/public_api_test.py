@@ -38,6 +38,7 @@ from avalan.tool.shell import (
     ExecutionSpec,
     GeneratedFile,
     GeneratedOutputPlan,
+    KillTool,
     LocalCommandExecutor,
     LocalCompositionExecutor,
     PathOperand,
@@ -98,6 +99,7 @@ class ShellPublicApiTest(TestCase):
         self.assertIs(
             ShellToolSet, import_module("avalan.tool.shell").ShellToolSet
         )
+        self.assertIs(KillTool, import_module("avalan.tool.shell").KillTool)
         self.assertIs(
             ExecutionPolicy, import_module("avalan.tool.shell").ExecutionPolicy
         )
@@ -369,6 +371,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.commands.head",
             "avalan.tool.shell.commands.helpers",
             "avalan.tool.shell.commands.jq",
+            "avalan.tool.shell.commands.kill",
             "avalan.tool.shell.commands.ls",
             "avalan.tool.shell.commands.nl",
             "avalan.tool.shell.commands.pdfinfo",
@@ -391,6 +394,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.filesystem",
             "avalan.tool.shell.formatting",
             "avalan.tool.shell.git",
+            "avalan.tool.shell.kill",
             "avalan.tool.shell.opt_in",
             "avalan.tool.shell.pgrep",
             "avalan.tool.shell.ps",

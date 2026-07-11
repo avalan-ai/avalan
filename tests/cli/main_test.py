@@ -800,6 +800,7 @@ class CliShellToolOptionTestCase(TestCase):
                     + [
                         "--tool-shell-allow-media-tools",
                         "--tool-shell-allow-process-tools",
+                        "--tool-shell-allow-process-control",
                         "--tool-shell-max-stdout-bytes",
                         "4096",
                         "--tool-shell-allow-pipelines",
@@ -825,6 +826,7 @@ class CliShellToolOptionTestCase(TestCase):
 
                 self.assertTrue(args.tool_shell_allow_media_tools)
                 self.assertTrue(args.tool_shell_allow_process_tools)
+                self.assertTrue(args.tool_shell_allow_process_control)
                 self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
                 self.assertTrue(args.tool_shell_allow_pipelines)
                 self.assertEqual(args.tool_shell_max_pipeline_stages, 3)

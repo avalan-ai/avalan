@@ -60,6 +60,7 @@ _EXPECTED_SCHEMA_NAMES = (
     "shell.nl",
     "shell.pgrep",
     "shell.ps",
+    "shell.kill",
     "shell.file",
     "shell.find",
     "shell.wc",
@@ -233,7 +234,7 @@ class ShellToolSetAssemblyTest(TestCase):
             with self.subTest(tool=getattr(tool, "__name__", "")):
                 self.assertIs(
                     getattr(tool, "supports_streaming"),
-                    getattr(tool, "__name__") not in {"pgrep", "ps"},
+                    getattr(tool, "__name__") not in {"kill", "pgrep", "ps"},
                 )
 
 
@@ -246,6 +247,7 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
             workspace_root=str(fixture_root),
             allow_media_tools=True,
             allow_process_tools=True,
+            allow_process_control=True,
         )
         resolver = TrustedExecutableResolver(
             lookup=unavailable_executable_lookup,
@@ -268,7 +270,7 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
                 self.assertIn("error_code: command_unavailable", output)
                 expected_message = (
                     f"{command_id} is unavailable"
-                    if command_id in {"pgrep", "ps"}
+                    if command_id in {"kill", "pgrep", "ps"}
                     else "command is unavailable"
                 )
                 self.assertIn(f"error_message: {expected_message}", output)
@@ -832,6 +834,10 @@ async def _call_ps(tool: Tool) -> str:
     return await _call_tool(tool, (1,))
 
 
+async def _call_kill(tool: Tool) -> str:
+    return await _call_tool(tool, 42)
+
+
 async def _call_file(tool: Tool) -> str:
     return await _call_tool(tool, ("filesystem/visible.txt",))
 
@@ -907,6 +913,7 @@ _TOOL_CALLS: dict[str, Callable[[Tool], Awaitable[str]]] = {
     "nl": _call_nl,
     "pgrep": _call_pgrep,
     "ps": _call_ps,
+    "kill": _call_kill,
     "file": _call_file,
     "find": _call_find,
     "wc": _call_wc,

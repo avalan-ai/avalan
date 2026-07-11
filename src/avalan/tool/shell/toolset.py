@@ -91,6 +91,7 @@ from .tools import (
     GitTagTool,
     HeadTool,
     JqTool,
+    KillTool,
     LsTool,
     NlTool,
     PdfInfoTool,
@@ -328,6 +329,12 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
             PsTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            KillTool(
                 settings=self._settings,
                 policy=policy,
                 executor=executor,

@@ -105,7 +105,7 @@ enabled.
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
 | `skills` | `skills.list`, `skills.match`, `skills.read`, `skills.check` | Discover and read trusted instruction resources through a registry. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `pgrep`, `ps`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline`, `git_*` | Read, inspect, search, transform, query bounded process metadata, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep` and `shell.ps` require `allow_process_tools = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `pgrep`, `ps`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline`, `git_*` | Read, inspect, search, transform, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep` and `shell.ps` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -439,6 +439,7 @@ max_stdout_bytes = 65536
 allow_media_tools = false
 allow_pipelines = false
 allow_process_tools = false
+allow_process_control = false
 ```
 
 Media tools such as `shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`,
@@ -460,7 +461,17 @@ argument, and returns process identifiers only. Process-table visibility is
 relative to the selected local, sandbox, or container backend. Trusted
 execution specifications and backend plans retain the raw query; formatted
 tool output and display projections do not. Both process tools are denied in
-structured shell compositions.
+structured shell compositions. `shell.kill` additionally requires trusted
+`allow_process_control = true`, accepts exactly one positive local PID, rejects
+PID 1 plus the current Avalan and parent PIDs, and permits only `TERM`, `INT`,
+or `KILL` with `TERM` as the default. It exposes no subprocess stdout and
+redacts diagnostics. It intentionally uses a consistent local-only identity
+contract and fails closed for all sandbox and container execution. Bubblewrap
+and one-shot containers do not preserve PID identity across calls; Seatbelt
+may share the host PID namespace, but remains denied for consistent behavior.
+Local execution can signal same-user processes, and PID reuse creates a race
+between inspecting a PID and signaling it. All three process tools are denied
+in structured shell compositions.
 
 Attached and generated files that need to be exposed to shell tools are
 materialized under `workspace_root / materialized_input_files_dir`. The
