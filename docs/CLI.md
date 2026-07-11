@@ -207,7 +207,7 @@ Process-table tools are a separate trusted opt-in:
 
 | Flag | Effect |
 | --- | --- |
-| `--tool-shell-allow-process-tools` | Permit process-risk wrappers such as `shell.pgrep` and `shell.ps`; disabled by default. |
+| `--tool-shell-allow-process-tools` | Permit process-risk wrappers such as `shell.pgrep`, `shell.ps`, and `shell.lsof`; disabled by default. |
 | `--tool-shell-allow-process-control` | Additionally permit `shell.kill`; disabled by default and requires process tools too. |
 
 Structured shell pipelines are a separate explicit opt-in. The model receives
@@ -295,6 +295,7 @@ Public shell tools:
 | `shell.nl` | Number lines in a bounded text file. | core | `coreutils` |
 | `shell.pgrep` | Find matching process identifiers without returning process text. | process | `procps-ng` or `procps` |
 | `shell.ps` | Inspect a fixed summary or resource view for exactly one selected process identifier. | process | `procps-ng` or `procps` |
+| `shell.lsof` | Inspect bounded descriptor metadata for exactly one selected process identifier. | process | `lsof` |
 | `shell.kill` | Send TERM, INT, or KILL to exactly one selected process identifier. | process | `procps-ng` or `procps` |
 | `shell.file` | Identify regular file types. | core | `file` |
 | `shell.find` | Find entries with constrained selectors. | core | `findutils` |
@@ -320,7 +321,7 @@ Python PDF tools resolve a trusted Python executable and also report
 container mode, the selected image must make both `avalan` and the target PDF
 library importable to that Python interpreter.
 
-`shell.pgrep` and `shell.ps` additionally require
+`shell.pgrep`, `shell.ps`, and `shell.lsof` additionally require
 `allow_process_tools = true`. `shell.pgrep` accepts
 only bounded structured matching options, redacts the pattern from display
 arguments, and returns PID lines rather than process names or command lines.
@@ -329,8 +330,20 @@ The raw query remains inside trusted execution specifications and backend
 plans. `shell.ps` requires exactly one PID. Its default `summary` view returns
 only PID, parent PID, state, elapsed time, and command name. Its `resources`
 view returns only PID, CPU percent, memory percent, resident memory in KiB,
-virtual memory in KiB, CPU time, and nice value, in that order. Neither process
-tool is supported inside `shell.pipeline` compositions. CPU percent is not a
+virtual memory in KiB, CPU time, and nice value, in that order. `shell.lsof`
+requires one PID and emits only tab-separated PID, numeric descriptor, access,
+canonical type, and canonical protocol fields. Type values are `regular`,
+`directory`, `character`, `block`, `pipe`, `ipv4`, `ipv6`, `unix_socket`,
+`socket`, `event`, or `other`; protocol values are `tcp`, `udp`, `udplite`,
+`other`, or `-`. Unknown identifier-shaped backend values become `other`, while
+punctuation-bearing values fail closed as malformed output. It omits pseudo
+descriptors, filenames, commands, users, filesystem paths, and network
+endpoints. Its `limit` defaults to 64 and must be between 1 and 256. The limit
+is a post-capture presentation bound, not an early stop for the kernel scan.
+The stdout-byte cap bounds retained subprocess capture and the complete public
+rows produced from that capture; it does not bound kernel scan duration or
+execution. The timeout is the execution-duration bound. None of these process
+tools is supported inside `shell.pipeline` compositions. CPU percent is not a
 portable instantaneous-load metric: Darwin reports a recent decaying average,
 while procps reports a lifetime CPU-time ratio. CPU and memory percentages are
 nonnegative values with one fractional digit. CPU time retains the backend's
@@ -346,8 +359,15 @@ container execution. In particular, Bubblewrap and one-shot containers do not
 preserve PID identity across calls; Seatbelt may share the host PID namespace,
 but `shell.kill` remains local-only for consistent policy behavior. Local
 operators must account for same-user process permissions and PID reuse between
-discovery and signaling. Process tools, including `shell.kill`, are not
-supported inside shell compositions.
+discovery and signaling. Process-table visibility for `shell.pgrep`,
+`shell.ps`, and `shell.lsof` is relative to the selected backend. PIDs do not
+automatically carry from the host into a sandbox or container, and one-shot
+containers do not preserve PID identity across calls. Process tools, including
+`shell.kill`, are not supported inside shell compositions. Container images
+need the separate `lsof` package for `shell.lsof`. Some `lsof` builds can use a
+per-user device cache; Avalan supplies a sanitized non-existent home/cache
+environment, but operators should verify their packaged binary and prefer a
+read-only container filesystem.
 
 The shell toolset does not provide generic shell execution. It never evaluates
 model-supplied shell strings, never accepts arbitrary executable paths from

@@ -74,6 +74,7 @@ _CALL_ARGUMENTS: dict[str, dict[str, object]] = {
     "shell.nl": {"path": "filesystem/visible.txt"},
     "shell.pgrep": {"pattern": "private-worker-pattern"},
     "shell.ps": {"pids": [1], "view": "resources"},
+    "shell.lsof": {"pid": 42, "limit": 16},
     "shell.kill": {"pid": 42},
     "shell.file": {"paths": ["filesystem/visible.txt"]},
     "shell.find": {"paths": ["filesystem"], "name": "visible.txt"},
@@ -105,6 +106,7 @@ _EXPECTED_ACTIONS = {
     "shell.nl": "number",
     "shell.pgrep": "find",
     "shell.ps": "inspect",
+    "shell.lsof": "inspect",
     "shell.kill": "stop",
     "shell.file": "identify",
     "shell.find": "find",
@@ -158,6 +160,19 @@ class ShellDisplayProjectionCallTest(TestCase):
         self.assertEqual(resources.target, "42")
         self.assertEqual(_detail_value(resources, "view"), "resources")
         self.assertEqual(_detail_value(summary, "view"), "summary")
+
+    def test_lsof_call_projection_identifies_pid_and_limit(self) -> None:
+        projection = _call_projection(
+            "shell.lsof",
+            {"pid": 42, "limit": 16},
+        )
+
+        self.assertEqual(projection.target, "42")
+        self.assertEqual(_detail_value(projection, "limit"), 16)
+        self.assertEqual(
+            projection.summary,
+            "Inspect selected process descriptor metadata.",
+        )
 
     def test_invalid_call_arguments_do_not_project(self) -> None:
         manager = _shell_manager(["shell.cat"])

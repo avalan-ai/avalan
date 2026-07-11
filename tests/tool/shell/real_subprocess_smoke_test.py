@@ -29,7 +29,9 @@ TRUSTED_SEARCH_PATHS = (
     "/opt/homebrew/bin",
     "/usr/local/bin",
     "/usr/bin",
+    "/usr/sbin",
     "/bin",
+    "/sbin",
 )
 
 
@@ -297,6 +299,36 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         no_match = await _call(
             _tool_by_name(self._toolset, "ps"),
             (2**31 - 1,),
+        )
+
+        self.assertIn("status: no_matches", no_match)
+        self.assertIn("exit_code: 1", no_match)
+
+    async def test_lsof_smoke_and_no_match(self) -> None:
+        await self._require_command("lsof")
+        await _skip_if_lsof_process_table_unavailable(self, self._resolver)
+
+        output = await _call(
+            _tool_by_name(self._toolset, "lsof"),
+            getpid(),
+            limit=8,
+        )
+
+        self.assertIsInstance(output, ShellFormattedResult)
+        assert isinstance(output, ShellFormattedResult)
+        _assert_completed(self, output, "lsof")
+        rows = output.execution_result.stdout.splitlines()
+        self.assertTrue(rows)
+        for row in rows:
+            fields = row.split("\t")
+            self.assertEqual(len(fields), 5)
+            self.assertEqual(fields[0], str(getpid()))
+            self.assertTrue(fields[1].isascii())
+            self.assertTrue(fields[1].isdigit())
+
+        no_match = await _call(
+            _tool_by_name(self._toolset, "lsof"),
+            2**31 - 1,
         )
 
         self.assertIn("status: no_matches", no_match)
@@ -649,6 +681,47 @@ async def _skip_if_ps_process_table_unavailable(
         test_case.skipTest("ps process table is unavailable")
     test_case.assertEqual(process.returncode, 0)
     test_case.assertIn(str(getpid()).encode("ascii"), stdout)
+
+
+async def _skip_if_lsof_process_table_unavailable(
+    test_case: IsolatedAsyncioTestCase,
+    resolver: TrustedExecutableResolver,
+) -> None:
+    executable = await resolver.resolve(SHELL_COMMAND_DEFINITIONS["lsof"])
+    assert executable is not None, "lsof availability preflight requires lsof"
+    try:
+        process = await create_subprocess_exec(
+            executable,
+            "-n",
+            "-P",
+            "-w",
+            "-b",
+            "-a",
+            "-p",
+            str(getpid()),
+            "-F0pftaP",
+            stdout=PIPE,
+            stderr=PIPE,
+        )
+    except PermissionError as error:
+        if error.errno in {EACCES, EPERM}:
+            test_case.skipTest("lsof process table is unavailable")
+        raise
+    stdout, stderr = await process.communicate()
+    diagnostic = stderr.decode("utf-8", errors="replace").lower()
+    unavailable_markers = (
+        "cannot get process list",
+        "operation not permitted",
+        "permission denied",
+        "process table",
+        "security level",
+    )
+    if process.returncode != 0 and any(
+        marker in diagnostic for marker in unavailable_markers
+    ):
+        test_case.skipTest("lsof process table is unavailable")
+    test_case.assertEqual(process.returncode, 0)
+    test_case.assertIn(f"p{getpid()}".encode("ascii"), stdout)
 
 
 def _trusted_search_paths() -> tuple[str, ...]:

@@ -157,7 +157,7 @@ class ExecutionPolicy:
             request,
             ShellCompositionRequest,
         ), "request must be a shell composition request"
-        process_commands = {"kill", "pgrep", "ps"}
+        process_commands = {"kill", "lsof", "pgrep", "ps"}
         if any(step.command in process_commands for step in request.steps):
             raise _policy_denied(
                 ShellExecutionErrorCode.DENIED_COMMAND,
@@ -324,7 +324,10 @@ class ExecutionPolicy:
                 ShellExecutionErrorCode.DENIED_COMMAND,
                 "process control requires local execution",
             )
-        if request.command in {"kill", "pgrep", "ps"} and request.paths:
+        if (
+            request.command in {"kill", "lsof", "pgrep", "ps"}
+            and request.paths
+        ):
             raise _policy_denied(
                 ShellExecutionErrorCode.INVALID_OPTION,
                 "process tools do not accept paths",
