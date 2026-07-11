@@ -78,6 +78,67 @@ class PsLocalIntegrationTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(events, [])
 
+    async def test_executes_fixed_resource_view_and_hides_metadata(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            executable, marker = _fake_ps(root)
+            output = await _tool(
+                root,
+                executable,
+                allow_process_tools=True,
+            )(
+                (42,),
+                view="resources",
+                context=ToolCallContext(),
+            )
+            launched = marker.read_text(encoding="utf-8")
+
+        self.assertIsInstance(output, ShellFormattedResult)
+        assert isinstance(output, ShellFormattedResult)
+        result = output.execution_result
+        self.assertIs(result.status, ShellExecutionStatus.COMPLETED)
+        self.assertEqual(
+            result.stdout,
+            "42 12.5 3.0 1024 4096 0:00.02 -1\n",
+        )
+        self.assertEqual(result.stderr, REDACTED_PS_STDERR)
+        self.assertEqual(result.metadata, {})
+        self.assertEqual(
+            launched,
+            "-p 42 -o pid= -o pcpu= -o pmem= -o rss= -o vsz= "
+            "-o time= -o nice=\n",
+        )
+
+    async def test_legacy_positional_cwd_keeps_summary_contract(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "subdir").mkdir()
+            executable, marker = _fake_ps(root)
+            output = await _tool(
+                root,
+                executable,
+                allow_process_tools=True,
+            )(
+                (42,),
+                "subdir",
+                context=ToolCallContext(),
+            )
+            launched = marker.read_text(encoding="utf-8")
+
+        self.assertIsInstance(output, ShellFormattedResult)
+        assert isinstance(output, ShellFormattedResult)
+        self.assertIs(
+            output.execution_result.status,
+            ShellExecutionStatus.COMPLETED,
+        )
+        self.assertEqual(
+            output.execution_result.stdout,
+            "42 1 S 01:02 /usr/bin/worker\n",
+        )
+        self.assertNotIn("pcpu=", launched)
+
     async def test_maps_exit_statuses_and_redacts_diagnostics(self) -> None:
         cases = (
             (1001, ShellExecutionStatus.NO_MATCHES, 1, None),
@@ -176,6 +237,29 @@ class PsLocalIntegrationTest(IsolatedAsyncioTestCase):
         self.assertIs(result.status, ShellExecutionStatus.POLICY_DENIED)
         self.assertEqual(result.error_message, "ps was denied by policy")
 
+    async def test_invalid_view_is_denied_without_launch(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            executable, marker = _fake_ps(root)
+            output = await _tool(
+                root,
+                executable,
+                allow_process_tools=True,
+            )(
+                (42,),
+                view="private",  # type: ignore[arg-type]
+                context=ToolCallContext(),
+            )
+
+            self.assertFalse(marker.exists())
+
+        self.assertIsInstance(output, ShellFormattedResult)
+        assert isinstance(output, ShellFormattedResult)
+        result = output.execution_result
+        self.assertIs(result.status, ShellExecutionStatus.POLICY_DENIED)
+        self.assertEqual(result.error_message, "ps was denied by policy")
+        self.assertEqual(result.metadata, {})
+
 
 class PsBackendPlanningIntegrationTest(IsolatedAsyncioTestCase):
     async def test_container_plan_preserves_fixed_argv(self) -> None:
@@ -226,6 +310,49 @@ class PsBackendPlanningIntegrationTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(plan.sandbox_plan.request.cwd, str(root.resolve()))
 
+    async def test_container_resource_plan_preserves_fixed_argv(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+                allow_process_tools=True,
+            )
+            plan = await normalize_shell_execution_request(
+                _request((42,), view="resources"),
+                ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+                container_settings=_container_settings(),
+            )
+
+        expected = _expected_argv((42,), view="resources")
+        self.assertIs(plan.mode, ShellExecutionMode.CONTAINER)
+        self.assertEqual(plan.local_spec.argv, expected)
+        assert plan.container_plan is not None
+        self.assertEqual(plan.container_plan.run_plan.command.argv, expected)
+
+    async def test_sandbox_resource_plan_preserves_fixed_argv(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            settings = ShellToolSettings(
+                execution_mode="sandbox",
+                workspace_root=str(root),
+                allow_process_tools=True,
+            )
+            plan = await normalize_shell_execution_request(
+                _request((42,), view="resources"),
+                ExecutionPolicy(settings=settings, resolver=_AllResolved()),
+                sandbox_settings=_sandbox_settings(root),
+            )
+
+        expected = _expected_argv((42,), view="resources")
+        self.assertIs(plan.mode, ShellExecutionMode.SANDBOX)
+        self.assertEqual(plan.local_spec.argv, expected)
+        assert plan.sandbox_plan is not None
+        self.assertEqual(
+            plan.sandbox_plan.request.argv,
+            ("/trusted/bin/ps", *expected[1:]),
+        )
+
 
 def _fake_ps(root: Path) -> tuple[Path, Path]:
     executable = root / "ps"
@@ -233,6 +360,12 @@ def _fake_ps(root: Path) -> tuple[Path, Path]:
     executable.write_text(
         "#!/bin/sh\n"
         'printf \'%s\\n\' "$*" > "$0.launched"\n'
+        'case "$*" in\n'
+        "  *pcpu=*)\n"
+        "    printf ' 42 12.5 3.0 1024 4096 0:00.02 -1\\n'\n"
+        "    printf 'private process diagnostic\\n' >&2\n"
+        "    exit 0 ;;\n"
+        "esac\n"
         'case "$2" in\n'
         "  1001) exit 1 ;;\n"
         "  1002) printf 'private failure detail\\n' >&2; exit 2 ;;\n"
@@ -278,32 +411,38 @@ def _tool(
     )
 
 
-def _request(pids: tuple[int, ...]) -> ShellCommandRequest:
+def _request(
+    pids: tuple[int, ...],
+    *,
+    view: str = "summary",
+) -> ShellCommandRequest:
     return ShellCommandRequest(
         tool_name="shell.ps",
         command="ps",
-        options={"pids": pids},
+        options={"pids": pids, "view": view},
         paths=(),
         cwd=None,
     )
 
 
-def _expected_argv(pids: tuple[int, ...]) -> tuple[str, ...]:
-    return (
+def _expected_argv(
+    pids: tuple[int, ...],
+    *,
+    view: str = "summary",
+) -> tuple[str, ...]:
+    fields = (
+        ("pid", "ppid", "state", "etime", "comm")
+        if view == "summary"
+        else ("pid", "pcpu", "pmem", "rss", "vsz", "time", "nice")
+    )
+    argv = [
         "ps",
         "-p",
         ",".join(str(pid) for pid in pids),
-        "-o",
-        "pid=",
-        "-o",
-        "ppid=",
-        "-o",
-        "state=",
-        "-o",
-        "etime=",
-        "-o",
-        "comm=",
-    )
+    ]
+    for field in fields:
+        argv.extend(("-o", f"{field}="))
+    return tuple(argv)
 
 
 def _container_settings() -> ContainerEffectiveSettings:

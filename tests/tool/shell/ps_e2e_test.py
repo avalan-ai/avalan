@@ -48,6 +48,9 @@ class PsToolManagerE2ETest(IsolatedAsyncioTestCase):
             self.assertIs(pids_schema["uniqueItems"], True)
             self.assertEqual(pids_schema["items"]["minimum"], 1)
             self.assertEqual(pids_schema["items"]["maximum"], 2**31 - 1)
+            view_schema = schema["properties"]["view"]
+            self.assertEqual(view_schema["enum"], ["summary", "resources"])
+            self.assertEqual(view_schema["default"], "summary")
 
             outcome = await manager.execute_call(
                 ToolCall(
@@ -66,6 +69,31 @@ class PsToolManagerE2ETest(IsolatedAsyncioTestCase):
             outcome.result.execution_result.stdout,
             "1 0 S 00:01 init\n",
         )
+
+    async def test_resource_view_executes_through_public_manager(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            executable, marker = _fake_ps(root)
+            manager = _manager(root, executable, allow_process_tools=True)
+
+            outcome = await manager.execute_call(
+                ToolCall(
+                    id="ps-resources",
+                    name="shell.ps",
+                    arguments={"pids": [1], "view": "resources"},
+                ),
+                context=ToolCallContext(),
+            )
+            launched = marker.read_text(encoding="utf-8")
+
+        self.assertIsInstance(outcome, ToolCallResult)
+        assert isinstance(outcome, ToolCallResult)
+        self.assertIsInstance(outcome.result, ShellFormattedResult)
+        assert isinstance(outcome.result, ShellFormattedResult)
+        result = outcome.result.execution_result
+        self.assertEqual(result.stdout, "1 0.0 0.1 512 2048 0:00.01 0\n")
+        self.assertEqual(result.metadata, {})
+        self.assertIn("-o pcpu=", launched)
 
     async def test_default_gate_denies_without_launch(self) -> None:
         with TemporaryDirectory() as temporary_directory:
@@ -98,6 +126,7 @@ class PsToolManagerE2ETest(IsolatedAsyncioTestCase):
             {"pids": []},
             {"pids": [True]},
             {"pids": [1, 2]},
+            {"pids": [1], "view": "private"},
         )
         for arguments in invalid_arguments:
             with self.subTest(arguments=arguments):
@@ -192,7 +221,12 @@ def _fake_ps(root: Path) -> tuple[Path, Path]:
     executable = root / "ps"
     marker = Path(f"{executable}.launched")
     executable.write_text(
-        "#!/bin/sh\ntouch \"$0.launched\"\nprintf '1 0 S 00:01 init\\n'\n",
+        "#!/bin/sh\n"
+        'printf \'%s\\n\' "$*" > "$0.launched"\n'
+        'case "$*" in\n'
+        "  *pcpu=*) printf '1 0.0 0.1 512 2048 0:00.01 0\\n' ;;\n"
+        "  *) printf '1 0 S 00:01 init\\n' ;;\n"
+        "esac\n",
         encoding="utf-8",
     )
     executable.chmod(0o700)
