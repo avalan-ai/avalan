@@ -10,6 +10,7 @@ by Avalan's common read-only shell tools:
 - `git`
 - `head`
 - `jq`
+- `kill`
 - `ls`
 - `pgrep`
 - `ps`
@@ -120,3 +121,11 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
 `container`, the selected image, or the workspace mount is unavailable. Shell
 tool execution does not fall back to the host when the container profile is
 required.
+
+The image includes the `kill` binary for completeness, but `shell.kill` uses a
+local-only identity contract and fails closed under container execution.
+One-shot container PID namespaces cannot safely carry process identity across
+calls. The read-only exploration example does not expose it. Local operators
+can enable it explicitly with both
+`--tool-shell-allow-process-tools` and
+`--tool-shell-allow-process-control`.

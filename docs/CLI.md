@@ -208,6 +208,7 @@ Process-table tools are a separate trusted opt-in:
 | Flag | Effect |
 | --- | --- |
 | `--tool-shell-allow-process-tools` | Permit process-risk wrappers such as `shell.pgrep` and `shell.ps`; disabled by default. |
+| `--tool-shell-allow-process-control` | Additionally permit `shell.kill`; disabled by default and requires process tools too. |
 
 Structured shell pipelines are a separate explicit opt-in. The model receives
 `shell.pipeline` as a typed tool with `steps` objects, not as a shell string.
@@ -294,6 +295,7 @@ Public shell tools:
 | `shell.nl` | Number lines in a bounded text file. | core | `coreutils` |
 | `shell.pgrep` | Find matching process identifiers without returning process text. | process | `procps-ng` or `procps` |
 | `shell.ps` | Inspect fixed metadata for exactly one selected process identifier. | process | `procps-ng` or `procps` |
+| `shell.kill` | Send TERM, INT, or KILL to exactly one selected process identifier. | process | `procps-ng` or `procps` |
 | `shell.file` | Identify regular file types. | core | `file` |
 | `shell.find` | Find entries with constrained selectors. | core | `findutils` |
 | `shell.wc` | Count lines, words, or bytes. | core | `coreutils` |
@@ -327,6 +329,19 @@ The raw query remains inside trusted execution specifications and backend
 plans. `shell.ps` requires exactly one PID and returns only PID, parent
 PID, state, elapsed time, and command name. Neither process tool is supported
 inside `shell.pipeline` compositions.
+
+`shell.kill` requires both `allow_process_tools = true` and the separate
+`allow_process_control = true` trusted opt-in. It rejects PID 1, the current
+Avalan PID, and Avalan's parent PID, accepts one positive local PID, and
+defaults to `TERM`; only `TERM`, `INT`, and `KILL` are supported. It returns no
+process output and redacts diagnostics. It intentionally enforces one
+consistent local-only identity contract and fails closed for all sandbox and
+container execution. In particular, Bubblewrap and one-shot containers do not
+preserve PID identity across calls; Seatbelt may share the host PID namespace,
+but `shell.kill` remains local-only for consistent policy behavior. Local
+operators must account for same-user process permissions and PID reuse between
+discovery and signaling. Process tools, including `shell.kill`, are not
+supported inside shell compositions.
 
 The shell toolset does not provide generic shell execution. It never evaluates
 model-supplied shell strings, never accepts arbitrary executable paths from

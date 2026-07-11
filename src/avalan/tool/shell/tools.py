@@ -43,6 +43,7 @@ from .git_policy import (
     git_remote_audit_metadata,
     redact_git_text,
 )
+from .kill import redacted_stderr as _redacted_kill_stderr
 from .pgrep import pid_only_stdout as _pgrep_pid_only_stdout
 from .pgrep import redacted_stderr as _redacted_pgrep_stderr
 from .policy import ExecutionPolicy
@@ -138,6 +139,18 @@ class _ShellCommandTool(Tool, ABC):
                     output_kind=result.output_kind,
                     requested_pids=(),
                 )
+            elif request.command == "kill":
+                result = _kill_public_result(
+                    result,
+                    backend=result.backend,
+                    tool_name=result.tool_name,
+                    command=result.command,
+                    display_argv=result.display_argv,
+                    cwd=result.cwd,
+                    display_cwd=result.display_cwd,
+                    stdout_media_type=result.stdout_media_type,
+                    output_kind=result.output_kind,
+                )
             return ShellFormattedResult(self._formatter(result), result)
         if self.supports_streaming and context.stream_event is not None:
             result = await self._executor.execute(
@@ -170,6 +183,18 @@ class _ShellCommandTool(Tool, ABC):
                 stdout_media_type=spec.stdout_media_type,
                 output_kind=spec.output_kind,
                 requested_pids=_ps_requested_pids(spec.metadata),
+            )
+        elif spec.command == "kill":
+            result = _kill_public_result(
+                result,
+                backend=spec.backend,
+                tool_name=spec.tool_name,
+                command=spec.command,
+                display_argv=spec.display_argv,
+                cwd=spec.cwd,
+                display_cwd=spec.display_cwd,
+                stdout_media_type=spec.stdout_media_type,
+                output_kind=spec.output_kind,
             )
         return ShellFormattedResult(self._formatter(result), result)
 
@@ -4361,6 +4386,96 @@ class PsTool(_ShellCommandTool):
         )
 
 
+class KillTool(_ShellCommandTool):
+    """Send a bounded signal to one selected local process identifier.
+
+    Args:
+        pid: Local process identifier to signal. PID 1 and the current
+            Avalan and parent process identifiers are protected.
+        signal: Named signal to send.
+        cwd: Workspace-relative working directory for the command.
+        timeout_seconds: Optional execution timeout in seconds.
+        max_stdout_bytes: Optional stdout byte cap.
+        max_stderr_bytes: Optional stderr byte cap.
+
+    Returns:
+        Formatted local shell execution result with diagnostics redacted.
+    """
+
+    supports_streaming = False
+
+    def __init__(
+        self,
+        *,
+        settings: ShellToolSettings,
+        policy: ExecutionPolicy,
+        executor: CommandExecutor,
+        formatter: ShellResultFormatter | None = None,
+    ) -> None:
+        super().__init__(
+            command="kill",
+            settings=settings,
+            policy=policy,
+            executor=executor,
+            formatter=formatter,
+        )
+
+    def json_schema(self, prefix: str | None = None) -> dict[str, Any]:
+        schema = super().json_schema(prefix)
+        parameters = schema["function"]["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters["properties"]
+        assert isinstance(properties, dict)
+        pid_schema = properties["pid"]
+        assert isinstance(pid_schema, dict)
+        pid_schema["minimum"] = 2
+        pid_schema["maximum"] = 2**31 - 1
+        return schema
+
+    def _build_request(
+        self,
+        pid: int,
+        signal: Literal["TERM", "INT", "KILL"] = "TERM",
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+    ) -> ShellCommandRequest:
+        return ShellCommandRequest(
+            tool_name="shell.kill",
+            command="kill",
+            options={"pid": pid, "signal": signal},
+            paths=(),
+            cwd=_optional_cwd(cwd),
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+        )
+
+    async def __call__(
+        self,
+        pid: int,
+        signal: Literal["TERM", "INT", "KILL"] = "TERM",
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+        *,
+        context: ToolCallContext,
+    ) -> str:
+        return await self._execute_request(
+            self._build_request(
+                pid=pid,
+                signal=signal,
+                cwd=_optional_cwd(cwd),
+                timeout_seconds=timeout_seconds,
+                max_stdout_bytes=max_stdout_bytes,
+                max_stderr_bytes=max_stderr_bytes,
+            ),
+            context=context,
+        )
+
+
 class FileTool(_ShellCommandTool):
     """Identify workspace file types.
 
@@ -6242,6 +6357,54 @@ def _pgrep_public_error_message(result: ExecutionResult) -> str | None:
         ShellExecutionStatus.NONZERO_EXIT: "pgrep exited non-zero",
     }
     return messages.get(result.status, "pgrep execution failed")
+
+
+def _kill_public_result(
+    result: ExecutionResult,
+    *,
+    backend: str,
+    tool_name: str,
+    command: str,
+    display_argv: tuple[str, ...],
+    cwd: str,
+    display_cwd: str,
+    stdout_media_type: str,
+    output_kind: ShellOutputKind,
+) -> ExecutionResult:
+    safe_stderr = _redacted_kill_stderr(result.stderr)
+    return replace(
+        result,
+        backend=backend,
+        tool_name=tool_name,
+        command=command,
+        argv=display_argv,
+        display_argv=display_argv,
+        cwd=cwd,
+        display_cwd=display_cwd,
+        stdout="",
+        stderr=safe_stderr,
+        stdout_media_type=stdout_media_type,
+        output_kind=output_kind,
+        generated_files=(),
+        stdout_bytes=0,
+        stderr_bytes=len(safe_stderr.encode("utf-8")),
+        error_message=_kill_public_error_message(result),
+        metadata={},
+    )
+
+
+def _kill_public_error_message(result: ExecutionResult) -> str | None:
+    if result.status is ShellExecutionStatus.COMPLETED:
+        return None
+    messages = {
+        ShellExecutionStatus.POLICY_DENIED: "kill was denied by policy",
+        ShellExecutionStatus.COMMAND_UNAVAILABLE: "kill is unavailable",
+        ShellExecutionStatus.SPAWN_FAILED: "kill failed to start",
+        ShellExecutionStatus.TIMEOUT: "kill timed out",
+        ShellExecutionStatus.CANCELLED: "kill was cancelled",
+        ShellExecutionStatus.NONZERO_EXIT: "kill exited non-zero",
+    }
+    return messages.get(result.status, "kill execution failed")
 
 
 def _ps_public_result(

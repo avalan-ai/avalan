@@ -157,7 +157,7 @@ class ExecutionPolicy:
             request,
             ShellCompositionRequest,
         ), "request must be a shell composition request"
-        process_commands = {"pgrep", "ps"}
+        process_commands = {"kill", "pgrep", "ps"}
         if any(step.command in process_commands for step in request.steps):
             raise _policy_denied(
                 ShellExecutionErrorCode.DENIED_COMMAND,
@@ -308,7 +308,23 @@ class ExecutionPolicy:
                 ShellExecutionErrorCode.DENIED_COMMAND,
                 "process tools are disabled",
             )
-        if request.command in {"pgrep", "ps"} and request.paths:
+        if (
+            request.command == "kill"
+            and not self._settings.allow_process_control
+        ):
+            raise _policy_denied(
+                ShellExecutionErrorCode.DENIED_COMMAND,
+                "process control tools are disabled",
+            )
+        if (
+            request.command == "kill"
+            and self._settings.execution_mode != "local"
+        ):
+            raise _policy_denied(
+                ShellExecutionErrorCode.DENIED_COMMAND,
+                "process control requires local execution",
+            )
+        if request.command in {"kill", "pgrep", "ps"} and request.paths:
             raise _policy_denied(
                 ShellExecutionErrorCode.INVALID_OPTION,
                 "process tools do not accept paths",

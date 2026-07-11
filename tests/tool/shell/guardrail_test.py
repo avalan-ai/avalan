@@ -26,6 +26,7 @@ SHELL_COMMANDS = (
     "nl",
     "pgrep",
     "ps",
+    "kill",
     "file",
     "find",
     "wc",

@@ -48,6 +48,7 @@ _REQUEST_ACTIONS = {
     "awk": "select",
     "sed": "select",
     "jq": "transform",
+    "kill": "stop",
     "pdfinfo": "inspect",
     "pdfplumber": "extract",
     "pdftotext": "extract",
@@ -71,6 +72,7 @@ _REQUEST_SUMMARIES = {
     "awk": "Select fields or lines.",
     "sed": "Select line ranges or patterns.",
     "jq": "Transform JSON.",
+    "kill": "Signal a selected process.",
     "pdfinfo": "Inspect PDF metadata.",
     "pdfplumber": "Extract PDF text or tables.",
     "pdftotext": "Extract PDF text.",
@@ -783,6 +785,11 @@ def _request_target(
         case "ps":
             pids = _sequence_option(request.options, "pids")
             return pids or "selected processes", False
+        case "kill":
+            pid = request.options.get("pid")
+            return (
+                str(pid) if isinstance(pid, int) else "selected process"
+            ), False
         case "rg":
             if _rg_files_mode(request):
                 return _paths_value(request.paths, default="workspace")

@@ -269,6 +269,7 @@ class ShellToolSettings:
         "allow_pipelines",
         "allow_media_tools",
         "allow_process_tools",
+        "allow_process_control",
         "allow_absolute_paths",
         "allow_symlinks",
         "allow_hidden",
@@ -339,6 +340,7 @@ class ShellToolSettings:
     allow_pipelines: bool = False
     allow_media_tools: bool = False
     allow_process_tools: bool = False
+    allow_process_control: bool = False
     allow_write: bool = False
     allow_shell: bool = False
     allow_absolute_paths: bool = False
@@ -567,6 +569,7 @@ _BOOLEAN_FIELDS = (
     "allow_pipelines",
     "allow_media_tools",
     "allow_process_tools",
+    "allow_process_control",
     "allow_write",
     "allow_shell",
     "allow_absolute_paths",
