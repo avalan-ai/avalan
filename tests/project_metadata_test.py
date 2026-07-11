@@ -192,6 +192,16 @@ def test_shell_code_container_documents_git_support() -> None:
     assert "--tool shell.git_status" in readme
 
 
+def test_shell_code_container_includes_process_tool_support() -> None:
+    dockerfile = _read_repository_text("docs/containers/shell-code/Dockerfile")
+    readme = _read_repository_text("docs/containers/shell-code/README.md")
+
+    assert re.search(r"(?m)^\s+procps-ng\s*\\?$", dockerfile)
+    assert "- `pgrep`" in readme
+    assert "--tool shell.pgrep" in readme
+    assert "--tool-shell-allow-process-tools" in readme
+
+
 def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
     optional_deps = _optional_dependencies()
     selected_extras = ("agent", "server", "tool", "vendors")

@@ -32,6 +32,7 @@ class ShellDependencyGroup(StrEnum):
     CORE = "core"
     TEXT_FILTERS = "text_filters"
     JSON = "json"
+    PROCESS = "process"
     POPPLER = "poppler"
     PYTHON_PDF = "python_pdf"
     OCR = "ocr"
@@ -178,6 +179,7 @@ class ShellCommandDefinition:
     output_filter: ShellCommandOutputFilter = default_output_filter
     public: bool = True
     media_risk: bool = False
+    process_risk: bool = False
     supports_double_dash: bool = True
 
     def __post_init__(self) -> None:
@@ -205,4 +207,5 @@ class ShellCommandDefinition:
         assert callable(self.output_filter), "output_filter must be callable"
         _assert_bool(self.public, "public")
         _assert_bool(self.media_risk, "media_risk")
+        _assert_bool(self.process_risk, "process_risk")
         _assert_bool(self.supports_double_dash, "supports_double_dash")

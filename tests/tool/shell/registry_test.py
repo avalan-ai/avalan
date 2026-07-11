@@ -47,6 +47,7 @@ class ShellRegistryTest(TestCase):
                 "ls",
                 "cat",
                 "nl",
+                "pgrep",
                 "file",
                 "find",
                 "wc",
@@ -114,6 +115,7 @@ class ShellRegistryTest(TestCase):
 
         self.assertEqual(groups_by_id["rg"], ShellDependencyGroup.CORE)
         self.assertEqual(groups_by_id["nl"], ShellDependencyGroup.CORE)
+        self.assertEqual(groups_by_id["pgrep"], ShellDependencyGroup.PROCESS)
         self.assertEqual(
             groups_by_id["awk"], ShellDependencyGroup.TEXT_FILTERS
         )
@@ -161,6 +163,11 @@ class ShellRegistryTest(TestCase):
             for command in SHELL_COMMANDS
             if command.media_risk
         }
+        process_commands = {
+            command.logical_id
+            for command in SHELL_COMMANDS
+            if command.process_risk
+        }
         stdin_commands = {
             command.logical_id
             for command in SHELL_COMMANDS
@@ -196,6 +203,7 @@ class ShellRegistryTest(TestCase):
                 "tesseract",
             },
         )
+        self.assertEqual(process_commands, {"pgrep"})
         self.assertEqual(
             no_double_dash_commands,
             {
@@ -231,6 +239,7 @@ class ShellRegistryTest(TestCase):
             "output_filter": None,
             "public": 1,
             "media_risk": 1,
+            "process_risk": 1,
             "supports_double_dash": 1,
         }
         for field_name, value in invalid_values.items():

@@ -1,6 +1,10 @@
-from os import environ
+from asyncio import create_subprocess_exec
+from asyncio.subprocess import PIPE
+from os import environ, getpid
 from pathlib import Path
+from sys import executable as python_executable
 from unittest import IsolatedAsyncioTestCase, main, skipUnless
+from uuid import uuid4
 
 from avalan.entities import ToolCallContext
 from avalan.tool import Tool
@@ -40,6 +44,7 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         settings = ShellToolSettings(
             workspace_root=str(FIXTURE_ROOT),
             allow_media_tools=True,
+            allow_process_tools=True,
             executable_search_paths=self._search_paths,
             max_inline_output_file_bytes=256,
         )
@@ -218,6 +223,43 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         _assert_completed(self, output, "nl")
         self.assertIn("0010: alpha", output)
         self.assertIn("0020: needle", output)
+
+    async def test_pgrep_smoke_and_no_match(self) -> None:
+        await self._require_command("pgrep")
+        await _skip_if_process_table_unavailable(self, self._resolver)
+        pattern = f"avalan-pgrep-smoke-{uuid4().hex}"
+        child = await create_subprocess_exec(
+            python_executable,
+            "-c",
+            "import time; time.sleep(30)",
+            pattern,
+        )
+        try:
+            output = await _call(
+                _tool_by_name(self._toolset, "pgrep"),
+                pattern,
+                full=True,
+                parent_pid=getpid(),
+            )
+
+            _assert_completed(self, output, "pgrep")
+            self.assertIn(str(child.pid), output)
+            self.assertNotIn(pattern, output)
+
+            no_match_pattern = f"{pattern}-definitely-absent"
+            no_match = await _call(
+                _tool_by_name(self._toolset, "pgrep"),
+                no_match_pattern,
+                full=True,
+                parent_pid=getpid(),
+            )
+
+            self.assertIn("status: no_matches", no_match)
+            self.assertIn("exit_code: 1", no_match)
+            self.assertNotIn(no_match_pattern, no_match)
+        finally:
+            child.terminate()
+            await child.wait()
 
     async def test_file_smoke(self) -> None:
         await self._require_command("file")
@@ -490,6 +532,37 @@ def _assert_completed(
         output,
     )
     test_case.assertIn("exit_code: 0", output)
+
+
+async def _skip_if_process_table_unavailable(
+    test_case: IsolatedAsyncioTestCase,
+    resolver: TrustedExecutableResolver,
+) -> None:
+    executable = await resolver.resolve(SHELL_COMMAND_DEFINITIONS["pgrep"])
+    assert (
+        executable is not None
+    ), "pgrep availability preflight requires pgrep"
+    process = await create_subprocess_exec(
+        executable,
+        "-f",
+        "-P",
+        str(getpid()),
+        "--",
+        "avalan-pgrep-process-table-availability-probe",
+        stdout=PIPE,
+        stderr=PIPE,
+    )
+    _, stderr = await process.communicate()
+    unavailable_markers = (
+        "cannot get process list",
+        "process table",
+        "sysmond service not found",
+    )
+    if process.returncode == 3 and any(
+        marker in stderr.decode("utf-8", errors="replace").lower()
+        for marker in unavailable_markers
+    ):
+        test_case.skipTest("pgrep process table is unavailable")
 
 
 def _trusted_search_paths() -> tuple[str, ...]:

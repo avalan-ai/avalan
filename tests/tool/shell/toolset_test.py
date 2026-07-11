@@ -58,6 +58,7 @@ _EXPECTED_SCHEMA_NAMES = (
     "shell.ls",
     "shell.cat",
     "shell.nl",
+    "shell.pgrep",
     "shell.file",
     "shell.find",
     "shell.wc",
@@ -229,7 +230,10 @@ class ShellToolSetAssemblyTest(TestCase):
         self.assertTrue(toolset.tools)
         for tool in toolset.tools:
             with self.subTest(tool=getattr(tool, "__name__", "")):
-                self.assertIs(getattr(tool, "supports_streaming"), True)
+                self.assertIs(
+                    getattr(tool, "supports_streaming"),
+                    getattr(tool, "__name__") != "pgrep",
+                )
 
 
 class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
@@ -240,6 +244,7 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
         settings = ShellToolSettings(
             workspace_root=str(fixture_root),
             allow_media_tools=True,
+            allow_process_tools=True,
         )
         resolver = TrustedExecutableResolver(
             lookup=unavailable_executable_lookup,
@@ -260,7 +265,12 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
                     output,
                 )
                 self.assertIn("error_code: command_unavailable", output)
-                self.assertIn("error_message: command is unavailable", output)
+                expected_message = (
+                    "pgrep is unavailable"
+                    if command_id == "pgrep"
+                    else "command is unavailable"
+                )
+                self.assertIn(f"error_message: {expected_message}", output)
 
     async def test_shell_tool_forwards_context_stream_callback(self) -> None:
         fixture_root = Path(__file__).parent / "fixtures"
@@ -813,6 +823,10 @@ async def _call_nl(tool: Tool) -> str:
     return await _call_tool(tool, "filesystem/visible.txt")
 
 
+async def _call_pgrep(tool: Tool) -> str:
+    return await _call_tool(tool, "avalan-pgrep-missing-binary")
+
+
 async def _call_file(tool: Tool) -> str:
     return await _call_tool(tool, ("filesystem/visible.txt",))
 
@@ -886,6 +900,7 @@ _TOOL_CALLS: dict[str, Callable[[Tool], Awaitable[str]]] = {
     "ls": _call_ls,
     "cat": _call_cat,
     "nl": _call_nl,
+    "pgrep": _call_pgrep,
     "file": _call_file,
     "find": _call_find,
     "wc": _call_wc,

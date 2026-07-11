@@ -11,6 +11,7 @@ RUN apk add --no-cache \
     gawk \
     git \
     jq \
+    procps-ng \
     ripgrep \
     sed
 

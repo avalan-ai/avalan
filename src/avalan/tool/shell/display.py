@@ -40,6 +40,7 @@ _REQUEST_ACTIONS = {
     "ls": "list",
     "cat": "read",
     "nl": "number",
+    "pgrep": "find",
     "file": "identify",
     "find": "find",
     "wc": "count",
@@ -61,6 +62,7 @@ _REQUEST_SUMMARIES = {
     "ls": "List a path.",
     "cat": "Read a file.",
     "nl": "Number file lines.",
+    "pgrep": "Find matching process identifiers.",
     "file": "Identify file types.",
     "find": "Find workspace entries.",
     "wc": "Count file content.",
@@ -774,6 +776,8 @@ def _request_target(
     request: ShellCommandRequest,
 ) -> tuple[str | None, bool]:
     match request.command:
+        case "pgrep":
+            return REDACTED_DISPLAY_VALUE, True
         case "rg":
             if _rg_files_mode(request):
                 return _paths_value(request.paths, default="workspace")
@@ -1072,14 +1076,14 @@ def _generated_file_preview(
 
 def _result_target(result: ExecutionResult) -> tuple[str, bool]:
     if not result.display_argv:
-        return result.command, False
+        return result.command, result.command == "pgrep"
     arguments: list[str] = []
     redacted = False
     for argument in result.display_argv:
         display_argument, argument_redacted = _safe_command_argument(argument)
         arguments.append(display_argument)
         redacted = redacted or argument_redacted
-    return shell_join(tuple(arguments)), redacted
+    return shell_join(tuple(arguments)), redacted or result.command == "pgrep"
 
 
 def _result_scope(result: ExecutionResult) -> tuple[str, bool]:

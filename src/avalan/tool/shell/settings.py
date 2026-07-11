@@ -268,6 +268,7 @@ class ShellToolSettings:
         "tesseract_thread_limit",
         "allow_pipelines",
         "allow_media_tools",
+        "allow_process_tools",
         "allow_absolute_paths",
         "allow_symlinks",
         "allow_hidden",
@@ -337,6 +338,7 @@ class ShellToolSettings:
     tesseract_thread_limit: int = 1
     allow_pipelines: bool = False
     allow_media_tools: bool = False
+    allow_process_tools: bool = False
     allow_write: bool = False
     allow_shell: bool = False
     allow_absolute_paths: bool = False
@@ -564,6 +566,7 @@ _BOOLEAN_FIELDS = (
     "input_file_manifest_enabled",
     "allow_pipelines",
     "allow_media_tools",
+    "allow_process_tools",
     "allow_write",
     "allow_shell",
     "allow_absolute_paths",

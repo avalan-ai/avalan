@@ -105,7 +105,7 @@ enabled.
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
 | `skills` | `skills.list`, `skills.match`, `skills.read`, `skills.check` | Discover and read trusted instruction resources through a registry. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline`, `git_*` | Read, inspect, search, transform, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `pgrep`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline`, `git_*` | Read, inspect, search, transform, query process identifiers, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep` requires `allow_process_tools = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -438,6 +438,7 @@ materialized_input_files_dir = "avalan-input-files"
 max_stdout_bytes = 65536
 allow_media_tools = false
 allow_pipelines = false
+allow_process_tools = false
 ```
 
 Media tools such as `shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`,
@@ -448,6 +449,14 @@ when the required package cannot be imported. In container mode, the selected
 image must make both `avalan` and the target PDF library importable to that
 Python interpreter. Absolute paths, symlinks, hidden files, and executable
 search paths are also opt-in.
+
+`shell.pgrep` requires trusted `allow_process_tools = true` configuration. It
+accepts a bounded pattern and structured flags, exposes a redacted display
+argument, and returns process identifiers only. Process-table visibility is
+relative to the selected local, sandbox, or container backend. Trusted
+execution specifications and backend plans retain the raw query; formatted
+tool output and display projections do not. `pgrep` is denied in structured
+shell compositions.
 
 Attached and generated files that need to be exposed to shell tools are
 materialized under `workspace_root / materialized_input_files_dir`. The

@@ -84,6 +84,7 @@ class ShellToolSettingsTest(TestCase):
             "tesseract_thread_limit": 1,
             "allow_pipelines": False,
             "allow_media_tools": False,
+            "allow_process_tools": False,
             "allow_write": False,
             "allow_shell": False,
             "allow_absolute_paths": False,
@@ -108,6 +109,7 @@ class ShellToolSettingsTest(TestCase):
 
         self.assertLess(scalar_fields, field_names)
         self.assertIn("allow_media_tools", scalar_fields)
+        self.assertIn("allow_process_tools", scalar_fields)
         self.assertIn("materialized_input_files_dir", scalar_fields)
         self.assertIn("input_file_manifest_enabled", scalar_fields)
         self.assertIn("input_file_manifest_message", scalar_fields)

@@ -1634,6 +1634,7 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 + 'input_file_manifest_path_message = "Pass them to tools."\n'
                 + "max_head_lines = 12\n"
                 + "allow_hidden = true\n"
+                + "allow_process_tools = true\n"
                 + 'allowed_commands = ["head", "cat"]\n'
             )
             tmp.flush()
@@ -1671,6 +1672,7 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             )
             self.assertEqual(tool_settings.shell.max_head_lines, 12)
             self.assertTrue(tool_settings.shell.allow_hidden)
+            self.assertTrue(tool_settings.shell.allow_process_tools)
             self.assertEqual(
                 tool_settings.shell.allowed_commands, ("head", "cat")
             )
