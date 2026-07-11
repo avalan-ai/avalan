@@ -49,6 +49,10 @@ class ShellToolPackageCompatibilityTest(TestCase):
             ("GitStatusTool", "avalan.tool.shell.tools.git_read"),
             ("_ShellCommandTool", "avalan.tool.shell.tools._base"),
             ("_ShellGitCommandTool", "avalan.tool.shell.tools.git_base"),
+            (
+                "_composition_request_has_safe_commands",
+                "avalan.tool.shell.tools.pipeline",
+            ),
             ("_git_policy_denied_result", "avalan.tool.shell.tools.git_base"),
         )
 

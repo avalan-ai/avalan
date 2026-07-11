@@ -523,6 +523,7 @@ class ShellToolWrapperStaticGuardTest(TestCase):
         self,
     ) -> None:
         tree = _tools_tree()
+        asyncio_imports: set[str] = set()
         imported_names: set[str] = set()
         imported_modules: set[str] = set()
 
@@ -530,15 +531,25 @@ class ShellToolWrapperStaticGuardTest(TestCase):
             if isinstance(node, Import):
                 for alias in node.names:
                     imported_modules.add(alias.name)
+                    if alias.name == "asyncio" or alias.name.startswith(
+                        "asyncio."
+                    ):
+                        asyncio_imports.add(alias.name)
             if isinstance(node, ImportFrom):
                 if node.module is not None:
                     imported_modules.add(node.module)
+                    if node.module == "asyncio":
+                        asyncio_imports.update(
+                            f"asyncio.{alias.name}" for alias in node.names
+                        )
+                    elif node.module.startswith("asyncio."):
+                        asyncio_imports.add(node.module)
                 for alias in node.names:
                     imported_names.add(alias.name)
 
         self.assertNotIn("ExecutionSpec", imported_names)
         self.assertNotIn("subprocess", imported_modules)
-        self.assertNotIn("asyncio", imported_modules)
+        self.assertEqual(asyncio_imports, {"asyncio.CancelledError"})
         self.assertTrue(
             all(
                 not module.startswith("commands")

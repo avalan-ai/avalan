@@ -9,6 +9,7 @@ from ast import (
 )
 from asyncio import CancelledError
 from collections.abc import Awaitable, Callable
+from concurrent.futures import CancelledError as FutureCancelledError
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -478,6 +479,20 @@ class GitToolExecutionPhase2Test(IsolatedAsyncioTestCase):
             self.assertTrue(result.git_result.cancelled)
             self.assertIn("status: cancelled", result)
 
+    async def test_non_asyncio_cancellation_propagates(self) -> None:
+        error = FutureCancelledError()
+        with TemporaryDirectory() as workspace:
+            _write_minimal_git_repo(Path(workspace) / "repo")
+            tool = _status_tool(
+                workspace,
+                executor=_FakeGitExecutor(error),
+            )
+
+            with self.assertRaises(FutureCancelledError) as raised:
+                await tool(context=ToolCallContext())
+
+        self.assertIs(raised.exception, error)
+
     async def test_policy_denial_does_not_call_executor(self) -> None:
         with TemporaryDirectory() as workspace:
 
@@ -558,7 +573,7 @@ class _FakeGitExecutor:
 
     def __init__(
         self,
-        result: ExecutionResult | CancelledError | _GitResultProvider,
+        result: ExecutionResult | BaseException | _GitResultProvider,
     ) -> None:
         self._result = result
         self.specs = []
@@ -572,7 +587,7 @@ class _FakeGitExecutor:
         ) = None,
     ) -> ExecutionResult:
         self.specs.append(spec)
-        if isinstance(self._result, CancelledError):
+        if isinstance(self._result, BaseException):
             raise self._result
         if callable(self._result):
             result = self._result(spec)
