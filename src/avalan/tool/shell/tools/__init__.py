@@ -1,4 +1,3 @@
-from . import pipeline as _pipeline
 from ._arguments import (
     _copied_json_schema_properties as _copied_json_schema_properties,
 )
@@ -114,6 +113,9 @@ from .pipeline import ShellPipelineStepArgument as ShellPipelineStepArgument
 from .pipeline import (
     _composition_policy_denied_result as _composition_policy_denied_result,
 )
+from .pipeline import (
+    _composition_request_has_safe_commands as _composition_request_has_safe_commands,  # noqa: E501
+)
 from .pipeline import _composition_step_request as _composition_step_request
 from .pipeline import _composition_step_requests as _composition_step_requests
 from .pipeline import _required_step_string as _required_step_string
@@ -137,8 +139,3 @@ from .sed import SedTool as SedTool
 from .tail import TailTool as TailTool
 from .tesseract import TesseractTool as TesseractTool
 from .wc import WcTool as WcTool
-
-_composition_request_has_safe_commands = (
-    _pipeline._composition_request_has_safe_commands
-)
-del _pipeline

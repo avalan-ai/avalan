@@ -27,6 +27,7 @@ from ..settings import ShellGitToolSettings, ShellToolSettings
 from ._arguments import _optional_cwd, _string_tuple
 
 from abc import ABC, abstractmethod
+from asyncio import CancelledError
 from collections.abc import Mapping, Sequence
 from inspect import signature
 from typing import Any, Self, cast
@@ -123,9 +124,7 @@ class _ShellGitCommandTool(Tool, ABC):
         assert executor is not None, "shell Git tools require an executor"
         try:
             execution_result = await executor.execute(spec)
-        except BaseException as error:
-            if error.__class__.__name__ != "CancelledError":
-                raise
+        except CancelledError:
             result = _git_cancelled_result(
                 request,
                 spec,
