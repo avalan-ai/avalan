@@ -48,6 +48,7 @@ def _config(**overrides: object) -> CliStreamDisplayConfig:
         "display_probabilities_sample_minimum": 0.1,
         "display_time_to_n_token": 2,
         "display_reasoning_time": True,
+        "display_reasoning": False,
     }
     values.update(overrides)
     return CliStreamDisplayConfig(**values)
@@ -189,7 +190,9 @@ class DisplayReducerTestCase(TestCase):
             22.0,
             23.0,
         )
-        reducer = CliStreamSnapshotReducer(_config(), clock=clock)
+        reducer = CliStreamSnapshotReducer(
+            _config(display_reasoning=True), clock=clock
+        )
         tool_id = "tool-1"
         projections = (
             _projection(StreamItemKind.STREAM_STARTED, 0),
@@ -1388,7 +1391,7 @@ class DisplayReducerTestCase(TestCase):
         self.assertEqual(snapshot.token_counts.display_tokens, 1)
         self.assertEqual(snapshot.build_stats.snapshots_built, 2)
         self.assertEqual(snapshot.build_stats.answer_chunks, 10_000)
-        self.assertEqual(snapshot.build_stats.text_materializations, 6)
+        self.assertEqual(snapshot.build_stats.text_materializations, 4)
 
     def test_apply_projection_duplicate_terminal_is_noop(self) -> None:
         reducer = CliStreamSnapshotReducer(
@@ -1650,7 +1653,7 @@ class DisplayReducerTestCase(TestCase):
                 ),
                 {
                     "answer": True,
-                    "reasoning": True,
+                    "reasoning": False,
                     "tool_argument": True,
                     "tool_execution": False,
                     "model_continuation": False,
@@ -1705,12 +1708,31 @@ class DisplayReducerTestCase(TestCase):
                 ),
                 {
                     "answer": True,
-                    "reasoning": True,
+                    "reasoning": False,
                     "tool_argument": True,
                     "tool_execution": True,
                     "model_continuation": True,
                     "event": True,
                     "usage": True,
+                    "terminal": True,
+                },
+            ),
+            (
+                "reasoning",
+                _config(
+                    stats=False,
+                    display_tools=False,
+                    display_events=False,
+                    display_reasoning=True,
+                ),
+                {
+                    "answer": True,
+                    "reasoning": True,
+                    "tool_argument": False,
+                    "tool_execution": False,
+                    "model_continuation": False,
+                    "event": False,
+                    "usage": False,
                     "terminal": True,
                 },
             ),
@@ -1727,6 +1749,102 @@ class DisplayReducerTestCase(TestCase):
                         reducer.apply_projection(projection),
                         expected[projection_name],
                     )
+
+    def test_hidden_reasoning_updates_metrics_without_retaining_or_refreshing(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(
+                stats=False,
+                display_tools=False,
+                display_events=False,
+                display_reasoning=False,
+                display_reasoning_time=True,
+            ),
+            clock=FakeClock(10.0, 11.0, 12.0, 13.0),
+        )
+
+        reasoning_changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.REASONING_DELTA,
+                0,
+                text_delta="plan",
+            )
+        )
+        reasoning_done_changed = reducer.apply_projection(
+            _projection(StreamItemKind.REASONING_DONE, 1)
+        )
+        answer_changed = reducer.apply_projection(
+            _projection(StreamItemKind.ANSWER_DELTA, 2, text_delta="ok")
+        )
+        terminal_changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.STREAM_COMPLETED,
+                3,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertFalse(reasoning_changed)
+        self.assertFalse(reasoning_done_changed)
+        self.assertTrue(answer_changed)
+        self.assertTrue(terminal_changed)
+        self.assertEqual(snapshot.reasoning_text, "")
+        self.assertEqual(snapshot.reasoning_segments, ())
+        self.assertEqual(snapshot.build_stats.reasoning_chunks, 1)
+        self.assertEqual(snapshot.build_stats.reasoning_characters, 4)
+        self.assertEqual(snapshot.build_stats.retained_reasoning_segments, 0)
+        self.assertEqual(snapshot.build_stats.reasoning_materializations, 0)
+        self.assertEqual(snapshot.token_counts.reasoning_tokens, 1)
+        self.assertEqual(snapshot.timing.reasoning_seconds, 2.0)
+
+    def test_visible_reasoning_refreshes_deltas_but_not_closure(self) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(
+                stats=False,
+                display_tools=False,
+                display_events=False,
+                display_reasoning=True,
+            ),
+            clock=FakeClock(1.0, 2.0, 3.0),
+        )
+
+        self.assertTrue(
+            reducer.apply_projection(
+                _projection(
+                    StreamItemKind.REASONING_DELTA,
+                    0,
+                    text_delta="plan",
+                )
+            )
+        )
+        self.assertFalse(
+            reducer.apply_projection(
+                _projection(StreamItemKind.REASONING_DONE, 1)
+            )
+        )
+        before_terminal = reducer.snapshot()
+        self.assertFalse(before_terminal.reasoning_segments[0].completed)
+        self.assertTrue(
+            reducer.apply_projection(
+                _projection(
+                    StreamItemKind.STREAM_COMPLETED,
+                    2,
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                )
+            )
+        )
+        after_terminal = reducer.snapshot()
+
+        self.assertEqual(after_terminal.reasoning_text, "plan")
+        self.assertTrue(after_terminal.reasoning_segments[0].completed)
+        self.assertEqual(
+            after_terminal.reasoning_segments[0].terminal_outcome,
+            StreamTerminalOutcome.COMPLETED,
+        )
+        self.assertFalse(after_terminal.display.show_stats)
+        self.assertTrue(after_terminal.display.show_reasoning)
 
     def test_apply_projection_reports_display_token_before_metadata(
         self,
@@ -2080,7 +2198,10 @@ class DisplayReducerAsyncTestCase(IsolatedAsyncioTestCase):
             snapshot
             async for snapshot in iter_cli_canonical_stream_snapshots(
                 source,
-                _config(display_time_to_n_token=2),
+                _config(
+                    display_time_to_n_token=2,
+                    display_reasoning=True,
+                ),
                 clock=FakeClock(
                     100.0,
                     101.0,

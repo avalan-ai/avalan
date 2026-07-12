@@ -852,6 +852,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         interactive: bool = True,
         record: bool = False,
         stats: bool = False,
+        display_reasoning: bool = False,
     ) -> CliStreamDisplayConfig:
         return CliStreamDisplayConfig(
             quiet=False,
@@ -871,6 +872,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             display_probabilities_sample_minimum=0.1,
             display_time_to_n_token=None,
             display_reasoning_time=True,
+            display_reasoning=display_reasoning,
         )
 
     def _empty_response(self) -> object:
@@ -1166,6 +1168,93 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(request.context.model_id, "m")
         self.assertEqual(request.mode, "answer")
         self.assertEqual(request.snapshot.answer_text, "answer")
+        console.print.assert_any_call("answer", end="")
+
+    async def test_reasoning_only_enables_noninteractive_diagnostics(
+        self,
+    ) -> None:
+        class RecordingPresenter:
+            supports_stderr_diagnostics = True
+
+            def __init__(self) -> None:
+                self.requests: list[CliStreamPresenterRequest] = []
+                self._emitted_answer = ""
+
+            async def present(
+                self,
+                request: CliStreamPresenterRequest,
+            ) -> AsyncIterator[CliStreamAnswerTextChunk]:
+                self.requests.append(request)
+                answer = request.snapshot.answer_text
+                delta = answer[len(self._emitted_answer) :]
+                self._emitted_answer = answer
+                if delta:
+                    yield CliStreamAnswerTextChunk(text=delta)
+
+        class RecordingTheme:
+            def __init__(self, presenter: RecordingPresenter) -> None:
+                self.presenter = presenter
+
+            def stream_presenter(
+                self,
+                logger: object,
+                *,
+                event_stats: object | None = None,
+            ) -> RecordingPresenter:
+                _ = logger, event_stats
+                return self.presenter
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+                async def gen() -> AsyncIterator[CanonicalStreamItem]:
+                    for item in _canonical_reasoning_answer_stream_items(
+                        reasoning=("plan",),
+                        answer=("answer",),
+                    ):
+                        yield item
+
+                return gen()
+
+        presenter = RecordingPresenter()
+        console = MagicMock()
+        display_config = self._display_config(
+            interactive=False,
+            stats=False,
+            display_reasoning=True,
+        )
+
+        await model_cmds.token_generation(
+            args=Namespace(skip_display_reasoning_time=False),
+            console=console,
+            theme=RecordingTheme(presenter),  # type: ignore[arg-type]
+            logger=getLogger(__name__),
+            orchestrator=None,
+            event_stats=None,
+            lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+            input_string="i",
+            response=Response(),  # type: ignore[arg-type]
+            display_tokens=0,
+            dtokens_pick=0,
+            with_stats=False,
+            tool_events_limit=2,
+            refresh_per_second=2,
+            display_config=display_config,
+        )
+
+        self.assertGreaterEqual(len(presenter.requests), 1)
+        self.assertTrue(all(r.mode == "live" for r in presenter.requests))
+        final = presenter.requests[-1].snapshot
+        self.assertTrue(final.display.show_reasoning)
+        self.assertFalse(final.display.show_stats)
+        self.assertEqual(final.reasoning_text, "plan")
+        self.assertEqual(final.answer_text, "answer")
         console.print.assert_any_call("answer", end="")
 
     async def test_token_generation_fancy_uses_snapshot_presenter(
@@ -14675,6 +14764,26 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
                 with_stats=True,
                 tool_events_limit=2,
                 refresh_per_second=2,
+                display_config=CliStreamDisplayConfig(
+                    quiet=False,
+                    stats=True,
+                    display_tools=False,
+                    display_events=False,
+                    display_tools_events=2,
+                    record=False,
+                    interactive=True,
+                    refresh_per_second=2,
+                    answer_height=12,
+                    answer_height_expand=False,
+                    display_tokens=0,
+                    display_pause=0,
+                    display_probabilities=False,
+                    display_probabilities_maximum=0.0,
+                    display_probabilities_sample_minimum=0.0,
+                    display_time_to_n_token=None,
+                    display_reasoning_time=True,
+                    display_reasoning=True,
+                ),
             )
 
         self.assertEqual(captured[-1]["thinking"], ["A"])

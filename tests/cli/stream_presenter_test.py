@@ -22,6 +22,8 @@ from avalan.cli.stream_presenter import (
     CliStreamRenderableFrame,
     CliStreamSnapshotPresenter,
     LegacyThemeStreamPresenter,
+    reasoning_display_blocks,
+    reasoning_display_text,
 )
 from avalan.cli.theme import (
     Theme,
@@ -36,6 +38,7 @@ from avalan.model.stream import (
     StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     canonical_item_from_consumer_projection,
 )
@@ -352,13 +355,14 @@ class StreamPresenterContractTestCase(TestCase):
         )
         frame = CliStreamRenderableFrame(
             renderable="frame",
-            role="stream",
+            role="reasoning",
             current_token=display_token,
         )
         chunk = CliStreamAnswerTextChunk(text="hi")
 
         self.assertEqual(request.mode, "live")
         self.assertEqual(frame.current_token, display_token)
+        self.assertEqual(frame.role, "reasoning")
         self.assertEqual(chunk.role, "answer")
         with self.assertRaises(FrozenInstanceError):
             context.model_id = "other"  # type: ignore[misc]
@@ -394,9 +398,68 @@ class StreamPresenterContractTestCase(TestCase):
                 current_token=object(),  # type: ignore[arg-type]
             )
         with self.assertRaises(AssertionError):
+            CliStreamRenderableFrame(
+                renderable="frame",
+                role="tools",
+                stderr_append=True,
+            )
+        with self.assertRaises(AssertionError):
             CliStreamAnswerTextChunk(text="")
         with self.assertRaises(AssertionError):
             CliStreamAnswerTextChunk(text="x", role="stream")
+
+    def test_reasoning_blocks_group_contiguous_representations(self) -> None:
+        config = _config(display_reasoning=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("native one", segment_instance_ordinal=0)
+        builder.append_reasoning_text(
+            "native two",
+            segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+        builder.append_reasoning_text(
+            "summary",
+            representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=2,
+            follows_completion=True,
+        )
+
+        snapshot = builder.snapshot()
+        blocks = reasoning_display_blocks(snapshot)
+
+        self.assertEqual(len(blocks), 2)
+        self.assertIs(
+            blocks[0].representation,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        self.assertEqual(blocks[0].text, "native one\n\nnative two")
+        self.assertIs(
+            blocks[1].representation,
+            StreamReasoningRepresentation.SUMMARY,
+        )
+        self.assertEqual(blocks[1].text, "summary")
+        self.assertEqual(
+            reasoning_display_text(snapshot),
+            "Reasoning:\nnative one\n\nnative two\n\n"
+            "Reasoning summary:\nsummary",
+        )
+
+    def test_reasoning_blocks_preserve_provider_paragraph_boundary(
+        self,
+    ) -> None:
+        config = _config(display_reasoning=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("left\n", segment_instance_ordinal=0)
+        builder.append_reasoning_text(
+            "\nright",
+            segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+
+        blocks = reasoning_display_blocks(builder.snapshot())
+
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0].text, "left\n\nright")
 
     def test_legacy_adapter_requires_theme_token_factory(self) -> None:
         with self.assertRaises(AssertionError):
@@ -671,9 +734,13 @@ class SnapshotStreamPresenterTestCase(IsolatedAsyncioTestCase):
     async def test_theme_default_presenter_emits_live_frame_roles(
         self,
     ) -> None:
-        config = _config(stats=False)
+        config = _config(stats=False, display_reasoning=True)
         theme = NoTokenTheme(lambda message: message, lambda s, p, n: s)
         builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text(
+            "summary",
+            representation=StreamReasoningRepresentation.SUMMARY,
+        )
         builder.append_answer_text("answer")
         builder.add_active_tool(
             tool_call_id="call-1",
@@ -696,7 +763,17 @@ class SnapshotStreamPresenterTestCase(IsolatedAsyncioTestCase):
                 for item in items
                 if isinstance(item, CliStreamRenderableFrame)
             ],
-            ["tools", "events"],
+            ["reasoning", "tools", "events"],
+        )
+        reasoning_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "reasoning"
+        )
+        self.assertEqual(
+            reasoning_frame.renderable,
+            "Reasoning summary:\nsummary",
         )
         self.assertEqual(
             [
@@ -993,7 +1070,7 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(call["display_token_size"], 2)
         self.assertIs(call["display_probabilities"], True)
         self.assertEqual(call["pick"], 2)
-        self.assertEqual(call["thinking_text_tokens"], ["think"])
+        self.assertEqual(call["thinking_text_tokens"], [])
         self.assertIs(call["display_reasoning"], False)
         self.assertEqual(call["tool_text_tokens"], ['{"x": 1}'])
         self.assertEqual(call["answer_text_tokens"], ["Hello"])
@@ -1065,7 +1142,7 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual(theme.calls[0]["thinking_text_tokens"], ["think"])
+        self.assertEqual(theme.calls[0]["thinking_text_tokens"], [])
         self.assertIs(theme.calls[0]["display_reasoning"], False)
 
     async def test_live_adapter_enables_reasoning_when_configured(

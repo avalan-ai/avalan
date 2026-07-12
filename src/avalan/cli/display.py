@@ -63,9 +63,19 @@ class CliStreamDisplayConfig:
         """Return where optional streaming diagnostics should render."""
         if self.quiet:
             return "none"
-        if self.stats or self.display_tools or self.display_events:
+        if (
+            self.stats
+            or self.display_tools
+            or self.display_events
+            or self.display_reasoning
+        ):
             return "live" if self.interactive else "stderr"
         return "none"
+
+    @property
+    def show_reasoning(self) -> bool:
+        """Return whether reasoning text should render."""
+        return self.display_reasoning and self.diagnostic_channel != "none"
 
     @property
     def show_stats(self) -> bool:

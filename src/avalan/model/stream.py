@@ -717,6 +717,9 @@ class StreamRetentionPolicy:
     reasoning_segment_limit: int = 1024
     reasoning_character_limit: int = 262144
     reasoning_text_byte_limit: int = 1048576
+    cli_reasoning_segment_limit: int = 1024
+    cli_reasoning_character_limit: int = 262144
+    cli_reasoning_text_byte_limit: int = 1048576
     replay_history_item_limit: int = 1024
     openai_replay_reasoning_item_limit: int = 1024
     openai_replay_reasoning_summary_node_limit: int = 4096
@@ -751,6 +754,18 @@ class StreamRetentionPolicy:
             ("reasoning_segment_limit", self.reasoning_segment_limit),
             ("reasoning_character_limit", self.reasoning_character_limit),
             ("reasoning_text_byte_limit", self.reasoning_text_byte_limit),
+            (
+                "cli_reasoning_segment_limit",
+                self.cli_reasoning_segment_limit,
+            ),
+            (
+                "cli_reasoning_character_limit",
+                self.cli_reasoning_character_limit,
+            ),
+            (
+                "cli_reasoning_text_byte_limit",
+                self.cli_reasoning_text_byte_limit,
+            ),
             ("replay_history_item_limit", self.replay_history_item_limit),
             (
                 "openai_replay_reasoning_item_limit",
@@ -2432,6 +2447,7 @@ class _RetainedReasoningSegment:
     closed: bool = False
     leading_partial: bool = False
     _materialized_text: str | None = None
+    materialization_count: int = 0
 
     @property
     def identity(self) -> tuple[object, ...]:
@@ -2456,6 +2472,7 @@ class _RetainedReasoningSegment:
 
     def materialize(self) -> str:
         if self._materialized_text is None:
+            self.materialization_count += 1
             self._materialized_text = "".join(self.chunks)
             self.chunks.clear()
             if self._materialized_text:
@@ -2509,12 +2526,25 @@ class _RetainedReasoningSegment:
         return removed_characters, removed_utf8_bytes
 
 
-class _BoundedReasoningSegmentOwner:
-    def __init__(self, retention_policy: StreamRetentionPolicy) -> None:
-        assert isinstance(retention_policy, StreamRetentionPolicy)
-        self._segment_limit = retention_policy.reasoning_segment_limit
-        self._character_limit = retention_policy.reasoning_character_limit
-        self._utf8_byte_limit = retention_policy.reasoning_text_byte_limit
+class StreamReasoningSegmentAccumulator:
+    """Retain one bounded structured reasoning tail."""
+
+    def __init__(
+        self,
+        *,
+        segment_limit: int,
+        character_limit: int,
+        utf8_byte_limit: int,
+    ) -> None:
+        for field_name, value in (
+            ("segment_limit", segment_limit),
+            ("character_limit", character_limit),
+            ("utf8_byte_limit", utf8_byte_limit),
+        ):
+            _assert_non_negative_int(value, field_name)
+        self._segment_limit = segment_limit
+        self._character_limit = character_limit
+        self._utf8_byte_limit = utf8_byte_limit
         self._segments: deque[_RetainedReasoningSegment] = deque()
         self._active: _RetainedReasoningSegment | None = None
         self._characters = 0
@@ -2583,8 +2613,19 @@ class _BoundedReasoningSegmentOwner:
     def utf8_byte_count(self) -> int:
         return self._utf8_bytes
 
-    def observe(self, item: CanonicalStreamItem) -> None:
-        assert isinstance(item, CanonicalStreamItem)
+    @property
+    def materialization_count(self) -> int:
+        """Return how many retained segment strings were joined."""
+        return sum(segment.materialization_count for segment in self._segments)
+
+    def observe(
+        self,
+        item: CanonicalStreamItem | StreamConsumerProjection,
+    ) -> None:
+        """Observe one canonical item or consumer projection."""
+        assert isinstance(
+            item, (CanonicalStreamItem, StreamConsumerProjection)
+        )
         if item.kind is StreamItemKind.REASONING_DELTA:
             self._add_delta(item)
             return
@@ -2595,7 +2636,10 @@ class _BoundedReasoningSegmentOwner:
         if outcome is not None:
             self._terminal_outcome = outcome
 
-    def _add_delta(self, item: CanonicalStreamItem) -> None:
+    def _add_delta(
+        self,
+        item: CanonicalStreamItem | StreamConsumerProjection,
+    ) -> None:
         assert item.text_delta is not None
         assert item.reasoning_representation is not None
         assert item.segment_instance_ordinal is not None
@@ -2782,7 +2826,11 @@ class CanonicalStreamAccumulator:
         self._retention_policy = retention_policy
         self._items: list[CanonicalStreamItem] = []
         self._answer_text: list[str] = []
-        self._reasoning = _BoundedReasoningSegmentOwner(retention_policy)
+        self._reasoning = StreamReasoningSegmentAccumulator(
+            segment_limit=retention_policy.reasoning_segment_limit,
+            character_limit=retention_policy.reasoning_character_limit,
+            utf8_byte_limit=retention_policy.reasoning_text_byte_limit,
+        )
         self._tool_call_arguments: dict[str, list[str]] = {}
         self._tool_execution_outputs: dict[str, list[str]] = {}
         self._diagnostics: list[CanonicalStreamItem] = []

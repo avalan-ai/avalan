@@ -158,6 +158,7 @@ class CliStreamSnapshotReducer:
             )
         self._builder.add_projection_summary(projection)
         self._update_usage(projection)
+        self._builder.observe_reasoning_projection(projection)
         if text_delta is not None:
             self._reduce_text_projection(projection, text_delta, now)
 
@@ -222,7 +223,6 @@ class CliStreamSnapshotReducer:
         ):
             if self._reasoning_started_at is None and now is not None:
                 self._reasoning_started_at = now
-            self._builder.append_reasoning_text(text_delta)
             self._record_visible_token(now)
         elif (
             projection.channel is StreamChannel.TOOL_CALL
@@ -321,7 +321,11 @@ class CliStreamSnapshotReducer:
                 StreamChannel.REASONING,
                 StreamChannel.TOOL_CALL,
             ):
-                return self._builder.display.show_stats
+                return (
+                    self._builder.display.show_reasoning
+                    if projection.channel is StreamChannel.REASONING
+                    else self._builder.display.show_stats
+                )
         if projection.kind in (
             StreamItemKind.TOOL_EXECUTION_STARTED,
             StreamItemKind.TOOL_EXECUTION_OUTPUT,

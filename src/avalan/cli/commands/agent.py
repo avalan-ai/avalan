@@ -2564,9 +2564,13 @@ async def agent_run(
                 use_async_generator=use_async_generator,
                 tool_confirm=_confirm_call if args.tools_confirm else None,
             )
+            structured_response = _agent_structured_response_requested(
+                orchestrator
+            )
 
             if (
-                not display_config.answer_stdout_only
+                not structured_response
+                and not display_config.answer_stdout_only
                 and not display_config.show_stats
                 and not (
                     isinstance(theme, Theme) and theme.prefix_stream_answers
@@ -2601,6 +2605,7 @@ async def agent_run(
                     if isinstance(theme, Theme)
                     and theme.prefix_stream_answers
                     and not display_config.answer_stdout_only
+                    and not structured_response
                     else None
                 ),
             )
@@ -2611,6 +2616,21 @@ async def agent_run(
                     in_conversation = True
             else:
                 break
+
+
+def _agent_structured_response_requested(orchestrator: object) -> bool:
+    """Return whether the agent requests machine-readable JSON output."""
+    call_options = getattr(orchestrator, "_call_options", None)
+    if not isinstance(call_options, Mapping):
+        return False
+    response_format = call_options.get("response_format")
+    if not isinstance(response_format, Mapping):
+        return False
+    response_format_type = response_format.get("type")
+    return isinstance(response_format_type, str) and response_format_type in {
+        "json_object",
+        "json_schema",
+    }
 
 
 async def agent_serve(

@@ -35,6 +35,7 @@ from avalan.cli.theme.basic import (
     _basic_has_executed_tool_frame,
     _basic_json_tool_answer,
     _basic_open_harmony_pattern,
+    _basic_reasoning_renderable,
     _basic_tool_elapsed_text,
     _basic_tool_result_summary,
     _basic_tool_status_outcome_markup,
@@ -61,7 +62,11 @@ from avalan.entities import (
     ToolCallDiagnosticStage,
 )
 from avalan.event import Event, EventType
-from avalan.model.stream import StreamTerminalOutcome
+from avalan.model.stream import (
+    StreamReasoningRepresentation,
+    StreamRetentionPolicy,
+    StreamTerminalOutcome,
+)
 from avalan.tool.display import (
     ToolDisplayDetail,
     ToolDisplayPreview,
@@ -185,6 +190,369 @@ def _visible_text(items: list[object]) -> str:
 
 
 class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_reasoning_live_frame_is_opt_in_bounded_and_labeled(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text(
+            "native plan",
+            segment_instance_ordinal=0,
+        )
+        builder.append_reasoning_text(
+            "summary plan",
+            representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["reasoning"])
+        output = _render_text(frames[0].renderable)
+        self.assertIn("Reasoning", output)
+        self.assertIn("native plan", output)
+        self.assertIn("Reasoning summary", output)
+        self.assertIn("summary plan", output)
+        self.assertLessEqual(len(output.splitlines()), 6)
+
+    async def test_stats_alone_does_not_render_reasoning(self) -> None:
+        config = _stream_config(stats=True, display_reasoning=False)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("private reasoning")
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertNotIn("private reasoning", _visible_text(items))
+        self.assertNotIn("reasoning", [frame.role for frame in _frames(items)])
+
+    async def test_stderr_reasoning_emits_only_unseen_suffixes_before_tool(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_reasoning=True,
+            display_tools=True,
+            interactive=False,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        builder.append_reasoning_text(
+            "x",
+            representation=StreamReasoningRepresentation.SUMMARY,
+        )
+        first = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.append_reasoning_text(
+            "x",
+            representation=StreamReasoningRepresentation.SUMMARY,
+        )
+        second = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.add_active_tool(
+            tool_call_id="call-1",
+            name="calc",
+            arguments={"x": 1},
+        )
+        followed_by_tool = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        first_frame = _frames(first)[0]
+        second_frame = _frames(second)[0]
+        final_frames = _frames(followed_by_tool)
+        self.assertEqual(first_frame.role, "reasoning")
+        self.assertTrue(first_frame.stderr_append)
+        self.assertEqual(first_frame.renderable, "Reasoning summary:\nx")
+        self.assertEqual(second_frame.renderable, "x")
+        self.assertEqual(final_frames[0].role, "reasoning")
+        self.assertEqual(final_frames[0].renderable, "\n")
+        self.assertEqual(final_frames[1].role, "tools")
+
+    async def test_stderr_reasoning_suffix_survives_retained_tail_shift(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=True, interactive=False)
+        builder = CliStreamSnapshotBuilder(
+            config,
+            retention_policy=StreamRetentionPolicy(
+                cli_reasoning_segment_limit=2,
+                cli_reasoning_character_limit=4,
+                cli_reasoning_text_byte_limit=16,
+            ),
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        builder.append_reasoning_text("abcd")
+        await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        builder.append_reasoning_text("e")
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        reasoning_frame = _frames(items)[0]
+        self.assertEqual(reasoning_frame.role, "reasoning")
+        self.assertEqual(reasoning_frame.renderable, "e")
+
+    async def test_stderr_reasoning_relabels_after_segment_and_separator_drop(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=True, interactive=False)
+        builder = CliStreamSnapshotBuilder(
+            config,
+            retention_policy=StreamRetentionPolicy(
+                cli_reasoning_segment_limit=1,
+                cli_reasoning_character_limit=100,
+                cli_reasoning_text_byte_limit=100,
+            ),
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        builder.append_reasoning_text("A", segment_instance_ordinal=0)
+        first = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        builder.append_reasoning_text(
+            "B",
+            segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+        second = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(
+            _frames(first)[0].renderable,
+            "Reasoning:\nA",
+        )
+        self.assertEqual(
+            _frames(second)[0].renderable,
+            "\n\nReasoning:\nB",
+        )
+
+    async def test_stderr_reasoning_relabels_after_unseen_character_tail_shift(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=True, interactive=False)
+        builder = CliStreamSnapshotBuilder(
+            config,
+            retention_policy=StreamRetentionPolicy(
+                cli_reasoning_segment_limit=2,
+                cli_reasoning_character_limit=4,
+                cli_reasoning_text_byte_limit=16,
+            ),
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        builder.append_reasoning_text("a")
+        await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        builder.append_reasoning_text("bcdef")
+        shifted = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(
+            _frames(shifted)[0].renderable,
+            "\n\nReasoning:\ncdef",
+        )
+
+    async def test_stderr_reasoning_relabels_after_unseen_utf8_tail_shift(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=True, interactive=False)
+        builder = CliStreamSnapshotBuilder(
+            config,
+            retention_policy=StreamRetentionPolicy(
+                cli_reasoning_segment_limit=2,
+                cli_reasoning_character_limit=100,
+                cli_reasoning_text_byte_limit=4,
+            ),
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        builder.append_reasoning_text("a")
+        await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        builder.append_reasoning_text("ééé")
+        shifted = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(
+            _frames(shifted)[0].renderable,
+            "\n\nReasoning:\néé",
+        )
+
+    async def test_stderr_first_truncated_tail_starts_with_label(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=True, interactive=False)
+        builder = CliStreamSnapshotBuilder(
+            config,
+            retention_policy=StreamRetentionPolicy(
+                cli_reasoning_segment_limit=2,
+                cli_reasoning_character_limit=4,
+                cli_reasoning_text_byte_limit=16,
+            ),
+        )
+        builder.append_reasoning_text("abcdef")
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(
+            _frames(items)[0].renderable,
+            "Reasoning:\ncdef",
+        )
+
+    async def test_stderr_reasoning_preserves_provider_paragraph_whitespace(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=True, interactive=False)
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        builder.append_reasoning_text("A\n", segment_instance_ordinal=0)
+        await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        builder.append_reasoning_text(
+            "\nB",
+            segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_frames(items)[0].renderable, "\nB")
+
+    def test_reasoning_renderable_handles_empty_and_display_budget(
+        self,
+    ) -> None:
+        empty_config = _stream_config(display_reasoning=True)
+        empty_request = _stream_request(
+            empty_config,
+            CliStreamSnapshotBuilder(empty_config).snapshot(),
+        )
+        self.assertIsNone(_basic_reasoning_renderable(empty_request))
+
+        builder = CliStreamSnapshotBuilder(empty_config)
+        representations = (
+            StreamReasoningRepresentation.NATIVE_TEXT,
+            StreamReasoningRepresentation.SUMMARY,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+            StreamReasoningRepresentation.SUMMARY,
+        )
+        for ordinal, representation in enumerate(representations):
+            builder.append_reasoning_text(
+                f"block-{ordinal}",
+                representation=representation,
+                segment_instance_ordinal=ordinal,
+                follows_completion=ordinal > 0,
+            )
+        renderable = _basic_reasoning_renderable(
+            _stream_request(empty_config, builder.snapshot())
+        )
+        assert renderable is not None
+        output = _render_text(renderable)
+
+        self.assertNotIn("block-0", output)
+        for ordinal in range(1, 4):
+            with self.subTest(ordinal=ordinal):
+                self.assertIn(f"block-{ordinal}", output)
+
+    async def test_unchanged_live_reasoning_is_not_reemitted_for_answers(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=True)
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        builder.append_reasoning_text("plan")
+        reasoning = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        builder.append_answer_text("Answer")
+        first_answer = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.append_answer_text(" complete")
+        second_answer = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(
+            [frame.role for frame in _frames(reasoning)],
+            ["reasoning"],
+        )
+        self.assertEqual(_frames(first_answer), [])
+        self.assertEqual(_frames(second_answer), [])
+        self.assertEqual(_answer_chunks(first_answer), ["Answer"])
+        self.assertEqual(_answer_chunks(second_answer), [" complete"])
+
+    async def test_live_reasoning_role_clears_when_no_longer_visible(
+        self,
+    ) -> None:
+        visible_config = _stream_config(display_reasoning=True)
+        visible_builder = CliStreamSnapshotBuilder(visible_config)
+        visible_builder.append_reasoning_text("plan")
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        await _collect_stream_items(
+            presenter,
+            _stream_request(visible_config, visible_builder.snapshot()),
+        )
+        hidden_config = _stream_config(stats=True, display_reasoning=False)
+        cleared = await _collect_stream_items(
+            presenter,
+            _stream_request(
+                hidden_config,
+                CliStreamSnapshotBuilder(hidden_config).snapshot(),
+            ),
+        )
+
+        reasoning_frames = [
+            frame for frame in _frames(cleared) if frame.role == "reasoning"
+        ]
+        self.assertEqual(len(reasoning_frames), 1)
+        self.assertEqual(reasoning_frames[0].renderable, "")
+
     async def test_default_streaming_is_answer_only_with_final_newline(
         self,
     ) -> None:

@@ -2,7 +2,17 @@
 
 from ..entities import ToolCallDiagnostic, ToolCallError
 from ..model.stream import (
+    REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
+    StreamChannel,
     StreamConsumerProjection,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamReasoningRepresentation,
+    StreamReasoningSegment,
+    StreamReasoningSegmentAccumulator,
+    StreamReasoningTruncation,
+    StreamRetentionPolicy,
+    StreamVisibility,
     stream_projection_text_delta,
 )
 from ..tool.display import ToolDisplayProjection
@@ -224,6 +234,7 @@ class CliStreamDisplayFlagsSnapshot:
     show_stats: bool
     show_tools: bool
     show_events: bool
+    show_reasoning: bool
     show_token_details: bool
     show_probabilities: bool
     show_timing: bool
@@ -240,6 +251,7 @@ class CliStreamDisplayFlagsSnapshot:
     display_probabilities_sample_minimum: float
     display_time_to_n_token: int | None
     display_reasoning_time: bool
+    display_reasoning: bool
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -254,6 +266,9 @@ class CliStreamRetentionSnapshot:
     display_token_history_limit: int
     usage_summary_history_limit: int
     projection_metadata_history_limit: int
+    reasoning_segment_limit: int
+    reasoning_character_limit: int
+    reasoning_text_byte_limit: int
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -409,6 +424,10 @@ class CliStreamBuildStatsSnapshot:
     tool_call_request_chunks: int
     answer_characters: int
     reasoning_characters: int
+    retained_reasoning_segments: int
+    retained_reasoning_characters: int
+    retained_reasoning_utf8_bytes: int
+    reasoning_materializations: int
     tool_call_request_characters: int
     text_materializations: int
     history_materializations: int
@@ -440,6 +459,8 @@ class CliStreamSnapshot:
     terminal: CliStreamTerminalSnapshot
     answer_text: str
     reasoning_text: str
+    reasoning_segments: tuple[StreamReasoningSegment, ...]
+    reasoning_truncation: StreamReasoningTruncation
     tool_call_request_text: str
     active_tools: tuple[CliToolExecutionSummarySnapshot, ...]
     completed_tools: tuple[CliToolExecutionSummarySnapshot, ...]
@@ -473,6 +494,7 @@ def display_flags_from_config(
         show_stats=config.show_stats,
         show_tools=config.show_tools,
         show_events=config.show_events,
+        show_reasoning=config.show_reasoning,
         show_token_details=config.show_token_details,
         show_probabilities=config.show_probabilities,
         show_timing=config.show_timing,
@@ -491,18 +513,23 @@ def display_flags_from_config(
         ),
         display_time_to_n_token=config.display_time_to_n_token,
         display_reasoning_time=config.display_reasoning_time,
+        display_reasoning=config.display_reasoning,
     )
 
 
 def retention_from_config(
     config: CliStreamDisplayConfig,
     *,
+    retention_policy: StreamRetentionPolicy | None = None,
     event_history_limit: int = DEFAULT_EVENT_HISTORY_LIMIT,
     unlimited_tool_history_limit: int = DEFAULT_UNLIMITED_TOOL_HISTORY_LIMIT,
     projection_summary_limit: int = DEFAULT_PROJECTION_SUMMARY_LIMIT,
 ) -> CliStreamRetentionSnapshot:
     """Return bounded snapshot retention derived from config."""
     assert isinstance(config, CliStreamDisplayConfig)
+    if retention_policy is None:
+        retention_policy = StreamRetentionPolicy()
+    assert isinstance(retention_policy, StreamRetentionPolicy)
     assert isinstance(event_history_limit, int)
     assert event_history_limit >= 0
     assert isinstance(unlimited_tool_history_limit, int)
@@ -536,6 +563,21 @@ def retention_from_config(
         ),
         projection_metadata_history_limit=(
             projection_summary_limit if show_stats else 0
+        ),
+        reasoning_segment_limit=(
+            retention_policy.cli_reasoning_segment_limit
+            if config.show_reasoning
+            else 0
+        ),
+        reasoning_character_limit=(
+            retention_policy.cli_reasoning_character_limit
+            if config.show_reasoning
+            else 0
+        ),
+        reasoning_text_byte_limit=(
+            retention_policy.cli_reasoning_text_byte_limit
+            if config.show_reasoning
+            else 0
         ),
     )
 
@@ -633,6 +675,7 @@ class CliStreamSnapshotBuilder:
         self,
         config: CliStreamDisplayConfig,
         *,
+        retention_policy: StreamRetentionPolicy | None = None,
         event_history_limit: int = DEFAULT_EVENT_HISTORY_LIMIT,
         unlimited_tool_history_limit: int = (
             DEFAULT_UNLIMITED_TOOL_HISTORY_LIMIT
@@ -643,12 +686,23 @@ class CliStreamSnapshotBuilder:
         self.display = display_flags_from_config(config)
         self.retention = retention_from_config(
             config,
+            retention_policy=retention_policy,
             event_history_limit=event_history_limit,
             unlimited_tool_history_limit=unlimited_tool_history_limit,
             projection_summary_limit=projection_summary_limit,
         )
         self._answer_text = CliAppendOnlyTextBuffer()
-        self._reasoning_text = CliAppendOnlyTextBuffer()
+        self._reasoning = (
+            StreamReasoningSegmentAccumulator(
+                segment_limit=self.retention.reasoning_segment_limit,
+                character_limit=self.retention.reasoning_character_limit,
+                utf8_byte_limit=self.retention.reasoning_text_byte_limit,
+            )
+            if self.display.show_reasoning
+            else None
+        )
+        self._reasoning_chunks = 0
+        self._reasoning_characters = 0
         self._tool_call_request_text = CliBoundedTextBuffer()
         self._active_tools: dict[str, CliToolExecutionSummarySnapshot] = {}
         tool_limit = self.retention.internal_tool_history_limit
@@ -695,15 +749,72 @@ class CliStreamSnapshotBuilder:
             total_tokens=self._token_counts.total_tokens + tokens,
         )
 
-    def append_reasoning_text(self, text: str, *, tokens: int = 1) -> None:
-        """Append reasoning text and update reasoning token counts."""
+    def observe_reasoning_projection(
+        self,
+        projection: StreamConsumerProjection,
+        *,
+        tokens: int = 1,
+    ) -> None:
+        """Observe reasoning lifecycle and update safe reasoning counts."""
+        assert isinstance(projection, StreamConsumerProjection)
         assert isinstance(tokens, int)
         assert tokens >= 0
-        self._reasoning_text.append(text)
+        if self._reasoning is not None:
+            self._reasoning.observe(projection)
+        if projection.kind is not StreamItemKind.REASONING_DELTA:
+            return
+        assert projection.text_delta is not None
+        self._reasoning_chunks += 1
+        self._reasoning_characters += len(projection.text_delta)
         self._token_counts = replace(
             self._token_counts,
             reasoning_tokens=self._token_counts.reasoning_tokens + tokens,
             total_tokens=self._token_counts.total_tokens + tokens,
+        )
+
+    def append_reasoning_text(
+        self,
+        text: str,
+        *,
+        tokens: int = 1,
+        representation: StreamReasoningRepresentation = (
+            StreamReasoningRepresentation.NATIVE_TEXT
+        ),
+        segment_instance_ordinal: int = 0,
+        correlation: StreamItemCorrelation | None = None,
+        follows_completion: bool = False,
+    ) -> None:
+        """Append one reasoning delta for direct snapshot construction."""
+        assert isinstance(text, str)
+        if not text:
+            return
+        assert isinstance(representation, StreamReasoningRepresentation)
+        assert isinstance(segment_instance_ordinal, int)
+        assert segment_instance_ordinal >= 0
+        assert correlation is None or isinstance(
+            correlation, StreamItemCorrelation
+        )
+        assert isinstance(follows_completion, bool)
+        self.observe_reasoning_projection(
+            StreamConsumerProjection(
+                stream_session_id="cli-snapshot-builder",
+                run_id="cli-snapshot-builder",
+                turn_id="cli-snapshot-builder",
+                sequence=0,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                correlation=correlation or StreamItemCorrelation(),
+                text_delta=text,
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=representation,
+                segment_instance_ordinal=segment_instance_ordinal,
+                metadata=(
+                    {REASONING_SEGMENT_BOUNDARY_METADATA_KEY: "completed"}
+                    if follows_completion
+                    else {}
+                ),
+            ),
+            tokens=tokens,
         )
 
     def append_tool_call_request_text(
@@ -1306,7 +1417,17 @@ class CliStreamSnapshotBuilder:
         """Materialize an immutable snapshot of current display state."""
         self._snapshots_built += 1
         answer_text = self._answer_text.materialize()
-        reasoning_text = self._reasoning_text.materialize()
+        reasoning_segments = (
+            self._reasoning.segments if self._reasoning is not None else ()
+        )
+        reasoning_text = (
+            self._reasoning.text if self._reasoning is not None else ""
+        )
+        reasoning_truncation = (
+            self._reasoning.truncation
+            if self._reasoning is not None
+            else StreamReasoningTruncation()
+        )
         tool_call_request_text = self._tool_call_request_text.materialize()
         completed_tools = self._completed_tools.snapshot()
         tool_results = self._tool_results.snapshot()
@@ -1337,6 +1458,8 @@ class CliStreamSnapshotBuilder:
             terminal=self._terminal,
             answer_text=answer_text,
             reasoning_text=reasoning_text,
+            reasoning_segments=reasoning_segments,
+            reasoning_truncation=reasoning_truncation,
             tool_call_request_text=safe_tool_call_request_text(
                 tool_call_request_text
             ),
@@ -1367,7 +1490,11 @@ class CliStreamSnapshotBuilder:
     ) -> CliStreamBuildStatsSnapshot:
         text_materializations = (
             self._answer_text.materialization_count
-            + self._reasoning_text.materialization_count
+            + (
+                self._reasoning.materialization_count
+                if self._reasoning is not None
+                else 0
+            )
             + self._tool_call_request_text.materialization_count
         )
         history_materializations = (
@@ -1383,10 +1510,30 @@ class CliStreamSnapshotBuilder:
         return CliStreamBuildStatsSnapshot(
             snapshots_built=self._snapshots_built,
             answer_chunks=self._answer_text.chunk_count,
-            reasoning_chunks=self._reasoning_text.chunk_count,
+            reasoning_chunks=self._reasoning_chunks,
             tool_call_request_chunks=self._tool_call_request_text.chunk_count,
             answer_characters=self._answer_text.character_count,
-            reasoning_characters=self._reasoning_text.character_count,
+            reasoning_characters=self._reasoning_characters,
+            retained_reasoning_segments=(
+                len(self._reasoning.segments)
+                if self._reasoning is not None
+                else 0
+            ),
+            retained_reasoning_characters=(
+                self._reasoning.character_count
+                if self._reasoning is not None
+                else 0
+            ),
+            retained_reasoning_utf8_bytes=(
+                self._reasoning.utf8_byte_count
+                if self._reasoning is not None
+                else 0
+            ),
+            reasoning_materializations=(
+                self._reasoning.materialization_count
+                if self._reasoning is not None
+                else 0
+            ),
             tool_call_request_characters=(
                 self._tool_call_request_text.character_count
             ),

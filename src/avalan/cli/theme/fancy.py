@@ -66,6 +66,8 @@ from ..display_snapshot import (
 )
 from ..stream_presenter import (
     pretty_json_answer_text,
+    reasoning_display_blocks,
+    reasoning_display_label,
     stream_terminal_completed,
 )
 
@@ -2995,8 +2997,13 @@ class FancyTheme(Theme):
         return lines
 
 
+_FANCY_REASONING_PANEL_LIMIT = 4
+
+
 class FancyStreamPresenter:
     """Present immutable stream snapshots with the Fancy layout."""
+
+    supports_stderr_diagnostics: bool = True
 
     def __init__(
         self,
@@ -3034,6 +3041,7 @@ class FancyStreamPresenter:
             tuple[StreamFrameRole, RenderableType | None],
             ...,
         ] = (
+            ("reasoning", self._reasoning_panels(request)),
             ("tools", self._tool_panel(request)),
             ("events", self._event_panel(request)),
             (
@@ -3050,7 +3058,10 @@ class FancyStreamPresenter:
             if frame is not None:
                 yield frame
 
-        if not request.display_config.show_stats:
+        if (
+            not request.display_config.show_stats
+            or request.display_config.diagnostic_channel != "live"
+        ):
             async for chunk in self._answer_presenter.present(
                 _fancy_answer_request(request)
             ):
@@ -3090,15 +3101,6 @@ class FancyStreamPresenter:
         fixed_panel_content_lines = (
             fixed_panel_height - 2 * fixed_panel_padding
         )
-        think_output = _fancy_wrapped_output(
-            snapshot.reasoning_text,
-            max_width=max_width,
-            height=fixed_panel_height,
-            padding=fixed_panel_padding,
-            limit_height=True,
-            visible_line_count=fixed_panel_content_lines,
-            skip_blank_lines=True,
-        )
         tool_output = _fancy_wrapped_output(
             snapshot.tool_call_request_text,
             max_width=max_width,
@@ -3119,30 +3121,23 @@ class FancyStreamPresenter:
             padding=1,
             limit_height=not display_config.answer_height_expand,
         )
-        think_panel = self._reasoning_panel(
-            context.model_id,
-            think_output,
-            progress_title=progress_title,
-            show_progress=answer_output is None,
-        )
         tool_panel = self._tool_request_panel(tool_output)
         answer_panel = self._answer_panel(
             context.model_id,
             answer_output,
             progress_title=progress_title,
-            show_title=think_output is None,
+            show_title=True,
             limit_height=not display_config.answer_height_expand,
             answer_height=display_config.answer_height,
         )
         stats_panel = self._token_stats_panel(
             progress_title,
-            visible=think_panel is None and answer_panel is None,
+            visible=answer_panel is None,
         )
         tokens_panel, current_token = self._token_distribution_panel(request)
         renderables: list[RenderableType] = _lf(
             [
                 stats_panel,
-                think_panel,
                 tool_panel,
                 answer_panel,
                 tokens_panel,
@@ -3255,6 +3250,49 @@ class FancyStreamPresenter:
             )
         )
 
+    def _reasoning_panels(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> RenderableType | None:
+        snapshot = request.snapshot
+        if not snapshot.display.show_reasoning:
+            return None
+        blocks = reasoning_display_blocks(snapshot)
+        if not blocks:
+            return None
+        max_width = max(1, request.context.console_width - 4)
+        show_progress = (
+            request.display_config.show_stats and not snapshot.answer_text
+        )
+        progress_title = self._progress_title(request) if show_progress else ""
+        panels = [
+            panel
+            for block in blocks[-_FANCY_REASONING_PANEL_LIMIT:]
+            if (
+                panel := self._reasoning_panel(
+                    request.context.model_id,
+                    reasoning_display_label(block.representation),
+                    _fancy_wrapped_output(
+                        block.text,
+                        max_width=max_width,
+                        height=6,
+                        padding=1,
+                        limit_height=True,
+                        visible_line_count=4,
+                        skip_blank_lines=True,
+                    ),
+                    progress_title=progress_title,
+                    show_progress=show_progress,
+                )
+            )
+            is not None
+        ]
+        if not panels:
+            return None
+        if len(panels) == 1:
+            return panels[0]
+        return Group(*panels)
+
     def _event_count_title(self) -> str | None:
         if self._event_stats is None:
             return None
@@ -3291,20 +3329,23 @@ class FancyStreamPresenter:
     def _reasoning_panel(
         self,
         model_id: str,
+        label: str,
         output: str | None,
         *,
         progress_title: str,
         show_progress: bool,
     ) -> Panel | None:
+        assert isinstance(label, str) and label
         if output is None:
             return None
         return Panel(
             Align(
-                f"[light_pink1]{output}[/light_pink1]",
+                Text(output, style="light_pink1"),
                 vertical="top",
             ),
-            title=self._theme._("{model_id} reasoning").format(
-                model_id=self._theme._f("id", model_id)
+            title=self._theme._("{model_id} {reasoning_label}").format(
+                model_id=self._theme._f("id", model_id),
+                reasoning_label=self._theme._(label),
             ),
             title_align="left",
             subtitle=progress_title if show_progress else None,

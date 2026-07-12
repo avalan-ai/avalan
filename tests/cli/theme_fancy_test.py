@@ -72,6 +72,7 @@ from avalan.memory.permanent import PermanentMemoryPartition
 from avalan.model.stream import (
     StreamChannel,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
 )
 from avalan.tool.display import ToolDisplayDetail, ToolDisplayProjection
@@ -561,7 +562,10 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
     async def test_presenter_renders_snapshot_native_rich_surfaces(
         self,
     ) -> None:
-        config = _stream_config(display_tools_events=None)
+        config = _stream_config(
+            display_tools_events=None,
+            display_reasoning=True,
+        )
         builder = CliStreamSnapshotBuilder(config)
         builder.append_reasoning_text("think before acting\n")
         builder.append_tool_call_request_text('{"name": "calc"}')
@@ -640,7 +644,7 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(
             [frame.role for frame in frames],
-            ["tools", "events", "stats", "stream"],
+            ["reasoning", "tools", "events", "stats", "stream"],
         )
         current_token = frames[-1].current_token
         self.assertIsNotNone(current_token)
@@ -663,7 +667,7 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
             "usage stream.completed",
             "projection chunk",
             "projection-data",
-            "model reasoning",
+            "model Reasoning",
             "think before acting",
             "Tool call requests",
             '{"name": "calc"}',
@@ -677,6 +681,137 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, output)
+
+    async def test_reasoning_gate_prevents_hidden_panel_construction(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=False)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("private reasoning")
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        with patch(
+            "avalan.cli.theme.fancy.reasoning_display_blocks",
+            side_effect=AssertionError("hidden reasoning was materialized"),
+        ):
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+
+        self.assertNotIn(
+            "reasoning",
+            [
+                item.role
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+        )
+
+    async def test_reasoning_panels_label_mixed_representations(self) -> None:
+        config = _stream_config(
+            stats=False,
+            display_tools=False,
+            display_events=False,
+            display_tokens=0,
+            display_reasoning=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("native plan")
+        builder.append_reasoning_text(
+            "summary plan",
+            representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        reasoning_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "reasoning"
+        )
+        output = _frame_text(reasoning_frame)
+        self.assertIn("model Reasoning", output)
+        self.assertIn("native plan", output)
+        self.assertIn("model Reasoning summary", output)
+        self.assertIn("summary plan", output)
+
+    async def test_blank_reasoning_block_creates_no_panel(self) -> None:
+        config = _stream_config(
+            stats=False,
+            display_tools=False,
+            display_events=False,
+            display_tokens=0,
+            display_reasoning=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text(" \n ")
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertNotIn(
+            "reasoning",
+            [
+                item.role
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+        )
+
+    async def test_noninteractive_stats_reasoning_keeps_json_answer_chunk(
+        self,
+    ) -> None:
+        config = _stream_config(
+            interactive=False,
+            display_tools=False,
+            display_events=False,
+            display_tokens=0,
+            display_reasoning=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text(
+            "summary",
+            representation=StreamReasoningRepresentation.SUMMARY,
+        )
+        builder.append_answer_text('{"ok":true}')
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertIn(
+            "reasoning",
+            [
+                item.role
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+        )
+        self.assertEqual(
+            [
+                item.text
+                for item in items
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ['{\n  "ok": true\n}'],
+        )
 
     async def test_tool_panel_prefers_display_projection_fields(self) -> None:
         config = _stream_config(display_tools_events=8, display_events=False)
@@ -1509,7 +1644,7 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
     async def test_reasoning_height_truncates_to_legacy_content_budget(
         self,
     ) -> None:
-        config = _stream_config()
+        config = _stream_config(display_reasoning=True)
         builder = CliStreamSnapshotBuilder(config)
         builder.append_reasoning_text(
             "\n".join(f"reasoning-line-{index}" for index in range(5))
@@ -1521,13 +1656,13 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
             _stream_request(config, builder.snapshot()),
         )
 
-        stream_frame = next(
+        reasoning_frame = next(
             item
             for item in items
             if isinstance(item, CliStreamRenderableFrame)
-            and item.role == "stream"
+            and item.role == "reasoning"
         )
-        output = _frame_text(stream_frame)
+        output = _frame_text(reasoning_frame)
         self.assertNotIn("reasoning-line-0", output)
         for index in range(1, 5):
             with self.subTest(index=index):
