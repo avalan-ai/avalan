@@ -571,6 +571,7 @@ class StreamProviderAdapterError(Exception):
     error: Exception
     provider_payload: LooseJsonValue | None
     provider_event_type: str | None
+    safe_data: LooseJsonValue | None
 
     def __init__(
         self,
@@ -578,16 +579,30 @@ class StreamProviderAdapterError(Exception):
         *,
         provider_payload: LooseJsonValue | None = None,
         provider_event_type: str | None = None,
+        safe_data: LooseJsonValue | None = None,
     ) -> None:
         assert isinstance(error, Exception)
         if provider_event_type is not None:
             _assert_non_empty_string(
                 provider_event_type, "provider_event_type"
             )
-        super().__init__(str(error))
+        super().__init__(
+            "Provider adapter rejected an event with safe diagnostics."
+            if safe_data is not None
+            else str(error)
+        )
         self.error = error
         self.provider_payload = provider_payload
         self.provider_event_type = provider_event_type
+        self.safe_data = safe_data
+
+
+class StreamConsumerCancellation(CancelledError):
+    """Signal cancellation owned by the local stream consumer."""
+
+
+class StreamConsumerClosure(Exception):
+    """Signal silent closure owned by the local stream consumer."""
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -2755,6 +2770,12 @@ async def normalize_provider_stream(
                 yield item
             if should_stop:
                 return
+    except StreamConsumerCancellation:
+        await close_provider_stream()
+        raise CancelledError() from None
+    except StreamConsumerClosure:
+        await close_provider_stream()
+        return
     except CancelledError:
         await close_provider_stream()
         for item in normalizer.cancelled():
@@ -3531,10 +3552,14 @@ class _ProviderStreamNormalizer:
                 StreamItemKind.STREAM_ERRORED,
                 provider_event=StreamProviderEvent(
                     kind=StreamItemKind.STREAM_ERRORED,
-                    data={
-                        "error_type": error.__class__.__name__,
-                        "message": str(error),
-                    },
+                    data=(
+                        exc.safe_data
+                        if exc.safe_data is not None
+                        else {
+                            "error_type": error.__class__.__name__,
+                            "message": str(error),
+                        }
+                    ),
                     provider_payload=exc.provider_payload,
                     provider_event_type=exc.provider_event_type,
                 ),

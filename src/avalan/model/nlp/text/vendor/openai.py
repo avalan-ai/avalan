@@ -15,6 +15,8 @@ from .....model.response.text import TextGenerationResponse
 from .....model.stream import (
     REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
     CanonicalStreamItem,
+    StreamConsumerCancellation,
+    StreamConsumerClosure,
     StreamItemCorrelation,
     StreamItemKind,
     StreamProducerBackend,
@@ -24,10 +26,10 @@ from .....model.stream import (
     StreamReasoningRepresentation,
     StreamReasoningSegmentState,
     StreamRetentionPolicy,
-    StreamValidationError,
     StreamVisibility,
     TextGenerationSingleStream,
     TextGenerationStream,
+    normalize_provider_stream,
 )
 from .....tool.manager import ToolManager
 from .....types import (
@@ -45,7 +47,15 @@ from . import (
     TextGenerationVendorModel,
 )
 
-from asyncio import CancelledError, sleep
+from asyncio import (
+    CancelledError,
+    Event,
+    Lock,
+    Task,
+    create_task,
+    current_task,
+    sleep,
+)
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -54,13 +64,14 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib import import_module
 from inspect import isawaitable
 from json import dumps
 from math import isfinite
 from mimetypes import guess_type
-from typing import Any, cast
+from types import SimpleNamespace
+from typing import Any, Never, cast, get_args
 from urllib.parse import urlparse
 
 
@@ -119,6 +130,1968 @@ class _OpenAIProviderRequestError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("OpenAI provider request failed")
+
+
+class _OpenAIConcurrentProviderConsumerError(RuntimeError):
+    """Report a concurrent pull against the single-consumer stream."""
+
+
+class _MissingProviderField:  # noqa: D101
+    pass
+
+
+_MISSING_PROVIDER_FIELD = _MissingProviderField()
+_OPENAI_RESPONSE_STREAM_EVENT_TYPES: frozenset[type[object]] | None = None
+_OPENAI_RESPONSE_OUTPUT_ITEM_TYPES: frozenset[type[object]] | None = None
+_OPENAI_TOOL_CALL_ID_ERROR_MESSAGE = (
+    "response tool call id must be a non-empty string"
+)
+
+
+def _is_trusted_openai_response_stream_event(value: object) -> bool:
+    global _OPENAI_RESPONSE_STREAM_EVENT_TYPES
+
+    trusted_types = _OPENAI_RESPONSE_STREAM_EVENT_TYPES
+    if trusted_types is None:
+        try:
+            event_alias = getattr(
+                import_module("openai.types.responses"),
+                "ResponseStreamEvent",
+            )
+        except (AttributeError, ImportError):
+            return False
+        discovered: set[type[object]] = set()
+        pending = [event_alias]
+        while pending:
+            candidate = pending.pop()
+            if isinstance(candidate, type):
+                discovered.add(candidate)
+                continue
+            pending.extend(get_args(candidate))
+        trusted_types = frozenset(discovered)
+        _OPENAI_RESPONSE_STREAM_EVENT_TYPES = trusted_types
+    return type(value) in trusted_types
+
+
+def _is_trusted_openai_response_output_item(value: object) -> bool:
+    global _OPENAI_RESPONSE_OUTPUT_ITEM_TYPES
+
+    trusted_types = _OPENAI_RESPONSE_OUTPUT_ITEM_TYPES
+    if trusted_types is None:
+        try:
+            item_alias = getattr(
+                import_module("openai.types.responses"),
+                "ResponseOutputItem",
+            )
+        except (AttributeError, ImportError):
+            return False
+        discovered: set[type[object]] = set()
+        pending = [item_alias]
+        while pending:
+            candidate = pending.pop()
+            if isinstance(candidate, type):
+                discovered.add(candidate)
+                continue
+            pending.extend(get_args(candidate))
+        trusted_types = frozenset(discovered)
+        _OPENAI_RESPONSE_OUTPUT_ITEM_TYPES = trusted_types
+    return type(value) in trusted_types
+
+
+def _provider_value_shape(value: object) -> str:
+    if value is _MISSING_PROVIDER_FIELD:
+        return "missing"
+    if value is None:
+        return "null"
+    if type(value) is bool:
+        return "boolean"
+    if type(value) is int:
+        return "negative_integer" if value < 0 else "integer"
+    if type(value) is float:
+        return "float"
+    if type(value) is str:
+        return "empty_string" if not value.strip() else "string"
+    if isinstance(value, Mapping):
+        return "mapping"
+    if isinstance(value, Sequence):
+        return "sequence"
+    return "object"
+
+
+class _OpenAIReasoningSummaryEventError(ValueError):
+    code = "invalid_reasoning_summary_event"
+    event_type: str
+    field: str
+    output_index: int | None
+    summary_index: int | None
+    value_shape: str
+    public_message: str | None
+
+    def __init__(
+        self,
+        *,
+        event_type: str,
+        field: str,
+        value: object = _MISSING_PROVIDER_FIELD,
+        output_index: object = _MISSING_PROVIDER_FIELD,
+        summary_index: object = _MISSING_PROVIDER_FIELD,
+        value_shape: str | None = None,
+        public_message: str | None = None,
+    ) -> None:
+        assert isinstance(event_type, str) and event_type
+        assert isinstance(field, str) and field
+        assert value_shape is None or (
+            isinstance(value_shape, str) and value_shape
+        )
+        assert public_message is None or (
+            type(public_message) is str and bool(public_message)
+        )
+        super().__init__("OpenAI reasoning summary event is invalid.")
+        self.event_type = event_type
+        self.field = field
+        self.output_index = self._safe_index(output_index)
+        self.summary_index = self._safe_index(summary_index)
+        self.value_shape = value_shape or _provider_value_shape(value)
+        self.public_message = public_message
+
+    @staticmethod
+    def _safe_index(value: object) -> int | None:
+        return value if type(value) is int and value >= 0 else None
+
+    def safe_data(self) -> LooseJsonValue:
+        data: dict[str, object] = {
+            "error": {
+                "type": "invalid_provider_event",
+                "code": self.code,
+                "message": str(self),
+                "event_type": self.event_type,
+                "field": self.field,
+                "index": {
+                    "output_index": self.output_index,
+                    "summary_index": self.summary_index,
+                },
+                "value_shape": self.value_shape,
+            }
+        }
+        if self.public_message is not None:
+            data["message"] = self.public_message
+        return cast(LooseJsonValue, data)
+
+
+class _OpenAIToolCallIdError(ValueError):
+    """Report a fixed safe invalid tool-call identifier diagnostic."""
+
+    value_shape: str
+
+    def __init__(self, value: object) -> None:
+        self.value_shape = _provider_value_shape(value)
+        super().__init__(_OPENAI_TOOL_CALL_ID_ERROR_MESSAGE)
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenAIReasoningSummaryEmission:
+    text: str
+    item_id: str
+    output_index: int
+    summary_index: int
+    provider_event_type: str
+
+
+@dataclass(slots=True)
+class _OpenAIReasoningSummaryPartState:
+    item_id: str
+    output_index: int
+    summary_index: int
+    part_added: bool = False
+    delta_fragments: list[str] = field(default_factory=list)
+    streamed_text_present: bool = False
+    text_done_seen: bool = False
+    text_done_text: str = ""
+    part_done_seen: bool = False
+    part_done_text: str = ""
+    fallback_text: str | None = None
+    closed: bool = False
+
+
+@dataclass(slots=True)
+class _OpenAIReasoningSummaryItemState:
+    item_id: str
+    output_index: int
+    parts: dict[int, _OpenAIReasoningSummaryPartState] = field(
+        default_factory=dict
+    )
+    completed_fingerprint: tuple[tuple[object, ...], ...] | None = None
+    completed: bool = False
+    incomplete: bool = False
+
+
+@dataclass(slots=True)
+class _OpenAINativeReasoningPartState:
+    delta_fragments: list[str] = field(default_factory=list)
+    completed_text: str | None = None
+    completed: bool = False
+
+
+@dataclass(slots=True)
+class _OpenAIOutputItemFingerprint:
+    item_id: str | None
+    output_index: int | None
+    item_type: str | None
+    call_id: str | None = None
+    canonical_name: str | None = None
+    content_index: int | None = None
+    completed_payload_fingerprint: tuple[tuple[object, ...], ...] | None = None
+    argument_fragments: list[str] = field(default_factory=list)
+    final_arguments: str | None = None
+    arguments_closed: bool = False
+    channel_closed: bool = False
+    completed: bool = False
+    native_parts: dict[int, _OpenAINativeReasoningPartState] = field(
+        default_factory=dict
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenAIProviderTerminal:
+    event: StreamProviderEvent
+    succeeded: bool
+    cleanup_method: str = "aclose"
+    cleanup_failed: bool = False
+    include_cleanup_diagnostic: bool = False
+
+    def __post_init__(self) -> None:
+        assert self.event.kind in {
+            StreamItemKind.STREAM_CANCELLED,
+            StreamItemKind.STREAM_COMPLETED,
+            StreamItemKind.STREAM_ERRORED,
+        }
+        assert self.succeeded is (
+            self.event.kind is StreamItemKind.STREAM_COMPLETED
+        )
+        assert self.cleanup_method in {"aclose", "cancel"}
+        assert isinstance(self.cleanup_failed, bool)
+        assert isinstance(self.include_cleanup_diagnostic, bool)
+
+
+@dataclass(slots=True)
+class _OpenAIReasoningSummaryState:
+    _items: dict[tuple[str, int], _OpenAIReasoningSummaryItemState] = field(
+        default_factory=dict
+    )
+    _fingerprint_by_item_id: dict[str, _OpenAIOutputItemFingerprint] = field(
+        default_factory=dict
+    )
+    _fingerprint_by_output_index: dict[int, _OpenAIOutputItemFingerprint] = (
+        field(default_factory=dict)
+    )
+    _fingerprint_by_call_id: dict[str, _OpenAIOutputItemFingerprint] = field(
+        default_factory=dict
+    )
+    _standalone_completed_item_ids: set[str] = field(default_factory=set)
+    _response_closed: bool = False
+    _response_terminal_type: str | None = None
+
+    def abort(self) -> None:
+        for item in self._items.values():
+            for part in item.parts.values():
+                part.delta_fragments.clear()
+                part.text_done_text = ""
+                part.part_done_text = ""
+                part.fallback_text = None
+            item.parts.clear()
+            item.completed_fingerprint = None
+        self._items.clear()
+        fingerprints = {
+            id(fingerprint): fingerprint
+            for fingerprint in (
+                *self._fingerprint_by_item_id.values(),
+                *self._fingerprint_by_output_index.values(),
+                *self._fingerprint_by_call_id.values(),
+            )
+        }
+        for fingerprint in fingerprints.values():
+            fingerprint.argument_fragments.clear()
+            fingerprint.final_arguments = None
+            fingerprint.canonical_name = None
+            fingerprint.call_id = None
+            fingerprint.completed_payload_fingerprint = None
+            for native_part in fingerprint.native_parts.values():
+                native_part.delta_fragments.clear()
+                native_part.completed_text = None
+            fingerprint.native_parts.clear()
+        self._fingerprint_by_item_id.clear()
+        self._fingerprint_by_output_index.clear()
+        self._fingerprint_by_call_id.clear()
+        self._standalone_completed_item_ids.clear()
+        self._response_closed = True
+        self._response_terminal_type = "response.consumer_closed"
+
+    def add_item(
+        self,
+        event: object,
+        event_type: str,
+        item_type: str | None,
+    ) -> bool:
+        item = self._field(event, "item", event_type)
+        if item_type != "reasoning":
+            return False
+        output_index_value = self._field(event, "output_index", event_type)
+        item_id_value = self._field(item, "id", event_type)
+        output_index = self._required_index(
+            output_index_value,
+            event_type=event_type,
+            field_name="output_index",
+            output_index=output_index_value,
+        )
+        item_id = self._required_item_id(
+            item_id_value,
+            event_type=event_type,
+            field_name="item.id",
+            output_index=output_index,
+        )
+        summary = self._field(item, "summary", event_type)
+        if type(summary) is not list or summary:
+            self._error(
+                event_type,
+                "item.summary",
+                summary,
+                output_index=output_index,
+                value_shape="unexpected_value",
+            )
+        key = (item_id, output_index)
+        current = self._items.get(key)
+        if current is not None:
+            return True
+        self._items[key] = _OpenAIReasoningSummaryItemState(
+            item_id=item_id,
+            output_index=output_index,
+        )
+        return True
+
+    def observe_output_item(
+        self,
+        event: object,
+        event_type: str,
+        item_type: str | None,
+        *,
+        call_id: str | None = None,
+        canonical_name: str | None = None,
+    ) -> tuple[str | None, _OpenAIOutputItemFingerprint | None]:
+        item = self._field(event, "item", event_type)
+        item_id_value = self._field(item, "id", event_type)
+        output_index_value = self._field(event, "output_index", event_type)
+        item_type_value = self._field(item, "type", event_type)
+        self._validate_output_item_status(
+            item,
+            event_type,
+            output_index=output_index_value,
+        )
+        item_id = self._optional_item_id(
+            item_id_value,
+            event_type=event_type,
+            field_name="item.id",
+            output_index=output_index_value,
+        )
+        output_index = self._optional_index(
+            output_index_value,
+            event_type=event_type,
+            field_name="output_index",
+        )
+        fingerprint = self._observe_fingerprint(
+            event_type=event_type,
+            item_id=item_id,
+            output_index=output_index,
+            output_index_value=output_index_value,
+            item_type=item_type,
+            item_type_value=item_type_value,
+            call_id=call_id,
+        )
+        if fingerprint is None:
+            return item_type, None
+        if (
+            fingerprint.channel_closed
+            and event_type == "response.output_item.added"
+        ):
+            self._error(
+                event_type,
+                "item",
+                output_index=output_index_value,
+                value_shape="closed",
+            )
+        if canonical_name is not None:
+            if fingerprint.canonical_name is None:
+                fingerprint.canonical_name = canonical_name
+            elif fingerprint.canonical_name != canonical_name:
+                self._error(
+                    event_type,
+                    "item.name",
+                    output_index=output_index_value,
+                    value_shape="conflict",
+                )
+        return fingerprint.item_type, fingerprint
+
+    @classmethod
+    def _validate_output_item_status(
+        cls,
+        item: object,
+        event_type: str,
+        *,
+        output_index: object,
+    ) -> None:
+        status = cls._field(item, "status", event_type)
+        if status is _MISSING_PROVIDER_FIELD or status is None:
+            return
+        expected = {
+            (
+                "in_progress"
+                if event_type == "response.output_item.added"
+                else "completed"
+            )
+        }
+        if event_type in {
+            "error",
+            "response.error",
+            "response.failed",
+            "response.incomplete",
+        }:
+            expected.add("incomplete")
+        if type(status) is not str or status not in expected:
+            cls._error(
+                event_type,
+                "item.status",
+                status,
+                output_index=output_index,
+                value_shape="unexpected_value",
+            )
+
+    def output_item_type(
+        self,
+        event: object,
+        event_type: str,
+    ) -> str | None:
+        item = self._field(event, "item", event_type)
+        output_index_value = self._field(event, "output_index", event_type)
+        raw_item_type = self._field(item, "type", event_type)
+        item_type = self._optional_item_type(
+            raw_item_type,
+            event_type=event_type,
+            output_index=output_index_value,
+        )
+        nested_custom_tool = self._field(item, "custom_tool_call", event_type)
+        if (
+            nested_custom_tool is not _MISSING_PROVIDER_FIELD
+            and nested_custom_tool is not None
+        ):
+            if item_type is None:
+                return "tool_call"
+            if item_type != "custom_tool_call":
+                self._error(
+                    event_type,
+                    "item.type",
+                    output_index=output_index_value,
+                    value_shape="conflict",
+                )
+            return item_type
+        if item_type is not None:
+            return item_type
+        if self._reasoning_fields_are_present(item, event_type):
+            self._error(
+                event_type,
+                "item.type",
+                raw_item_type,
+                output_index=output_index_value,
+            )
+        if event_type == "response.output_item.added":
+            return None
+        item_id_value = self._field(item, "id", event_type)
+        item_id = (
+            item_id_value
+            if type(item_id_value) is str and bool(item_id_value.strip())
+            else None
+        )
+        output_index = (
+            output_index_value
+            if type(output_index_value) is int and output_index_value >= 0
+            else None
+        )
+        fingerprints = tuple(
+            fingerprint
+            for fingerprint in (
+                (
+                    self._fingerprint_by_item_id.get(item_id)
+                    if item_id is not None
+                    else None
+                ),
+                (
+                    self._fingerprint_by_output_index.get(output_index)
+                    if output_index is not None
+                    else None
+                ),
+            )
+            if fingerprint is not None
+        )
+        if fingerprints:
+            for fingerprint in fingerprints:
+                if fingerprint.item_type in {
+                    "custom_tool_call",
+                    "function_call",
+                    "tool_call",
+                }:
+                    return fingerprint.item_type
+            return None
+        return "function_call"
+
+    @classmethod
+    def _reasoning_fields_are_present(
+        cls,
+        item: object,
+        event_type: str,
+    ) -> bool:
+        return any(
+            cls._field(item, field_name, event_type)
+            is not _MISSING_PROVIDER_FIELD
+            for field_name in ("summary", "encrypted_content")
+        )
+
+    @staticmethod
+    def _item_types_compatible(left: str, right: str) -> bool:
+        if left == right:
+            return True
+        if {left, right} <= {"message", "output_text"}:
+            return True
+        refinements = {"custom_tool_call", "function_call"}
+        return (left == "tool_call" and right in refinements) or (
+            right == "tool_call" and left in refinements
+        )
+
+    def validate_semantic_event(
+        self,
+        event: object,
+        event_type: str,
+        *,
+        allowed_item_types: frozenset[str],
+        implied_item_type: str | None = None,
+        call_id: str | None = None,
+        canonical_name: str | None = None,
+        require_open: bool = False,
+        validate_content_index: bool = False,
+    ) -> _OpenAIOutputItemFingerprint | None:
+        item_id_value = self._field(event, "item_id", event_type)
+        output_index_value = self._field(event, "output_index", event_type)
+        item_id = self._optional_item_id(
+            item_id_value,
+            event_type=event_type,
+            field_name="item_id",
+            output_index=output_index_value,
+        )
+        output_index = self._optional_index(
+            output_index_value,
+            event_type=event_type,
+            field_name="output_index",
+        )
+        content_index_value = (
+            self._field(event, "content_index", event_type)
+            if validate_content_index
+            else _MISSING_PROVIDER_FIELD
+        )
+        content_index = self._optional_index(
+            content_index_value,
+            event_type=event_type,
+            field_name="content_index",
+            output_index=output_index_value,
+        )
+        fingerprint = self._observe_fingerprint(
+            event_type=event_type,
+            item_id=item_id,
+            output_index=output_index,
+            output_index_value=output_index_value,
+            item_type=implied_item_type,
+            item_type_value=implied_item_type,
+            call_id=call_id,
+        )
+        assert fingerprint is not None
+        if require_open and fingerprint.channel_closed:
+            self._error(
+                event_type,
+                "item",
+                output_index=output_index_value,
+                value_shape="closed",
+            )
+        assert fingerprint.item_type in allowed_item_types
+        if content_index is not None:
+            if fingerprint.content_index is None:
+                fingerprint.content_index = content_index
+            elif fingerprint.content_index != content_index:
+                self._error(
+                    event_type,
+                    "content_index",
+                    content_index_value,
+                    output_index=output_index_value,
+                    value_shape="conflict",
+                )
+        if canonical_name is not None:
+            if fingerprint.canonical_name is None:
+                fingerprint.canonical_name = canonical_name
+            elif fingerprint.canonical_name != canonical_name:
+                self._error(
+                    event_type,
+                    "item.name",
+                    output_index=output_index_value,
+                    value_shape="conflict",
+                )
+        return fingerprint
+
+    def add_tool_argument_delta(
+        self,
+        fingerprint: _OpenAIOutputItemFingerprint,
+        delta: str,
+        *,
+        event_type: str,
+        output_index: object = _MISSING_PROVIDER_FIELD,
+    ) -> None:
+        if fingerprint.arguments_closed or fingerprint.completed:
+            self._error(
+                event_type,
+                "arguments",
+                output_index=output_index,
+                value_shape="closed",
+            )
+        fingerprint.argument_fragments.append(delta)
+
+    def finish_tool_arguments(
+        self,
+        fingerprint: _OpenAIOutputItemFingerprint,
+        arguments: str | None,
+        *,
+        event_type: str,
+        output_index: object = _MISSING_PROVIDER_FIELD,
+        close: bool,
+        allow_closed: bool = False,
+    ) -> None:
+        if (
+            fingerprint.completed
+            or fingerprint.arguments_closed
+            and not allow_closed
+        ):
+            self._error(
+                event_type,
+                "arguments",
+                output_index=output_index,
+                value_shape="closed",
+            )
+        assembled = "".join(fingerprint.argument_fragments)
+        if arguments is not None and fingerprint.argument_fragments:
+            if arguments != assembled:
+                self._error(
+                    event_type,
+                    "arguments",
+                    output_index=output_index,
+                    value_shape="conflict",
+                )
+        if (
+            arguments is not None
+            and fingerprint.final_arguments is not None
+            and arguments != fingerprint.final_arguments
+        ):
+            self._error(
+                event_type,
+                "arguments",
+                output_index=output_index,
+                value_shape="conflict",
+            )
+        if fingerprint.final_arguments is None:
+            if arguments is not None:
+                fingerprint.final_arguments = arguments
+            elif fingerprint.argument_fragments:
+                fingerprint.final_arguments = assembled
+        if close:
+            fingerprint.arguments_closed = True
+
+    def add_native_reasoning_delta(
+        self,
+        event: object,
+        event_type: str,
+        fingerprint: _OpenAIOutputItemFingerprint,
+        delta: str,
+    ) -> int:
+        content_index = self._native_content_index(event, event_type)
+        part = fingerprint.native_parts.setdefault(
+            content_index,
+            _OpenAINativeReasoningPartState(),
+        )
+        if part.completed:
+            self._error(
+                event_type,
+                "content",
+                output_index=fingerprint.output_index,
+                value_shape="closed",
+            )
+        part.delta_fragments.append(delta)
+        return content_index
+
+    def finish_native_reasoning(
+        self,
+        event: object,
+        event_type: str,
+        fingerprint: _OpenAIOutputItemFingerprint,
+    ) -> bool:
+        content_index = self._native_content_index(event, event_type)
+        part = fingerprint.native_parts.setdefault(
+            content_index,
+            _OpenAINativeReasoningPartState(),
+        )
+        text_value = self._field(event, "text", event_type)
+        assembled = "".join(part.delta_fragments)
+        if text_value is _MISSING_PROVIDER_FIELD or text_value is None:
+            text = assembled
+        elif type(text_value) is str:
+            text = text_value
+        else:
+            self._error(
+                event_type,
+                "text",
+                text_value,
+                output_index=fingerprint.output_index,
+            )
+        if part.completed:
+            if text == part.completed_text:
+                return False
+            self._error(
+                event_type,
+                "text",
+                text_value,
+                output_index=fingerprint.output_index,
+                value_shape="conflict",
+            )
+        if part.delta_fragments and text != assembled:
+            self._error(
+                event_type,
+                "text",
+                text_value,
+                output_index=fingerprint.output_index,
+                value_shape="conflict",
+            )
+        part.completed_text = text
+        part.completed = True
+        return True
+
+    @classmethod
+    def _native_content_index(
+        cls,
+        event: object,
+        event_type: str,
+    ) -> int:
+        content_index = cls._field(event, "content_index", event_type)
+        if content_index is _MISSING_PROVIDER_FIELD or content_index is None:
+            return 0
+        if type(content_index) is not int or content_index < 0:
+            cls._error(
+                event_type,
+                "content_index",
+                content_index,
+                output_index=cls._field(event, "output_index", event_type),
+            )
+        return content_index
+
+    def output_item_completion_is_duplicate(
+        self,
+        event: object,
+        event_type: str,
+        fingerprint: _OpenAIOutputItemFingerprint | None,
+    ) -> bool:
+        if fingerprint is None or not fingerprint.completed:
+            return False
+        item = self._field(event, "item", event_type)
+        completed_fingerprint = self._replay_significant_fingerprint(
+            item,
+            event_type=event_type,
+            output_index=fingerprint.output_index,
+        )
+        if fingerprint.completed_payload_fingerprint == completed_fingerprint:
+            return True
+        self._error(
+            event_type,
+            "item",
+            output_index=fingerprint.output_index,
+            value_shape="conflict",
+        )
+
+    def mark_output_item_completed(
+        self,
+        event: object,
+        event_type: str,
+        fingerprint: _OpenAIOutputItemFingerprint | None,
+    ) -> None:
+        if fingerprint is not None:
+            item = self._field(event, "item", event_type)
+            completed_fingerprint = self._replay_significant_fingerprint(
+                item,
+                event_type=event_type,
+                output_index=fingerprint.output_index,
+            )
+            fingerprint.completed_payload_fingerprint = completed_fingerprint
+            fingerprint.completed = True
+            fingerprint.channel_closed = True
+
+    @staticmethod
+    def mark_channel_closed(
+        fingerprint: _OpenAIOutputItemFingerprint | None,
+    ) -> None:
+        if fingerprint is not None:
+            fingerprint.channel_closed = True
+
+    def _observe_fingerprint(
+        self,
+        *,
+        event_type: str,
+        item_id: str | None,
+        output_index: int | None,
+        output_index_value: object,
+        item_type: str | None,
+        item_type_value: object,
+        call_id: str | None,
+    ) -> _OpenAIOutputItemFingerprint | None:
+        candidates: list[_OpenAIOutputItemFingerprint] = []
+        for fingerprint in (
+            (
+                self._fingerprint_by_item_id.get(item_id)
+                if item_id is not None
+                else None
+            ),
+            (
+                self._fingerprint_by_output_index.get(output_index)
+                if output_index is not None
+                else None
+            ),
+            (
+                self._fingerprint_by_call_id.get(call_id)
+                if call_id is not None
+                else None
+            ),
+        ):
+            if fingerprint is not None and all(
+                fingerprint is not candidate for candidate in candidates
+            ):
+                candidates.append(fingerprint)
+        if len(candidates) > 1:
+            self._error(
+                event_type,
+                "item.identity",
+                output_index=output_index_value,
+                value_shape="conflict",
+            )
+        if candidates:
+            fingerprint = candidates[0]
+        elif item_type is None and call_id is None:
+            return None
+        else:
+            fingerprint = _OpenAIOutputItemFingerprint(
+                item_id=None,
+                output_index=None,
+                item_type=None,
+            )
+        if (
+            item_id is not None
+            and fingerprint.item_id is not None
+            and item_id != fingerprint.item_id
+        ) or (
+            output_index is not None
+            and fingerprint.output_index is not None
+            and output_index != fingerprint.output_index
+        ):
+            self._error(
+                event_type,
+                "item.identity",
+                output_index=output_index_value,
+                value_shape="conflict",
+            )
+        if (
+            call_id is not None
+            and fingerprint.call_id is not None
+            and call_id != fingerprint.call_id
+        ):
+            self._error(
+                event_type,
+                "item.call_id",
+                output_index=output_index_value,
+                value_shape="conflict",
+            )
+        if item_type is None and candidates:
+            self._error(
+                event_type,
+                "item.type",
+                item_type_value,
+                output_index=output_index_value,
+            )
+        if item_type is not None and fingerprint.item_type is not None:
+            if not self._item_types_compatible(
+                item_type, fingerprint.item_type
+            ):
+                self._error(
+                    event_type,
+                    "item.type",
+                    output_index=output_index_value,
+                    value_shape="conflict",
+                )
+            if fingerprint.item_type == "tool_call" and item_type in {
+                "custom_tool_call",
+                "function_call",
+            }:
+                fingerprint.item_type = item_type
+        elif item_type is not None:
+            fingerprint.item_type = item_type
+        if fingerprint.item_id is None:
+            fingerprint.item_id = item_id
+        if fingerprint.output_index is None:
+            fingerprint.output_index = output_index
+        if fingerprint.call_id is None:
+            fingerprint.call_id = call_id
+        if fingerprint.item_id is not None:
+            self._fingerprint_by_item_id[fingerprint.item_id] = fingerprint
+        if fingerprint.output_index is not None:
+            self._fingerprint_by_output_index[fingerprint.output_index] = (
+                fingerprint
+            )
+        if fingerprint.call_id is not None:
+            self._fingerprint_by_call_id[fingerprint.call_id] = fingerprint
+        return fingerprint
+
+    def validate_terminal_output(
+        self,
+        response: object,
+        event_type: str,
+    ) -> None:
+        output = self._field(response, "output", event_type)
+        if output is _MISSING_PROVIDER_FIELD:
+            return
+        if type(output) is not list:
+            self._error(
+                event_type,
+                "response.output",
+                output,
+            )
+        observed_fingerprints: set[int] = set()
+        for output_index, item in enumerate(output):
+            if not (
+                type(item) is dict
+                or type(item) is SimpleNamespace
+                or _is_trusted_openai_response_output_item(item)
+            ):
+                self._error(
+                    event_type,
+                    "response.output",
+                    output_index=output_index,
+                    value_shape="unreadable",
+                )
+            item_id_value = self._field(item, "id", event_type)
+            item_type_value = self._field(item, "type", event_type)
+            self._validate_output_item_status(
+                item,
+                event_type,
+                output_index=output_index,
+            )
+            item_id = self._optional_item_id(
+                item_id_value,
+                event_type=event_type,
+                field_name="item.id",
+                output_index=output_index,
+            )
+            item_type = self._optional_item_type(
+                item_type_value,
+                event_type=event_type,
+                output_index=output_index,
+            )
+            item_type = self._terminal_output_item_type(
+                item,
+                event_type,
+                item_type,
+                item_type_value=item_type_value,
+                output_index=output_index,
+            )
+            call_id = self._terminal_call_id(
+                item,
+                event_type,
+                item_type,
+                item_id=item_id,
+                output_index=output_index,
+            )
+            if (
+                item_type in {"custom_tool_call", "function_call", "tool_call"}
+                and call_id is None
+            ):
+                self._error(
+                    event_type,
+                    "item.call_id",
+                    output_index=output_index,
+                )
+            fingerprints = tuple(
+                {
+                    id(fingerprint): fingerprint
+                    for fingerprint in (
+                        (
+                            self._fingerprint_by_item_id.get(item_id)
+                            if item_id is not None
+                            else None
+                        ),
+                        self._fingerprint_by_output_index.get(output_index),
+                        (
+                            self._fingerprint_by_call_id.get(call_id)
+                            if call_id is not None
+                            else None
+                        ),
+                    )
+                    if fingerprint is not None
+                }.values()
+            )
+            if len(fingerprints) > 1:
+                self._error(
+                    event_type,
+                    "item.identity",
+                    output_index=output_index,
+                    value_shape="conflict",
+                )
+            observed_fingerprints.update(map(id, fingerprints))
+            for fingerprint in fingerprints:
+                if (
+                    (
+                        fingerprint.item_id is not None
+                        and item_id != fingerprint.item_id
+                    )
+                    or (fingerprint.item_id is None and item_id is not None)
+                    or (
+                        fingerprint.output_index is not None
+                        and output_index != fingerprint.output_index
+                    )
+                    or (
+                        fingerprint.call_id is not None
+                        and call_id != fingerprint.call_id
+                    )
+                    or (fingerprint.call_id is None and call_id is not None)
+                ):
+                    self._error(
+                        event_type,
+                        "item.identity",
+                        output_index=output_index,
+                        value_shape="conflict",
+                    )
+                if fingerprint.output_index is None:
+                    fingerprint.output_index = output_index
+                    self._fingerprint_by_output_index[output_index] = (
+                        fingerprint
+                    )
+            for fingerprint in fingerprints:
+                if (
+                    fingerprint.item_type is not None
+                    and not self._item_types_compatible(
+                        item_type, fingerprint.item_type
+                    )
+                ):
+                    self._error(
+                        event_type,
+                        "item.type",
+                        output_index=output_index,
+                        value_shape="conflict",
+                    )
+                if fingerprint.completed_payload_fingerprint is not None:
+                    terminal_fingerprint = (
+                        self._replay_significant_fingerprint(
+                            item,
+                            event_type=event_type,
+                            output_index=output_index,
+                        )
+                    )
+                    if (
+                        terminal_fingerprint
+                        != fingerprint.completed_payload_fingerprint
+                    ):
+                        self._error(
+                            event_type,
+                            "item",
+                            output_index=output_index,
+                            value_shape="conflict",
+                        )
+        tracked_fingerprints = {
+            id(fingerprint): fingerprint
+            for fingerprint in (
+                *self._fingerprint_by_item_id.values(),
+                *self._fingerprint_by_output_index.values(),
+                *self._fingerprint_by_call_id.values(),
+            )
+        }
+        for identity, fingerprint in tracked_fingerprints.items():
+            if fingerprint.completed and identity not in observed_fingerprints:
+                self._error(
+                    event_type,
+                    "response.output",
+                    output_index=fingerprint.output_index,
+                    value_shape="missing_position",
+                )
+
+    @classmethod
+    def _terminal_call_id(
+        cls,
+        item: object,
+        event_type: str,
+        item_type: str | None,
+        *,
+        item_id: str | None,
+        output_index: int,
+    ) -> str | None:
+        nested = cls._field(item, "custom_tool_call", event_type)
+        values = (
+            cls._field(item, "call_id", event_type),
+            cls._field(nested, "id", event_type),
+        )
+        call_id: str | None = None
+        for value in values:
+            if value is _MISSING_PROVIDER_FIELD or value is None:
+                continue
+            if type(value) is not str or not value.strip():
+                cls._error(
+                    event_type,
+                    "item.call_id",
+                    value,
+                    output_index=output_index,
+                )
+            if call_id is not None and value != call_id:
+                cls._error(
+                    event_type,
+                    "item.call_id",
+                    output_index=output_index,
+                    value_shape="conflict",
+                )
+            call_id = value
+        if call_id is not None:
+            if item_type not in {
+                "custom_tool_call",
+                "function_call",
+                "tool_call",
+            }:
+                cls._error(
+                    event_type,
+                    "item.call_id",
+                    output_index=output_index,
+                    value_shape="unexpected_value",
+                )
+            return call_id
+        if item_type in {
+            "custom_tool_call",
+            "function_call",
+            "tool_call",
+        }:
+            return item_id
+        return None
+
+    @classmethod
+    def _terminal_output_item_type(
+        cls,
+        item: object,
+        event_type: str,
+        item_type: str | None,
+        *,
+        item_type_value: object,
+        output_index: int,
+    ) -> str:
+        supported_types = {
+            "custom_tool_call",
+            "function_call",
+            "message",
+            "output_text",
+            "reasoning",
+            "tool_call",
+        }
+        if item_type is not None:
+            if item_type not in supported_types:
+                cls._error(
+                    event_type,
+                    "item.type",
+                    item_type_value,
+                    output_index=output_index,
+                    value_shape="unexpected_value",
+                )
+            effective_type = item_type
+        else:
+            cls._error(
+                event_type,
+                "item.type",
+                item_type_value,
+                output_index=output_index,
+            )
+        if effective_type in {"message", "output_text"}:
+            OpenAIStream._message_done_text(
+                item,
+                event_type=event_type,
+                output_index=output_index,
+            )
+        elif effective_type in {
+            "custom_tool_call",
+            "function_call",
+            "tool_call",
+        }:
+            cls._validate_terminal_tool_item_shape(
+                item,
+                event_type,
+                output_index=output_index,
+            )
+        else:
+            summary = cls._field(item, "summary", event_type)
+            encrypted_content = cls._field(
+                item,
+                "encrypted_content",
+                event_type,
+            )
+            content = cls._field(item, "content", event_type)
+            legacy_replay_item = (
+                summary is _MISSING_PROVIDER_FIELD
+                and type(encrypted_content) is str
+                and bool(encrypted_content)
+                and type(content) is list
+            )
+            if type(summary) is not list and not legacy_replay_item:
+                cls._error(
+                    event_type,
+                    "item.summary",
+                    summary,
+                    output_index=output_index,
+                )
+        return effective_type
+
+    @classmethod
+    def _validate_terminal_tool_item_shape(
+        cls,
+        item: object,
+        event_type: str,
+        *,
+        output_index: int,
+    ) -> None:
+        nested = cls._field(item, "custom_tool_call", event_type)
+        function = cls._field(item, "function", event_type)
+        names = (
+            cls._field(item, "name", event_type),
+            cls._field(nested, "name", event_type),
+            cls._field(function, "name", event_type),
+        )
+        present_names = tuple(
+            value
+            for value in names
+            if value is not _MISSING_PROVIDER_FIELD and value is not None
+        )
+        arguments = (
+            cls._field(item, "arguments", event_type),
+            cls._field(item, "input", event_type),
+            cls._field(nested, "input", event_type),
+        )
+        present_arguments = tuple(
+            value
+            for value in arguments
+            if value is not _MISSING_PROVIDER_FIELD and value is not None
+        )
+        if not present_names and not present_arguments:
+            return
+        if (
+            not present_names
+            or any(
+                type(value) is not str or not value.strip()
+                for value in present_names
+            )
+            or len(set(present_names)) > 1
+        ):
+            cls._error(
+                event_type,
+                "item.name",
+                output_index=output_index,
+            )
+        if (
+            not present_arguments
+            or any(
+                type(value) not in {dict, str} for value in present_arguments
+            )
+            or any(
+                value != present_arguments[0]
+                for value in present_arguments[1:]
+            )
+        ):
+            cls._error(
+                event_type,
+                "item.arguments",
+                output_index=output_index,
+            )
+
+    def add_part(self, event: object, event_type: str) -> None:
+        item, part, output_index, summary_index = self._open_part_identity(
+            event, event_type
+        )
+        part_value = self._field(event, "part", event_type)
+        part_type = self._field(part_value, "type", event_type)
+        text = self._field(part_value, "text", event_type)
+        if type(part_type) is not str or part_type != "summary_text":
+            self._error(
+                event_type,
+                "part.type",
+                part_type,
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="unexpected_value",
+            )
+        if type(text) is not str or text:
+            self._error(
+                event_type,
+                "part.text",
+                text,
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="unexpected_value",
+            )
+        if part.part_added:
+            if part.closed:
+                self._error(
+                    event_type,
+                    "part",
+                    part_value,
+                    output_index=output_index,
+                    summary_index=summary_index,
+                    value_shape="closed",
+                )
+            return
+        assert item.parts[summary_index] is part
+        part.part_added = True
+
+    def add_delta(
+        self, event: object, event_type: str
+    ) -> _OpenAIReasoningSummaryEmission | None:
+        _, part, output_index, summary_index = self._open_part_identity(
+            event, event_type
+        )
+        delta = self._field(event, "delta", event_type)
+        if type(delta) is not str:
+            self._error(
+                event_type,
+                "delta",
+                delta,
+                output_index=output_index,
+                summary_index=summary_index,
+            )
+        if not part.part_added:
+            self._error(
+                event_type,
+                "part",
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="not_added",
+            )
+        if part.text_done_seen or part.part_done_seen or part.closed:
+            self._error(
+                event_type,
+                "part",
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="closed",
+            )
+        part.delta_fragments.append(delta)
+        if not delta:
+            return None
+        part.streamed_text_present = True
+        return _OpenAIReasoningSummaryEmission(
+            text=delta,
+            item_id=part.item_id,
+            output_index=output_index,
+            summary_index=summary_index,
+            provider_event_type=event_type,
+        )
+
+    def finish_text(self, event: object, event_type: str) -> None:
+        _, part, output_index, summary_index = self._open_part_identity(
+            event, event_type
+        )
+        text = self._field(event, "text", event_type)
+        if type(text) is not str:
+            self._error(
+                event_type,
+                "text",
+                text,
+                output_index=output_index,
+                summary_index=summary_index,
+            )
+        expected = "".join(part.delta_fragments)
+        if part.text_done_seen:
+            if text == part.text_done_text:
+                return
+            self._error(
+                event_type,
+                "text",
+                text,
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="conflict",
+            )
+        if not part.part_added:
+            self._error(
+                event_type,
+                "part",
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="not_added",
+            )
+        if text != expected:
+            self._error(
+                event_type,
+                "text",
+                text,
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="conflict",
+            )
+        part.text_done_seen = True
+        part.text_done_text = text
+
+    def finish_part(self, event: object, event_type: str) -> None:
+        _, part, output_index, summary_index = self._open_part_identity(
+            event, event_type
+        )
+        part_value = self._field(event, "part", event_type)
+        part_type = self._field(part_value, "type", event_type)
+        text = self._field(part_value, "text", event_type)
+        if type(part_type) is not str or part_type != "summary_text":
+            self._error(
+                event_type,
+                "part.type",
+                part_type,
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="unexpected_value",
+            )
+        if type(text) is not str:
+            self._error(
+                event_type,
+                "part.text",
+                text,
+                output_index=output_index,
+                summary_index=summary_index,
+            )
+        if part.part_done_seen:
+            if text == part.part_done_text:
+                return
+            self._error(
+                event_type,
+                "part.text",
+                text,
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="conflict",
+            )
+        if not part.text_done_seen:
+            self._error(
+                event_type,
+                "text.done",
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="missing",
+            )
+        if text != part.text_done_text:
+            self._error(
+                event_type,
+                "part.text",
+                text,
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="conflict",
+            )
+        part.part_done_seen = True
+        part.part_done_text = text
+        part.closed = True
+
+    def complete_item(
+        self,
+        event: object,
+        event_type: str,
+    ) -> tuple[tuple[_OpenAIReasoningSummaryEmission, ...], bool, bool]:
+        item_value = self._field(event, "item", event_type)
+        item_id_value = self._field(item_value, "id", event_type)
+        item_id = self._required_item_id(
+            item_id_value,
+            event_type=event_type,
+            field_name="item.id",
+        )
+        output_index_value = self._field(event, "output_index", event_type)
+        output_item_fingerprint = self._fingerprint_by_item_id.get(item_id)
+        if (
+            output_item_fingerprint is None
+            or output_item_fingerprint.output_index is None
+        ):
+            self._standalone_completed_item_ids.add(item_id)
+            return (), True, True
+        tracked_output_index = output_item_fingerprint.output_index
+        state = self._items.get((item_id, tracked_output_index))
+        if state is None:
+            self._standalone_completed_item_ids.add(item_id)
+            return (), True, True
+        output_index = self._required_index(
+            output_index_value,
+            event_type=event_type,
+            field_name="output_index",
+            output_index=output_index_value,
+        )
+        assert output_index == tracked_output_index
+        summary_value = self._field(item_value, "summary", event_type)
+        summary_fingerprint = self._summary_fingerprint(
+            summary_value,
+            event_type=event_type,
+            output_index=output_index,
+        )
+        completed_fingerprint = self._replay_significant_fingerprint(
+            item_value,
+            event_type=event_type,
+            output_index=output_index,
+        )
+        for part in state.parts.values():
+            if part.part_added and not part.part_done_seen:
+                self._error(
+                    event_type,
+                    "part",
+                    output_index=output_index,
+                    summary_index=part.summary_index,
+                    value_shape="open",
+                )
+        emissions: list[_OpenAIReasoningSummaryEmission] = []
+        for summary_index, (_, text) in enumerate(summary_fingerprint):
+            part_state = state.parts.get(summary_index)
+            if part_state is not None and part_state.streamed_text_present:
+                if text != part_state.part_done_text:
+                    self._error(
+                        event_type,
+                        "item.summary",
+                        summary_value,
+                        output_index=output_index,
+                        summary_index=summary_index,
+                        value_shape="conflict",
+                    )
+                continue
+            if not text:
+                continue
+            if part_state is None:
+                part_state = _OpenAIReasoningSummaryPartState(
+                    item_id=item_id,
+                    output_index=output_index,
+                    summary_index=summary_index,
+                    closed=True,
+                )
+                state.parts[summary_index] = part_state
+            part_state.fallback_text = text
+            part_state.closed = True
+            emissions.append(
+                _OpenAIReasoningSummaryEmission(
+                    text=text,
+                    item_id=item_id,
+                    output_index=output_index,
+                    summary_index=summary_index,
+                    provider_event_type=event_type,
+                )
+            )
+        for summary_index in state.parts:
+            if summary_index >= len(summary_fingerprint):
+                self._error(
+                    event_type,
+                    "item.summary",
+                    summary_value,
+                    output_index=output_index,
+                    summary_index=summary_index,
+                    value_shape="missing_position",
+                )
+        state.completed_fingerprint = completed_fingerprint
+        output_item_fingerprint.completed_payload_fingerprint = (
+            completed_fingerprint
+        )
+        state.completed = True
+        return tuple(emissions), True, False
+
+    @classmethod
+    def _replay_significant_fingerprint(
+        cls,
+        item: object,
+        *,
+        event_type: str,
+        output_index: int | None,
+    ) -> tuple[tuple[object, ...], ...]:
+        try:
+            dumped_payload = OpenAIStream._raw_provider_payload(item)
+        except _ReasoningReplayRetentionError:
+            dumped_payload = None
+        if dumped_payload is not None:
+            raw_payload: object = dumped_payload
+        else:
+            payload: dict[str, object] = {}
+            for field_name in (
+                "id",
+                "type",
+                "encrypted_content",
+                "summary",
+                "content",
+                "call_id",
+                "name",
+                "arguments",
+                "input",
+                "custom_tool_call",
+            ):
+                field_value = cls._field(item, field_name, event_type)
+                if field_value is not _MISSING_PROVIDER_FIELD:
+                    payload[field_name] = field_value
+            raw_payload = payload
+        try:
+            normalized = _strict_provider_fingerprint_copy(raw_payload)
+            assert type(normalized) is dict
+            cleaned = _clean_replay_input_payload(normalized)
+            return _stable_replay_json_fingerprint(cleaned)
+        except _ReasoningReplayRetentionError:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field="item",
+                output_index=output_index,
+                value_shape="unreadable",
+            ) from None
+
+    def close_response(self, event_type: str, *, completed: bool) -> None:
+        if self._response_closed:
+            if self._response_terminal_type == event_type:
+                return
+            self._error(
+                event_type,
+                "response",
+                value_shape="closed",
+            )
+        if completed:
+            for item in self._items.values():
+                if not item.completed:
+                    self._error(
+                        event_type,
+                        "item",
+                        output_index=item.output_index,
+                        value_shape="open",
+                    )
+        else:
+            for item in self._items.values():
+                if item.completed:
+                    continue
+                item.incomplete = True
+                for part in item.parts.values():
+                    part.closed = True
+        self._response_closed = True
+        self._response_terminal_type = event_type
+
+    def close_source(self) -> None:
+        if self._response_closed:
+            return
+        for item in self._items.values():
+            if not item.completed:
+                self._error(
+                    "response.source_exhausted",
+                    "item",
+                    output_index=item.output_index,
+                    value_shape="open",
+                )
+        self._response_closed = True
+        self._response_terminal_type = "response.source_exhausted"
+
+    def _open_part_identity(
+        self,
+        event: object,
+        event_type: str,
+    ) -> tuple[
+        _OpenAIReasoningSummaryItemState,
+        _OpenAIReasoningSummaryPartState,
+        int,
+        int,
+    ]:
+        item_id_value = self._field(event, "item_id", event_type)
+        output_index_value = self._field(event, "output_index", event_type)
+        summary_index_value = self._field(event, "summary_index", event_type)
+        output_index = self._required_index(
+            output_index_value,
+            event_type=event_type,
+            field_name="output_index",
+            output_index=output_index_value,
+            summary_index=summary_index_value,
+        )
+        summary_index = self._required_index(
+            summary_index_value,
+            event_type=event_type,
+            field_name="summary_index",
+            output_index=output_index,
+            summary_index=summary_index_value,
+        )
+        item_id = self._required_item_id(
+            item_id_value,
+            event_type=event_type,
+            field_name="item_id",
+            output_index=output_index,
+            summary_index=summary_index,
+        )
+        item_fingerprint = self._fingerprint_by_item_id.get(item_id)
+        index_fingerprint = self._fingerprint_by_output_index.get(output_index)
+        if item_fingerprint is None or index_fingerprint is None:
+            self._error(
+                event_type,
+                "item.identity",
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape=(
+                    "unrecognized"
+                    if item_fingerprint is None and index_fingerprint is None
+                    else "conflict"
+                ),
+            )
+        assert item_fingerprint is not None
+        assert index_fingerprint is not None
+        assert item_fingerprint is index_fingerprint
+        assert item_fingerprint.item_id == item_id
+        assert item_fingerprint.output_index == output_index
+        if (
+            item_fingerprint.item_type != "reasoning"
+            or index_fingerprint.item_type != "reasoning"
+        ):
+            self._error(
+                event_type,
+                "item.type",
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="unexpected_value",
+            )
+        if item_id in self._standalone_completed_item_ids:
+            self._error(
+                event_type,
+                "item",
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="closed",
+            )
+        item = self._items.get((item_id, output_index))
+        if item is None:
+            self._error(
+                event_type,
+                "item.state",
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="missing",
+            )
+        assert item is not None
+        if item.completed or item.incomplete:
+            self._error(
+                event_type,
+                "item",
+                item_id,
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="closed",
+            )
+        part = item.parts.get(summary_index)
+        if part is None:
+            part = _OpenAIReasoningSummaryPartState(
+                item_id=item_id,
+                output_index=output_index,
+                summary_index=summary_index,
+            )
+            item.parts[summary_index] = part
+        return item, part, output_index, summary_index
+
+    @staticmethod
+    def _summary_fingerprint(
+        summary: object,
+        *,
+        event_type: str,
+        output_index: int,
+    ) -> tuple[tuple[str, str], ...]:
+        if type(summary) is not list:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field="item.summary",
+                value=summary,
+                output_index=output_index,
+            )
+        result: list[tuple[str, str]] = []
+        for summary_index, raw_part in enumerate(summary):
+            part_type = _OpenAIReasoningSummaryState._nested_field(
+                raw_part,
+                "type",
+                event_type=event_type,
+                field_name="item.summary.type",
+                output_index=output_index,
+                summary_index=summary_index,
+            )
+            text = _OpenAIReasoningSummaryState._nested_field(
+                raw_part,
+                "text",
+                event_type=event_type,
+                field_name="item.summary.text",
+                output_index=output_index,
+                summary_index=summary_index,
+            )
+            if type(part_type) is not str or part_type != "summary_text":
+                raise _OpenAIReasoningSummaryEventError(
+                    event_type=event_type,
+                    field="item.summary.type",
+                    value=part_type,
+                    output_index=output_index,
+                    summary_index=summary_index,
+                    value_shape="unexpected_value",
+                )
+            if type(text) is not str:
+                raise _OpenAIReasoningSummaryEventError(
+                    event_type=event_type,
+                    field="item.summary.text",
+                    value=text,
+                    output_index=output_index,
+                    summary_index=summary_index,
+                )
+            result.append((part_type, text))
+        return tuple(result)
+
+    @staticmethod
+    def _nested_field(
+        value: object,
+        name: str,
+        *,
+        event_type: str,
+        field_name: str,
+        output_index: int,
+        summary_index: int,
+    ) -> object:
+        try:
+            return _OpenAIReasoningSummaryState._field(value, name, event_type)
+        except _OpenAIReasoningSummaryEventError:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field=field_name,
+                output_index=output_index,
+                summary_index=summary_index,
+                value_shape="unreadable",
+            ) from None
+
+    @staticmethod
+    def _field(value: object, name: str, event_type: str) -> object:
+        try:
+            if isinstance(value, Mapping):
+                if name not in value:
+                    return _MISSING_PROVIDER_FIELD
+                return value[name]
+            return getattr(value, name, _MISSING_PROVIDER_FIELD)
+        except Exception:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field=name,
+                value_shape="unreadable",
+            ) from None
+
+    @staticmethod
+    def _required_index(
+        value: object,
+        *,
+        event_type: str,
+        field_name: str,
+        output_index: object = _MISSING_PROVIDER_FIELD,
+        summary_index: object = _MISSING_PROVIDER_FIELD,
+    ) -> int:
+        if type(value) is not int or value < 0:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field=field_name,
+                value=value,
+                output_index=output_index,
+                summary_index=summary_index,
+            )
+        return value
+
+    @staticmethod
+    def _optional_index(
+        value: object,
+        *,
+        event_type: str,
+        field_name: str,
+        output_index: object = _MISSING_PROVIDER_FIELD,
+    ) -> int | None:
+        if value is _MISSING_PROVIDER_FIELD or value is None:
+            return None
+        if type(value) is not int or value < 0:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field=field_name,
+                value=value,
+                output_index=output_index,
+            )
+        return value
+
+    @staticmethod
+    def _required_item_id(
+        value: object,
+        *,
+        event_type: str,
+        field_name: str,
+        output_index: object = _MISSING_PROVIDER_FIELD,
+        summary_index: object = _MISSING_PROVIDER_FIELD,
+    ) -> str:
+        if type(value) is not str or not value.strip():
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field=field_name,
+                value=value,
+                output_index=output_index,
+                summary_index=summary_index,
+            )
+        return value
+
+    @staticmethod
+    def _optional_item_id(
+        value: object,
+        *,
+        event_type: str,
+        field_name: str,
+        output_index: object = _MISSING_PROVIDER_FIELD,
+    ) -> str | None:
+        if value is _MISSING_PROVIDER_FIELD or value is None:
+            return None
+        if type(value) is not str or not value.strip():
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field=field_name,
+                value=value,
+                output_index=output_index,
+            )
+        return value
+
+    @staticmethod
+    def _optional_item_type(
+        value: object,
+        *,
+        event_type: str,
+        output_index: object = _MISSING_PROVIDER_FIELD,
+    ) -> str | None:
+        if value is _MISSING_PROVIDER_FIELD or value is None:
+            return None
+        if type(value) is not str or not value.strip():
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field="item.type",
+                value=value,
+                output_index=output_index,
+            )
+        return value
+
+    @staticmethod
+    def _error(
+        event_type: str,
+        field_name: str,
+        value: object = _MISSING_PROVIDER_FIELD,
+        *,
+        output_index: object = _MISSING_PROVIDER_FIELD,
+        summary_index: object = _MISSING_PROVIDER_FIELD,
+        value_shape: str | None = None,
+    ) -> Never:
+        raise _OpenAIReasoningSummaryEventError(
+            event_type=event_type,
+            field=field_name,
+            value=value,
+            output_index=output_index,
+            summary_index=summary_index,
+            value_shape=value_shape,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +2174,24 @@ def _strict_replay_json_copy(value: object) -> LooseJsonValue:
     return cast(LooseJsonValue, root[0])
 
 
+def _strict_provider_fingerprint_copy(value: object) -> LooseJsonValue:
+    if type(value) is SimpleNamespace:
+        value = value.__dict__
+    if type(value) is list:
+        return [
+            _strict_provider_fingerprint_copy(item)
+            for item in cast(list[object], value)
+        ]
+    if type(value) is dict:
+        result: dict[str, object] = {}
+        for key, item in cast(dict[object, object], value).items():
+            if type(key) is not str:
+                raise _ReasoningReplayRetentionError()
+            result[key] = _strict_provider_fingerprint_copy(item)
+        return cast(LooseJsonValue, result)
+    return _strict_replay_json_copy(value)
+
+
 def _clean_replay_input_payload(
     payload: dict[str, object],
 ) -> dict[str, Any]:
@@ -218,7 +2209,8 @@ def _clean_replay_input_payload(
         if isinstance(source, dict):
             normalized_mapping: dict[str, object] = {}
             _assign_replay_json_value(target, key, normalized_mapping)
-            item_type = source.get("type") if clean_fields else None
+            raw_item_type = source.get("type") if clean_fields else None
+            item_type = raw_item_type if type(raw_item_type) is str else None
             entries: list[tuple[str, object, bool]] = []
             for item_key, item_value in source.items():
                 if clean_fields and (
@@ -295,7 +2287,8 @@ def _sanitize_provider_json_payload(
                 raise _ReasoningReplayRetentionError()
             ancestor_containers.add(source_id)
             source_mapping = cast(dict[object, object], source)
-            item_type = source_mapping.get("type")
+            raw_item_type = source_mapping.get("type")
+            item_type = raw_item_type if type(raw_item_type) is str else None
             normalized_mapping: dict[str, object] = {}
             _assign_replay_json_value(target, key, normalized_mapping)
             work.append((source_id, target, key, True))
@@ -349,7 +2342,7 @@ def _replay_json_accounting(value: LooseJsonValue) -> tuple[int, int]:
             work.extend(current)
         else:
             nodes += 1
-            if isinstance(current, str):
+            if type(current) is str:
                 characters += len(current)
     return nodes, characters
 
@@ -413,6 +2406,40 @@ def _replay_json_scalar_serialized_bytes(value: object) -> int:
     if serialization_failed:
         raise _ReasoningReplayRetentionError() from None
     return len(encoded)
+
+
+def _stable_replay_json_fingerprint(
+    value: LooseJsonValue,
+) -> tuple[tuple[object, ...], ...]:
+    tokens: list[tuple[object, ...]] = []
+    work: list[tuple[str, object]] = [("value", value)]
+    while work:
+        token_type, current = work.pop()
+        if token_type == "key":
+            assert type(current) is str
+            tokens.append(("key", current))
+            continue
+        if type(current) is dict:
+            mapping = cast(dict[str, LooseJsonValue], current)
+            tokens.append(("mapping", len(mapping)))
+            for key in sorted(mapping, reverse=True):
+                work.append(("value", mapping[key]))
+                work.append(("key", key))
+            continue
+        if type(current) is list:
+            sequence = cast(list[LooseJsonValue], current)
+            tokens.append(("sequence", len(sequence)))
+            for item in reversed(sequence):
+                work.append(("value", item))
+            continue
+        assert current is None or type(current) in {
+            bool,
+            float,
+            int,
+            str,
+        }
+        tokens.append(("scalar", type(current).__name__, current))
+    return tuple(tokens)
 
 
 @dataclass(slots=True, repr=False)
@@ -486,7 +2513,8 @@ class _OpenAIReplayOwner:
         if self._released or not self._attempt_active:
             raise RuntimeError("OpenAI replay owner has no active attempt")
         normalized = OpenAIStream._response_input_item_payload(item)
-        item_type = normalized.get("type")
+        raw_item_type = normalized.get("type")
+        item_type = raw_item_type if type(raw_item_type) is str else None
         if item_type == "reasoning":
             if not OpenAIStream._is_replayable_reasoning_item(normalized):
                 return False
@@ -599,11 +2627,29 @@ class OpenAIStream(TextGenerationVendorStream):
     _TEXT_DONE_EVENTS = {"response.text.done", "response.output_text.done"}
     _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
     _REASONING_DONE_EVENTS = {"response.reasoning_text.done"}
+    _REASONING_SUMMARY_PART_ADDED_EVENT = (
+        "response.reasoning_summary_part.added"
+    )
+    _REASONING_SUMMARY_TEXT_DELTA_EVENT = (
+        "response.reasoning_summary_text.delta"
+    )
+    _REASONING_SUMMARY_TEXT_DONE_EVENT = "response.reasoning_summary_text.done"
+    _REASONING_SUMMARY_PART_DONE_EVENT = "response.reasoning_summary_part.done"
+    _REASONING_SUMMARY_EVENTS = {
+        _REASONING_SUMMARY_PART_ADDED_EVENT,
+        _REASONING_SUMMARY_TEXT_DELTA_EVENT,
+        _REASONING_SUMMARY_TEXT_DONE_EVENT,
+        _REASONING_SUMMARY_PART_DONE_EVENT,
+    }
     _TOOL_CALL_ITEM_TYPES = {
         "custom_tool_call",
         "function_call",
         "tool_call",
     }
+    _TEXT_OUTPUT_ITEM_TYPES = frozenset({"message", "output_text"})
+    _NATIVE_REASONING_ITEM_TYPES = frozenset({"reasoning"})
+    _FUNCTION_ARGUMENT_ITEM_TYPES = frozenset({"function_call", "tool_call"})
+    _CUSTOM_ARGUMENT_ITEM_TYPES = frozenset({"custom_tool_call", "tool_call"})
     _TOOL_ARGUMENT_DELTA_EVENTS = {
         "response.custom_tool_call_input.delta",
         "response.function_call_arguments.delta",
@@ -613,9 +2659,9 @@ class OpenAIStream(TextGenerationVendorStream):
         "response.function_call_arguments.done",
     }
     _ERROR_EVENTS = {"response.error", "response.failed", "error"}
-    _CANCELLED_EVENTS = {"response.cancelled", "response.canceled"}
     _INCOMPLETE_EVENTS = {"response.incomplete"}
-    _stream: AsyncIterator[Any]
+    _INCOMPLETE_REASONS = {"content_filter", "max_output_tokens"}
+    _stream: AsyncIterator[Any] | None
     _canonical_tool_calls: dict[str, dict[str, str | bool | None]]
     _tool_call_ids_by_item_id: dict[str, str]
     _canonical_ready_tool_call_ids: set[str]
@@ -632,6 +2678,7 @@ class OpenAIStream(TextGenerationVendorStream):
     _attempt_output_item_count: int
     _output_item_rollback: Callable[[int], None] | None
     _reasoning_segments: StreamReasoningSegmentState
+    _reasoning_summary_state: _OpenAIReasoningSummaryState
     _replay_owner: _OpenAIReplayOwner | None
     _replay_owner_retainer: (
         Callable[[_OpenAIReplayOwner, tuple[str, ...]], None] | None
@@ -639,6 +2686,21 @@ class OpenAIStream(TextGenerationVendorStream):
     _replay_owner_releaser: Callable[[_OpenAIReplayOwner], None] | None
     _replay_owner_terminal_handled: bool
     _request_has_replay_items: bool
+    _active_provider_task: Task[Any] | None
+    _external_finish_method: str | None
+    _private_output_seen: bool
+    _provider_terminal_prepared: bool
+    _provider_terminal_event: StreamProviderEvent | None
+    _provider_terminal_emitted: bool
+    _provider_terminal_cleanup_failed: bool
+    _provider_terminal_lock: Lock
+    _provider_lifetime_claimed: bool
+    _provider_consumer_owner: object | None
+    _provider_consumer_done: Event
+    _provider_finish_done: Event
+    _provider_finish_error: BaseException | None
+    _provider_silent_closed: bool
+    _external_finish_lock: Lock
 
     def __init__(
         self,
@@ -679,6 +2741,7 @@ class OpenAIStream(TextGenerationVendorStream):
         self._last_text_delta_alias_event_type = None
         self._attempt_output_item_count = 0
         self._reasoning_segments = StreamReasoningSegmentState()
+        self._reasoning_summary_state = _OpenAIReasoningSummaryState()
         self._replay_owner = replay_owner
         self._replay_owner_retainer = replay_owner_retainer
         self._replay_owner_releaser = replay_owner_releaser
@@ -686,14 +2749,34 @@ class OpenAIStream(TextGenerationVendorStream):
         self._request_has_replay_items = request_has_replay_items or bool(
             replay_owner is not None and replay_owner.item_count
         )
+        self._active_provider_task = None
+        self._external_finish_method = None
+        self._private_output_seen = False
+        self._provider_terminal_prepared = False
+        self._provider_terminal_event = None
+        self._provider_terminal_emitted = False
+        self._provider_terminal_cleanup_failed = False
+        self._provider_terminal_lock = Lock()
+        self._provider_lifetime_claimed = False
+        self._provider_consumer_owner = None
+        self._provider_consumer_done = Event()
+        self._provider_consumer_done.set()
+        self._provider_finish_done = Event()
+        self._provider_finish_error = None
+        self._provider_silent_closed = False
+        self._external_finish_lock = Lock()
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
-            async for item in self.canonical_stream(
+            canonical = self.canonical_stream(
                 stream_session_id=self._DEFAULT_STREAM_SESSION_ID,
                 run_id=self._DEFAULT_RUN_ID,
                 turn_id=self._DEFAULT_TURN_ID,
-            ):
-                yield item
+            )
+            try:
+                async for item in canonical:
+                    yield item
+            finally:
+                await self._call_stream_source_cleanup(canonical, "aclose")
 
         super().__init__(
             generator(),
@@ -709,25 +2792,64 @@ class OpenAIStream(TextGenerationVendorStream):
         return await super().__anext__()
 
     async def cancel(self) -> None:
-        await self._finish_and_cleanup("cancel")
+        await self._request_external_finish("cancel")
 
     async def aclose(self) -> None:
-        await self._finish_and_cleanup("aclose")
+        await self._request_external_finish("aclose")
 
-    async def _finish_and_cleanup(self, method_name: str) -> None:
+    async def _request_external_finish(self, method_name: str) -> None:
         assert method_name in {"aclose", "cancel"}
-        errors: list[BaseException] = []
-        try:
-            self._finish_replay_owner(succeeded=False)
-        except BaseException as error:
-            errors.append(self._cleanup_boundary_error(error))
-        try:
-            if method_name == "cancel":
-                await super().cancel()
-            else:
+        async with self._external_finish_lock:
+            existing_method = self._external_finish_method
+            first_request = existing_method is None
+            if first_request:
+                self._external_finish_method = method_name
+            already_finished = (
+                self._provider_terminal_prepared
+                or self._provider_silent_closed
+            )
+
+        if not first_request:
+            await self._provider_finish_done.wait()
+            if method_name == "aclose":
                 await super().aclose()
-        except BaseException as error:
-            errors.append(self._cleanup_boundary_error(error))
+            return
+
+        if not already_finished:
+            active_operation = self._active_provider_task
+            consumer_active = self._provider_consumer_owner is not None
+            if active_operation is current_task():
+                return
+            await self._cancel_active_provider_pull()
+            if active_operation is not None and consumer_active:
+                await self._provider_finish_done.wait()
+                if method_name == "aclose":
+                    await self._provider_consumer_done.wait()
+            elif method_name == "cancel":
+                await self._finalize_provider_terminal(
+                    _OpenAIProviderTerminal(
+                        event=StreamProviderEvent(
+                            kind=StreamItemKind.STREAM_CANCELLED
+                        ),
+                        succeeded=False,
+                        cleanup_method="cancel",
+                    )
+                )
+            else:
+                await self._finalize_provider_close()
+
+        cleanup_errors: list[BaseException] = []
+        if self._provider_finish_error is not None:
+            cleanup_errors.append(self._provider_finish_error)
+        if method_name == "aclose":
+            try:
+                await super().aclose()
+            except BaseException as error:
+                cleanup_errors.append(self._cleanup_boundary_error(error))
+        self._raise_cleanup_errors(cleanup_errors)
+
+    @staticmethod
+    def _raise_cleanup_errors(errors: list[BaseException]) -> None:
         if len(errors) == 1:
             raise errors[0] from None
         if errors:
@@ -736,11 +2858,91 @@ class OpenAIStream(TextGenerationVendorStream):
                 errors,
             ) from None
 
+    async def _cleanup_provider_sources_locked(
+        self,
+        method_name: str,
+    ) -> list[BaseException]:
+        cleanup_methods, errors = self._detach_provider_cleanup_methods(
+            method_name
+        )
+        for cleanup_method in cleanup_methods:
+            try:
+                result = cleanup_method()
+                if isawaitable(result):
+                    awaited_result = await cast(Awaitable[object], result)
+                    assert awaited_result is None
+                else:
+                    assert result is None
+            except BaseException as error:
+                errors.append(error)
+                if not isinstance(error, Exception):
+                    break
+        return errors
+
+    def _detach_provider_cleanup_methods(
+        self,
+        method_name: str,
+    ) -> tuple[list[Callable[[], object]], list[BaseException]]:
+        assert method_name in {"aclose", "cancel"}
+        sources = (self._stream, *self._stream_sources)
+        self._stream = None
+        self._stream_sources = ()
+        if method_name == "cancel":
+            self._stream_cancelled = True
+        method_names = (
+            ("cancel", "close", "aclose")
+            if method_name == "cancel"
+            else ("aclose", "close")
+        )
+        cleanup_methods: list[Callable[[], object]] = []
+        errors: list[BaseException] = []
+        seen: set[int] = set()
+        for source in sources:
+            if source is None:
+                continue
+            source_id = id(source)
+            if source_id in seen:
+                continue
+            seen.add(source_id)
+            try:
+                cleanup_method: object | None = None
+                for cleanup_method_name in method_names:
+                    cleanup_method = getattr(
+                        source,
+                        cleanup_method_name,
+                        None,
+                    )
+                    if cleanup_method is not None:
+                        break
+                if cleanup_method is None:
+                    continue
+                assert callable(cleanup_method)
+                cleanup_methods.append(cleanup_method)
+            except BaseException as error:
+                errors.append(error)
+                if not isinstance(error, Exception):
+                    break
+        return cleanup_methods, errors
+
+    async def _cancel_active_provider_pull(self) -> None:
+        active_task = self._active_provider_task
+        if active_task is None or active_task is current_task():
+            return
+        if not active_task.done():
+            active_task.cancel()
+        try:
+            await active_task
+        except BaseException:
+            pass
+        finally:
+            if self._active_provider_task is active_task:
+                self._active_provider_task = None
+
     def _cleanup_boundary_error(
         self,
         error: BaseException,
     ) -> BaseException:
-        if not self._request_has_replay_items:
+        if not (self._request_has_replay_items or self._private_output_seen):
             return error
         if isinstance(error, _OpenAIClientClosedError):
             return _OpenAIClientClosedError()
@@ -754,9 +2956,6 @@ class OpenAIStream(TextGenerationVendorStream):
             return _OpenAICleanupError(error.cleanup_target)
         return _OpenAICleanupError("stream")
 
-    def _cleanup_sources(self) -> tuple[object, ...]:
-        return self._stream_sources
-
     def canonical_stream(
         self,
         *,
@@ -767,13 +2966,15 @@ class OpenAIStream(TextGenerationVendorStream):
         capabilities: StreamProviderCapabilities | None = None,
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
-        self._reset_response_attempt_state()
-        return self._provider_canonical_stream(
+        canonical = normalize_provider_stream(
             self._provider_events(),
             stream_session_id=stream_session_id,
             run_id=run_id,
             turn_id=turn_id,
-            provider_family=provider_family,
+            provider_family=self._effective_provider_family(
+                provider_family,
+                capabilities,
+            ),
             capabilities=capabilities
             or StreamProviderCapabilities(
                 backend=StreamProducerBackend.HOSTED,
@@ -786,29 +2987,106 @@ class OpenAIStream(TextGenerationVendorStream):
             ),
             close_after_terminal=close_after_terminal,
         )
+        return self._guard_canonical_stream(canonical)
+
+    async def _guard_canonical_stream(
+        self,
+        items: AsyncIterator[CanonicalStreamItem],
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        iterator = items.__aiter__()
+        try:
+            while True:
+                if self._external_finish_method == "aclose":
+                    return
+                try:
+                    item = await iterator.__anext__()
+                except StopAsyncIteration:
+                    return
+                if self._external_finish_method == "aclose":
+                    return
+                yield item
+        finally:
+            await self._call_stream_source_cleanup(iterator, "aclose")
+            if (
+                not self._provider_lifetime_claimed
+                and self._external_finish_method is None
+                and not self._provider_terminal_prepared
+                and not self._provider_silent_closed
+            ):
+                self._provider_lifetime_claimed = True
+                await self._finalize_provider_close()
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
-        private_provider_failure = False
-        private_cleanup_failure = False
+        consumer_owner = object()
+        if (
+            self._provider_lifetime_claimed
+            or self._provider_consumer_owner is not None
+            or self._active_provider_task is not None
+        ):
+            raise _OpenAIConcurrentProviderConsumerError(
+                "OpenAI stream already has an active consumer"
+            )
+        self._provider_lifetime_claimed = True
+        self._provider_consumer_owner = consumer_owner
+        self._provider_consumer_done.clear()
+        self._reset_response_attempt_state()
+        terminal: _OpenAIProviderTerminal | None = None
+        provider_iterator: AsyncIterator[Any] | None = None
+        event: object | None = None
+        provider_events: tuple[StreamProviderEvent, ...] = ()
+        provider_event: StreamProviderEvent | None = None
+        sanitized_events: list[StreamProviderEvent] = []
+        sanitized_event: StreamProviderEvent | None = None
+        replacement_stream: AsyncIterator[Any] | None = None
         try:
             try:
                 attempts = 0
-                while True:
+                if self._provider_terminal_prepared:
+                    assert self._provider_terminal_event is not None
+                    stored_event = self._provider_terminal_event
+                    terminal = _OpenAIProviderTerminal(
+                        event=stored_event,
+                        succeeded=(
+                            stored_event.kind
+                            is StreamItemKind.STREAM_COMPLETED
+                        ),
+                    )
+                while terminal is None:
                     retry = False
                     output_seen = False
-                    async for event in self._stream:
-                        event_type_value = OpenAIClient._response_field(
-                            event, "type"
-                        )
-                        provider_event_type = (
-                            event_type_value
-                            if isinstance(event_type_value, str)
-                            else None
-                        )
+                    self._raise_if_provider_interrupted()
+                    assert self._stream is not None
+                    provider_iterator = self._stream.__aiter__()
+                    while True:
+                        try:
+                            self._raise_if_provider_interrupted()
+                            assert provider_iterator is not None
+                            event = await self._pull_provider_event(
+                                provider_iterator
+                            )
+                        except StopAsyncIteration:
+                            break
+                        self._raise_if_provider_interrupted()
+                        provider_event_type: str | None = None
                         try:
                             provider_events = self._provider_events_from_event(
                                 event
                             )
+                            provider_event_type = next(
+                                (
+                                    provider_event.provider_event_type
+                                    for provider_event in provider_events
+                                    if provider_event.provider_event_type
+                                    is not None
+                                ),
+                                self._best_effort_event_type(event),
+                            )
+                        except _OpenAIReasoningSummaryEventError as exc:
+                            raise self._reasoning_summary_adapter_error(
+                                exc
+                            ) from None
+                        except StreamProviderAdapterError:
+                            raise
                         except _ReasoningReplayRetentionError as exc:
                             provider_events = (
                                 StreamProviderEvent(
@@ -824,7 +3102,13 @@ class OpenAIStream(TextGenerationVendorStream):
                                 ),
                             )
                         except Exception as exc:
-                            if self._request_has_replay_items:
+                            provider_event_type = self._best_effort_event_type(
+                                event
+                            )
+                            if (
+                                self._request_has_replay_items
+                                or self._private_output_seen
+                            ):
                                 provider_events = (
                                     self._private_replay_provider_failure_event(),
                                 )
@@ -836,14 +3120,22 @@ class OpenAIStream(TextGenerationVendorStream):
                                     ),
                                     provider_event_type=provider_event_type,
                                 ) from exc
-                        if self._request_has_replay_items:
+                        self._raise_if_provider_interrupted()
+                        if (
+                            self._request_has_replay_items
+                            or self._private_output_seen
+                        ):
                             self._usage = self._private_replay_usage(
                                 self._usage
                             )
-                            sanitized_events: list[StreamProviderEvent] = []
+                            sanitized_events = []
                             for provider_event in provider_events:
                                 sanitized_event = (
                                     self._sanitize_private_replay_event(
+                                        provider_event
+                                    )
+                                    if self._request_has_replay_items
+                                    else self._sanitize_private_output_event(
                                         provider_event
                                     )
                                 )
@@ -864,47 +3156,76 @@ class OpenAIStream(TextGenerationVendorStream):
                             retry = True
                             break
                         for provider_event in provider_events:
+                            self._raise_if_provider_interrupted()
                             if self._is_model_output_event(provider_event):
                                 output_seen = True
-                            try:
-                                if (
-                                    provider_event.kind
-                                    is StreamItemKind.STREAM_COMPLETED
-                                ):
-                                    self._finish_replay_owner(succeeded=True)
-                                elif provider_event.kind in {
-                                    StreamItemKind.STREAM_CANCELLED,
-                                    StreamItemKind.STREAM_ERRORED,
-                                }:
-                                    self._finish_replay_owner(succeeded=False)
-                            except (
-                                _OpenAIClientClosedError,
-                                _ReasoningReplayRetentionError,
-                                _ReplayOwnerAssociationError,
-                            ) as exc:
-                                yield self._replay_error_event(
-                                    exc,
-                                    provider_event_type,
+                            if provider_event.kind in {
+                                StreamItemKind.STREAM_CANCELLED,
+                                StreamItemKind.STREAM_COMPLETED,
+                                StreamItemKind.STREAM_ERRORED,
+                            }:
+                                terminal = _OpenAIProviderTerminal(
+                                    event=provider_event,
+                                    succeeded=(
+                                        provider_event.kind
+                                        is StreamItemKind.STREAM_COMPLETED
+                                    ),
                                 )
-                                return
+                                break
                             yield provider_event
                             if (
                                 provider_event.kind
                                 is not StreamItemKind.REASONING_DELTA
                             ):
                                 self._reasoning_segments.complete_segment()
-                    if not retry:
-                        try:
-                            self._finish_replay_owner(succeeded=True)
-                        except (
-                            _OpenAIClientClosedError,
-                            _ReasoningReplayRetentionError,
-                            _ReplayOwnerAssociationError,
-                        ) as exc:
-                            yield self._replay_error_event(exc, None)
+                        if terminal is not None:
+                            break
+                        event = None
+                        provider_event = None
+                        provider_events = ()
+                    if terminal is not None:
                         break
-                    await self._close_current_stream()
-                    self._rollback_response_attempt_output_items()
+                    if not retry:
+                        self._raise_if_provider_interrupted()
+                        try:
+                            self._reasoning_summary_state.close_source()
+                        except _OpenAIReasoningSummaryEventError as exc:
+                            raise self._reasoning_summary_adapter_error(
+                                exc
+                            ) from None
+                        terminal = _OpenAIProviderTerminal(
+                            event=StreamProviderEvent(
+                                kind=StreamItemKind.STREAM_COMPLETED
+                            ),
+                            succeeded=True,
+                        )
+                        break
+                    retry_terminal = next(
+                        (
+                            candidate
+                            for candidate in reversed(provider_events)
+                            if candidate.kind
+                            in {
+                                StreamItemKind.STREAM_CANCELLED,
+                                StreamItemKind.STREAM_COMPLETED,
+                                StreamItemKind.STREAM_ERRORED,
+                            }
+                        ),
+                        self._stream_cleanup_failure_event(),
+                    )
+                    try:
+                        await self._close_current_stream()
+                        self._rollback_response_attempt_output_items()
+                    except BaseException:
+                        terminal = _OpenAIProviderTerminal(
+                            event=retry_terminal,
+                            succeeded=(
+                                retry_terminal.kind
+                                is StreamItemKind.STREAM_COMPLETED
+                            ),
+                            cleanup_failed=True,
+                        )
+                        break
                     self._reset_response_attempt_state()
                     await self._raise_if_retry_interrupted()
                     assert self._stream_factory is not None
@@ -916,33 +3237,322 @@ class OpenAIStream(TextGenerationVendorStream):
                         ),
                     )
                     if delay > 0:
-                        await sleep(delay)
+                        await self._run_provider_operation(sleep(delay))
                     await self._raise_if_retry_interrupted()
                     attempts += 1
-                    stream = await self._stream_factory()
-                    await self._raise_if_retry_interrupted(stream)
-                    self._stream = stream
+                    replacement_stream = cast(
+                        AsyncIterator[Any],
+                        await self._run_provider_operation(
+                            self._stream_factory()
+                        ),
+                    )
+                    await self._raise_if_retry_interrupted(replacement_stream)
+                    self._stream = replacement_stream
                     self._stream_sources = (self._stream,)
+                    event = None
+                    provider_iterator = None
+                    provider_event = None
+                    provider_events = ()
+                    replacement_stream = None
+            except StreamConsumerClosure:
+                raise
+            except StreamProviderAdapterError as error:
+                terminal = _OpenAIProviderTerminal(
+                    event=self._provider_adapter_error_event(error),
+                    succeeded=False,
+                )
             except Exception as error:
-                if not self._request_has_replay_items:
-                    raise
-                private_provider_failure = True
-                private_cleanup_failure = isinstance(
-                    error,
-                    _OpenAICleanupError,
+                if not (
+                    self._request_has_replay_items or self._private_output_seen
+                ):
+                    terminal = _OpenAIProviderTerminal(
+                        event=self._provider_exception_event(error),
+                        succeeded=False,
+                    )
+                else:
+                    terminal = _OpenAIProviderTerminal(
+                        event=self._private_replay_provider_failure_event(),
+                        succeeded=False,
+                        include_cleanup_diagnostic=True,
+                    )
+        except CancelledError:
+            if self._external_finish_method == "cancel":
+                terminal = _OpenAIProviderTerminal(
+                    event=StreamProviderEvent(
+                        kind=StreamItemKind.STREAM_CANCELLED
+                    ),
+                    succeeded=False,
+                    cleanup_method="cancel",
                 )
-            if private_provider_failure:
-                cleanup_failed = False
-                try:
-                    await self.aclose()
-                except BaseException:
-                    cleanup_failed = True
-                yield self._private_replay_provider_failure_event(
-                    cleanup_failed=(cleanup_failed or private_cleanup_failure)
-                )
-                return
+            else:
+                task = current_task()
+                if task is not None and task.cancelling():
+                    await self._finalize_provider_close()
+                    self._release_provider_consumer(consumer_owner)
+                    raise StreamConsumerCancellation() from None
+                await self._finalize_provider_close()
+                self._release_provider_consumer(consumer_owner)
+                raise
+        except BaseException:
+            await self._finalize_provider_close()
+            self._release_provider_consumer(consumer_owner)
+            raise
+        event = None
+        provider_iterator = None
+        provider_events = ()
+        provider_event = None
+        sanitized_events.clear()
+        sanitized_event = None
+        replacement_stream = None
+        assert terminal is not None
+        try:
+            terminal_event = await self._finalize_provider_terminal(terminal)
+        except StreamConsumerCancellation:
+            self._release_provider_consumer(consumer_owner)
+            raise
+        except StreamConsumerClosure:
+            self._release_provider_consumer(consumer_owner)
+            raise
+        try:
+            if not self._provider_terminal_emitted:
+                self._provider_terminal_emitted = True
+                yield terminal_event
         finally:
-            await self.aclose()
+            self._release_provider_consumer(consumer_owner)
+
+    def _release_provider_consumer(self, owner: object) -> None:
+        assert self._provider_consumer_owner is owner
+        self._provider_consumer_owner = None
+        self._provider_consumer_done.set()
+
+    @staticmethod
+    def _provider_adapter_error_event(
+        error: StreamProviderAdapterError,
+    ) -> StreamProviderEvent:
+        return StreamProviderEvent(
+            kind=StreamItemKind.STREAM_ERRORED,
+            data=(
+                error.safe_data
+                if error.safe_data is not None
+                else {
+                    "error_type": error.error.__class__.__name__,
+                    "message": str(error.error),
+                }
+            ),
+            provider_payload=error.provider_payload,
+            provider_event_type=error.provider_event_type,
+        )
+
+    @staticmethod
+    def _provider_exception_event(error: Exception) -> StreamProviderEvent:
+        return StreamProviderEvent(
+            kind=StreamItemKind.STREAM_ERRORED,
+            data={
+                "error_type": error.__class__.__name__,
+                "message": str(error),
+            },
+        )
+
+    async def _pull_provider_event(
+        self,
+        iterator: AsyncIterator[Any],
+    ) -> object:
+        pull: Task[object] = create_task(self._pull_provider_next(iterator))
+        self._active_provider_task = pull
+        try:
+            return await pull
+        except BaseException:
+            self._raise_if_provider_interrupted()
+            raise
+        finally:
+            if self._active_provider_task is pull:
+                self._active_provider_task = None
+
+    @staticmethod
+    async def _pull_provider_next(iterator: AsyncIterator[Any]) -> object:
+        return await iterator.__anext__()
+
+    async def _run_provider_operation(
+        self,
+        operation: Awaitable[object],
+    ) -> object:
+        async def await_operation() -> object:
+            return await operation
+
+        task = create_task(await_operation())
+        self._active_provider_task = task
+        try:
+            return await task
+        except BaseException:
+            self._raise_if_provider_interrupted()
+            raise
+        finally:
+            if self._active_provider_task is task:
+                self._active_provider_task = None
+
+    async def _finalize_provider_terminal(
+        self,
+        outcome: _OpenAIProviderTerminal,
+    ) -> StreamProviderEvent:
+        async with self._provider_terminal_lock:
+            if self._provider_terminal_prepared:
+                assert self._provider_terminal_event is not None
+                return self._provider_terminal_event
+            cleanup_errors = await self._cleanup_provider_sources_locked(
+                outcome.cleanup_method
+            )
+            task = current_task()
+            consumer_cleanup_cancelled = bool(
+                self._external_finish_method is None
+                and task is not None
+                and task.cancelling()
+            )
+            cleanup_failed = outcome.cleanup_failed or bool(cleanup_errors)
+
+            event = outcome.event
+            succeeded = outcome.succeeded
+            external_finish_method = self._external_finish_method
+            if external_finish_method == "aclose":
+                succeeded = False
+            elif external_finish_method == "cancel":
+                event = StreamProviderEvent(
+                    kind=StreamItemKind.STREAM_CANCELLED
+                )
+                succeeded = False
+            elif consumer_cleanup_cancelled:
+                succeeded = False
+            elif cleanup_failed and succeeded:
+                event = self._stream_cleanup_failure_event()
+                succeeded = False
+            elif cleanup_failed and outcome.include_cleanup_diagnostic:
+                event = self._private_replay_provider_failure_event(
+                    cleanup_failed=True
+                )
+
+            if succeeded:
+                replay_error: (
+                    _OpenAIClientClosedError
+                    | _ReasoningReplayRetentionError
+                    | _ReplayOwnerAssociationError
+                    | None
+                ) = None
+                try:
+                    self._finish_replay_owner(succeeded=True)
+                except (
+                    _OpenAIClientClosedError,
+                    _ReasoningReplayRetentionError,
+                    _ReplayOwnerAssociationError,
+                ) as error:
+                    replay_error = error
+                except BaseException:
+                    replay_error = _ReplayOwnerAssociationError()
+                if replay_error is not None:
+                    event = self._replay_error_event(
+                        replay_error,
+                        event.provider_event_type,
+                    )
+                    succeeded = False
+
+            if succeeded:
+                self._attempt_output_item_count = 0
+            else:
+                cleanup_errors.extend(
+                    self._rollback_and_release_provider_attempt()
+                )
+
+            self._reasoning_summary_state.abort()
+            self._provider_terminal_cleanup_failed = cleanup_failed
+            finish_error = self._cleanup_error_from_errors(cleanup_errors)
+            if finish_error is not None:
+                if self._provider_finish_error is None:
+                    self._provider_finish_error = finish_error
+                else:
+                    self._provider_finish_error = BaseExceptionGroup(
+                        "OpenAI stream cleanup failed",
+                        [self._provider_finish_error, finish_error],
+                    )
+            if (
+                consumer_cleanup_cancelled
+                or external_finish_method == "aclose"
+            ):
+                self._provider_silent_closed = True
+            else:
+                self._provider_terminal_event = event
+                self._provider_terminal_prepared = True
+            self._provider_finish_done.set()
+            if consumer_cleanup_cancelled:
+                raise StreamConsumerCancellation() from None
+            if external_finish_method == "aclose":
+                raise StreamConsumerClosure() from None
+            return event
+
+    async def _finalize_provider_close(self) -> None:
+        async with self._provider_terminal_lock:
+            if (
+                self._provider_terminal_prepared
+                or self._provider_silent_closed
+            ):
+                self._provider_finish_done.set()
+                return
+            cleanup_errors = await self._cleanup_provider_sources_locked(
+                "aclose"
+            )
+            cleanup_errors.extend(
+                self._rollback_and_release_provider_attempt()
+            )
+            self._reasoning_summary_state.abort()
+            finish_error = self._cleanup_error_from_errors(cleanup_errors)
+            if finish_error is not None:
+                if self._provider_finish_error is None:
+                    self._provider_finish_error = finish_error
+                else:
+                    self._provider_finish_error = BaseExceptionGroup(
+                        "OpenAI stream cleanup failed",
+                        [self._provider_finish_error, finish_error],
+                    )
+            self._provider_silent_closed = True
+            self._provider_finish_done.set()
+
+    def _rollback_and_release_provider_attempt(
+        self,
+    ) -> list[BaseException]:
+        errors: list[BaseException] = []
+        try:
+            self._rollback_response_attempt_output_items()
+        except BaseException as error:
+            errors.append(error)
+        try:
+            self._finish_replay_owner(succeeded=False)
+        except BaseException as error:
+            errors.append(error)
+        return errors
+
+    def _cleanup_error_from_errors(
+        self,
+        errors: list[BaseException],
+    ) -> BaseException | None:
+        sanitized = [self._cleanup_boundary_error(error) for error in errors]
+        if len(sanitized) == 1:
+            return sanitized[0]
+        if sanitized:
+            return BaseExceptionGroup(
+                "OpenAI stream cleanup failed",
+                sanitized,
+            )
+        return None
+
+    @staticmethod
+    def _stream_cleanup_failure_event() -> StreamProviderEvent:
+        return StreamProviderEvent(
+            kind=StreamItemKind.STREAM_ERRORED,
+            data={
+                "error": {
+                    "type": "server_error",
+                    "code": _OpenAICleanupError.code,
+                    "message": "OpenAI stream cleanup failed",
+                }
+            },
+        )
 
     def _should_retry_stream_failure(
         self,
@@ -962,7 +3572,10 @@ class OpenAIStream(TextGenerationVendorStream):
             )
         ):
             return False
-        if OpenAIClient._response_field(event, "type") != "response.failed":
+        if not any(
+            provider_event.provider_event_type == "response.failed"
+            for provider_event in provider_events
+        ):
             return False
         response = OpenAIClient._response_field(event, "response")
         response_error = OpenAIClient._response_field(response, "error")
@@ -1039,18 +3652,74 @@ class OpenAIStream(TextGenerationVendorStream):
         self._last_text_delta_alias_event_type = None
         self._attempt_output_item_count = 0
         self._reasoning_segments = StreamReasoningSegmentState()
+        self._reasoning_summary_state = _OpenAIReasoningSummaryState()
+        if (
+            not self._provider_terminal_prepared
+            and self._external_finish_method is None
+        ):
+            self._provider_terminal_event = None
+            self._provider_terminal_emitted = False
+            self._provider_terminal_cleanup_failed = False
+            self._provider_finish_error = None
+            self._provider_finish_done.clear()
+            self._provider_silent_closed = False
         if self._replay_owner is not None and not self._replay_owner.released:
             self._replay_owner.begin_attempt()
+
+    @staticmethod
+    def _reasoning_summary_adapter_error(
+        error: _OpenAIReasoningSummaryEventError,
+    ) -> StreamProviderAdapterError:
+        return StreamProviderAdapterError(
+            error,
+            provider_payload=None,
+            provider_event_type=error.event_type,
+            safe_data=error.safe_data(),
+        )
+
+    def _reasoning_summary_event(
+        self,
+        emission: _OpenAIReasoningSummaryEmission,
+    ) -> StreamProviderEvent:
+        correlation = StreamItemCorrelation(
+            protocol_item_id=emission.item_id,
+            provider_output_index=emission.output_index,
+            provider_summary_index=emission.summary_index,
+        )
+        follows_boundary = (
+            self._reasoning_segments.next_allocation_follows_boundary
+        )
+        ordinal = self._reasoning_segments.allocate(
+            StreamReasoningRepresentation.SUMMARY,
+            correlation,
+        )
+        return StreamProviderEvent(
+            kind=StreamItemKind.REASONING_DELTA,
+            text_delta=emission.text,
+            correlation=correlation,
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=ordinal,
+            metadata=(
+                {REASONING_SEGMENT_BOUNDARY_METADATA_KEY: "completed"}
+                if follows_boundary
+                else {}
+            ),
+            provider_payload=None,
+            provider_event_type=emission.provider_event_type,
+        )
 
     def _rollback_response_attempt_output_items(self) -> None:
         if self._replay_owner is not None and not self._replay_owner.released:
             self._replay_owner.rollback_attempt()
-        if self._attempt_output_item_count <= 0:
+        output_item_count = self._attempt_output_item_count
+        self._attempt_output_item_count = 0
+        if output_item_count <= 0:
             return
         rollback = self._output_item_rollback
         if rollback is None:
             return
-        rollback(self._attempt_output_item_count)
+        rollback(output_item_count)
 
     def _finish_replay_owner(self, *, succeeded: bool) -> None:
         if self._replay_owner_terminal_handled:
@@ -1118,12 +3787,12 @@ class OpenAIStream(TextGenerationVendorStream):
             if event.provider_event_type
             in {
                 *OpenAIStream._ERROR_EVENTS,
-                *OpenAIStream._CANCELLED_EVENTS,
                 *OpenAIStream._INCOMPLETE_EVENTS,
                 *OpenAIStream._TEXT_DELTA_EVENTS,
                 *OpenAIStream._TEXT_DONE_EVENTS,
                 *OpenAIStream._REASONING_DELTA_EVENTS,
                 *OpenAIStream._REASONING_DONE_EVENTS,
+                *OpenAIStream._REASONING_SUMMARY_EVENTS,
                 *OpenAIStream._TOOL_ARGUMENT_DELTA_EVENTS,
                 *OpenAIStream._TOOL_ARGUMENT_DONE_EVENTS,
                 "response.completed",
@@ -1145,6 +3814,43 @@ class OpenAIStream(TextGenerationVendorStream):
             provider_payload=None,
             provider_event_type=safe_event_type,
         )
+
+    @staticmethod
+    def _sanitize_private_output_event(
+        event: StreamProviderEvent,
+    ) -> StreamProviderEvent:
+        sanitized = OpenAIStream._sanitize_private_replay_event(event)
+        event_data = event.data
+        error_data = (
+            event_data.get("error") if type(event_data) is dict else None
+        )
+        error_code = (
+            error_data.get("code") if type(error_data) is dict else None
+        )
+        if (
+            event.kind is StreamItemKind.STREAM_ERRORED
+            and type(error_code) is str
+            and error_code == _ReasoningReplayRetentionError.code
+        ):
+            return replace(
+                sanitized,
+                data={
+                    "error": {
+                        "type": "server_error",
+                        "code": _ReasoningReplayRetentionError.code,
+                        "message": (
+                            "OpenAI reasoning replay state is invalid or "
+                            "exceeds its retention limit."
+                        ),
+                    }
+                },
+            )
+        if (
+            event.kind is StreamItemKind.STREAM_ERRORED
+            and event.provider_event_type in OpenAIStream._INCOMPLETE_EVENTS
+        ):
+            return replace(sanitized, data=event.data)
+        return sanitized
 
     @staticmethod
     def _private_replay_usage(
@@ -1297,43 +4003,99 @@ class OpenAIStream(TextGenerationVendorStream):
         if self._replay_owner_releaser is None:
             owner.release()
             return
-        self._replay_owner_releaser(owner)
+        try:
+            self._replay_owner_releaser(owner)
+        finally:
+            owner.release()
 
     async def _close_current_stream(self) -> None:
-        cleanup_failed = False
-        try:
-            await self._call_stream_source_cleanup(self._stream, "aclose")
-        except BaseException:
-            if not self._request_has_replay_items:
-                raise
-            cleanup_failed = True
-        finally:
-            self._stream_sources = ()
-        if cleanup_failed:
+        async with self._provider_terminal_lock:
+            errors = await self._cleanup_provider_sources_locked("aclose")
+        if errors and (
+            self._request_has_replay_items or self._private_output_seen
+        ):
             raise _OpenAICleanupError("stream") from None
+        self._raise_cleanup_errors(errors)
 
     async def _raise_if_retry_interrupted(
         self,
         stream: AsyncIterator[Any] | None = None,
     ) -> None:
-        if not (self._stream_cancelled or self._stream_closed):
-            return
-        if stream is not None:
-            await self._call_stream_source_cleanup(stream, "aclose")
-        raise CancelledError()
+        try:
+            self._raise_if_provider_interrupted()
+        except BaseException:
+            if stream is not None:
+                try:
+                    await self._call_stream_source_cleanup(stream, "aclose")
+                except BaseException:
+                    cleanup_error: BaseException = _OpenAICleanupError(
+                        "stream"
+                    )
+                    assert self._provider_finish_error is None
+                    self._provider_finish_error = cleanup_error
+            raise
 
-    async def _call_stream_cleanup(self, method_name: str) -> None:
-        assert method_name in ("cancel", "aclose")
-        errors: list[Exception] = []
-        for source in self._cleanup_sources():
-            try:
-                await self._call_stream_source_cleanup(source, method_name)
-            except Exception as exc:
-                errors.append(exc)
-        if len(errors) == 1:
-            raise errors[0]
-        if errors:
-            raise BaseExceptionGroup("vendor stream cleanup failed", errors)
+    def _raise_if_provider_interrupted(self) -> None:
+        if self._external_finish_method == "aclose":
+            raise StreamConsumerClosure()
+        if self._external_finish_method == "cancel":
+            raise CancelledError()
+        task = current_task()
+        if task is None or not task.cancelling():
+            return
+        raise StreamConsumerCancellation()
+
+    @staticmethod
+    def _best_effort_event_type(event: object) -> str | None:
+        try:
+            event_type = OpenAIClient._response_field(event, "type")
+        except Exception:
+            return None
+        return event_type if type(event_type) is str else None
+
+    @staticmethod
+    def _response_event_type(event: object) -> str | None:
+        try:
+            event_type = OpenAIClient._response_field(event, "type")
+        except Exception:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.unknown",
+                field="type",
+                value_shape="unreadable",
+            ) from None
+        if isinstance(event_type, str) and type(event_type) is not str:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.unknown",
+                field="type",
+                value=event_type,
+            ) from None
+        if event_type is None:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.unknown",
+                field="type",
+                value_shape="missing",
+            )
+        if type(event_type) is not str:
+            raise ValueError("response event type must be a string")
+        return event_type
+
+    @staticmethod
+    def _validate_reasoning_summary_provider_payload(
+        event: object,
+        event_type: str,
+    ) -> None:
+        if isinstance(event, Mapping):
+            return
+        try:
+            payload = OpenAIStream._raw_provider_payload(event)
+            if payload is not None:
+                _sanitize_provider_json_payload(payload)
+        except _ReasoningReplayRetentionError:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field="provider_payload",
+                value_shape="unreadable",
+            ) from None
 
     @staticmethod
     async def _call_stream_source_cleanup(
@@ -1363,28 +4125,210 @@ class OpenAIStream(TextGenerationVendorStream):
     def _provider_events_from_event(
         self, event: object
     ) -> tuple[StreamProviderEvent, ...]:
-        event_type_value = OpenAIClient._response_field(event, "type")
-        if event_type_value is not None and not isinstance(
-            event_type_value, str
-        ):
-            raise ValueError("response event type must be a string")
-        event_type = event_type_value
-        provider_payload = self._provider_payload(event)
-        response = OpenAIClient._response_field(event, "response")
-        error = OpenAIClient._response_field(
-            event, "error"
-        ) or OpenAIClient._response_field(response, "error")
-
-        if event_type in self._CANCELLED_EVENTS:
-            return (
-                StreamProviderEvent(
-                    kind=StreamItemKind.STREAM_CANCELLED,
-                    data=self._response_event_data(event),
-                    provider_payload=provider_payload,
-                    provider_event_type=event_type,
-                ),
+        if self._event_may_contain_private_output(event, None):
+            self._private_output_seen = True
+        if not self._provider_event_graph_is_readable(event):
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=self._preclassified_event_type(event),
+                field="provider_payload",
+                value_shape="unreadable",
             )
+        event_type = self._response_event_type(event)
+        assert event_type is not None
+        if event_type in self._REASONING_SUMMARY_EVENTS:
+            self._validate_reasoning_summary_provider_payload(
+                event, event_type
+            )
+        try:
+            provider_events = self._map_provider_events_from_event(
+                event, event_type
+            )
+        except _OpenAIToolCallIdError as error:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field="item.call_id",
+                output_index=OpenAIClient._response_field(
+                    event,
+                    "output_index",
+                ),
+                value_shape=error.value_shape,
+                public_message=_OPENAI_TOOL_CALL_ID_ERROR_MESSAGE,
+            ) from None
+        if not self._private_output_seen:
+            return provider_events
+        return tuple(
+            self._sanitize_private_output_event(provider_event)
+            for provider_event in provider_events
+        )
+
+    @classmethod
+    def _event_may_contain_private_output(
+        cls,
+        event: object,
+        event_type: str | None,
+    ) -> bool:
+        _ = event_type
+        payload: object
+        if type(event) is dict:
+            raw_event_type = event.get("type", _MISSING_PROVIDER_FIELD)
+            if type(raw_event_type) is not str:
+                return True
+            return cls._privacy_graph_may_be_private(event)
+        if type(event) is SimpleNamespace:
+            payload = event.__dict__
+        elif _is_trusted_openai_response_stream_event(event):
+            try:
+                payload = cls._raw_provider_payload(event)
+            except BaseException:
+                return True
+            if type(payload) is not dict:
+                return True
+        else:
+            return True
+        assert type(payload) is dict
+        raw_event_type = payload.get("type", _MISSING_PROVIDER_FIELD)
+        if type(raw_event_type) is not str:
+            return True
+        return cls._privacy_graph_may_be_private(payload)
+
+    @classmethod
+    def _provider_event_graph_is_readable(cls, value: object) -> bool:
+        if not (
+            type(value) in {dict, SimpleNamespace}
+            or _is_trusted_openai_response_stream_event(value)
+        ):
+            return False
+        container_fields = {
+            "content",
+            "item",
+            "output",
+            "part",
+            "response",
+            "summary",
+        }
+        work: list[tuple[object, str | None]] = [(value, None)]
+        seen: set[int] = set()
+        while work:
+            current, parent_field = work.pop()
+            if (
+                isinstance(current, str)
+                or type(current) in {bool, float, int}
+                or current is None
+            ):
+                continue
+            current_id = id(current)
+            if current_id in seen:
+                return False
+            seen.add(current_id)
+            if type(current) is dict:
+                for key, item in current.items():
+                    if type(key) is not str:
+                        return False
+                    work.append((item, key))
+                continue
+            if type(current) is list:
+                work.extend((item, parent_field) for item in current)
+                continue
+            if type(current) is SimpleNamespace:
+                work.append((current.__dict__, parent_field))
+                continue
+            if _is_trusted_openai_response_stream_event(current):
+                continue
+            if isinstance(current, (Mapping, Sequence)):
+                return False
+            if parent_field in container_fields:
+                return False
+        return True
+
+    @staticmethod
+    def _preclassified_event_type(event: object) -> str:
+        if type(event) is dict:
+            event_type = event.get("type")
+            if type(event_type) is str and event_type:
+                return event_type
+        if type(event) is SimpleNamespace:
+            event_type = event.__dict__.get("type")
+            if type(event_type) is str and event_type:
+                return event_type
+        return "response.unknown"
+
+    @classmethod
+    def _privacy_graph_may_be_private(
+        cls,
+        value: object,
+        *,
+        seen: set[int] | None = None,
+    ) -> bool:
+        if type(value) in {bool, float, int, str} or value is None:
+            return False
+        if seen is None:
+            seen = set()
+        value_id = id(value)
+        if value_id in seen:
+            return True
+        seen.add(value_id)
+        if type(value) is list:
+            return any(
+                cls._privacy_graph_may_be_private(item, seen=seen)
+                for item in value
+            )
+        if type(value) is dict:
+            for key, item in value.items():
+                if type(key) is not str:
+                    return True
+                if key in {"encrypted_content", "summary"}:
+                    return True
+                if key == "type":
+                    if type(item) is not str:
+                        return True
+                    if "reasoning" in item:
+                        return True
+                if cls._privacy_graph_may_be_private(item, seen=seen):
+                    return True
+            return False
+        if isinstance(value, (Mapping, Sequence)):
+            return True
+        if type(value) is SimpleNamespace:
+            return cls._privacy_graph_may_be_private(
+                value.__dict__,
+                seen=seen,
+            )
+        if _is_trusted_openai_response_stream_event(value):
+            try:
+                payload = cls._raw_provider_payload(value)
+            except BaseException:
+                return True
+            return cls._privacy_graph_may_be_private(payload, seen=seen)
+        return True
+
+    def _map_provider_events_from_event(
+        self,
+        event: object,
+        event_type: str | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        provider_payload = (
+            None
+            if self._private_output_seen
+            else self._provider_payload(event)
+        )
+        if event_type in self._REASONING_SUMMARY_EVENTS:
+            response = None
+            error = None
+        else:
+            response = OpenAIClient._response_field(event, "response")
+            error = OpenAIClient._response_field(
+                event, "error"
+            ) or OpenAIClient._response_field(response, "error")
+
         if event_type in self._ERROR_EVENTS or error is not None:
+            assert event_type is not None
+            self._reasoning_summary_state.validate_terminal_output(
+                response,
+                event_type,
+            )
+            self._reasoning_summary_state.close_response(
+                event_type, completed=False
+            )
             data = (
                 self._response_failure_data(response)
                 if error is None and event_type == "response.failed"
@@ -1401,10 +4345,32 @@ class OpenAIStream(TextGenerationVendorStream):
         if event_type in self._INCOMPLETE_EVENTS or (
             self._response_is_incomplete(response)
         ):
+            assert event_type is not None
+            self._reasoning_summary_state.validate_terminal_output(
+                response,
+                event_type,
+            )
+            self._reasoning_summary_state.close_response(
+                event_type, completed=False
+            )
             return self._incomplete_events(event, provider_payload, event_type)
         if event_type == "response.completed":
+            self._reasoning_summary_state.validate_terminal_output(
+                response, event_type
+            )
+            self._reasoning_summary_state.close_response(
+                event_type, completed=True
+            )
             return self._completion_events(event, provider_payload, event_type)
         if event_type in self._TEXT_DELTA_EVENTS:
+            self._reasoning_summary_state.validate_semantic_event(
+                event,
+                event_type,
+                allowed_item_types=self._TEXT_OUTPUT_ITEM_TYPES,
+                implied_item_type="output_text",
+                require_open=True,
+                validate_content_index=True,
+            )
             if self._answer_done_seen:
                 return ()
             delta = self._response_string_field(event, "delta", event_type)
@@ -1424,7 +4390,17 @@ class OpenAIStream(TextGenerationVendorStream):
                 ),
             )
         if event_type in self._TEXT_DONE_EVENTS:
+            fingerprint = (
+                self._reasoning_summary_state.validate_semantic_event(
+                    event,
+                    event_type,
+                    allowed_item_types=self._TEXT_OUTPUT_ITEM_TYPES,
+                    implied_item_type="output_text",
+                    validate_content_index=True,
+                )
+            )
             if self._answer_done_seen:
+                self._reasoning_summary_state.mark_channel_closed(fingerprint)
                 return ()
             text = self._response_optional_string_field(
                 event, event_type, "text", "delta"
@@ -1432,6 +4408,7 @@ class OpenAIStream(TextGenerationVendorStream):
             if text and not self._answer_text_seen:
                 self._answer_text_seen = True
                 self._answer_done_seen = True
+                self._reasoning_summary_state.mark_channel_closed(fingerprint)
                 return (
                     StreamProviderEvent(
                         kind=StreamItemKind.ANSWER_DELTA,
@@ -1446,8 +4423,10 @@ class OpenAIStream(TextGenerationVendorStream):
                     ),
                 )
             if not self._answer_text_seen:
+                self._reasoning_summary_state.mark_channel_closed(fingerprint)
                 return ()
             self._answer_done_seen = True
+            self._reasoning_summary_state.mark_channel_closed(fingerprint)
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.ANSWER_DONE,
@@ -1456,7 +4435,23 @@ class OpenAIStream(TextGenerationVendorStream):
                 ),
             )
         if event_type in self._REASONING_DELTA_EVENTS:
+            fingerprint = (
+                self._reasoning_summary_state.validate_semantic_event(
+                    event,
+                    event_type,
+                    allowed_item_types=self._NATIVE_REASONING_ITEM_TYPES,
+                    implied_item_type="reasoning",
+                    require_open=True,
+                )
+            )
+            assert fingerprint is not None
             delta = self._response_string_field(event, "delta", event_type)
+            self._reasoning_summary_state.add_native_reasoning_delta(
+                event,
+                event_type,
+                fingerprint,
+                delta,
+            )
             if not delta:
                 return ()
             representation = StreamReasoningRepresentation.NATIVE_TEXT
@@ -1485,31 +4480,263 @@ class OpenAIStream(TextGenerationVendorStream):
                 ),
             )
         if event_type in self._REASONING_DONE_EVENTS:
+            fingerprint = (
+                self._reasoning_summary_state.validate_semantic_event(
+                    event,
+                    event_type,
+                    allowed_item_types=self._NATIVE_REASONING_ITEM_TYPES,
+                    implied_item_type="reasoning",
+                    require_open=True,
+                )
+            )
+            assert fingerprint is not None
+            if self._reasoning_summary_state.finish_native_reasoning(
+                event,
+                event_type,
+                fingerprint,
+            ):
+                self._reasoning_segments.complete_segment()
+            return ()
+        if event_type == self._REASONING_SUMMARY_PART_ADDED_EVENT:
+            self._reasoning_summary_state.add_part(event, event_type)
+            return ()
+        if event_type == self._REASONING_SUMMARY_TEXT_DELTA_EVENT:
+            emission = self._reasoning_summary_state.add_delta(
+                event, event_type
+            )
+            if emission is None:
+                return ()
+            return (self._reasoning_summary_event(emission),)
+        if event_type == self._REASONING_SUMMARY_TEXT_DONE_EVENT:
+            self._reasoning_summary_state.finish_text(event, event_type)
+            return ()
+        if event_type == self._REASONING_SUMMARY_PART_DONE_EVENT:
+            self._reasoning_summary_state.finish_part(event, event_type)
             self._reasoning_segments.complete_segment()
             return ()
         if event_type == "response.output_item.added":
-            self._record_output_item(event)
+            item_type = self._reasoning_summary_state.output_item_type(
+                event, event_type
+            )
+            if item_type == "reasoning":
+                self._private_output_seen = True
+            item = OpenAIClient._response_field(event, "item")
+            call_id = (
+                self._tool_call_id_from_item(item)
+                if item_type in self._TOOL_CALL_ITEM_TYPES
+                else None
+            )
+            canonical_name = (
+                self._tool_call_name_from_item(item)
+                if item_type in self._TOOL_CALL_ITEM_TYPES
+                else None
+            )
+            item_type, _ = self._reasoning_summary_state.observe_output_item(
+                event,
+                event_type,
+                item_type,
+                call_id=call_id,
+                canonical_name=canonical_name,
+            )
+            self._reasoning_summary_state.add_item(
+                event, event_type, item_type
+            )
+            self._record_output_item(
+                event,
+                call_id=call_id,
+                canonical_name=canonical_name,
+            )
             return ()
         if event_type in self._TOOL_ARGUMENT_DELTA_EVENTS:
+            implied_item_type = (
+                "custom_tool_call"
+                if event_type.startswith("response.custom_")
+                else "function_call"
+            )
+            call_id = self._tool_call_id_from_event(event)
+            assert call_id is not None
+            canonical_name = self._tool_call_name_from_item(event)
+            fingerprint = (
+                self._reasoning_summary_state.validate_semantic_event(
+                    event,
+                    event_type,
+                    allowed_item_types=(
+                        self._CUSTOM_ARGUMENT_ITEM_TYPES
+                        if event_type.startswith("response.custom_")
+                        else self._FUNCTION_ARGUMENT_ITEM_TYPES
+                    ),
+                    implied_item_type=implied_item_type,
+                    call_id=call_id,
+                    canonical_name=canonical_name,
+                    require_open=True,
+                )
+            )
+            assert fingerprint is not None
+            delta = self._response_string_field(event, "delta", event_type)
+            self._reasoning_summary_state.add_tool_argument_delta(
+                fingerprint,
+                delta,
+                event_type=event_type,
+                output_index=OpenAIClient._response_field(
+                    event, "output_index"
+                ),
+            )
+            self._bind_canonical_tool_state(
+                call_id,
+                fingerprint.item_id,
+                canonical_name,
+                event_type=event_type,
+            )
             return self._tool_argument_delta_events(
-                event, provider_payload, event_type
+                event,
+                provider_payload,
+                event_type,
+                call_id=call_id,
+                delta=delta,
             )
         if event_type in self._TOOL_ARGUMENT_DONE_EVENTS:
-            return self._tool_ready_events(event, provider_payload, event_type)
+            implied_item_type = (
+                "custom_tool_call"
+                if event_type.startswith("response.custom_")
+                else "function_call"
+            )
+            call_id = self._tool_call_id_from_event(event)
+            assert call_id is not None
+            canonical_name = self._tool_call_name_from_item(event)
+            fingerprint = (
+                self._reasoning_summary_state.validate_semantic_event(
+                    event,
+                    event_type,
+                    allowed_item_types=(
+                        self._CUSTOM_ARGUMENT_ITEM_TYPES
+                        if event_type.startswith("response.custom_")
+                        else self._FUNCTION_ARGUMENT_ITEM_TYPES
+                    ),
+                    implied_item_type=implied_item_type,
+                    call_id=call_id,
+                    canonical_name=canonical_name,
+                )
+            )
+            assert fingerprint is not None
+            arguments = self._tool_call_arguments_from_item(event)
+            self._reasoning_summary_state.finish_tool_arguments(
+                fingerprint,
+                arguments,
+                event_type=event_type,
+                output_index=OpenAIClient._response_field(
+                    event, "output_index"
+                ),
+                close=True,
+            )
+            self._bind_canonical_tool_state(
+                call_id,
+                fingerprint.item_id,
+                canonical_name,
+                event_type=event_type,
+            )
+            return self._tool_argument_done_events(
+                event,
+                provider_payload,
+                event_type,
+                call_id=call_id,
+                arguments=arguments,
+            )
         if event_type == "response.output_item.done":
-            self._record_done_output_item(event)
+            item_type = self._reasoning_summary_state.output_item_type(
+                event, event_type
+            )
+            if item_type == "reasoning":
+                self._private_output_seen = True
             item = OpenAIClient._response_field(event, "item")
-            if OpenAIClient._response_field(item, "type") == "reasoning":
-                self._reasoning_segments.complete_segment()
+            call_id = (
+                self._tool_call_id_from_item(item)
+                if item_type in self._TOOL_CALL_ITEM_TYPES
+                else None
+            )
+            canonical_name = (
+                self._tool_call_name_from_item(item)
+                if item_type in self._TOOL_CALL_ITEM_TYPES
+                else None
+            )
+            item_type, fingerprint = (
+                self._reasoning_summary_state.observe_output_item(
+                    event,
+                    event_type,
+                    item_type,
+                    call_id=call_id,
+                    canonical_name=canonical_name,
+                )
+            )
+            state = self._reasoning_summary_state
+            completion_is_duplicate = (
+                state.output_item_completion_is_duplicate(
+                    event,
+                    event_type,
+                    fingerprint,
+                )
+            )
+            if completion_is_duplicate:
                 return ()
-            return self._tool_done_events(event, provider_payload, event_type)
+            if item_type == "reasoning":
+                emissions, record_output_item, _ = (
+                    self._reasoning_summary_state.complete_item(
+                        event, event_type
+                    )
+                )
+                provider_events = tuple(
+                    self._reasoning_summary_event(emission)
+                    for emission in emissions
+                )
+                if record_output_item:
+                    self._record_done_output_item(event)
+                self._reasoning_segments.complete_segment()
+                self._reasoning_summary_state.mark_output_item_completed(
+                    event,
+                    event_type,
+                    fingerprint,
+                )
+                return provider_events
+            if item_type in self._TOOL_CALL_ITEM_TYPES:
+                if call_id is not None and fingerprint is not None:
+                    arguments = self._tool_call_arguments_from_item(item)
+                    self._reasoning_summary_state.finish_tool_arguments(
+                        fingerprint,
+                        arguments,
+                        event_type=event_type,
+                        output_index=OpenAIClient._response_field(
+                            event, "output_index"
+                        ),
+                        close=True,
+                        allow_closed=True,
+                    )
+                    self._bind_canonical_tool_state(
+                        call_id,
+                        fingerprint.item_id,
+                        canonical_name,
+                        event_type=event_type,
+                    )
+            provider_events = self._tool_done_events(
+                event,
+                provider_payload,
+                event_type,
+                item_type=item_type,
+                call_id=call_id,
+                canonical_name=canonical_name,
+            )
+            self._record_done_output_item(event)
+            self._reasoning_summary_state.mark_output_item_completed(
+                event,
+                event_type,
+                fingerprint,
+            )
+            return provider_events
         return ()
 
     @staticmethod
     def _reasoning_correlation(event: object) -> StreamItemCorrelation:
         item_id = OpenAIClient._response_field(event, "item_id")
         if item_id is not None and (
-            not isinstance(item_id, str) or not item_id.strip()
+            type(item_id) is not str or not item_id.strip()
         ):
             raise ValueError(
                 "response reasoning item id must be a non-empty string"
@@ -1535,19 +4762,23 @@ class OpenAIStream(TextGenerationVendorStream):
             provider_summary_index=indices.get("provider_summary_index"),
         )
 
-    def _record_done_output_item(self, event: object) -> None:
-        if self._output_item_sink is None and self._replay_owner is None:
-            return
+    def _record_done_output_item(
+        self,
+        event: object,
+    ) -> None:
         item = OpenAIClient._response_field(event, "item")
         payload = self._raw_provider_payload(item)
         if not isinstance(payload, dict):
             return
         payload = self._response_input_item_payload(payload)
-        item_type = payload.get("type")
+        raw_item_type = payload.get("type")
+        item_type = raw_item_type if type(raw_item_type) is str else None
         if item_type == "reasoning":
             if not self._is_replayable_reasoning_item(payload):
                 return
         elif item_type != "function_call":
+            return
+        if self._output_item_sink is None and self._replay_owner is None:
             return
         if self._replay_owner is not None and not self._replay_owner.released:
             if self._replay_owner.admit(payload):
@@ -1561,7 +4792,7 @@ class OpenAIStream(TextGenerationVendorStream):
         payload: Mapping[str, Any],
     ) -> bool:
         encrypted_content = payload.get("encrypted_content")
-        return isinstance(encrypted_content, str) and bool(encrypted_content)
+        return type(encrypted_content) is str and bool(encrypted_content)
 
     @staticmethod
     def _response_input_item_payload(
@@ -1648,13 +4879,21 @@ class OpenAIStream(TextGenerationVendorStream):
         )
         return tuple(result)
 
-    def _record_output_item(self, event: object) -> None:
+    def _record_output_item(
+        self,
+        event: object,
+        *,
+        call_id: str | None = None,
+        canonical_name: str | None = None,
+    ) -> None:
         item = OpenAIClient._response_field(event, "item")
         if not self._is_tool_call_item(item):
             return
-        call_id = self._tool_call_id_from_item(item)
+        if call_id is None:
+            call_id = self._tool_call_id_from_item(item)
         item_id = self._tool_item_id_from_item(item)
-        name = self._tool_call_name_from_item(item)
+        if canonical_name is None:
+            canonical_name = self._tool_call_name_from_item(item)
         if call_id is None:
             return
         self._record_tool_call_item_id(item_id, call_id)
@@ -1662,8 +4901,32 @@ class OpenAIStream(TextGenerationVendorStream):
             call_id,
             {"name": None, "arguments_seen": False},
         )
-        if name is not None:
-            state["name"] = name
+        self._record_tool_call_name(
+            state,
+            canonical_name,
+            event_type="response.output_item.added",
+        )
+        if item_id is not None:
+            state["protocol_item_id"] = item_id
+
+    def _bind_canonical_tool_state(
+        self,
+        call_id: str,
+        item_id: str | None,
+        canonical_name: str | None,
+        *,
+        event_type: str,
+    ) -> None:
+        self._record_tool_call_item_id(item_id, call_id)
+        state = self._canonical_tool_calls.setdefault(
+            call_id,
+            {"name": None, "arguments_seen": False},
+        )
+        self._record_tool_call_name(
+            state,
+            canonical_name,
+            event_type=event_type,
+        )
         if item_id is not None:
             state["protocol_item_id"] = item_id
 
@@ -1672,10 +4935,10 @@ class OpenAIStream(TextGenerationVendorStream):
         event: object,
         provider_payload: LooseJsonValue | None,
         event_type: str,
+        *,
+        call_id: str,
+        delta: str,
     ) -> tuple[StreamProviderEvent, ...]:
-        call_id = self._tool_call_id_from_event(event)
-        assert call_id is not None
-        delta = self._response_string_field(event, "delta", event_type)
         state = self._canonical_tool_calls.setdefault(
             call_id,
             {"name": None, "arguments_seen": False},
@@ -1691,76 +4954,76 @@ class OpenAIStream(TextGenerationVendorStream):
             ),
         )
 
-    def _tool_ready_events(
+    def _tool_argument_done_events(
         self,
         event: object,
         provider_payload: LooseJsonValue | None,
         event_type: str,
+        *,
+        call_id: str,
+        arguments: str | None,
     ) -> tuple[StreamProviderEvent, ...]:
-        call_id = self._tool_call_id_from_event(event)
-        assert call_id is not None
-        return self._mark_tool_ready(call_id, provider_payload, event_type)
+        state = self._canonical_tool_calls.setdefault(
+            call_id,
+            {"name": None, "arguments_seen": False},
+        )
+        result: list[StreamProviderEvent] = []
+        if arguments is not None and not state["arguments_seen"]:
+            state["arguments_seen"] = True
+            result.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    correlation=self._tool_call_correlation(event, call_id),
+                    text_delta=arguments,
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                )
+            )
+        result.extend(
+            self._mark_tool_ready(call_id, provider_payload, event_type)
+        )
+        return tuple(result)
 
     def _tool_done_events(
         self,
         event: object,
         provider_payload: LooseJsonValue | None,
         event_type: str,
+        *,
+        item_type: str | None,
+        call_id: str | None,
+        canonical_name: str | None,
     ) -> tuple[StreamProviderEvent, ...]:
         item = OpenAIClient._response_field(event, "item")
-        if item is not None and not self._is_tool_call_item(item):
+        if item_type in self._TEXT_OUTPUT_ITEM_TYPES:
             return self._message_done_events(
-                item, provider_payload, event_type
+                item,
+                provider_payload,
+                event_type,
+                output_index=OpenAIClient._response_field(
+                    event, "output_index"
+                ),
             )
-        call_id = self._tool_call_id_from_item(item)
+        if item_type not in self._TOOL_CALL_ITEM_TYPES:
+            return ()
         item_id = self._tool_item_id_from_item(item)
-        item_call_id = OpenAIClient._response_field(item, "call_id")
-        if (
-            call_id is not None
-            and item_id is not None
-            and call_id == item_id
-            and item_call_id is None
-        ):
-            call_id = self._tool_call_ids_by_item_id.get(item_id, call_id)
         if call_id is None:
             call_id = self._tool_call_id_from_event(event, required=False)
         if call_id is None:
             return ()
-        if item_id is not None and item_id != call_id:
-            item_state = self._canonical_tool_calls.get(item_id)
-            if item_state is not None and item_state.get("arguments_seen"):
-                call_id = item_id
-            else:
-                self._record_tool_call_item_id(item_id, call_id)
-        else:
-            self._record_tool_call_item_id(item_id, call_id)
-        if call_id not in self._canonical_tool_calls:
-            pending_call_ids = [
-                pending_call_id
-                for pending_call_id, state in (
-                    self._canonical_tool_calls.items()
-                )
-                if state.get("arguments_seen")
-                and pending_call_id not in self._canonical_done_tool_call_ids
-            ]
-            if pending_call_ids:
-                raise StreamValidationError(
-                    "response tool call item id "
-                    f"{call_id} does not match pending tool call item "
-                    f"{pending_call_ids[0]}"
-                )
-        if call_id in self._canonical_done_tool_call_ids:
-            raise ValueError("response tool call already completed")
+        self._record_tool_call_item_id(item_id, call_id)
         state = self._canonical_tool_calls.setdefault(
             call_id,
             {
-                "name": self._tool_call_name_from_item(item),
+                "name": canonical_name,
                 "arguments_seen": False,
             },
         )
-        name = self._tool_call_name_from_item(item)
-        if name is not None:
-            state["name"] = name
+        self._record_tool_call_name(
+            state,
+            canonical_name,
+            event_type=event_type,
+        )
 
         result = list(
             self._tool_argument_from_done_item(
@@ -1786,10 +5049,16 @@ class OpenAIStream(TextGenerationVendorStream):
         item: object,
         provider_payload: LooseJsonValue | None,
         event_type: str,
+        *,
+        output_index: object,
     ) -> tuple[StreamProviderEvent, ...]:
         if self._answer_text_seen or self._answer_done_seen:
             return ()
-        text = self._message_done_text(item)
+        text = self._message_done_text(
+            item,
+            event_type=event_type,
+            output_index=output_index,
+        )
         if not text:
             return ()
 
@@ -1813,40 +5082,115 @@ class OpenAIStream(TextGenerationVendorStream):
             )
         return tuple(result)
 
-    @staticmethod
-    def _completed_response_text(response: object) -> str:
+    @classmethod
+    def _completed_response_text(
+        cls,
+        response: object,
+        *,
+        event_type: str = "response.completed",
+    ) -> str:
         output_text = OpenAIClient._response_field(response, "output_text")
-        if isinstance(output_text, str) and output_text:
-            return output_text
-
-        parts: list[str] = []
         output = OpenAIClient._response_field(response, "output")
-        if isinstance(output, list):
-            for item in output:
-                item_type = OpenAIClient._response_field(item, "type")
-                content = OpenAIClient._response_field(item, "content")
-                has_text_content = isinstance(content, list) or isinstance(
-                    OpenAIClient._response_field(item, "text"), str
+        if output is None:
+            if output_text is None:
+                return ""
+            if type(output_text) is not str:
+                raise _OpenAIReasoningSummaryEventError(
+                    event_type=event_type,
+                    field="response.output_text",
+                    value=output_text,
                 )
-                if item_type in {"message", "output_text"} or (
-                    item_type is None and has_text_content
-                ):
-                    parts.append(OpenAIStream._message_done_text(item))
-        return "".join(parts)
+            return output_text
+        assert type(output) is list
+        parts: list[str] = []
+        validated_message = False
+        for output_index, item in enumerate(output):
+            item_type = OpenAIClient._response_field(item, "type")
+            if type(item_type) is str and item_type in {
+                "message",
+                "output_text",
+            }:
+                validated_message = True
+                parts.append(
+                    cls._message_done_text(
+                        item,
+                        event_type=event_type,
+                        output_index=output_index,
+                    )
+                )
+        if not validated_message:
+            return ""
+        derived_text = "".join(parts)
+        if output_text is None:
+            return derived_text
+        if type(output_text) is not str:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field="response.output_text",
+                value=output_text,
+            )
+        if output_text != derived_text:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field="response.output_text",
+                output_index=0,
+                value_shape="conflict",
+            )
+        return derived_text
 
     @staticmethod
-    def _message_done_text(item: object) -> str:
-        direct_text = OpenAIClient._response_field(item, "text")
-        if isinstance(direct_text, str) and direct_text:
-            return direct_text
-
+    def _message_done_text(
+        item: object,
+        *,
+        event_type: str,
+        output_index: object,
+    ) -> str:
         parts: list[str] = []
         contents = OpenAIClient._response_field(item, "content")
-        if isinstance(contents, list):
+        if type(contents) is list:
             for content in contents:
+                part_type = _OpenAIReasoningSummaryState._field(
+                    content,
+                    "type",
+                    event_type,
+                )
+                if (
+                    part_type is not _MISSING_PROVIDER_FIELD
+                    and part_type is not None
+                    and (
+                        type(part_type) is not str
+                        or part_type != "output_text"
+                    )
+                ):
+                    raise _OpenAIReasoningSummaryEventError(
+                        event_type=event_type,
+                        field="item.content.type",
+                        value=part_type,
+                        output_index=output_index,
+                        value_shape="unexpected_value",
+                    )
                 text = OpenAIClient._response_field(content, "text")
-                if isinstance(text, str):
+                if type(text) is str:
                     parts.append(text)
+                elif text is not None:
+                    raise _OpenAIReasoningSummaryEventError(
+                        event_type=event_type,
+                        field="item.content.text",
+                        value=text,
+                        output_index=output_index,
+                    )
+        if parts:
+            return "".join(parts)
+        direct_text = OpenAIClient._response_field(item, "text")
+        if type(direct_text) is str:
+            return direct_text
+        if direct_text is not None:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=event_type,
+                field="item.text",
+                value=direct_text,
+                output_index=output_index,
+            )
         return "".join(parts)
 
     def _is_tool_call_item(self, item: object) -> bool:
@@ -1855,7 +5199,9 @@ class OpenAIStream(TextGenerationVendorStream):
         if OpenAIClient._response_field(item, "custom_tool_call") is not None:
             return True
         item_type = OpenAIClient._response_field(item, "type")
-        return item_type is None or item_type in self._TOOL_CALL_ITEM_TYPES
+        return item_type is None or (
+            type(item_type) is str and item_type in self._TOOL_CALL_ITEM_TYPES
+        )
 
     def _tool_argument_from_done_item(
         self,
@@ -1914,13 +5260,11 @@ class OpenAIStream(TextGenerationVendorStream):
             value = OpenAIClient._response_field(event, field_name)
             if value is None:
                 continue
-            if isinstance(value, str) and value.strip():
+            if type(value) is str and value.strip():
                 if field_name == "call_id":
                     return value
                 return self._tool_call_ids_by_item_id.get(value, value)
-            raise ValueError(
-                "response tool call id must be a non-empty string"
-            )
+            raise _OpenAIToolCallIdError(value)
         if required:
             raise ValueError("response tool call id is missing")
         return None
@@ -1932,16 +5276,18 @@ class OpenAIStream(TextGenerationVendorStream):
         for value in (
             OpenAIClient._response_field(custom, "id"),
             OpenAIClient._response_field(item, "call_id"),
-            OpenAIClient._response_field(item, "id"),
         ):
             if value is None:
                 continue
-            if isinstance(value, str) and value.strip():
+            if type(value) is str and value.strip():
                 return value
-            raise ValueError(
-                "response tool call id must be a non-empty string"
-            )
-        return None
+            raise _OpenAIToolCallIdError(value)
+        item_id = OpenAIClient._response_field(item, "id")
+        if item_id is None:
+            return None
+        if type(item_id) is str and item_id.strip():
+            return self._tool_call_ids_by_item_id.get(item_id, item_id)
+        raise _OpenAIToolCallIdError(item_id)
 
     @staticmethod
     def _tool_item_id_from_item(item: object) -> str | None:
@@ -1951,9 +5297,8 @@ class OpenAIStream(TextGenerationVendorStream):
             value = OpenAIClient._response_field(item, field_name)
             if value is None:
                 continue
-            if isinstance(value, str) and value.strip():
-                return value
-            raise ValueError("response tool call item id must be a string")
+            assert type(value) is str and value.strip()
+            return value
         return None
 
     def _record_tool_call_item_id(
@@ -1961,18 +5306,31 @@ class OpenAIStream(TextGenerationVendorStream):
         item_id: str | None,
         call_id: str,
     ) -> None:
-        assert isinstance(call_id, str)
+        assert type(call_id) is str
         assert call_id.strip()
         if item_id is None:
             return
         self._tool_call_ids_by_item_id[item_id] = call_id
+
+    @staticmethod
+    def _record_tool_call_name(
+        state: dict[str, str | bool | None],
+        name: str | None,
+        *,
+        event_type: str,
+    ) -> None:
+        if name is None:
+            return
+        current = state.get("name")
+        assert current is None or current == name, event_type
+        state["name"] = name
 
     def _tool_call_correlation(
         self,
         source: object,
         call_id: str,
     ) -> StreamItemCorrelation:
-        assert isinstance(call_id, str)
+        assert type(call_id) is str
         assert call_id.strip()
         item_id = self._tool_item_id_from_item(source)
         return StreamItemCorrelation(
@@ -1987,14 +5345,14 @@ class OpenAIStream(TextGenerationVendorStream):
         call_id: str,
         state: dict[str, str | bool | None],
     ) -> StreamItemCorrelation:
-        assert isinstance(call_id, str)
+        assert type(call_id) is str
         assert call_id.strip()
         item_id = state.get("protocol_item_id")
         return StreamItemCorrelation(
             tool_call_id=call_id,
             protocol_item_id=(
                 item_id
-                if isinstance(item_id, str) and item_id != call_id
+                if type(item_id) is str and item_id != call_id
                 else None
             ),
         )
@@ -2010,7 +5368,7 @@ class OpenAIStream(TextGenerationVendorStream):
         ):
             if value is None:
                 continue
-            if isinstance(value, str):
+            if type(value) is str:
                 try:
                     return TextGenerationVendor.canonical_tool_name(
                         value,
@@ -2028,11 +5386,12 @@ class OpenAIStream(TextGenerationVendorStream):
         custom = OpenAIClient._response_field(item, "custom_tool_call")
         for value in (
             OpenAIClient._response_field(item, "arguments"),
+            OpenAIClient._response_field(item, "input"),
             OpenAIClient._response_field(custom, "input"),
         ):
             if value is None:
                 continue
-            if isinstance(value, str):
+            if type(value) is str:
                 return value
             if isinstance(value, Mapping):
                 return to_json(value)
@@ -2044,7 +5403,7 @@ class OpenAIStream(TextGenerationVendorStream):
         event: object, field_name: str, event_type: str
     ) -> str:
         value = OpenAIClient._response_field(event, field_name)
-        if isinstance(value, str):
+        if type(value) is str:
             return value
         raise ValueError(f"{event_type} {field_name} must be a string")
 
@@ -2058,17 +5417,10 @@ class OpenAIStream(TextGenerationVendorStream):
             value = OpenAIClient._response_field(event, field_name)
             if value is None:
                 continue
-            if isinstance(value, str):
+            if type(value) is str:
                 return value
             raise ValueError(f"{event_type} {field_name} must be a string")
         return None
-
-    @staticmethod
-    def _response_event_data(event: object) -> LooseJsonValue:
-        reason = OpenAIClient._response_field(event, "reason")
-        if isinstance(reason, str):
-            return {"reason": reason}
-        return {}
 
     @staticmethod
     def _response_error_data(error: object) -> LooseJsonValue:
@@ -2076,7 +5428,7 @@ class OpenAIStream(TextGenerationVendorStream):
         if isinstance(payload, dict):
             return {"error": payload}
         message = OpenAIClient._response_field(error, "message")
-        if isinstance(message, str):
+        if type(message) is str:
             return {"error": {"message": message}}
         return {"error": {"message": "provider error"}}
 
@@ -2087,22 +5439,22 @@ class OpenAIStream(TextGenerationVendorStream):
             "code": "response_failed",
             "message": (
                 message
-                if isinstance(message, str) and message
+                if type(message) is str and message
                 else "response failed"
             ),
         }
         status = OpenAIClient._response_field(response, "status")
-        if isinstance(status, str) and status:
+        if type(status) is str and status:
             error["status"] = status
         response_id = OpenAIClient._response_field(response, "id")
-        if isinstance(response_id, str) and response_id:
+        if type(response_id) is str and response_id:
             error["response_id"] = response_id
         return {"error": error}
 
     @staticmethod
     def _response_is_incomplete(response: object) -> bool:
         status = OpenAIClient._response_field(response, "status")
-        return status == "incomplete" or (
+        return (type(status) is str and status == "incomplete") or (
             OpenAIClient._response_field(response, "incomplete_details")
             is not None
         )
@@ -2116,16 +5468,39 @@ class OpenAIStream(TextGenerationVendorStream):
             "code": "response_incomplete",
             "message": message,
         }
-        if isinstance(reason, str) and reason:
+        if type(reason) is str and reason in OpenAIStream._INCOMPLETE_REASONS:
             error["reason"] = reason
             error["message"] = f"{message}: {reason}"
         status = OpenAIClient._response_field(response, "status")
-        if isinstance(status, str) and status:
+        if type(status) is str and status == "incomplete":
             error["status"] = status
         response_id = OpenAIClient._response_field(response, "id")
-        if isinstance(response_id, str) and response_id:
+        if not isinstance(
+            response, Mapping
+        ) and OpenAIStream._is_safe_response_id(response_id):
+            assert type(response_id) is str
             error["response_id"] = response_id
         return {"error": error}
+
+    @staticmethod
+    def _is_safe_response_id(value: object) -> bool:
+        if type(value) is not str or not value.startswith(
+            (
+                "resp_",
+                "resp-",
+            )
+        ):
+            return False
+        suffix = value[5:]
+        return (
+            bool(suffix)
+            and len(suffix) <= 128
+            and all(
+                character.isascii()
+                and (character.isalnum() or character in {"_", "-"})
+                for character in suffix
+            )
+        )
 
     @staticmethod
     def _provider_payload(event: object) -> LooseJsonValue | None:
@@ -2144,7 +5519,10 @@ class OpenAIStream(TextGenerationVendorStream):
                 return dict(event)
             except Exception:
                 raise _ReasoningReplayRetentionError() from None
-        model_dump = getattr(event, "model_dump", None)
+        try:
+            model_dump = getattr(event, "model_dump", None)
+        except Exception:
+            raise _ReasoningReplayRetentionError() from None
         if callable(model_dump):
             try:
                 payload = model_dump(mode="json")
@@ -2512,20 +5890,21 @@ class OpenAIClient(TextGenerationVendor):
         self._replay_owner_registry().clear()
         self._ambiguous_replay_ids().clear()
         self._replay_association_poisoned = False
-        close = getattr(self._client, "close", None)
-        if close is None:
-            close = getattr(self._client, "aclose", None)
-        if close is not None:
-            assert callable(close)
-            try:
+        close: object | None = None
+        try:
+            close = getattr(self._client, "close", None)
+            if close is None:
+                close = getattr(self._client, "aclose", None)
+            if close is not None:
+                assert callable(close)
                 result = close()
                 if isawaitable(result):
                     awaited_result = await cast(Awaitable[object], result)
                     assert awaited_result is None
                 else:
                     assert result is None
-            except BaseException:
-                errors.append(_OpenAICleanupError("client"))
+        except BaseException:
+            errors.append(_OpenAICleanupError("client"))
         if len(errors) == 1:
             raise errors[0] from None
         if errors:
@@ -2848,7 +6227,7 @@ class OpenAIClient(TextGenerationVendor):
         self._deactivate_replay_owner(owner)
         self._dissociate_replay_owner(owner)
         for call_id in call_ids:
-            assert isinstance(call_id, str) and call_id
+            assert type(call_id) is str and call_id
             registry[call_id] = owner
 
     def _discard_replay_owner(self, owner: _OpenAIReplayOwner) -> None:
@@ -2961,7 +6340,7 @@ class OpenAIClient(TextGenerationVendor):
             call_id: str | None = None
             if len(synthetic) == 2:
                 synthetic_call_id = synthetic[0].get("call_id")
-                if isinstance(synthetic_call_id, str) and synthetic_call_id:
+                if type(synthetic_call_id) is str and synthetic_call_id:
                     call_id = synthetic_call_id
                     outputs_by_call_id[call_id] = synthetic[1]
             synthetic_records.append((call_id, synthetic))
@@ -2972,7 +6351,8 @@ class OpenAIClient(TextGenerationVendor):
         messages: list[dict[str, Any]] = []
         matched_call_ids: set[str] = set()
         for response_item in replay_items:
-            item_type = response_item.get("type")
+            raw_item_type = response_item.get("type")
+            item_type = raw_item_type if type(raw_item_type) is str else None
             if item_type == "reasoning":
                 if OpenAIStream._is_replayable_reasoning_item(response_item):
                     copied = _strict_replay_json_copy(response_item)
@@ -2982,7 +6362,7 @@ class OpenAIClient(TextGenerationVendor):
             if item_type != "function_call":
                 continue
             call_id = response_item.get("call_id")
-            if not isinstance(call_id, str):
+            if type(call_id) is not str:
                 continue
             result_message = outputs_by_call_id.get(call_id)
             if result_message is not None:
@@ -3397,20 +6777,21 @@ class OpenAIClient(TextGenerationVendor):
     ) -> str:
         parts: list[str] = []
         output = OpenAIClient._response_field(response, "output")
-        if not isinstance(output, list):
+        if type(output) is not list:
             return "".join(parts)
 
         for item in output:
-            item_type = OpenAIClient._response_field(item, "type")
+            raw_item_type = OpenAIClient._response_field(item, "type")
+            item_type = raw_item_type if type(raw_item_type) is str else None
             contents = OpenAIClient._response_field(item, "content")
-            if not isinstance(contents, list):
+            if type(contents) is not list:
                 contents = []
 
             if item_type in {None, "message", "output_text"}:
                 for content in contents:
                     text = OpenAIClient._response_field(content, "text")
-                    if isinstance(text, str):
-                        parts.append(text)
+                if type(text) is str:
+                    parts.append(text)
                 continue
 
             if item_type in {"tool_call", "function_call"}:

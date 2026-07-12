@@ -1,7 +1,7 @@
 import importlib
 import sys
 import types
-from asyncio import CancelledError, Event, create_task, wait_for
+from asyncio import CancelledError, Event, create_task, sleep, wait_for
 from collections.abc import AsyncIterable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -47,10 +47,12 @@ from avalan.model.stream import (
     StreamChannel,
     StreamItemKind,
     StreamReasoningRepresentation,
+    StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamVisibility,
     accumulate_canonical_stream_items,
 )
+from avalan.model.vendor import TextGenerationVendorStream
 from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
@@ -79,6 +81,77 @@ async def _stream_items(
     stream: AsyncIterable[CanonicalStreamItem],
 ) -> list[CanonicalStreamItem]:
     return [item async for item in stream]
+
+
+def _summary_stream_events(
+    *parts: str,
+    item_id: str = "rs_async",
+) -> list[object]:
+    events: list[object] = [
+        {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "id": item_id,
+                "type": "reasoning",
+                "status": "in_progress",
+                "summary": [],
+            },
+        }
+    ]
+    for summary_index, text in enumerate(parts):
+        events.extend(
+            (
+                {
+                    "type": "response.reasoning_summary_part.added",
+                    "item_id": item_id,
+                    "output_index": 0,
+                    "summary_index": summary_index,
+                    "part": {"type": "summary_text", "text": ""},
+                },
+                {
+                    "type": "response.reasoning_summary_text.delta",
+                    "item_id": item_id,
+                    "output_index": 0,
+                    "summary_index": summary_index,
+                    "delta": text,
+                },
+                {
+                    "type": "response.reasoning_summary_text.done",
+                    "item_id": item_id,
+                    "output_index": 0,
+                    "summary_index": summary_index,
+                    "text": text,
+                },
+                {
+                    "type": "response.reasoning_summary_part.done",
+                    "item_id": item_id,
+                    "output_index": 0,
+                    "summary_index": summary_index,
+                    "part": {"type": "summary_text", "text": text},
+                },
+            )
+        )
+    events.extend(
+        (
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {
+                    "id": item_id,
+                    "type": "reasoning",
+                    "status": "completed",
+                    "summary": [
+                        {"type": "summary_text", "text": text}
+                        for text in parts
+                    ],
+                    "encrypted_content": "cipher",
+                },
+            },
+            {"type": "response.completed", "response": {"usage": {}}},
+        )
+    )
+    return events
 
 
 class TrackedAsyncIter:
@@ -176,6 +249,74 @@ class PendingAsyncIter:
             self.pull_cancelled = True
             raise
         return SimpleNamespace(type="response.output_text.delta", delta="late")
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
+class PrefixPendingAsyncIter:
+    def __init__(self, items: list[object]) -> None:
+        self._iter = iter(items)
+        self.started = Event()
+        self.pull_cancelled = False
+        self.read_count = 0
+        self.close_count = 0
+
+    def __aiter__(self) -> "PrefixPendingAsyncIter":
+        return self
+
+    async def __anext__(self) -> object:
+        self.read_count += 1
+        try:
+            return next(self._iter)
+        except StopIteration:
+            self.started.set()
+            try:
+                await Event().wait()
+            except CancelledError:
+                self.pull_cancelled = True
+                raise
+        raise AssertionError("pending provider pull unexpectedly resumed")
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
+class CancellationSuppressingAsyncIter:
+    def __init__(
+        self,
+        event: object,
+        *,
+        prefix: list[object] | None = None,
+    ) -> None:
+        self._event = event
+        self._prefix = iter(prefix or [])
+        self._event_emitted = False
+        self.started = Event()
+        self.release = Event()
+        self.cancellation_seen = Event()
+        self.cancellation_suppressed = False
+        self.close_count = 0
+
+    def __aiter__(self) -> "CancellationSuppressingAsyncIter":
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            return next(self._prefix)
+        except StopIteration:
+            pass
+        if self._event_emitted:
+            raise StopAsyncIteration
+        self.started.set()
+        try:
+            await self.release.wait()
+        except CancelledError:
+            self.cancellation_suppressed = True
+            self.cancellation_seen.set()
+            await self.release.wait()
+        self._event_emitted = True
+        return self._event
 
     async def aclose(self) -> None:
         self.close_count += 1
@@ -1201,9 +1342,20 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         events = [
             SimpleNamespace(type="response.output_item.added"),
             SimpleNamespace(type="response.content_part.added"),
-            SimpleNamespace(type="response.reasoning_text.delta", delta="r1"),
-            SimpleNamespace(type="response.reasoning_text.delta", delta="r2"),
-            SimpleNamespace(type="response.reasoning_text.done"),
+            SimpleNamespace(
+                type="response.reasoning_text.delta",
+                content_index=0,
+                delta="r1",
+            ),
+            SimpleNamespace(
+                type="response.reasoning_text.delta",
+                content_index=0,
+                delta="r2",
+            ),
+            SimpleNamespace(
+                type="response.reasoning_text.done",
+                content_index=0,
+            ),
             SimpleNamespace(type="response.output_item.done"),
             SimpleNamespace(
                 type="response.output_item.added",
@@ -1911,7 +2063,10 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
         async def retry_stream():
             factory_started.set()
-            await factory_release.wait()
+            try:
+                await factory_release.wait()
+            except CancelledError:
+                return replacement_stream
             return replacement_stream
 
         stream = self.mod.OpenAIStream(
@@ -1972,7 +2127,10 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
         async def retry_stream():
             factory_started.set()
-            await factory_release.wait()
+            try:
+                await factory_release.wait()
+            except CancelledError:
+                return replacement_stream
             return replacement_stream
 
         stream = self.mod.OpenAIStream(
@@ -1992,7 +2150,8 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             await wait_for(factory_started.wait(), 1.0)
             await stream.aclose()
             factory_release.set()
-            item = await wait_for(pull, 1.0)
+            with self.assertRaises(StopAsyncIteration):
+                await wait_for(pull, 1.0)
         finally:
             factory_release.set()
             if not pull.done():
@@ -2000,7 +2159,6 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             await canonical.aclose()
 
         self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
-        self.assertIs(item.kind, StreamItemKind.STREAM_CANCELLED)
         self.assertGreaterEqual(failed_stream.close_count, 1)
         self.assertEqual(replacement_stream.read_count, 0)
         self.assertEqual(replacement_stream.close_count, 1)
@@ -2023,9 +2181,15 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         stream = self.mod.OpenAIStream(source)
 
         await stream.aclose()
+        await self.mod.OpenAIStream._call_stream_source_cleanup(
+            AsyncIter([]), "aclose"
+        )
+        await self.mod.OpenAIStream._call_stream_source_cleanup(
+            source, "aclose"
+        )
 
         self.assertEqual(source.read_count, 0)
-        self.assertEqual(source.close_count, 1)
+        self.assertEqual(source.close_count, 2)
 
     async def test_stream_aclose_propagates_single_cleanup_error(self):
         error = RuntimeError("close failed")
@@ -2068,6 +2232,106 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             context.exception.exceptions,
             (first_error, second_error),
         )
+
+    async def test_provider_reentrant_aclose_defers_until_pull_returns(self):
+        class ReentrantCloseSource:
+            def __init__(self):
+                self.stream = None
+                self.close_count = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                assert self.stream is not None
+                await self.stream.aclose()
+                return {
+                    "type": "response.output_text.delta",
+                    "delta": "must-not-emit",
+                }
+
+            async def aclose(self):
+                self.close_count += 1
+
+        source = ReentrantCloseSource()
+        stream = self.mod.OpenAIStream(source)
+        source.stream = stream
+        canonical = stream.canonical_stream(
+            stream_session_id="reentrant-close",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        with self.assertRaises(StopAsyncIteration):
+            await anext(canonical)
+        await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_aclose_groups_provider_and_wrapper_cleanup_failures(self):
+        class WrapperCleanupFailureStream(self.mod.OpenAIStream):
+            async def _call_stream_cleanup(self, method_name):
+                raise RuntimeError(f"wrapper {method_name} failed")
+
+        source = FailingCloseOnlyAsyncIter(
+            [], RuntimeError("provider close failed")
+        )
+        stream = WrapperCleanupFailureStream(source)
+
+        with self.assertRaises(BaseExceptionGroup) as context:
+            await stream.aclose()
+
+        self.assertEqual(
+            [str(error) for error in context.exception.exceptions],
+            ["provider close failed", "wrapper aclose failed"],
+        )
+
+    async def test_cleanup_getter_cancellation_is_preserved(self):
+        class GetterCancellationSource:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise StopAsyncIteration
+
+            @property
+            def aclose(self):
+                raise CancelledError()
+
+        stream = self.mod.OpenAIStream(GetterCancellationSource())
+
+        with self.assertRaises(CancelledError):
+            await stream.aclose()
+
+    async def test_retry_cleanup_failure_stops_before_factory(self):
+        source = FailingCloseOnlyAsyncIter(
+            [
+                SimpleNamespace(
+                    type="response.failed",
+                    response=SimpleNamespace(
+                        status="failed",
+                        error=None,
+                        output=[],
+                    ),
+                )
+            ],
+            RuntimeError("retry cleanup failed"),
+        )
+        retry_factory = AsyncMock()
+        stream = self.mod.OpenAIStream(
+            source,
+            stream_factory=retry_factory,
+            stream_retries=1,
+        )
+
+        items = await _stream_items(stream)
+
+        self.assertTrue(
+            any(item.kind is StreamItemKind.STREAM_ERRORED for item in items)
+        )
+        retry_factory.assert_not_awaited()
 
     async def test_client_response_failed_retry_settings_override_defaults(
         self,
@@ -2522,21 +2786,23 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 item_id="reasoning-1",
                 output_index=0,
                 summary_index=1,
+                content_index=0,
             ),
-            SimpleNamespace(type="response.reasoning_text.done"),
+            SimpleNamespace(
+                type="response.reasoning_text.done",
+                content_index=0,
+            ),
             SimpleNamespace(
                 type="response.reasoning_text.delta",
                 delta="check ",
                 item_id="reasoning-1",
                 output_index=0,
                 summary_index=1,
+                content_index=1,
             ),
             SimpleNamespace(
-                type="response.output_item.done",
-                item=SimpleNamespace(
-                    id="reasoning-1",
-                    type="reasoning",
-                ),
+                type="response.reasoning_text.done",
+                content_index=1,
             ),
             SimpleNamespace(
                 type="response.reasoning_text.delta",
@@ -2544,6 +2810,14 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 item_id="reasoning-1",
                 output_index=0,
                 summary_index=1,
+                content_index=2,
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    id="reasoning-1",
+                    type="reasoning",
+                ),
             ),
             SimpleNamespace(
                 type="response.output_item.added",
@@ -2704,10 +2978,19 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 delta="nk> stays answer ",
             ),
             SimpleNamespace(
-                type="response.reasoning_text.delta", delta="  plan"
+                type="response.reasoning_text.delta",
+                content_index=0,
+                delta="  plan",
             ),
-            SimpleNamespace(type="response.reasoning_text.delta", delta="\n"),
-            SimpleNamespace(type="response.reasoning_text.done"),
+            SimpleNamespace(
+                type="response.reasoning_text.delta",
+                content_index=0,
+                delta="\n",
+            ),
+            SimpleNamespace(
+                type="response.reasoning_text.done",
+                content_index=0,
+            ),
             SimpleNamespace(
                 type="response.output_text.delta", delta="post </think>"
             ),
@@ -2958,7 +3241,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_canonical_stream_preserves_done_item_provider_payload(self):
+    async def test_canonical_stream_rejects_ambiguous_model_dump_event(self):
         payload = {
             "type": "response.output_item.done",
             "item": {
@@ -2995,22 +3278,25 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(modes, ["json"])
+        self.assertEqual(modes, [])
         self.assertEqual(
             [item.kind for item in items],
             [
                 StreamItemKind.STREAM_STARTED,
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
-                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_ERRORED,
             ],
         )
-        self.assertEqual(items[1].provider_payload, payload)
-        self.assertEqual(items[2].provider_payload, payload)
-        self.assertEqual(items[3].provider_payload, payload)
+        self.assertIsNone(items[1].provider_payload)
+        error_data = items[1].data
+        assert isinstance(error_data, dict)
+        error = error_data["error"]
+        assert isinstance(error, dict)
+        self.assertEqual(error["code"], "invalid_reasoning_summary_event")
+        self.assertEqual(error["field"], "provider_payload")
 
-    async def test_canonical_stream_ignores_non_object_provider_payload(self):
+    async def test_canonical_stream_rejects_non_object_model_dump_payload(
+        self,
+    ):
         class ModelDumpEvent:
             type = "response.output_text.delta"
             delta = "hi"
@@ -3030,8 +3316,14 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(items[1].text_delta, "hi")
+        self.assertIs(items[1].kind, StreamItemKind.STREAM_ERRORED)
         self.assertIsNone(items[1].provider_payload)
+        error_data = items[1].data
+        assert isinstance(error_data, dict)
+        error = error_data["error"]
+        assert isinstance(error, dict)
+        self.assertEqual(error["code"], "invalid_reasoning_summary_event")
+        self.assertEqual(error["field"], "provider_payload")
 
     async def test_canonical_stream_uses_response_call_id_for_function_call(
         self,
@@ -3164,8 +3456,11 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(items[2].metadata["tool_call.close_reason"], "error")
         error_data = items[3].data
         assert isinstance(error_data, dict)
-        self.assertEqual(error_data["error_type"], "StreamValidationError")
-        self.assertIn("call-1", error_data["message"])
+        error = error_data["error"]
+        assert isinstance(error, dict)
+        self.assertEqual(error["code"], "invalid_reasoning_summary_event")
+        self.assertEqual(error["field"], "item.call_id")
+        self.assertEqual(error["value_shape"], "conflict")
 
     async def test_canonical_stream_handles_empty_responses_control_events(
         self,
@@ -3286,67 +3581,35 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(items[2].data, {"name": "pkg.custom"})
 
-    async def test_canonical_stream_maps_responses_errors_and_cancellation(
-        self,
-    ):
-        class OpaqueError:
-            def __str__(self):
-                return "opaque response"
-
+    async def test_canonical_stream_maps_responses_errors(self):
         cases = (
             (
-                [
-                    SimpleNamespace(
-                        type="response.failed", error={"code": "bad"}
-                    )
-                ],
+                [{"type": "response.failed", "error": {"code": "bad"}}],
                 StreamItemKind.STREAM_ERRORED,
                 StreamTerminalOutcome.ERRORED,
                 {"error": {"code": "bad"}},
             ),
             (
                 [
-                    SimpleNamespace(
-                        type="response.cancelled", reason="disconnect"
-                    )
-                ],
-                StreamItemKind.STREAM_CANCELLED,
-                StreamTerminalOutcome.CANCELLED,
-                {"reason": "disconnect"},
-            ),
-            (
-                [SimpleNamespace(type="response.cancelled")],
-                StreamItemKind.STREAM_CANCELLED,
-                StreamTerminalOutcome.CANCELLED,
-                {},
-            ),
-            (
-                [
-                    SimpleNamespace(
-                        type="response.failed",
-                        error=SimpleNamespace(message="bad response"),
-                    )
+                    {
+                        "type": "response.failed",
+                        "error": {"message": "bad response"},
+                    }
                 ],
                 StreamItemKind.STREAM_ERRORED,
                 StreamTerminalOutcome.ERRORED,
                 {"error": {"message": "bad response"}},
             ),
             (
-                [SimpleNamespace(type="response.failed", error=OpaqueError())],
-                StreamItemKind.STREAM_ERRORED,
-                StreamTerminalOutcome.ERRORED,
-                {"error": {"message": "provider error"}},
-            ),
-            (
                 [
-                    SimpleNamespace(
-                        type="response.failed",
-                        response=SimpleNamespace(
-                            id="resp-1",
-                            status="failed",
-                            error=None,
-                        ),
-                    )
+                    {
+                        "type": "response.failed",
+                        "response": {
+                            "id": "resp-1",
+                            "status": "failed",
+                            "error": None,
+                        },
+                    }
                 ],
                 StreamItemKind.STREAM_ERRORED,
                 StreamTerminalOutcome.ERRORED,
@@ -3460,74 +3723,71 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self,
     ):
         cases = (
-            (SimpleNamespace(type=3), "type"),
+            ({"type": 3}, "type"),
             (
-                SimpleNamespace(
-                    type="response.output_text.delta", delta=object()
-                ),
+                {"type": "response.output_text.delta", "delta": object()},
                 "delta",
             ),
             (
-                SimpleNamespace(
-                    type="response.output_text.done", text=object()
-                ),
+                {"type": "response.output_text.done", "text": object()},
                 "text",
             ),
             (
-                SimpleNamespace(
-                    type="response.function_call_arguments.delta",
-                    delta="{}",
-                ),
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "delta": "{}",
+                },
                 "id is missing",
             ),
             (
-                SimpleNamespace(
-                    type="response.function_call_arguments.delta",
-                    item_id="",
-                    delta="{}",
-                ),
-                "id",
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "",
+                    "delta": "{}",
+                },
+                "empty id",
             ),
             (
-                SimpleNamespace(
-                    type="response.output_item.added",
-                    item=SimpleNamespace(
-                        id=object(),
-                        custom_tool_call=SimpleNamespace(id=object()),
-                    ),
-                ),
-                "id",
+                {
+                    "type": "response.output_item.added",
+                    "item": {
+                        "id": object(),
+                        "custom_tool_call": {"id": object()},
+                    },
+                },
+                "nested id",
             ),
             (
-                SimpleNamespace(
-                    type="response.output_item.added",
-                    item=SimpleNamespace(
-                        id=object(),
-                        custom_tool_call=SimpleNamespace(id="call-1"),
-                    ),
-                ),
+                {
+                    "type": "response.output_item.added",
+                    "item": {
+                        "id": object(),
+                        "custom_tool_call": {"id": "call-1"},
+                    },
+                },
                 "item id",
             ),
             (
-                SimpleNamespace(
-                    type="response.output_item.added",
-                    item=SimpleNamespace(
-                        custom_tool_call=SimpleNamespace(
-                            id="call-1", name=object()
-                        )
-                    ),
-                ),
+                {
+                    "type": "response.output_item.added",
+                    "item": {
+                        "custom_tool_call": {
+                            "id": "call-1",
+                            "name": object(),
+                        }
+                    },
+                },
                 "name",
             ),
             (
-                SimpleNamespace(
-                    type="response.output_item.done",
-                    item=SimpleNamespace(
-                        type="function_call",
-                        id="call-1",
-                        arguments=object(),
-                    ),
-                ),
+                {
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "function_call",
+                        "id": "call-1",
+                        "arguments": object(),
+                    },
+                },
                 "arguments",
             ),
         )
@@ -3555,8 +3815,72 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 )
                 error_data = items[1].data
                 assert isinstance(error_data, dict)
-                self.assertEqual(error_data["error_type"], "ValueError")
-                self.assertIn(message, error_data["message"])
+                if message in {"empty id", "nested id"}:
+                    self.assertIsNone(items[1].provider_payload)
+                    self.assertEqual(
+                        error_data,
+                        {
+                            "message": (
+                                "response tool call id must be a "
+                                "non-empty string"
+                            ),
+                            "error": {
+                                "type": "invalid_provider_event",
+                                "code": "invalid_reasoning_summary_event",
+                                "message": (
+                                    "OpenAI reasoning summary event is "
+                                    "invalid."
+                                ),
+                                "event_type": event["type"],
+                                "field": "item.call_id",
+                                "index": {
+                                    "output_index": None,
+                                    "summary_index": None,
+                                },
+                                "value_shape": (
+                                    "empty_string"
+                                    if message == "empty id"
+                                    else "object"
+                                ),
+                            },
+                        },
+                    )
+                elif message in {
+                    "arguments",
+                    "delta",
+                    "name",
+                    "text",
+                    "type",
+                }:
+                    self.assertIsNone(items[1].provider_payload)
+                    self.assertEqual(
+                        error_data,
+                        {
+                            "error": {
+                                "type": "server_error",
+                                "code": "openai_provider_request_failed",
+                                "status": "failed",
+                                "message": "OpenAI provider request failed",
+                            }
+                        },
+                    )
+                elif message == "item id":
+                    error = error_data["error"]
+                    assert isinstance(error, dict)
+                    self.assertEqual(
+                        error["code"], "invalid_reasoning_summary_event"
+                    )
+                    self.assertEqual(error["field"], "item.id")
+                else:
+                    self.assertEqual(error_data["error_type"], "ValueError")
+                    self.assertIn(
+                        (
+                            "id"
+                            if message in {"empty id", "nested id"}
+                            else message
+                        ),
+                        error_data["message"],
+                    )
 
     async def test_canonical_stream_preserves_malformed_response_payload(
         self,
@@ -3607,16 +3931,26 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             [item.kind for item in items],
         )
 
-    async def test_canonical_stream_maps_duplicate_tool_done_to_error(self):
+    async def test_canonical_stream_accepts_exact_duplicate_tool_done(self):
+        item = {
+            "id": "tool-item-1",
+            "type": "function_call",
+            "status": "completed",
+            "call_id": "call-1",
+            "name": "lookup",
+            "arguments": "{}",
+        }
         events = [
-            SimpleNamespace(
-                type="response.output_item.done",
-                item=SimpleNamespace(id="call-1"),
-            ),
-            SimpleNamespace(
-                type="response.output_item.done",
-                item=SimpleNamespace(id="call-1"),
-            ),
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": item,
+            },
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": dict(item),
+            },
         ]
         stream = self.mod.OpenAIStream(AsyncIter(events))
 
@@ -3629,20 +3963,17 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(
-            [item.kind for item in items],
-            [
-                StreamItemKind.STREAM_STARTED,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
-                StreamItemKind.STREAM_ERRORED,
-                StreamItemKind.STREAM_CLOSED,
-            ],
+        self.assertFalse(
+            any(item.kind is StreamItemKind.STREAM_ERRORED for item in items)
         )
-        error_data = items[3].data
-        assert isinstance(error_data, dict)
-        self.assertEqual(error_data["error_type"], "ValueError")
-        self.assertIn("already completed", error_data["message"])
+        self.assertEqual(
+            sum(item.kind is StreamItemKind.TOOL_CALL_READY for item in items),
+            1,
+        )
+        self.assertEqual(
+            sum(item.kind is StreamItemKind.TOOL_CALL_DONE for item in items),
+            1,
+        )
 
     async def test_function_call_events(self):
         events = [
@@ -3734,7 +4065,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 item=SimpleNamespace(
                     type="function_call",
                     id="item-4",
-                    call_id="call-4",
+                    call_id="item-4",
                     name="pkg__search",
                 ),
             ),
@@ -4325,6 +4656,1443 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 base_url="https://api.openai.com/v1",
                 azure_api_version="2025-04-01-preview",
             )
+
+    async def test_summary_consumer_aclose_yields_nothing_and_closes_once(
+        self,
+    ):
+        source = TrackedAsyncIter(_summary_stream_events("visible"))
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="summary-aclose",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        delta = await anext(canonical)
+        guard_frame = canonical.ag_frame
+        assert guard_frame is not None
+        wrapped = guard_frame.f_locals["iterator"]
+        wrapped_frame = wrapped.ag_frame
+        assert wrapped_frame is not None
+        provider = wrapped_frame.f_locals["event_iterator"]
+        self.assertIsNotNone(provider.ag_frame)
+        self.assertIsNotNone(stream._generator.ag_frame)
+        await canonical.aclose()
+        with self.assertRaises(StopAsyncIteration):
+            await anext(canonical)
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.REASONING_DELTA)
+        self.assertEqual(delta.text_delta, "visible")
+        self.assertEqual(source.read_count, 3)
+        self.assertEqual(source.close_count, 1)
+        self.assertIsNone(wrapped.ag_frame)
+        self.assertIsNone(provider.ag_frame)
+        self.assertIsNotNone(stream._generator.ag_frame)
+        await stream.aclose()
+        self.assertIsNone(stream._generator.ag_frame)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_summary_cancel_pending_pull_closes_once_without_late_output(
+        self,
+    ):
+        source = PrefixPendingAsyncIter(_summary_stream_events("visible")[:3])
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="summary-pending",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        delta = await anext(canonical)
+        pull = create_task(anext(canonical))
+        try:
+            await wait_for(source.started.wait(), 1.0)
+            pull.cancel()
+            with self.assertRaises(CancelledError):
+                await wait_for(pull, 1.0)
+        finally:
+            if not pull.done():
+                pull.cancel()
+            await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.REASONING_DELTA)
+        self.assertTrue(source.pull_cancelled)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_stream_aclose_drops_late_summary_after_blocked_pull(self):
+        events = _summary_stream_events("LATE_AFTER_CLOSE")
+        source = CancellationSuppressingAsyncIter(
+            events[2],
+            prefix=events[:2],
+        )
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="summary-close-race",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        pending = create_task(anext(canonical))
+        await wait_for(source.started.wait(), 1.0)
+        close_task = create_task(stream.aclose())
+        try:
+            await wait_for(source.cancellation_seen.wait(), 1.0)
+            source.release.set()
+            await wait_for(close_task, 1.0)
+        finally:
+            source.release.set()
+            if not close_task.done():
+                close_task.cancel()
+
+        with self.assertRaises(StopAsyncIteration):
+            await wait_for(pending, 1.0)
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertTrue(source.cancellation_suppressed)
+        self.assertEqual(source.close_count, 1)
+        self.assertEqual(stream._reasoning_summary_state._items, {})
+        self.assertTrue(stream._reasoning_summary_state._response_closed)
+
+    async def test_stream_aclose_drops_late_tool_after_blocked_pull(self):
+        source = CancellationSuppressingAsyncIter(
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "tool-item",
+                    "type": "function_call",
+                    "call_id": "tool-call",
+                    "name": "danger",
+                    "arguments": '{"unsafe":true}',
+                },
+            }
+        )
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="tool-close-race",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        pending = create_task(anext(canonical))
+        await wait_for(source.started.wait(), 1.0)
+        close_task = create_task(stream.aclose())
+        try:
+            await wait_for(source.cancellation_seen.wait(), 1.0)
+            source.release.set()
+            await wait_for(close_task, 1.0)
+        finally:
+            source.release.set()
+            if not close_task.done():
+                close_task.cancel()
+
+        with self.assertRaises(StopAsyncIteration):
+            await wait_for(pending, 1.0)
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertTrue(source.cancellation_suppressed)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_stream_aclose_drops_buffered_tool_events(self):
+        source = TrackedAsyncIter(
+            [
+                {
+                    "type": "response.output_item.done",
+                    "item": {
+                        "id": "tool-item",
+                        "type": "function_call",
+                        "call_id": "tool-call",
+                        "name": "danger",
+                        "arguments": '{"unsafe":true}',
+                    },
+                }
+            ]
+        )
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="tool-buffer-close",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        argument = await anext(canonical)
+        await stream.aclose()
+
+        with self.assertRaises(StopAsyncIteration):
+            await anext(canonical)
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(
+            argument.kind,
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        )
+        self.assertEqual(source.close_count, 1)
+
+    async def test_stream_aclose_drops_buffered_terminal_frames(self):
+        events = [
+            *_summary_stream_events("visible")[:3],
+            {
+                "type": "response.failed",
+                "response": {
+                    "status": "failed",
+                    "error": None,
+                    "output": [],
+                },
+            },
+        ]
+        source = TrackedAsyncIter(events)
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="terminal-buffer-close",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        delta = await anext(canonical)
+        reasoning_done = await anext(canonical)
+        await stream.aclose()
+
+        with self.assertRaises(StopAsyncIteration):
+            await anext(canonical)
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.REASONING_DELTA)
+        self.assertIs(reasoning_done.kind, StreamItemKind.REASONING_DONE)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_stream_aclose_interrupts_blocked_retry_delay(self):
+        source = TrackedAsyncIter(
+            [
+                {
+                    "type": "response.failed",
+                    "response": {
+                        "status": "failed",
+                        "error": None,
+                        "output": [],
+                    },
+                }
+            ]
+        )
+        delay_started = Event()
+
+        async def blocked_delay(_: float) -> None:
+            delay_started.set()
+            await Event().wait()
+
+        retry_factory = AsyncMock()
+        stream = self.mod.OpenAIStream(
+            source,
+            stream_factory=retry_factory,
+            stream_retries=1,
+            stream_retry_delay_seconds=1,
+        )
+        canonical = stream.canonical_stream(
+            stream_session_id="retry-delay-close",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        with patch.object(self.mod, "sleep", new=blocked_delay):
+            pending = create_task(anext(canonical))
+            await wait_for(delay_started.wait(), 1.0)
+            await stream.aclose()
+            with self.assertRaises(StopAsyncIteration):
+                await wait_for(pending, 1.0)
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        retry_factory.assert_not_awaited()
+        self.assertEqual(source.close_count, 1)
+
+    async def test_stream_cancel_interrupts_pending_pull_with_terminal(self):
+        source = PendingAsyncIter()
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="external-cancel",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        pending = create_task(anext(canonical))
+        await wait_for(source.started.wait(), 1.0)
+        await stream.cancel()
+        terminal = await wait_for(pending, 1.0)
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(terminal.kind, StreamItemKind.STREAM_CANCELLED)
+        self.assertTrue(source.pull_cancelled)
+        await canonical.aclose()
+        self.assertEqual(source.close_count, 1)
+
+    async def test_canonical_guard_drops_item_returned_during_aclose(self):
+        source = TrackedAsyncIter([])
+        stream = self.mod.OpenAIStream(source)
+
+        class CloseBeforeReturn:
+            def __init__(self):
+                self.close_count = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await stream.aclose()
+                return CanonicalStreamItem(
+                    stream_session_id="guard-close",
+                    run_id="run-1",
+                    turn_id="turn-1",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                )
+
+            async def aclose(self):
+                self.close_count += 1
+
+        inner = CloseBeforeReturn()
+        guarded = stream._guard_canonical_stream(inner)
+
+        with self.assertRaises(StopAsyncIteration):
+            await anext(guarded)
+        self.assertEqual(inner.close_count, 1)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_provider_events_reject_concurrent_active_consumer(self):
+        source = TrackedAsyncIter([])
+        stream = self.mod.OpenAIStream(source)
+        blocker = create_task(Event().wait())
+        stream._active_provider_task = blocker
+        events = stream._provider_events()
+        try:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "already has an active consumer",
+            ):
+                await anext(events)
+        finally:
+            blocker.cancel()
+            await stream.aclose()
+
+    async def test_provider_events_owner_rejects_consumer_between_yields(self):
+        source = TrackedAsyncIter(
+            [
+                {"type": "response.output_text.delta", "delta": "A"},
+                {"type": "response.output_text.delta", "delta": "B"},
+            ]
+        )
+        stream = self.mod.OpenAIStream(source)
+        first = stream.canonical_stream(
+            stream_session_id="first-projection",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+        second = stream.canonical_stream(
+            stream_session_id="second-projection",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        first_started = await anext(first)
+        first_event = await anext(first)
+        second_started = await anext(second)
+        rejected = await anext(second)
+
+        self.assertIs(first_started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertEqual(first_event.text_delta, "A")
+        self.assertIs(second_started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(rejected.kind, StreamItemKind.STREAM_ERRORED)
+        self.assertEqual(
+            rejected.data,
+            {
+                "error_type": "_OpenAIConcurrentProviderConsumerError",
+                "message": "OpenAI stream already has an active consumer",
+            },
+        )
+        self.assertTrue(stream._answer_text_seen)
+        self.assertEqual(source.read_count, 1)
+
+        second_event = await anext(first)
+        self.assertEqual(second_event.text_delta, "B")
+        self.assertEqual(source.read_count, 2)
+        await second.aclose()
+        await first.aclose()
+        self.assertEqual(source.close_count, 1)
+
+    async def test_direct_normalizer_preserves_canonical_wrapper_contract(
+        self,
+    ):
+        valid_source = TrackedAsyncIter(
+            [
+                {"type": "response.completed", "response": {}},
+                {"type": "response.output_text.delta", "delta": "late"},
+            ]
+        )
+        valid_stream = self.mod.OpenAIStream(valid_source)
+        valid = await _stream_items(
+            valid_stream.canonical_stream(
+                stream_session_id="valid-session",
+                run_id="valid-run",
+                turn_id="valid-turn",
+                close_after_terminal=False,
+            )
+        )
+
+        error_source = TrackedAsyncIter(
+            [
+                {
+                    "type": "response.failed",
+                    "response": {
+                        "status": "failed",
+                        "error": None,
+                        "output": [],
+                    },
+                },
+                {"type": "response.output_text.delta", "delta": "late"},
+            ]
+        )
+        error_stream = self.mod.OpenAIStream(error_source)
+        errored = await _stream_items(
+            error_stream.canonical_stream(
+                stream_session_id="error-session",
+                run_id="error-run",
+                turn_id="error-turn",
+            )
+        )
+
+        cancel_source = TrackedAsyncIter(
+            [{"type": "response.output_text.delta", "delta": "late"}]
+        )
+        cancel_stream = self.mod.OpenAIStream(cancel_source)
+        cancelled_iterator = cancel_stream.canonical_stream(
+            stream_session_id="cancel-session",
+            run_id="cancel-run",
+            turn_id="cancel-turn",
+        )
+        cancelled_started = await anext(cancelled_iterator)
+        await cancel_stream.cancel()
+        cancelled = [
+            cancelled_started,
+            *[item async for item in cancelled_iterator],
+        ]
+
+        self.assertEqual(
+            [item.kind for item in valid],
+            [StreamItemKind.STREAM_STARTED, StreamItemKind.STREAM_COMPLETED],
+        )
+        self.assertEqual(
+            [item.kind for item in errored],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            [item.kind for item in cancelled],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_CANCELLED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        for items, identity in (
+            (valid, ("valid-session", "valid-run", "valid-turn")),
+            (errored, ("error-session", "error-run", "error-turn")),
+            (cancelled, ("cancel-session", "cancel-run", "cancel-turn")),
+        ):
+            self.assertTrue(
+                all(
+                    (
+                        item.stream_session_id,
+                        item.run_id,
+                        item.turn_id,
+                    )
+                    == identity
+                    for item in items
+                )
+            )
+            self.assertTrue(
+                all(item.provider_family == "openai" for item in items)
+            )
+            self.assertEqual(
+                items[0].metadata["capabilities"]["backend"],
+                "hosted",
+            )
+            self.assertTrue(
+                items[0].metadata["capabilities"]["supports_terminal_events"]
+            )
+
+        self.assertEqual(valid_source.read_count, 1)
+        self.assertEqual(error_source.read_count, 1)
+        self.assertEqual(cancel_source.read_count, 0)
+        self.assertEqual(valid_source.close_count, 1)
+        self.assertEqual(error_source.close_count, 1)
+        self.assertEqual(cancel_source.cancel_count, 1)
+
+    async def test_vendor_wrapper_aggregates_nested_and_owner_close_errors(
+        self,
+    ):
+        class FailingIterator:
+            def __init__(self):
+                self.emitted = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self.emitted:
+                    raise StopAsyncIteration
+                self.emitted = True
+                return "item"
+
+            async def aclose(self):
+                raise RuntimeError("nested close failed")
+
+        owner = TextGenerationVendorStream(AsyncIter([]))
+        owner.aclose = AsyncMock(
+            side_effect=RuntimeError("owner close failed")
+        )
+        wrapped = owner._close_stream_on_exit(FailingIterator())
+
+        self.assertEqual(await anext(wrapped), "item")
+        with self.assertRaises(BaseExceptionGroup) as raised:
+            await wrapped.aclose()
+        self.assertEqual(
+            [str(error) for error in raised.exception.exceptions],
+            ["nested close failed", "owner close failed"],
+        )
+
+        single = owner._close_stream_on_exit(FailingIterator())
+        self.assertEqual(await anext(single), "item")
+        owner.aclose.reset_mock(side_effect=True)
+        with self.assertRaisesRegex(RuntimeError, "nested close failed"):
+            await single.aclose()
+
+    async def test_suppressed_task_cancellation_cannot_emit_tool_events(self):
+        source = CancellationSuppressingAsyncIter(
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "tool-item",
+                    "type": "function_call",
+                    "call_id": "tool-call",
+                    "name": "danger",
+                    "arguments": '{"unsafe":true}',
+                },
+            }
+        )
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="suppressed-source-cancel",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        pending = create_task(anext(canonical))
+        await wait_for(source.started.wait(), 1.0)
+        pending.cancel()
+        source.release.set()
+
+        with self.assertRaises(CancelledError):
+            await wait_for(pending, 1.0)
+        await canonical.aclose()
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertTrue(source.cancellation_suppressed)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_suppressed_retry_factory_cancellation_closes_replacement(
+        self,
+    ):
+        secret = "REPLACEMENT_CLEANUP_PRIVATE_SENTINEL"
+
+        class FailingReplacement:
+            def __init__(self):
+                self.read_count = 0
+                self.aclose_count = 0
+                self.close_count = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self.read_count += 1
+                raise StopAsyncIteration
+
+            async def aclose(self):
+                self.aclose_count += 1
+                raise RuntimeError(secret)
+
+            async def close(self):
+                self.close_count += 1
+
+        for method_name in ("cancel", "aclose"):
+            source = TrackedAsyncIter(
+                [
+                    {
+                        "type": "response.failed",
+                        "response": {
+                            "status": "failed",
+                            "error": None,
+                            "output": [],
+                        },
+                    }
+                ]
+            )
+            replacement = FailingReplacement()
+            factory_started = Event()
+            replay_owner = self.mod._OpenAIReplayOwner(
+                StreamRetentionPolicy()
+            )
+            replay_owner.begin_attempt()
+
+            def release_then_fail(owner):
+                owner.release()
+                raise RuntimeError("replay owner release failed")
+
+            async def suppressing_factory():
+                factory_started.set()
+                try:
+                    await Event().wait()
+                except CancelledError:
+                    return replacement
+                raise AssertionError("retry factory unexpectedly resumed")
+
+            stream = self.mod.OpenAIStream(
+                source,
+                stream_factory=suppressing_factory,
+                stream_retries=1,
+                replay_owner=replay_owner,
+                replay_owner_releaser=release_then_fail,
+            )
+            canonical = stream.canonical_stream(
+                stream_session_id=f"suppressed-factory-{method_name}",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+
+            started = await anext(canonical)
+            pending = create_task(anext(canonical))
+            await wait_for(factory_started.wait(), 1.0)
+            with self.assertRaises(BaseExceptionGroup) as raised:
+                await wait_for(getattr(stream, method_name)(), 1.0)
+
+            if method_name == "cancel":
+                terminal = await wait_for(pending, 1.0)
+                self.assertIs(
+                    terminal.kind,
+                    StreamItemKind.STREAM_CANCELLED,
+                )
+            else:
+                with self.assertRaises(StopAsyncIteration):
+                    await wait_for(pending, 1.0)
+            await canonical.aclose()
+
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            self.assertNotIn(secret, repr(raised.exception))
+            self.assertEqual(source.close_count, 1)
+            self.assertEqual(replacement.read_count, 0)
+            self.assertEqual(replacement.aclose_count, 1)
+            self.assertEqual(replacement.close_count, 0)
+            self.assertTrue(replay_owner.released)
+
+    async def test_summary_cancellation_boundaries_are_deterministic(
+        self,
+    ):
+        two_parts = _summary_stream_events("first", "must-not-be-pulled")
+        between_source = PrefixPendingAsyncIter(two_parts[:5])
+        between_stream = self.mod.OpenAIStream(between_source)
+        between = between_stream.canonical_stream(
+            stream_session_id="summary-between",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+        await anext(between)
+        first = await anext(between)
+        between_pending = create_task(anext(between))
+        await wait_for(between_source.started.wait(), 1.0)
+        await between_stream.aclose()
+        with self.assertRaises(StopAsyncIteration):
+            await wait_for(between_pending, 1.0)
+        await between.aclose()
+
+        self.assertEqual(first.text_delta, "first")
+        self.assertEqual(between_source.read_count, 6)
+        self.assertTrue(between_source.pull_cancelled)
+        self.assertEqual(between_source.close_count, 1)
+
+        complete_prefix = _summary_stream_events("complete")[:-1]
+        complete_source = PrefixPendingAsyncIter(complete_prefix)
+        complete_stream = self.mod.OpenAIStream(complete_source)
+        complete = complete_stream.canonical_stream(
+            stream_session_id="summary-item-complete",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+        await anext(complete)
+        completed_delta = await anext(complete)
+        pending = create_task(anext(complete))
+        try:
+            await wait_for(complete_source.started.wait(), 1.0)
+            pending.cancel()
+            with self.assertRaises(CancelledError):
+                await wait_for(pending, 1.0)
+        finally:
+            if not pending.done():
+                pending.cancel()
+            await complete.aclose()
+
+        self.assertEqual(completed_delta.text_delta, "complete")
+        self.assertTrue(complete_source.pull_cancelled)
+        self.assertEqual(complete_source.close_count, 1)
+
+    async def test_summary_cancellation_during_retry_delay_starts_no_retry(
+        self,
+    ):
+        source = TrackedAsyncIter(
+            [
+                {
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {
+                        "id": "rs_retry_cancel",
+                        "type": "reasoning",
+                        "status": "in_progress",
+                        "summary": [],
+                    },
+                },
+                {
+                    "type": "response.reasoning_summary_part.added",
+                    "item_id": "rs_retry_cancel",
+                    "output_index": 0,
+                    "summary_index": 0,
+                    "part": {"type": "summary_text", "text": ""},
+                },
+                {
+                    "type": "response.failed",
+                    "response": {
+                        "status": "failed",
+                        "error": None,
+                        "output": [],
+                    },
+                },
+            ]
+        )
+        delay_started = Event()
+
+        async def blocked_delay(_: float) -> None:
+            delay_started.set()
+            await Event().wait()
+
+        retry_factory = AsyncMock(
+            return_value=TrackedAsyncIter(_summary_stream_events("late"))
+        )
+        stream = self.mod.OpenAIStream(
+            source,
+            stream_factory=retry_factory,
+            stream_retries=1,
+            stream_retry_delay_seconds=1,
+        )
+        canonical = stream.canonical_stream(
+            stream_session_id="summary-retry-cancel",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        with patch.object(self.mod, "sleep", new=blocked_delay):
+            pull = create_task(anext(canonical))
+            try:
+                await wait_for(delay_started.wait(), 1.0)
+                pull.cancel()
+                try:
+                    await wait_for(pull, 1.0)
+                except CancelledError:
+                    pass
+            finally:
+                if not pull.done():
+                    pull.cancel()
+                await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        retry_factory.assert_not_awaited()
+        self.assertGreaterEqual(source.close_count, 1)
+
+    async def test_summary_stream_is_pull_driven_without_read_ahead(self):
+        source = TrackedAsyncIter(_summary_stream_events("first", "second"))
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="summary-backpressure",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        reads_after_start = source.read_count
+        first = await anext(canonical)
+        reads_after_first = source.read_count
+        second = await anext(canonical)
+        reads_after_second = source.read_count
+        await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertEqual(reads_after_start, 0)
+        self.assertEqual(first.text_delta, "first")
+        self.assertEqual(reads_after_first, 3)
+        self.assertEqual(second.text_delta, "second")
+        self.assertEqual(reads_after_second, 7)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_real_async_generator_close_awaits_suppressed_pull_unwind(
+        self,
+    ):
+        started = Event()
+        cancellation_seen = Event()
+        release = Event()
+        finalized = Event()
+
+        async def provider():
+            try:
+                started.set()
+                try:
+                    await release.wait()
+                except CancelledError:
+                    cancellation_seen.set()
+                    await release.wait()
+                yield {
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": {
+                        "id": "late-private",
+                        "type": "reasoning",
+                        "status": "completed",
+                        "summary": [
+                            {"type": "summary_text", "text": "late-private"}
+                        ],
+                        "encrypted_content": "late-private",
+                    },
+                }
+            finally:
+                finalized.set()
+
+        source = provider()
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="real-generator-close",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+        first = await anext(canonical)
+        pending = create_task(anext(canonical))
+        close_task = None
+        try:
+            await wait_for(started.wait(), 1.0)
+            close_task = create_task(stream.aclose())
+            await wait_for(cancellation_seen.wait(), 1.0)
+            release.set()
+            await wait_for(close_task, 1.0)
+            with self.assertRaises(StopAsyncIteration):
+                await wait_for(pending, 1.0)
+        finally:
+            release.set()
+            if close_task is not None and not close_task.done():
+                close_task.cancel()
+            if not pending.done():
+                pending.cancel()
+            await canonical.aclose()
+
+        self.assertIs(first.kind, StreamItemKind.STREAM_STARTED)
+        self.assertTrue(finalized.is_set())
+        self.assertIsNone(source.ag_frame)
+        self.assertIsNone(canonical.ag_frame)
+
+    async def test_stream_aclose_between_pulls_does_not_cancel_consumer(self):
+        finalized = Event()
+        unrelated_release = Event()
+
+        async def provider():
+            try:
+                yield {
+                    "type": "response.reasoning_text.delta",
+                    "delta": "private-reasoning",
+                }
+                await Event().wait()
+            finally:
+                finalized.set()
+
+        source = provider()
+        stream = self.mod.OpenAIStream(source)
+        iterator = stream.__aiter__()
+        unrelated = create_task(unrelated_release.wait())
+        reached_after_close = False
+        try:
+            started = await anext(iterator)
+            delta = await anext(iterator)
+            await wait_for(stream.aclose(), 1.0)
+            reached_after_close = True
+            self.assertFalse(unrelated.done())
+            with self.assertRaises(StopAsyncIteration):
+                await anext(iterator)
+        finally:
+            unrelated_release.set()
+            await unrelated
+
+        self.assertTrue(reached_after_close)
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.REASONING_DELTA)
+        self.assertTrue(finalized.is_set())
+        self.assertIsNone(source.ag_frame)
+        self.assertIsNone(iterator.ag_frame)
+        self.assertIsNone(stream._generator.ag_frame)
+        self.assertIsNone(stream._stream)
+        self.assertEqual(stream._stream_sources, ())
+
+    async def test_real_async_generator_cancel_emits_one_cancelled_terminal(
+        self,
+    ):
+        unwind_secret = "CANCEL_UNWIND_PRIVATE_SENTINEL"
+        started = Event()
+        finalized = Event()
+
+        async def provider():
+            try:
+                started.set()
+                await Event().wait()
+                yield {"type": "response.output_text.delta", "delta": "late"}
+            except CancelledError:
+                raise RuntimeError(unwind_secret) from None
+            finally:
+                finalized.set()
+
+        source = provider()
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="real-generator-cancel",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+        first = await anext(canonical)
+        pending = create_task(anext(canonical))
+        try:
+            await wait_for(started.wait(), 1.0)
+            await stream.cancel()
+            terminal = await wait_for(pending, 1.0)
+            remaining = [item async for item in canonical]
+        finally:
+            if not pending.done():
+                pending.cancel()
+            await canonical.aclose()
+
+        emitted = [terminal, *remaining]
+        self.assertIs(first.kind, StreamItemKind.STREAM_STARTED)
+        self.assertEqual(
+            sum(
+                item.kind is StreamItemKind.STREAM_CANCELLED
+                for item in emitted
+            ),
+            1,
+        )
+        self.assertFalse(
+            any(
+                item.kind
+                in {
+                    StreamItemKind.STREAM_COMPLETED,
+                    StreamItemKind.STREAM_ERRORED,
+                }
+                for item in emitted
+            )
+        )
+        self.assertTrue(finalized.is_set())
+        self.assertIsNone(source.ag_frame)
+        self.assertIsNone(canonical.ag_frame)
+        self.assertNotIn(
+            unwind_secret,
+            repr([item.to_trace_dict() for item in emitted]),
+        )
+
+    async def test_cancel_between_pulls_never_reenters_closed_provider(self):
+        class BlockingAfterClose:
+            def __init__(self):
+                self.read_count = 0
+                self.close_count = 0
+                self.closed = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self.read_count += 1
+                if self.closed:
+                    await Event().wait()
+                return {
+                    "type": "response.output_text.delta",
+                    "delta": "answer",
+                }
+
+            async def aclose(self):
+                self.close_count += 1
+                self.closed = True
+
+        source = BlockingAfterClose()
+        stream = self.mod.OpenAIStream(source)
+        iterator = stream.__aiter__()
+
+        started = await anext(iterator)
+        reads_before_cancel = source.read_count
+        await stream.cancel()
+        await stream.cancel()
+        terminal = await wait_for(anext(iterator), 1.0)
+        closed = await wait_for(anext(iterator), 1.0)
+        with self.assertRaises(StopAsyncIteration):
+            await wait_for(anext(iterator), 1.0)
+        await stream.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(terminal.kind, StreamItemKind.STREAM_CANCELLED)
+        self.assertIs(closed.kind, StreamItemKind.STREAM_CLOSED)
+        self.assertEqual(source.read_count, reads_before_cancel)
+        self.assertEqual(source.close_count, 1)
+        self.assertIsNone(stream._stream)
+        self.assertEqual(stream._stream_sources, ())
+
+    async def test_external_finish_waits_for_suppressed_pull_unwind(self):
+        for method_name in ("cancel", "aclose"):
+            source = CancellationSuppressingAsyncIter(
+                {
+                    "type": "response.output_text.delta",
+                    "delta": "late",
+                }
+            )
+            stream = self.mod.OpenAIStream(source)
+            canonical = stream.canonical_stream(
+                stream_session_id=f"wait-{method_name}",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+            started = await anext(canonical)
+            pending = create_task(anext(canonical))
+            await wait_for(source.started.wait(), 1.0)
+            finish_task = create_task(getattr(stream, method_name)())
+            await wait_for(source.cancellation_seen.wait(), 1.0)
+            await sleep(0)
+
+            self.assertFalse(finish_task.done())
+            source.release.set()
+            await wait_for(finish_task, 1.0)
+            if method_name == "cancel":
+                terminal = await wait_for(pending, 1.0)
+                self.assertIs(
+                    terminal.kind,
+                    StreamItemKind.STREAM_CANCELLED,
+                )
+            else:
+                self.assertTrue(pending.done())
+                with self.assertRaises(StopAsyncIteration):
+                    await wait_for(pending, 1.0)
+            await canonical.aclose()
+
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            self.assertEqual(source.close_count, 1)
+
+    async def test_external_finish_serializes_with_terminal_cleanup(self):
+        class BlockingTerminalCleanup:
+            def __init__(self):
+                self.emitted = False
+                self.close_count = 0
+                self.cleanup_started = Event()
+                self.cleanup_release = Event()
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self.emitted:
+                    raise StopAsyncIteration
+                self.emitted = True
+                return {"type": "response.completed", "response": {}}
+
+            async def aclose(self):
+                self.close_count += 1
+                self.cleanup_started.set()
+                await self.cleanup_release.wait()
+
+        for method_name in ("cancel", "aclose"):
+            source = BlockingTerminalCleanup()
+            stream = self.mod.OpenAIStream(source)
+            canonical = stream.canonical_stream(
+                stream_session_id=f"terminal-race-{method_name}",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+            started = await anext(canonical)
+            terminal_pull = create_task(anext(canonical))
+            await wait_for(source.cleanup_started.wait(), 1.0)
+            finish_task = create_task(getattr(stream, method_name)())
+            await sleep(0)
+
+            self.assertFalse(finish_task.done())
+            self.assertEqual(source.close_count, 1)
+            source.cleanup_release.set()
+            await wait_for(finish_task, 1.0)
+            if method_name == "cancel":
+                terminal = await wait_for(terminal_pull, 1.0)
+                self.assertIs(
+                    terminal.kind,
+                    StreamItemKind.STREAM_CANCELLED,
+                )
+            else:
+                self.assertTrue(terminal_pull.done())
+                with self.assertRaises(StopAsyncIteration):
+                    await wait_for(terminal_pull, 1.0)
+            await canonical.aclose()
+
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            self.assertEqual(source.close_count, 1)
+
+    async def test_cancel_detaches_before_single_cleanup_invocation(self):
+        cleanup_started = Event()
+        cleanup_release = Event()
+
+        class FailingCancelWithAclose:
+            def __init__(self):
+                self.cancel_count = 0
+                self.aclose_count = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await Event().wait()
+                raise AssertionError("provider unexpectedly resumed")
+
+            async def cancel(self):
+                self.cancel_count += 1
+                cleanup_started.set()
+                await cleanup_release.wait()
+                raise RuntimeError("selected cancel failed")
+
+            async def aclose(self):
+                self.aclose_count += 1
+
+        source = FailingCancelWithAclose()
+        stream = self.mod.OpenAIStream(source)
+        cancel_task = create_task(stream.cancel())
+        await wait_for(cleanup_started.wait(), 1.0)
+
+        self.assertIsNone(stream._stream)
+        self.assertEqual(stream._stream_sources, ())
+        cleanup_release.set()
+        with self.assertRaisesRegex(RuntimeError, "selected cancel failed"):
+            await wait_for(cancel_task, 1.0)
+        await stream.cancel()
+        items = await _stream_items(stream)
+        await stream.aclose()
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_CANCELLED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(source.cancel_count, 1)
+        self.assertEqual(source.aclose_count, 0)
+
+    async def test_consumer_cancel_during_terminal_cleanup_rolls_back(self):
+        class CancelledTerminalCleanup:
+            def __init__(self):
+                self.emitted = False
+                self.close_count = 0
+                self.cleanup_started = Event()
+                self.cleanup_cancelled = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self.emitted:
+                    raise StopAsyncIteration
+                self.emitted = True
+                return {"type": "response.completed", "response": {}}
+
+            async def aclose(self):
+                self.close_count += 1
+                self.cleanup_started.set()
+                try:
+                    await Event().wait()
+                except CancelledError:
+                    self.cleanup_cancelled = True
+                    return
+
+        source = CancelledTerminalCleanup()
+        owner = self.mod._OpenAIReplayOwner(StreamRetentionPolicy())
+        owner.begin_attempt()
+        owner.admit(
+            {
+                "id": "terminal-cancel-owner",
+                "type": "reasoning",
+                "encrypted_content": "cipher",
+                "summary": [],
+            }
+        )
+        output_items = [{"type": "function_call", "call_id": "pending"}]
+        rollback_counts = []
+
+        def rollback(count):
+            rollback_counts.append(count)
+            del output_items[-count:]
+
+        stream = self.mod.OpenAIStream(
+            source,
+            output_item_sink=output_items.append,
+            output_item_rollback=rollback,
+            replay_owner=owner,
+        )
+        canonical = stream.canonical_stream(
+            stream_session_id="terminal-cleanup-task-cancel",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+        started = await anext(canonical)
+        pending = create_task(anext(canonical))
+        await wait_for(source.cleanup_started.wait(), 1.0)
+        stream._attempt_output_item_count = 1
+        pending.cancel()
+
+        with self.assertRaises(CancelledError):
+            await wait_for(pending, 1.0)
+        await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertTrue(source.cleanup_cancelled)
+        self.assertEqual(source.close_count, 1)
+        self.assertEqual(output_items, [])
+        self.assertEqual(rollback_counts, [1])
+        self.assertTrue(owner.released)
+        self.assertEqual(owner.release_count, 1)
+        self.assertIsNone(stream._stream)
+        self.assertEqual(stream._stream_sources, ())
+
+        async def finalize_while_cancelling() -> None:
+            traceable_stream = self.mod.OpenAIStream(
+                SyncCloseOnlyAsyncIter([])
+            )
+            task = self.mod.current_task()
+            assert task is not None
+            task.cancel()
+            task.cancel()
+            try:
+                await sleep(0)
+            except CancelledError:
+                pass
+            try:
+                await traceable_stream._finalize_provider_terminal(
+                    self.mod._OpenAIProviderTerminal(
+                        event=self.mod.StreamProviderEvent(
+                            kind=StreamItemKind.STREAM_COMPLETED
+                        ),
+                        succeeded=True,
+                    )
+                )
+            except self.mod.StreamConsumerCancellation:
+                self.assertEqual(task.uncancel(), 1)
+                self.assertEqual(task.uncancel(), 0)
+            else:
+                self.fail("consumer cancellation was not preserved")
+
+        await create_task(finalize_while_cancelling())
+
+    async def test_provider_terminal_scrubs_state_and_closes_source_pre_yield(
+        self,
+    ):
+        reasoning_item = {
+            "id": "terminal-private",
+            "type": "reasoning",
+            "status": "completed",
+            "summary": [{"type": "summary_text", "text": "private-summary"}],
+            "encrypted_content": "private-encrypted",
+        }
+        terminal_cases = (
+            (
+                {
+                    "type": "response.completed",
+                    "response": {"usage": {}, "output": [reasoning_item]},
+                },
+                StreamItemKind.STREAM_COMPLETED,
+            ),
+            (
+                {
+                    "type": "response.failed",
+                    "response": {
+                        "status": "failed",
+                        "error": None,
+                        "output": [reasoning_item],
+                    },
+                },
+                StreamItemKind.STREAM_ERRORED,
+            ),
+            (
+                {
+                    "type": "response.incomplete",
+                    "response": {
+                        "status": "incomplete",
+                        "incomplete_details": {"reason": "max_output_tokens"},
+                        "output": [reasoning_item],
+                    },
+                },
+                StreamItemKind.STREAM_ERRORED,
+            ),
+        )
+        for terminal_event, terminal_kind in terminal_cases:
+            read_count = 0
+            read_past_terminal = False
+            finalized = Event()
+
+            async def provider():
+                nonlocal read_count, read_past_terminal
+                try:
+                    read_count += 1
+                    yield {
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": reasoning_item,
+                    }
+                    read_count += 1
+                    yield terminal_event
+                    read_past_terminal = True
+                    read_count += 1
+                    yield {
+                        "type": "response.output_text.delta",
+                        "delta": "must-not-read",
+                    }
+                finally:
+                    finalized.set()
+
+            source = provider()
+            stream = self.mod.OpenAIStream(source)
+            canonical = stream.canonical_stream(
+                stream_session_id=f"terminal-{terminal_event['type']}",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+            started = await anext(canonical)
+            emitted = []
+            while True:
+                item = await anext(canonical)
+                emitted.append(item)
+                if item.kind is terminal_kind:
+                    terminal = item
+                    break
+
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            self.assertIs(terminal.kind, terminal_kind)
+            self.assertEqual(read_count, 2)
+            self.assertFalse(read_past_terminal)
+            self.assertTrue(finalized.is_set())
+            self.assertEqual(stream._reasoning_summary_state._items, {})
+            self.assertIsNone(source.ag_frame)
+            guard_frame = canonical.ag_frame
+            self.assertIsNotNone(guard_frame)
+            assert guard_frame is not None
+            wrapped = guard_frame.f_locals["iterator"]
+            wrapped_frame = wrapped.ag_frame
+            self.assertIsNotNone(wrapped_frame)
+            assert wrapped_frame is not None
+            provider = wrapped_frame.f_locals["event_iterator"]
+            provider_frame = provider.ag_frame
+            self.assertIsNotNone(provider_frame)
+            assert provider_frame is not None
+            self.assertIsNone(provider_frame.f_locals["event"])
+            self.assertIsNone(provider_frame.f_locals["provider_iterator"])
+            self.assertEqual(provider_frame.f_locals["provider_events"], ())
+            self.assertIsNone(provider_frame.f_locals["provider_event"])
+            self.assertNotIn(
+                "private-summary",
+                repr(provider_frame.f_locals),
+            )
+            self.assertNotIn(
+                "private-encrypted",
+                repr(provider_frame.f_locals),
+            )
+            self.assertIsNone(stream._stream)
+            self.assertEqual(stream._stream_sources, ())
+            await canonical.aclose()
+            self.assertIsNone(canonical.ag_frame)
+
+    async def test_client_close_attribute_failures_are_sanitized_and_release(
+        self,
+    ):
+        class HostileClose:
+            @property
+            def close(self):
+                raise RuntimeError("HOSTILE_CLIENT_CLOSE_PRIVATE_SENTINEL")
+
+        class HostileAclose:
+            close = None
+
+            @property
+            def aclose(self):
+                raise RuntimeError("HOSTILE_CLIENT_ACLOSE_PRIVATE_SENTINEL")
+
+        for sdk_client, secret in (
+            (HostileClose(), "HOSTILE_CLIENT_CLOSE_PRIVATE_SENTINEL"),
+            (HostileAclose(), "HOSTILE_CLIENT_ACLOSE_PRIVATE_SENTINEL"),
+        ):
+            client = self.mod.OpenAIClient(api_key="k", base_url="b")
+            client._client = sdk_client
+            with self.assertRaises(self.mod._OpenAICleanupError) as raised:
+                await client.aclose()
+            self.assertEqual(raised.exception.cleanup_target, "client")
+            self.assertNotIn(secret, repr(raised.exception))
+            self.assertNotIn(secret, str(raised.exception))
+            self.assertEqual(client._active_replay_owners, {})
+            self.assertEqual(client._active_replay_streams, {})
+
+        stream_secret = "HOSTILE_STREAM_CLOSE_PRIVATE_SENTINEL"
+        client_secret = "HOSTILE_CLIENT_GROUP_PRIVATE_SENTINEL"
+        source = FailingCloseOnlyAsyncIter([], RuntimeError(stream_secret))
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=source
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        stream = await client("gpt-5", [])
+
+        class GroupHostileClose:
+            @property
+            def close(self):
+                raise RuntimeError(client_secret)
+
+        client._client = GroupHostileClose()
+        with self.assertRaises(BaseExceptionGroup) as grouped:
+            await client.aclose()
+
+        work = list(grouped.exception.exceptions)
+        flattened = []
+        while work:
+            error = work.pop()
+            flattened.append(error)
+            if isinstance(error, BaseExceptionGroup):
+                work.extend(error.exceptions)
+        self.assertGreaterEqual(
+            {getattr(error, "cleanup_target", None) for error in flattened},
+            {"client", "stream"},
+        )
+        diagnostics = "\n".join(
+            [
+                *(repr(error) for error in flattened),
+                *(str(error) for error in flattened),
+            ]
+        )
+        self.assertNotIn(stream_secret, diagnostics)
+        self.assertNotIn(client_secret, diagnostics)
+        self.assertEqual(client._active_replay_owners, {})
+        self.assertEqual(client._active_replay_streams, {})
+        self.assertTrue(stream._replay_owner.released)
 
 
 class VendorClientsTestCase(TestCase):

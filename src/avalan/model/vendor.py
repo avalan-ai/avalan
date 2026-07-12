@@ -25,6 +25,7 @@ from .stream import (
     StreamProviderEvent,
     StreamValidationError,
     TextGenerationStream,
+    _close_async_iterable,
     normalize_provider_stream,
 )
 
@@ -460,7 +461,22 @@ class TextGenerationVendorStream(TextGenerationStream):
             async for item in items:
                 yield item
         finally:
-            await self.aclose()
+            errors: list[BaseException] = []
+            try:
+                await _close_async_iterable(items)
+            except BaseException as error:
+                errors.append(error)
+            try:
+                await self.aclose()
+            except BaseException as error:
+                errors.append(error)
+            if len(errors) == 1:
+                raise errors[0]
+            if errors:
+                raise BaseExceptionGroup(
+                    "vendor stream close failed",
+                    errors,
+                )
 
     async def cancel(self) -> None:
         if self._stream_cancelled:
