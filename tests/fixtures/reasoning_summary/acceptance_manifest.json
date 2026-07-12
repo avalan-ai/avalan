@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "reasoning_summary",
-  "active_phase": 4,
+  "active_phase": 5,
   "dimensions": {
     "phase 0 infrastructure": [
       "tests/reasoning_summary_phase0_test.py::test_provider_trace_inventory_is_complete_and_valid",
@@ -313,6 +313,45 @@
       "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_success_terminal_commits_output_sink_checkpoint",
       "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_present_malformed_terminal_output_is_fail_closed",
       "tests/model/nlp/vendor_openai_test.py::OpenAITestCase::test_cancel_detaches_before_single_cleanup_invocation"
+    ],
+    "phase 5 SDK accumulation orchestration and non-stream": [
+      "tests/reasoning_summary_phase5_manifest_test.py::test_phase5_acceptance_manifest_pins_exact_catalog",
+      "tests/model/model_stream_retention_isolation_test.py::test_summary_parts_have_readable_boundaries",
+      "tests/model/model_stream_retention_isolation_test.py::test_flat_reasoning_preserves_part_order",
+      "tests/model/model_stream_retention_isolation_test.py::test_structured_reasoning_preserves_representation",
+      "tests/model/model_stream_retention_isolation_test.py::test_summary_obeys_reasoning_retention",
+      "tests/model/model_stream_retention_isolation_test.py::test_multipart_summary_is_ordered_and_readable",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_merges_only_contiguous_exact_segment_identity",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_terminal_finalizes_status_without_boundary_leak",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_character_limit_retains_utf8_safe_suffix",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_utf8_byte_limit_never_splits_character",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_separator_is_charged_before_following_segment",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_history_is_independent_from_canonical_item_retention",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_accumulator_instances_isolate_concurrent_sentinels",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_flat_view_has_no_second_retained_history",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_character_retention_limit_minus_equal_plus_one",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_utf8_retention_limit_minus_equal_plus_one",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_segment_retention_limit_minus_equal_plus_one",
+      "tests/model/model_stream_retention_isolation_test.py::test_reasoning_separator_budget_limit_minus_equal_plus_one",
+      "tests/model/model_stream_retention_isolation_test.py::test_canonical_item_retention_limit_minus_equal_plus_one",
+      "tests/model/model_stream_retention_isolation_test.py::test_large_unicode_reasoning_owner_work_and_storage_are_bounded",
+      "tests/model/text_generation_response_reasoning_summary_test.py::test_summary_never_contaminates_answer",
+      "tests/model/text_generation_response_reasoning_summary_test.py::test_summary_isolated_from_answer_tools_and_memory",
+      "tests/model/text_generation_response_reasoning_summary_test.py::test_reasoning_tokens_and_summary_characters_are_separate",
+      "tests/model/text_generation_response_reasoning_summary_test.py::test_rich_non_stream_result_uses_canonical_normalization",
+      "tests/model/text_generation_response_reasoning_summary_test.py::test_non_stream_terminal_status_preserves_partial_answer",
+      "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_non_stream_openai_preserves_summary_tool_and_answer",
+      "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_non_stream_openai_unknown_output_item_is_ignored",
+      "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_non_stream_openai_replay_owner_follows_valid_tool_cycle",
+      "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_non_stream_openai_no_tool_releases_replay_owner",
+      "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_non_stream_openai_mapping_failure_rolls_back_owner",
+      "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_openai_stream_and_non_stream_semantics_are_equivalent",
+      "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_non_stream_openai_incomplete_tool_is_not_executable",
+      "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_non_stream_openai_client_close_owns_temporary_stream",
+      "tests/model/nlp/vendor_openai_test.py::NonStreamingResponseTestCase::test_response_single_stream",
+      "tests/model/nlp/vendor_openai_test.py::TemplateMessagesFormatTestCase::test_non_stream_tool_call_output",
+      "tests/agent/orchestrator_response_test.py::OrchestratorResponseMethodsTestCase::test_non_stream_structured_response_uses_canonical_path",
+      "tests/agent/engine_agent_test.py::EngineAgentRunTestCase::test_sync_messages_keeps_rich_reasoning_out_of_memory"
     ]
   }
 }

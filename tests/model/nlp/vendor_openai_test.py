@@ -2904,7 +2904,18 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
         accumulator = accumulate_canonical_stream_items(items)
         self.assertEqual(accumulator.answer_text, "hi ")
-        self.assertEqual(accumulator.reasoning_text, "plan check confirm ")
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.REASONING_DELTA
+            ],
+            ["plan ", "check ", "confirm "],
+        )
+        self.assertEqual(
+            accumulator.reasoning_text,
+            "plan \n\ncheck \n\nconfirm ",
+        )
         reasoning = [
             item
             for item in items
@@ -5245,9 +5256,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             )
             replacement = FailingReplacement()
             factory_started = Event()
-            replay_owner = self.mod._OpenAIReplayOwner(
-                StreamRetentionPolicy()
-            )
+            replay_owner = self.mod._OpenAIReplayOwner(StreamRetentionPolicy())
             replay_owner.begin_attempt()
 
             def release_then_fail(owner):
@@ -6196,9 +6205,12 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
             temperature=1.0,
             top_p=1.0,
         )
-        from avalan.model.stream import TextGenerationSingleStream
+        from avalan.model.stream import TextGenerationNonStreamResult
 
-        self.assertIsInstance(response._output_fn, TextGenerationSingleStream)
+        self.assertIsInstance(
+            response._output_fn,
+            TextGenerationNonStreamResult,
+        )
         self.assertFalse(response._use_async_generator)
         self.assertEqual(response.usage.input_tokens, 1)
         self.assertEqual(response.provider_family, "openai")
@@ -6609,11 +6621,31 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
                 "model", [message], use_async_generator=False
             )
 
-        from avalan.model.stream import TextGenerationSingleStream
+        from avalan.model.stream import (
+            StreamItemKind,
+            TextGenerationNonStreamResult,
+        )
 
-        self.assertIsInstance(stream, TextGenerationSingleStream)
-        self.assertEqual(stream.content, "hello <tool_call />")
-        build_token.assert_called_once_with("call1", "pkg__tool", '{"a":1}')
+        self.assertIsInstance(stream, TextGenerationNonStreamResult)
+        self.assertEqual(stream.content, "hello ")
+        self.assertEqual(
+            [event.kind for event in stream.events],
+            [
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+            ],
+        )
+        tool_done = stream.events[-2]
+        self.assertEqual(tool_done.correlation.tool_call_id, "call1")
+        self.assertEqual(
+            tool_done.correlation.protocol_item_id,
+            "fc_non_stream_1",
+        )
+        build_token.assert_not_called()
 
 
 class TemplateAndToolSchemaTestCase(TestCase):

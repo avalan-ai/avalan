@@ -73,6 +73,14 @@ class StreamReasoningRepresentation(StrEnum):
     SUMMARY = "summary"
 
 
+class StreamReasoningSegmentStatus(StrEnum):
+    """Identify the retained reasoning segment completion status."""
+
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    INCOMPLETE = "incomplete"
+
+
 class StreamBackpressurePolicy(StrEnum):
     BLOCK = "block"
     FAIL = "fail"
@@ -408,6 +416,87 @@ _EMPTY_STREAM_ITEM_CORRELATION = StreamItemCorrelation()
 REASONING_SEGMENT_BOUNDARY_METADATA_KEY = "reasoning.segment_boundary"
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StreamReasoningSegment:
+    """Describe one retained contiguous reasoning segment."""
+
+    representation: StreamReasoningRepresentation
+    segment_instance_ordinal: int
+    text: str
+    completed: bool
+    status: StreamReasoningSegmentStatus
+    terminal_outcome: StreamTerminalOutcome | None
+    provider_item_id: str | None = None
+    output_index: int | None = None
+    summary_index: int | None = None
+    continuation_id: str | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.representation, StreamReasoningRepresentation)
+        _assert_non_negative_int(
+            self.segment_instance_ordinal, "segment_instance_ordinal"
+        )
+        assert isinstance(self.text, str)
+        assert self.text, "reasoning segment text must not be empty"
+        assert isinstance(self.completed, bool)
+        assert isinstance(self.status, StreamReasoningSegmentStatus)
+        if self.terminal_outcome is not None:
+            assert isinstance(self.terminal_outcome, StreamTerminalOutcome)
+        for field_name, value in (
+            ("provider_item_id", self.provider_item_id),
+            ("continuation_id", self.continuation_id),
+        ):
+            if value is not None:
+                _assert_non_empty_string(value, field_name)
+        for field_name, index_value in (
+            ("output_index", self.output_index),
+            ("summary_index", self.summary_index),
+        ):
+            if index_value is not None:
+                _assert_non_negative_int(index_value, field_name)
+        if self.status is StreamReasoningSegmentStatus.IN_PROGRESS:
+            assert not self.completed
+            assert self.terminal_outcome is None
+        elif self.status is StreamReasoningSegmentStatus.COMPLETED:
+            assert self.completed
+            assert self.terminal_outcome is StreamTerminalOutcome.COMPLETED
+        else:
+            assert not self.completed
+            assert self.terminal_outcome in (
+                StreamTerminalOutcome.ERRORED,
+                StreamTerminalOutcome.CANCELLED,
+            )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StreamReasoningTruncation:
+    """Describe deterministic retained reasoning tail truncation."""
+
+    truncated: bool = False
+    dropped_segments: int = 0
+    dropped_characters: int = 0
+    dropped_utf8_bytes: int = 0
+    leading_segment_partial: bool = False
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.truncated, bool)
+        assert isinstance(self.leading_segment_partial, bool)
+        for field_name, value in (
+            ("dropped_segments", self.dropped_segments),
+            ("dropped_characters", self.dropped_characters),
+            ("dropped_utf8_bytes", self.dropped_utf8_bytes),
+        ):
+            _assert_non_negative_int(value, field_name)
+        has_drops = bool(
+            self.dropped_segments
+            or self.dropped_characters
+            or self.dropped_utf8_bytes
+        )
+        assert self.truncated is has_drops
+        if self.leading_segment_partial:
+            assert self.truncated
+
+
 @dataclass(slots=True)
 class StreamReasoningSegmentState:
     """Allocate and validate response-local reasoning segment ordinals."""
@@ -625,6 +714,9 @@ class StreamSessionLifecycle:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class StreamRetentionPolicy:
     accumulator_item_limit: int = 4096
+    reasoning_segment_limit: int = 1024
+    reasoning_character_limit: int = 262144
+    reasoning_text_byte_limit: int = 1048576
     replay_history_item_limit: int = 1024
     openai_replay_reasoning_item_limit: int = 1024
     openai_replay_reasoning_summary_node_limit: int = 4096
@@ -656,6 +748,9 @@ class StreamRetentionPolicy:
             self.a2a_task_event_byte_limit >= 2
         ), "a2a_task_event_byte_limit must be at least 2"
         for field_name, value in (
+            ("reasoning_segment_limit", self.reasoning_segment_limit),
+            ("reasoning_character_limit", self.reasoning_character_limit),
+            ("reasoning_text_byte_limit", self.reasoning_text_byte_limit),
             ("replay_history_item_limit", self.replay_history_item_limit),
             (
                 "openai_replay_reasoning_item_limit",
@@ -2322,6 +2417,359 @@ def _validate_open_channel_boundaries_closed(
             )
 
 
+@dataclass(slots=True)
+class _RetainedReasoningSegment:
+    representation: StreamReasoningRepresentation
+    segment_instance_ordinal: int
+    provider_item_id: str | None
+    output_index: int | None
+    summary_index: int | None
+    continuation_id: str | None
+    chunks: deque[str] = field(default_factory=deque)
+    characters: int = 0
+    utf8_bytes: int = 0
+    separator_after: str = ""
+    closed: bool = False
+    leading_partial: bool = False
+    _materialized_text: str | None = None
+
+    @property
+    def identity(self) -> tuple[object, ...]:
+        return (
+            self.representation,
+            self.segment_instance_ordinal,
+            self.provider_item_id,
+            self.output_index,
+            self.summary_index,
+            self.continuation_id,
+        )
+
+    def append(self, text: str) -> tuple[int, int]:
+        assert isinstance(text, str)
+        assert text
+        encoded_length = len(text.encode("utf-8"))
+        self.chunks.append(text)
+        self.characters += len(text)
+        self.utf8_bytes += encoded_length
+        self._materialized_text = None
+        return len(text), encoded_length
+
+    def materialize(self) -> str:
+        if self._materialized_text is None:
+            self._materialized_text = "".join(self.chunks)
+            self.chunks.clear()
+            if self._materialized_text:
+                self.chunks.append(self._materialized_text)
+        return self._materialized_text
+
+    def trailing_line_feeds(self) -> int:
+        count = 0
+        for chunk in reversed(self.chunks):
+            exhausted = True
+            for character in reversed(chunk):
+                if not character.isspace():
+                    exhausted = False
+                    break
+                if character == "\n":
+                    count += 1
+            if not exhausted:
+                break
+        return count
+
+    def trim_prefix(
+        self,
+        minimum_characters: int,
+        minimum_utf8_bytes: int,
+    ) -> tuple[int, int]:
+        assert minimum_characters >= 0
+        assert minimum_utf8_bytes >= 0
+        removed_characters = 0
+        removed_utf8_bytes = 0
+        while self.chunks and (
+            removed_characters < minimum_characters
+            or removed_utf8_bytes < minimum_utf8_bytes
+        ):
+            chunk = self.chunks.popleft()
+            position = 0
+            while position < len(chunk) and (
+                removed_characters < minimum_characters
+                or removed_utf8_bytes < minimum_utf8_bytes
+            ):
+                character = chunk[position]
+                removed_characters += 1
+                removed_utf8_bytes += len(character.encode("utf-8"))
+                position += 1
+            if position < len(chunk):
+                self.chunks.appendleft(chunk[position:])
+        if removed_characters:
+            self.characters -= removed_characters
+            self.utf8_bytes -= removed_utf8_bytes
+            self.leading_partial = True
+            self._materialized_text = None
+        return removed_characters, removed_utf8_bytes
+
+
+class _BoundedReasoningSegmentOwner:
+    def __init__(self, retention_policy: StreamRetentionPolicy) -> None:
+        assert isinstance(retention_policy, StreamRetentionPolicy)
+        self._segment_limit = retention_policy.reasoning_segment_limit
+        self._character_limit = retention_policy.reasoning_character_limit
+        self._utf8_byte_limit = retention_policy.reasoning_text_byte_limit
+        self._segments: deque[_RetainedReasoningSegment] = deque()
+        self._active: _RetainedReasoningSegment | None = None
+        self._characters = 0
+        self._utf8_bytes = 0
+        self._dropped_segments = 0
+        self._dropped_characters = 0
+        self._dropped_utf8_bytes = 0
+        self._terminal_outcome: StreamTerminalOutcome | None = None
+
+    @property
+    def segments(self) -> tuple[StreamReasoningSegment, ...]:
+        status, completed = self._public_completion()
+        return tuple(
+            StreamReasoningSegment(
+                representation=segment.representation,
+                segment_instance_ordinal=(segment.segment_instance_ordinal),
+                text=segment.materialize(),
+                completed=completed,
+                status=status,
+                terminal_outcome=self._terminal_outcome,
+                provider_item_id=segment.provider_item_id,
+                output_index=segment.output_index,
+                summary_index=segment.summary_index,
+                continuation_id=segment.continuation_id,
+            )
+            for segment in self._segments
+            if segment.characters
+        )
+
+    @property
+    def text(self) -> str:
+        parts: list[str] = []
+        for segment in self._segments:
+            if not segment.characters:
+                continue
+            parts.append(segment.materialize())
+            if segment.separator_after:
+                parts.append(segment.separator_after)
+        return "".join(parts)
+
+    @property
+    def truncation(self) -> StreamReasoningTruncation:
+        first = next(
+            (segment for segment in self._segments if segment.characters),
+            None,
+        )
+        return StreamReasoningTruncation(
+            truncated=bool(
+                self._dropped_segments
+                or self._dropped_characters
+                or self._dropped_utf8_bytes
+            ),
+            dropped_segments=self._dropped_segments,
+            dropped_characters=self._dropped_characters,
+            dropped_utf8_bytes=self._dropped_utf8_bytes,
+            leading_segment_partial=(
+                first.leading_partial if first is not None else False
+            ),
+        )
+
+    @property
+    def character_count(self) -> int:
+        return self._characters
+
+    @property
+    def utf8_byte_count(self) -> int:
+        return self._utf8_bytes
+
+    def observe(self, item: CanonicalStreamItem) -> None:
+        assert isinstance(item, CanonicalStreamItem)
+        if item.kind is StreamItemKind.REASONING_DELTA:
+            self._add_delta(item)
+            return
+        if item.kind is StreamItemKind.STREAM_CLOSED:
+            return
+        self._close_active()
+        outcome = stream_terminal_outcome_for_kind(item.kind)
+        if outcome is not None:
+            self._terminal_outcome = outcome
+
+    def _add_delta(self, item: CanonicalStreamItem) -> None:
+        assert item.text_delta is not None
+        assert item.reasoning_representation is not None
+        assert item.segment_instance_ordinal is not None
+        identity = (
+            item.reasoning_representation,
+            item.segment_instance_ordinal,
+            item.correlation.protocol_item_id,
+            item.correlation.provider_output_index,
+            item.correlation.provider_summary_index,
+            item.correlation.model_continuation_id,
+        )
+        active = self._active
+        if active is None or active.closed or active.identity != identity:
+            self._close_active()
+            active = _RetainedReasoningSegment(
+                representation=item.reasoning_representation,
+                segment_instance_ordinal=item.segment_instance_ordinal,
+                provider_item_id=item.correlation.protocol_item_id,
+                output_index=item.correlation.provider_output_index,
+                summary_index=item.correlation.provider_summary_index,
+                continuation_id=item.correlation.model_continuation_id,
+            )
+            self._append_separator_before(item.text_delta)
+            self._segments.append(active)
+            self._active = active
+        characters, utf8_bytes = active.append(item.text_delta)
+        self._characters += characters
+        self._utf8_bytes += utf8_bytes
+        self._enforce_limits()
+
+    def _append_separator_before(
+        self,
+        text: str,
+    ) -> None:
+        previous = next(
+            (
+                candidate
+                for candidate in reversed(self._segments)
+                if candidate.characters
+            ),
+            None,
+        )
+        if previous is None:
+            return
+        leading = 0
+        for character in text:
+            if not character.isspace():
+                break
+            if character == "\n":
+                leading += 1
+        missing = max(0, 2 - previous.trailing_line_feeds() - leading)
+        if not missing:
+            return
+        separator = "\n" * missing
+        previous.separator_after = separator
+        self._characters += missing
+        self._utf8_bytes += missing
+
+    def _close_active(self) -> None:
+        active = self._active
+        if active is None:
+            return
+        active.closed = True
+        self._active = None
+        if not active.characters:
+            self._remove_empty_last_segment(active)
+        self._enforce_limits()
+
+    def _remove_empty_last_segment(
+        self,
+        segment: _RetainedReasoningSegment,
+    ) -> None:
+        assert not segment.characters
+        assert self._segments and self._segments[-1] is segment
+        self._segments.pop()
+        self._dropped_segments += 1
+        if self._segments:
+            previous = self._segments[-1]
+            separator = previous.separator_after
+            if separator:
+                previous.separator_after = ""
+                self._characters -= len(separator)
+                self._utf8_bytes -= len(separator.encode("utf-8"))
+                self._record_dropped_text(separator)
+
+    def _enforce_limits(self) -> None:
+        while len(self._segments) > self._segment_limit:
+            oldest = self._segments[0]
+            if not oldest.closed:
+                self._trim_all_active_text(oldest)
+                break
+            self._drop_oldest_segment()
+
+        while self._over_text_limit() and self._segments:
+            oldest = self._segments[0]
+            if oldest.closed and len(self._segments) > 1:
+                self._drop_oldest_segment()
+                continue
+            required_characters = max(
+                0, self._characters - self._character_limit
+            )
+            required_utf8_bytes = max(
+                0, self._utf8_bytes - self._utf8_byte_limit
+            )
+            removed_characters, removed_utf8_bytes = oldest.trim_prefix(
+                required_characters,
+                required_utf8_bytes,
+            )
+            if not removed_characters:
+                break
+            self._characters -= removed_characters
+            self._utf8_bytes -= removed_utf8_bytes
+            self._dropped_characters += removed_characters
+            self._dropped_utf8_bytes += removed_utf8_bytes
+            if not oldest.characters and oldest.closed:
+                self._drop_empty_oldest_segment()
+
+    def _trim_all_active_text(
+        self,
+        segment: _RetainedReasoningSegment,
+    ) -> None:
+        assert not segment.closed
+        removed_characters, removed_utf8_bytes = segment.trim_prefix(
+            segment.characters,
+            segment.utf8_bytes,
+        )
+        self._characters -= removed_characters
+        self._utf8_bytes -= removed_utf8_bytes
+        self._dropped_characters += removed_characters
+        self._dropped_utf8_bytes += removed_utf8_bytes
+
+    def _drop_oldest_segment(self) -> None:
+        segment = self._segments.popleft()
+        assert segment.closed
+        text_characters = segment.characters
+        text_utf8_bytes = segment.utf8_bytes
+        separator = segment.separator_after
+        separator_characters = len(separator)
+        separator_utf8_bytes = len(separator.encode("utf-8"))
+        self._characters -= text_characters + separator_characters
+        self._utf8_bytes -= text_utf8_bytes + separator_utf8_bytes
+        self._dropped_segments += 1
+        self._dropped_characters += text_characters + separator_characters
+        self._dropped_utf8_bytes += text_utf8_bytes + separator_utf8_bytes
+
+    def _drop_empty_oldest_segment(self) -> None:
+        segment = self._segments[0]
+        assert segment.closed
+        assert not segment.characters
+        self._drop_oldest_segment()
+
+    def _record_dropped_text(self, text: str) -> None:
+        self._dropped_characters += len(text)
+        self._dropped_utf8_bytes += len(text.encode("utf-8"))
+
+    def _over_text_limit(self) -> bool:
+        return (
+            self._characters > self._character_limit
+            or self._utf8_bytes > self._utf8_byte_limit
+        )
+
+    def _public_completion(
+        self,
+    ) -> tuple[StreamReasoningSegmentStatus, bool]:
+        if self._terminal_outcome is StreamTerminalOutcome.COMPLETED:
+            return StreamReasoningSegmentStatus.COMPLETED, True
+        if self._terminal_outcome in (
+            StreamTerminalOutcome.ERRORED,
+            StreamTerminalOutcome.CANCELLED,
+        ):
+            return StreamReasoningSegmentStatus.INCOMPLETE, False
+        return StreamReasoningSegmentStatus.IN_PROGRESS, False
+
+
 class CanonicalStreamAccumulator:
     def __init__(
         self,
@@ -2334,7 +2782,7 @@ class CanonicalStreamAccumulator:
         self._retention_policy = retention_policy
         self._items: list[CanonicalStreamItem] = []
         self._answer_text: list[str] = []
-        self._reasoning_text: list[str] = []
+        self._reasoning = _BoundedReasoningSegmentOwner(retention_policy)
         self._tool_call_arguments: dict[str, list[str]] = {}
         self._tool_execution_outputs: dict[str, list[str]] = {}
         self._diagnostics: list[CanonicalStreamItem] = []
@@ -2375,7 +2823,23 @@ class CanonicalStreamAccumulator:
 
     @property
     def reasoning_text(self) -> str:
-        return "".join(self._reasoning_text)
+        return self._reasoning.text
+
+    @property
+    def reasoning_segments(self) -> tuple[StreamReasoningSegment, ...]:
+        return self._reasoning.segments
+
+    @property
+    def reasoning_truncation(self) -> StreamReasoningTruncation:
+        return self._reasoning.truncation
+
+    @property
+    def retained_reasoning_characters(self) -> int:
+        return self._reasoning.character_count
+
+    @property
+    def retained_reasoning_utf8_bytes(self) -> int:
+        return self._reasoning.utf8_byte_count
 
     @property
     def tool_call_arguments(self) -> dict[str, str]:
@@ -2542,12 +3006,10 @@ class CanonicalStreamAccumulator:
             _validate_post_final_usage_item(item, self._usage_completed)
 
     def _accumulate(self, item: CanonicalStreamItem) -> None:
+        self._reasoning.observe(item)
         if item.kind is StreamItemKind.ANSWER_DELTA:
             assert item.text_delta is not None
             self._answer_text.append(item.text_delta)
-        elif item.kind is StreamItemKind.REASONING_DELTA:
-            assert item.text_delta is not None
-            self._reasoning_text.append(item.text_delta)
         elif item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
             assert item.text_delta is not None
             tool_call_id = item.correlation.tool_call_id
@@ -4016,3 +4478,113 @@ class TextGenerationSingleStream(TextGenerationStream):
         item = items[self._item_index]
         self._item_index += 1
         return item
+
+
+class TextGenerationNonStreamResult(TextGenerationStream):
+    """Expose a provider-neutral rich non-stream generation result."""
+
+    def __init__(
+        self,
+        events: Iterable[StreamProviderEvent],
+        *,
+        answer_text: str,
+        provider_family: ProviderFamily | str | None = None,
+        usage: object | None = None,
+    ) -> None:
+        assert isinstance(answer_text, str)
+        normalized_provider_family = provider_family_value(provider_family)
+        normalized_events = tuple(events)
+        assert normalized_events
+        assert all(
+            isinstance(event, StreamProviderEvent)
+            for event in normalized_events
+        )
+        terminal_indices = tuple(
+            index
+            for index, event in enumerate(normalized_events)
+            if is_stream_terminal_kind(event.kind)
+        )
+        assert terminal_indices == (len(normalized_events) - 1,)
+        derived_answer = "".join(
+            event.text_delta or ""
+            for event in normalized_events
+            if event.kind is StreamItemKind.ANSWER_DELTA
+        )
+        assert answer_text == derived_answer
+        self._events = normalized_events
+        self._answer_text = answer_text
+        self._provider_family = normalized_provider_family
+        self._usage = usage
+        self._generator = None
+
+    @property
+    def events(self) -> tuple[StreamProviderEvent, ...]:
+        return self._events
+
+    @property
+    def answer_text(self) -> str:
+        return self._answer_text
+
+    @property
+    def content(self) -> str:
+        return self._answer_text
+
+    @property
+    def provider_family(self) -> str | None:
+        return self._provider_family
+
+    @property
+    def usage(self) -> object | None:
+        return self._usage
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: ProviderFamily | str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        return normalize_provider_stream(
+            self._iterate_provider_events(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=provider_family or self._provider_family,
+            capabilities=capabilities,
+            close_after_terminal=close_after_terminal,
+        )
+
+    async def _iterate_provider_events(
+        self,
+    ) -> AsyncIterator[StreamProviderEvent]:
+        for event in self._events:
+            yield event
+
+    def __call__(
+        self, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        self._generator = self._default_canonical_stream()
+        return self
+
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+        self._generator = self._default_canonical_stream()
+        return self
+
+    async def __anext__(self) -> CanonicalStreamItem:
+        if self._generator is None:
+            self._generator = self._default_canonical_stream()
+        return await self._generator.__anext__()
+
+    def _default_canonical_stream(self) -> AsyncIterator[CanonicalStreamItem]:
+        return self.canonical_stream(
+            stream_session_id="non-stream-result",
+            run_id="non-stream-run",
+            turn_id="non-stream-turn",
+            provider_family=self._provider_family,
+        )
+
+    async def to_str(self) -> str:
+        return self._answer_text

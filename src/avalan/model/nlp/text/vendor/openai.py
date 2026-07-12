@@ -27,6 +27,7 @@ from .....model.stream import (
     StreamReasoningSegmentState,
     StreamRetentionPolicy,
     StreamVisibility,
+    TextGenerationNonStreamResult,
     TextGenerationSingleStream,
     TextGenerationStream,
     normalize_provider_stream,
@@ -5811,25 +5812,13 @@ class OpenAIClient(TextGenerationVendor):
                 return response_stream
 
             non_stream_adapter_failed = False
-            response: TextGenerationSingleStream | None = None
+            response: TextGenerationNonStreamResult | None = None
             try:
-                content = OpenAIClient._non_stream_response_content(
+                response = await self._non_stream_result(
                     client_stream,
                     tool=tool,
-                    provider_family=self._usage_provider_family,
-                )
-                response_usage = OpenAIClient._response_field(
-                    client_stream,
-                    "usage",
-                )
-                if request_has_replay_items:
-                    response_usage = OpenAIStream._private_replay_usage(
-                        response_usage
-                    )
-                response = TextGenerationSingleStream(
-                    content,
-                    provider_family=self._usage_provider_family,
-                    usage=response_usage,
+                    replay_owner=replay_owner,
+                    request_has_replay_items=request_has_replay_items,
                 )
             except BaseException:
                 if not request_has_replay_items:
@@ -5841,7 +5830,6 @@ class OpenAIClient(TextGenerationVendor):
         except BaseException:
             self._discard_replay_owner(replay_owner)
             raise
-        self._discard_replay_owner(replay_owner)
         return response
 
     @property
@@ -6768,6 +6756,555 @@ class OpenAIClient(TextGenerationVendor):
         ), "OpenAI tool_choice must match an available tool"
         return {"type": "function", "name": name}
 
+    async def _non_stream_result(
+        self,
+        response: object,
+        *,
+        tool: ToolManager | None,
+        replay_owner: _OpenAIReplayOwner,
+        request_has_replay_items: bool,
+    ) -> TextGenerationNonStreamResult:
+        synthetic_events = self._non_stream_response_events(response)
+        source = self._iterate_non_stream_events(synthetic_events)
+        stream = OpenAIStream(
+            stream=source,
+            provider_family=self._usage_provider_family.value,
+            replay_owner=replay_owner,
+            replay_owner_retainer=self._retain_replay_owner,
+            replay_owner_releaser=self._discard_replay_owner,
+            request_has_replay_items=request_has_replay_items,
+            tool=tool,
+        )
+        self._raise_if_closed()
+        self._register_active_replay_stream(replay_owner, stream)
+        collected_events: list[StreamProviderEvent] = []
+        async for event in stream._provider_events():
+            collected_events.append(replace(event, provider_payload=None))
+        events = tuple(collected_events)
+        usage = self._response_field(response, "usage")
+        if request_has_replay_items or stream._private_output_seen:
+            usage = OpenAIStream._private_replay_usage(usage)
+        answer_text = "".join(
+            event.text_delta or ""
+            for event in events
+            if event.kind is StreamItemKind.ANSWER_DELTA
+        )
+        return TextGenerationNonStreamResult(
+            events,
+            answer_text=answer_text,
+            provider_family=self._usage_provider_family,
+            usage=usage,
+        )
+
+    @staticmethod
+    async def _iterate_non_stream_events(
+        events: tuple[dict[str, object], ...],
+    ) -> AsyncIterator[object]:
+        for event in events:
+            yield event
+
+    @classmethod
+    def _non_stream_response_events(
+        cls,
+        response: object,
+    ) -> tuple[dict[str, object], ...]:
+        terminal_type = cls._non_stream_terminal_type(response)
+        output = cls._response_field(response, "output")
+        if output is None:
+            raw_items: list[object] = []
+        elif type(output) is list:
+            raw_items = cast(list[object], output)
+        else:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=terminal_type,
+                field="response.output",
+                value=output,
+            )
+
+        normalized_items: list[dict[str, object]] = []
+        source_indices: list[int] = []
+        for source_index, item in enumerate(raw_items):
+            normalized = cls._non_stream_output_item(item, source_index)
+            if normalized is None:
+                continue
+            normalized_items.append(normalized)
+            source_indices.append(source_index)
+
+        output_text = cls._response_field(response, "output_text")
+        if not normalized_items and output_text is not None:
+            if type(output_text) is not str:
+                raise _OpenAIReasoningSummaryEventError(
+                    event_type=terminal_type,
+                    field="response.output_text",
+                    value=output_text,
+                )
+            normalized_items.append(
+                {
+                    "id": "msg_non_stream_output_text",
+                    "type": "message",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": output_text}],
+                }
+            )
+            source_indices.append(0)
+
+        events: list[dict[str, object]] = []
+        terminal_item_count = max(
+            len(raw_items),
+            max(source_indices, default=-1) + 1,
+        )
+        terminal_items = [
+            cls._non_stream_terminal_placeholder(output_index)
+            for output_index in range(terminal_item_count)
+        ]
+        for item, source_index in zip(
+            normalized_items,
+            source_indices,
+            strict=True,
+        ):
+            output_index = source_index
+            added_item = cls._non_stream_added_item(item, source_index)
+            completed_item = dict(item)
+            completed_item["status"] = "completed"
+            terminal_item = dict(item)
+            terminal_item["status"] = cls._non_stream_terminal_item_status(
+                item,
+                terminal_type=terminal_type,
+                output_index=output_index,
+            )
+            events.append(
+                {
+                    "type": "response.output_item.added",
+                    "output_index": output_index,
+                    "item": added_item,
+                }
+            )
+            if item["type"] == "reasoning":
+                events.extend(
+                    cls._non_stream_native_reasoning_events(
+                        item,
+                        output_index=output_index,
+                    )
+                )
+            if not (
+                item["type"] in OpenAIStream._TOOL_CALL_ITEM_TYPES
+                and item["status"] == "incomplete"
+            ):
+                events.append(
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": output_index,
+                        "item": completed_item,
+                    }
+                )
+            terminal_items[output_index] = terminal_item
+
+        terminal_response: dict[str, object] = {"output": terminal_items}
+        usage = cls._response_field(response, "usage")
+        if usage is not None:
+            terminal_response["usage"] = usage
+        response_id = cls._response_field(response, "id")
+        if OpenAIStream._is_safe_response_id(response_id):
+            terminal_response["id"] = response_id
+        response_status = cls._response_field(response, "status")
+        if type(response_status) is str:
+            terminal_response["status"] = response_status
+        elif terminal_type == "response.failed":
+            terminal_response["status"] = "failed"
+        elif terminal_type == "response.incomplete":
+            terminal_response["status"] = "incomplete"
+        else:
+            terminal_response["status"] = "completed"
+        error = cls._response_field(response, "error")
+        if error is not None:
+            terminal_response["error"] = error
+        incomplete_details = cls._response_field(
+            response,
+            "incomplete_details",
+        )
+        if incomplete_details is not None:
+            terminal_response["incomplete_details"] = incomplete_details
+        events.append({"type": terminal_type, "response": terminal_response})
+        return tuple(events)
+
+    @staticmethod
+    def _non_stream_terminal_placeholder(
+        output_index: int,
+    ) -> dict[str, object]:
+        assert type(output_index) is int and output_index >= 0
+        return {
+            "type": "message",
+            "status": "completed",
+            "content": [],
+        }
+
+    @classmethod
+    def _non_stream_native_reasoning_events(
+        cls,
+        item: dict[str, object],
+        *,
+        output_index: int,
+    ) -> tuple[dict[str, object], ...]:
+        content = item.get("content")
+        if content is None:
+            return ()
+        if type(content) is not list:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.output_item.done",
+                field="item.content",
+                value=content,
+                output_index=output_index,
+            )
+        item_id = item["id"]
+        assert type(item_id) is str and item_id.strip()
+        events: list[dict[str, object]] = []
+        for content_index, part in enumerate(cast(list[object], content)):
+            part_type = cls._response_field(part, "type")
+            text = cls._response_field(part, "text")
+            if type(part_type) is not str or part_type != "reasoning_text":
+                raise _OpenAIReasoningSummaryEventError(
+                    event_type="response.output_item.done",
+                    field="item.content.type",
+                    value=part_type,
+                    output_index=output_index,
+                    value_shape="unexpected_value",
+                )
+            if type(text) is not str:
+                raise _OpenAIReasoningSummaryEventError(
+                    event_type="response.output_item.done",
+                    field="item.content.text",
+                    value=text,
+                    output_index=output_index,
+                )
+            identity = {
+                "item_id": item_id,
+                "output_index": output_index,
+                "content_index": content_index,
+            }
+            events.extend(
+                (
+                    {
+                        "type": "response.reasoning_text.delta",
+                        "delta": text,
+                        **identity,
+                    },
+                    {
+                        "type": "response.reasoning_text.done",
+                        "text": text,
+                        **identity,
+                    },
+                )
+            )
+        return tuple(events)
+
+    @classmethod
+    def _non_stream_terminal_type(cls, response: object) -> str:
+        status = cls._response_field(response, "status")
+        error = cls._response_field(response, "error")
+        incomplete_details = cls._response_field(
+            response,
+            "incomplete_details",
+        )
+        if status is not None and type(status) is not str:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.completed",
+                field="response.status",
+                value=status,
+            )
+        if error is not None or status in {"failed", "cancelled"}:
+            return "response.failed"
+        if incomplete_details is not None or status == "incomplete":
+            return "response.incomplete"
+        if status not in {None, "completed"}:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.completed",
+                field="response.status",
+                value=status,
+                value_shape="unexpected_value",
+            )
+        return "response.completed"
+
+    @classmethod
+    def _non_stream_output_item(
+        cls,
+        item: object,
+        source_index: int,
+    ) -> dict[str, object] | None:
+        item_type = cls._response_field(item, "type")
+        content = cls._response_field(item, "content")
+        direct_text = cls._response_field(item, "text")
+        nested_call = cls._response_field(item, "call")
+        if item_type is None:
+            if type(content) is list or direct_text is not None:
+                item_type = "message"
+            elif nested_call is not None:
+                item_type = "function_call"
+            else:
+                return None
+        if type(item_type) is not str:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.output_item.done",
+                field="item.type",
+                value=item_type,
+                output_index=source_index,
+            )
+        if item_type in {"message", "output_text"}:
+            return cls._non_stream_message_item(
+                item,
+                item_type=item_type,
+                source_index=source_index,
+            )
+        if item_type == "reasoning":
+            return cls._non_stream_reasoning_item(item, source_index)
+        if item_type in OpenAIStream._TOOL_CALL_ITEM_TYPES:
+            return cls._non_stream_tool_item(
+                item,
+                item_type=item_type,
+                source_index=source_index,
+            )
+        return None
+
+    @classmethod
+    def _non_stream_message_item(
+        cls,
+        item: object,
+        *,
+        item_type: str,
+        source_index: int,
+    ) -> dict[str, object]:
+        identifier = cls._non_stream_item_id(
+            item,
+            fallback=f"msg_non_stream_{source_index}",
+            output_index=source_index,
+        )
+        normalized_content: list[dict[str, object]] = []
+        content = cls._response_field(item, "content")
+        if type(content) is list:
+            for part in cast(list[object], content):
+                part_type = cls._response_field(part, "type")
+                if part_type is None:
+                    part_type = "output_text"
+                normalized_content.append(
+                    {
+                        "type": part_type,
+                        "text": cls._response_field(part, "text"),
+                    }
+                )
+        if not normalized_content:
+            direct_text = cls._response_field(item, "text")
+            if direct_text is not None:
+                normalized_content.append(
+                    {
+                        "type": "output_text",
+                        "text": direct_text,
+                    }
+                )
+        return {
+            "id": identifier,
+            "type": item_type,
+            "status": cls._non_stream_raw_item_status(item, source_index),
+            "content": normalized_content,
+        }
+
+    @classmethod
+    def _non_stream_reasoning_item(
+        cls,
+        item: object,
+        source_index: int,
+    ) -> dict[str, object]:
+        identifier = cls._non_stream_item_id(
+            item,
+            fallback=None,
+            output_index=source_index,
+        )
+        summary = cls._response_field(item, "summary")
+        normalized_summary: object
+        if summary is None:
+            normalized_summary = []
+        elif type(summary) is list:
+            normalized_summary = [
+                {
+                    "type": cls._response_field(part, "type"),
+                    "text": cls._response_field(part, "text"),
+                }
+                for part in cast(list[object], summary)
+            ]
+        else:
+            normalized_summary = summary
+        normalized: dict[str, object] = {
+            "id": identifier,
+            "type": "reasoning",
+            "status": cls._non_stream_raw_item_status(item, source_index),
+            "summary": normalized_summary,
+        }
+        encrypted_content = cls._response_field(item, "encrypted_content")
+        if encrypted_content is not None:
+            normalized["encrypted_content"] = encrypted_content
+        content = cls._response_field(item, "content")
+        if type(content) is list:
+            normalized["content"] = [
+                {
+                    "type": cls._response_field(part, "type"),
+                    "text": cls._response_field(part, "text"),
+                }
+                for part in cast(list[object], content)
+            ]
+        elif content is not None:
+            normalized["content"] = content
+        return normalized
+
+    @classmethod
+    def _non_stream_tool_item(
+        cls,
+        item: object,
+        *,
+        item_type: str,
+        source_index: int,
+    ) -> dict[str, object]:
+        call = cls._response_field(item, "call") or item
+        function = cls._response_field(call, "function") or call
+        custom = cls._response_field(item, "custom_tool_call")
+        effective = custom or function
+        call_id = (
+            cls._response_field(item, "call_id")
+            or cls._response_field(call, "call_id")
+            or cls._response_field(call, "id")
+            or cls._response_field(custom, "id")
+        )
+        if type(call_id) is not str or not call_id.strip():
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.output_item.done",
+                field="item.call_id",
+                value=call_id,
+                output_index=source_index,
+            )
+        identifier = cls._non_stream_item_id(
+            item,
+            fallback=f"fc_non_stream_{source_index}",
+            output_index=source_index,
+        )
+        name = cls._response_field(effective, "name")
+        arguments = (
+            cls._response_field(item, "arguments")
+            or cls._response_field(item, "input")
+            or cls._response_field(effective, "arguments")
+            or cls._response_field(effective, "input")
+        )
+        normalized_type = (
+            "custom_tool_call"
+            if item_type == "custom_tool_call"
+            else "function_call"
+        )
+        normalized: dict[str, object] = {
+            "id": identifier,
+            "type": normalized_type,
+            "status": cls._non_stream_raw_item_status(item, source_index),
+            "call_id": call_id,
+            "name": name,
+        }
+        field_name = (
+            "input" if normalized_type == "custom_tool_call" else "arguments"
+        )
+        normalized[field_name] = arguments
+        return normalized
+
+    @classmethod
+    def _non_stream_item_id(
+        cls,
+        item: object,
+        *,
+        fallback: str | None,
+        output_index: int,
+    ) -> str:
+        identifier = cls._response_field(item, "id")
+        if identifier is None:
+            if fallback is not None:
+                return fallback
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.output_item.done",
+                field="item.id",
+                output_index=output_index,
+            )
+        if type(identifier) is not str or not identifier.strip():
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.output_item.done",
+                field="item.id",
+                value=identifier,
+                output_index=output_index,
+            )
+        return identifier
+
+    @classmethod
+    def _non_stream_raw_item_status(
+        cls,
+        item: object,
+        output_index: int,
+    ) -> str:
+        status = cls._response_field(item, "status")
+        if status is None:
+            return "completed"
+        if type(status) is not str or status not in {
+            "completed",
+            "incomplete",
+        }:
+            raise _OpenAIReasoningSummaryEventError(
+                event_type="response.output_item.done",
+                field="item.status",
+                value=status,
+                output_index=output_index,
+                value_shape="unexpected_value",
+            )
+        return status
+
+    @staticmethod
+    def _non_stream_added_item(
+        item: dict[str, object],
+        source_index: int,
+    ) -> dict[str, object]:
+        item_type = item["type"]
+        identifier = item["id"]
+        added: dict[str, object] = {
+            "id": identifier,
+            "type": item_type,
+            "status": "in_progress",
+        }
+        if item_type == "reasoning":
+            added["summary"] = []
+        elif item_type in {"message", "output_text"}:
+            added["content"] = []
+        elif item_type in OpenAIStream._TOOL_CALL_ITEM_TYPES:
+            added["call_id"] = item["call_id"]
+            added["name"] = item["name"]
+            field_name = (
+                "input" if item_type == "custom_tool_call" else "arguments"
+            )
+            added[field_name] = ""
+        else:
+            raise AssertionError(
+                f"unsupported non-stream item at index {source_index}"
+            )
+        return added
+
+    @classmethod
+    def _non_stream_terminal_item_status(
+        cls,
+        item: dict[str, object],
+        *,
+        terminal_type: str,
+        output_index: int,
+    ) -> str:
+        status = item["status"]
+        assert type(status) is str
+        if terminal_type == "response.completed" and status != "completed":
+            raise _OpenAIReasoningSummaryEventError(
+                event_type=terminal_type,
+                field="item.status",
+                value=status,
+                output_index=output_index,
+                value_shape="unexpected_value",
+            )
+        return status
+
     @staticmethod
     def _non_stream_response_content(
         response: object,
@@ -6988,7 +7525,10 @@ class OpenAIModel(TextGenerationVendorModel):
             )
 
         static_text: str | None = None
-        if isinstance(streamer, TextGenerationSingleStream):
+        if isinstance(
+            streamer,
+            (TextGenerationNonStreamResult, TextGenerationSingleStream),
+        ):
             content = streamer.content
             static_text = content if isinstance(content, str) else None
 

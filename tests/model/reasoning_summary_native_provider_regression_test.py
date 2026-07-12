@@ -796,7 +796,12 @@ def _assert_happy_native_adapter_trace(
 
     accumulator = accumulate_canonical_stream_items(items)
     assert accumulator.answer_text == "answer"
-    assert accumulator.reasoning_text == "thinkagain"
+    assert [
+        item.text_delta
+        for item in items
+        if item.kind is StreamItemKind.REASONING_DELTA
+    ] == ["think", "again"]
+    assert accumulator.reasoning_text == "think\n\nagain"
     assert accumulator.tool_call_arguments == {"call-1": '{"q":1}'}
     assert accumulator.final_usage == {
         "input_tokens": 2,

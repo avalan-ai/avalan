@@ -2794,17 +2794,24 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 )
             ]
         )
-        accumulator = accumulate_canonical_stream_items(
-            [
-                canonical_item_from_consumer_projection(projection)
-                for projection in projections
-            ]
-        )
+        projected_items = [
+            canonical_item_from_consumer_projection(projection)
+            for projection in projections
+        ]
+        accumulator = accumulate_canonical_stream_items(projected_items)
 
         self.assertEqual(accumulator.answer_text, "xy")
         self.assertEqual(
             accumulator.reasoning_text,
-            "<think>a</think><think>b</think>",
+            "<think>a</think>\n\n<think>b</think>",
+        )
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in projected_items
+                if item.kind is StreamItemKind.REASONING_DELTA
+            ],
+            ["<think>a</think>", "<think>b</think>"],
         )
         self.assertEqual(
             len(

@@ -25,8 +25,13 @@ from avalan.model.manager import ModelManager
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamItemCorrelation,
     StreamItemKind,
+    StreamProviderEvent,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
+    StreamVisibility,
+    TextGenerationNonStreamResult,
 )
 from avalan.tool.manager import ToolManager
 
@@ -382,6 +387,66 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         synced = memory.recent_messages[0].message
         self.assertEqual(synced.role, MessageRole.ASSISTANT)
         self.assertEqual(synced.content, "assistant")
+
+    async def test_sync_messages_keeps_rich_reasoning_out_of_memory(
+        self,
+    ) -> None:
+        summary = "private summary sentinel"
+        answer = '{"answer":true}'
+        terminals = (
+            StreamItemKind.STREAM_COMPLETED,
+            StreamItemKind.STREAM_ERRORED,
+            StreamItemKind.STREAM_CANCELLED,
+        )
+        for terminal in terminals:
+            events = (
+                StreamProviderEvent(
+                    kind=StreamItemKind.REASONING_DELTA,
+                    text_delta=summary,
+                    correlation=StreamItemCorrelation(
+                        protocol_item_id="reasoning-memory",
+                        provider_output_index=0,
+                        provider_summary_index=0,
+                    ),
+                    visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=(
+                        StreamReasoningRepresentation.SUMMARY
+                    ),
+                    segment_instance_ordinal=0,
+                ),
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=answer,
+                ),
+                StreamProviderEvent(kind=StreamItemKind.ANSWER_DONE),
+                StreamProviderEvent(
+                    kind=terminal,
+                    data=(
+                        {"message": "provider failed"}
+                        if terminal is StreamItemKind.STREAM_ERRORED
+                        else None
+                    ),
+                ),
+            )
+            result = TextGenerationNonStreamResult(
+                events,
+                answer_text=answer,
+                provider_family="openai",
+            )
+            response = TextGenerationResponse(
+                result,
+                logger=getLogger(),
+                use_async_generator=False,
+            )
+            agent, _, memory, _ = self._make_agent(response)
+
+            await agent.sync_messages()
+
+            self.assertEqual(len(memory.recent_messages), 1)
+            synced = memory.recent_messages[0].message
+            self.assertEqual(synced.role, MessageRole.ASSISTANT)
+            self.assertEqual(synced.content, answer)
+            self.assertNotIn(summary, str(synced.content))
 
     async def test_sync_messages_appends_partial_output_for_errored_stream(
         self,

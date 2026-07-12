@@ -7218,7 +7218,15 @@ class StreamContractTestCase(TestCase):
         ]
 
         self.assertEqual(accumulator.answer_text, "xy")
-        self.assertEqual(accumulator.reasoning_text, "ab")
+        self.assertEqual(
+            "".join(
+                item.text_delta or ""
+                for item in items
+                if item.kind is StreamItemKind.REASONING_DELTA
+            ),
+            "ab",
+        )
+        self.assertEqual(accumulator.reasoning_text, "a\n\nb")
         self.assertEqual(len(reasoning_done_items), 1)
         self.assertGreater(
             reasoning_done_items[0].sequence,
@@ -7249,7 +7257,15 @@ class StreamContractTestCase(TestCase):
         accumulator = accumulate_canonical_stream_items(items)
 
         self.assertEqual(accumulator.answer_text, "xy")
-        self.assertEqual(accumulator.reasoning_text, "ab")
+        self.assertEqual(
+            "".join(
+                item.text_delta or ""
+                for item in items
+                if item.kind is StreamItemKind.REASONING_DELTA
+            ),
+            "ab",
+        )
+        self.assertEqual(accumulator.reasoning_text, "a\n\nb")
         self.assertEqual(
             [
                 item.kind
@@ -7279,7 +7295,15 @@ class StreamContractTestCase(TestCase):
         accumulator = accumulate_canonical_stream_items(items)
 
         self.assertEqual(accumulator.answer_text, "xy")
-        self.assertEqual(accumulator.reasoning_text, "a \n b")
+        self.assertEqual(
+            "".join(
+                item.text_delta or ""
+                for item in items
+                if item.kind is StreamItemKind.REASONING_DELTA
+            ),
+            "a \n b",
+        )
+        self.assertEqual(accumulator.reasoning_text, "a\n \n b")
 
     def test_local_stream_normalizer_closes_before_false_repeated_marker(
         self,

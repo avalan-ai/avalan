@@ -184,6 +184,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _pending_tool_batch_task: Task[list[_ToolExecutionOutcome]] | None
     _maximum_tool_cycles: MaximumToolCycles
     _block_repeated_tool_calls: bool
+    _final_response_text: str | None
 
     def __init__(
         self,
@@ -274,6 +275,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._pending_tool_batch_task = None
         self._maximum_tool_cycles = maximum_tool_cycles
         self._block_repeated_tool_calls = block_repeated_tool_calls
+        self._final_response_text = None
 
     @property
     def input_token_count(self) -> int:
@@ -516,16 +518,26 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert isinstance(correlation, StreamItemCorrelation)
         active_id = self._active_model_continuation_id
         incoming_id = correlation.model_continuation_id
-        if active_id is None:
-            return correlation
-        if incoming_id is not None and incoming_id != active_id:
-            raise StreamValidationError(
-                "response item model continuation id conflicts with the "
-                "active continuation"
+        if active_id is not None:
+            if incoming_id is not None and incoming_id != active_id:
+                raise StreamValidationError(
+                    "response item model continuation id conflicts with the "
+                    "active continuation"
+                )
+            if incoming_id is None:
+                correlation = replace(
+                    correlation,
+                    model_continuation_id=active_id,
+                )
+        if (
+            correlation.task_id is None
+            and self._canonical_correlation.task_id is not None
+        ):
+            correlation = replace(
+                correlation,
+                task_id=self._canonical_correlation.task_id,
             )
-        if incoming_id is not None:
-            return correlation
-        return replace(correlation, model_continuation_id=active_id)
+        return correlation
 
     def _validate_canonical_reasoning_segment(
         self,
@@ -1209,6 +1221,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._response.set_thinking(thinking)
 
     async def to_str(self) -> str:
+        if self._final_response_text is not None:
+            return self._final_response_text
         if not self._canonical_items:
             self._append_canonical_item(StreamItemKind.STREAM_STARTED)
         try:
@@ -1226,6 +1240,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             )
             raise
         self._finish_canonical_stream(StreamItemKind.STREAM_COMPLETED)
+        self._final_response_text = output
         return output
 
     async def to_json(self) -> str:
@@ -2144,23 +2159,6 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     ) -> tuple[str, list[ToolCall]]:
         self._begin_tool_call_lifecycle_response()
         try:
-            if not response.is_async_generator:
-                text = (
-                    await self._await_with_session_cancellation(
-                        response.to_str()
-                    )
-                    if self._active_model_continuation_id is not None
-                    else await response.to_str()
-                )
-                text, calls = await self._non_stream_response_text_and_calls(
-                    text
-                )
-                self._finish_active_model_continuation(
-                    StreamItemKind.MODEL_CONTINUATION_COMPLETED
-                )
-                return text, calls
-
-            self._begin_tool_call_lifecycle_response()
             self._calls = self._make_staging_queue()
             text_parts: list[str] = []
             streamed_calls: list[ToolCall] = []
@@ -2172,7 +2170,15 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     streamed_calls,
                 )
 
-            response_iterator = aiter(response)
+            response_iterator = (
+                aiter(response)
+                if response.is_async_generator
+                else response.canonical_stream(
+                    stream_session_id=self._canonical_stream_session_id,
+                    run_id=self._canonical_run_id,
+                    turn_id=self._canonical_turn_id,
+                )
+            )
             while True:
                 try:
                     response_item = response_iterator.__anext__()
