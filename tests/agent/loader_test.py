@@ -37,6 +37,7 @@ from avalan.entities import (
     MessageRole,
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
+    ReasoningSummaryMode,
     ToolCall,
     ToolCallContext,
     ToolCallDiagnosticCode,
@@ -2250,12 +2251,25 @@ readiness_timeout_seconds = 12
             result = await loader.from_file(
                 tmp.name,
                 agent_id=agent_id,
+                call_options_override={
+                    "reasoning": {
+                        "summary": ReasoningSummaryMode.DETAILED,
+                    }
+                },
                 tool_settings=ToolSettingsContext(extra={"caller": "ok"}),
             )
 
             self.assertEqual(result, "enveloped")
             assert envelope_loader.plan is not None
             assert envelope_loader.kwargs is not None
+            self.assertEqual(
+                envelope_loader.kwargs["call_options_override"],
+                {
+                    "reasoning": {
+                        "summary": ReasoningSummaryMode.DETAILED,
+                    }
+                },
+            )
             passed_tool_settings = envelope_loader.kwargs["tool_settings"]
             assert isinstance(passed_tool_settings, ToolSettingsContext)
             self.assertEqual(passed_tool_settings.extra, {"caller": "ok"})
@@ -2283,6 +2297,61 @@ readiness_timeout_seconds = 12
                 envelope_loader.plan.run_plan.request.request_id,
                 str(agent_id),
             )
+            await stack.aclose()
+
+    async def test_runtime_container_omission_preserves_legacy_signature(
+        self,
+    ) -> None:
+        image = "ghcr.io/example/tools@sha256:" + "4" * 64
+
+        class LegacyAgentEnvelopeLoader:
+            trusted_runtime_envelope_runner = True
+
+            async def load_agent_runtime_envelope(
+                self,
+                plan,
+                *,
+                path,
+                agent_id,
+                disable_memory,
+                uri,
+                tool_settings,
+                event_manager_mode,
+            ):
+                return "legacy-enveloped"
+
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + f"""
+[tool.container]
+backend = "docker"
+default_profile = "runtime"
+
+[tool.container.profiles.runtime]
+image = "{image}"
+
+[tool.shell]
+backend = "container"
+
+[runtime.container]
+profile = "runtime"
+""")
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+                runtime_envelope_loader=LegacyAgentEnvelopeLoader(),
+            )
+
+            for override in (None, {}):
+                result = await loader.from_file(
+                    tmp.name,
+                    agent_id=uuid4(),
+                    call_options_override=override,
+                )
+                self.assertEqual(result, "legacy-enveloped")
             await stack.aclose()
 
     async def test_runtime_container_loader_must_be_trusted(self) -> None:
@@ -4818,6 +4887,11 @@ uri = \"ai://local/model\"
 
 [run.reasoning]
 effort = \"xhigh\"
+summary = \"detailed\"
+max_new_tokens = 77
+enabled = true
+stop_on_max_new_tokens = true
+tag = \"channel\"
 """
         with TemporaryDirectory() as tmp:
             path = f"{tmp}/agent.toml"
@@ -4850,7 +4924,166 @@ effort = \"xhigh\"
                 self.assertEqual(
                     settings.call_options["reasoning"]["effort"], "xhigh"
                 )
+                self.assertEqual(
+                    settings.call_options["reasoning"],
+                    {
+                        "effort": "xhigh",
+                        "summary": ReasoningSummaryMode.DETAILED,
+                        "max_new_tokens": 77,
+                        "enabled": True,
+                        "stop_on_max_new_tokens": True,
+                        "tag": "channel",
+                    },
+                )
             await stack.aclose()
+
+    async def test_run_reasoning_summary_override_preserves_toml_siblings(
+        self,
+    ):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.reasoning]
+effort = \"high\"
+summary = \"auto\"
+max_new_tokens = 45
+enabled = true
+stop_on_max_new_tokens = true
+tag = \"think\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            stack = AsyncExitStack()
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(
+                    path,
+                    agent_id=uuid4(),
+                    call_options_override={
+                        "reasoning": {
+                            "summary": ReasoningSummaryMode.CONCISE,
+                        }
+                    },
+                )
+
+                self.assertEqual(result, "orch")
+                settings = from_settings.call_args.args[0]
+                self.assertEqual(
+                    settings.call_options["reasoning"],
+                    {
+                        "effort": "high",
+                        "summary": ReasoningSummaryMode.CONCISE,
+                        "max_new_tokens": 45,
+                        "enabled": True,
+                        "stop_on_max_new_tokens": True,
+                        "tag": "think",
+                    },
+                )
+            await stack.aclose()
+
+    async def test_invalid_run_reasoning_summary_from_file(self):
+        invalid_values = (
+            '"verbose"',
+            "1",
+            "true",
+            '{ mode = "auto" }',
+        )
+        for value in invalid_values:
+            with self.subTest(value=value), TemporaryDirectory() as tmp:
+                path = f"{tmp}/agent.toml"
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(f"""
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.reasoning]
+summary = {value}
+""")
+
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "run.reasoning.summary",
+                ):
+                    await loader.from_file(path, agent_id=uuid4())
+                await stack.aclose()
+
+    async def test_run_reasoning_summary_file_entry_points_match(self) -> None:
+        invalid_tables = (
+            'summary = "verbose"',
+            "summary = 1",
+            "summary = true",
+            'summary = { mode = "auto" }',
+            'summary = "auto"\nenabled = false',
+        )
+        for reasoning_table in invalid_tables:
+            with TemporaryDirectory() as tmp:
+                path = f"{tmp}/agent.toml"
+                Path(path).write_text(
+                    f"""
+[agent]
+role = "assistant"
+
+[engine]
+uri = "ai://local/model"
+
+[run.reasoning]
+{reasoning_table}
+""",
+                    encoding="utf-8",
+                )
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "run.reasoning.summary",
+                ):
+                    await OrchestratorLoader.validate_agent_file(path)
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "run.reasoning.summary",
+                ):
+                    await loader.from_file(path, agent_id=uuid4())
+                await stack.aclose()
+
+        OrchestratorLoader.validate_agent_config(
+            {
+                "agent": {"role": "assistant"},
+                "engine": {"uri": "ai://local/model"},
+                "run": {"reasoning": {"summary": "auto"}},
+            }
+        )
 
     async def test_permanent_memory_from_file(self):
         config_tmpl = """
@@ -5218,6 +5451,109 @@ maximum_tool_cycles = \"unlimited\"
                     config["run"]["openai_timeout_seconds"],
                     30,
                 )
+
+    async def test_blueprint_reasoning_literal_round_trips_through_loader(
+        self,
+    ) -> None:
+        template_dir = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "avalan"
+            / "agent"
+            / "templates"
+        )
+        env = Environment(
+            loader=FileSystemLoader(template_dir),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+        env.filters["toml_value"] = agent_cmds._toml_template_value
+        template = env.get_template("blueprint.toml")
+
+        def render(call_options: dict[str, object]) -> str:
+            return template.render(
+                orchestrator=Namespace(
+                    agent_config={},
+                    memory_recent=False,
+                    memory_permanent_message=None,
+                    sentence_model_id="sentence-model",
+                    sentence_model_max_tokens=200,
+                    sentence_model_overlap_size=20,
+                    sentence_model_window_size=40,
+                    uri="ai://local/model",
+                    call_options=call_options,
+                    tools=[],
+                ),
+                tool_format=None,
+                tool_recovery_formats=None,
+                tool_name_policy=None,
+                skills_tool=None,
+                browser_tool=None,
+                graph_tool=None,
+                database_tool=None,
+                container_tool=None,
+                sandbox_tool=None,
+                shell_tool=None,
+                shell_sandbox=None,
+                shell_container=None,
+            )
+
+        expected_reasoning = {
+            "effort": "xhigh",
+            "summary": ReasoningSummaryMode.DETAILED,
+            "max_new_tokens": 77,
+            "enabled": True,
+            "stop_on_max_new_tokens": True,
+            "tag": "channel",
+        }
+        rendered = render(
+            {
+                "max_new_tokens": 42,
+                "skip_special_tokens": False,
+                "reasoning": expected_reasoning,
+            }
+        )
+        self.assertNotIn("[run.reasoning]", render({}))
+
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            Path(path).write_text(rendered, encoding="utf-8")
+
+            validated = await OrchestratorLoader.validate_agent_file(path)
+            self.assertEqual(
+                validated["run"]["reasoning"],
+                expected_reasoning,
+            )
+            self.assertIs(
+                validated["run"]["reasoning"]["summary"],
+                ReasoningSummaryMode.DETAILED,
+            )
+
+            stack = AsyncExitStack()
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=uuid4())
+
+            self.assertEqual(result, "orch")
+            settings = from_settings.call_args.args[0]
+            self.assertEqual(
+                settings.call_options["reasoning"],
+                expected_reasoning,
+            )
+            self.assertIs(
+                settings.call_options["reasoning"]["summary"],
+                ReasoningSummaryMode.DETAILED,
+            )
+            await stack.aclose()
 
     async def test_run_response_format_schema_ref_is_resolved(self):
         config = """

@@ -98,20 +98,14 @@ block_repeated_tool_calls = {{ orchestrator.call_options['block_repeated_tool_ca
 
 [run.chat]
 {% for key, value in orchestrator.call_options['chat_settings'].items() %}
-{% if value is boolean %}{{ key }} = {{ value | lower }}
-{% elif value is number %}{{ key }} = {{ value }}
-{% else %}{{ key }} = "{{ value }}"
-{% endif %}
+{{ key }} = {{ value | toml_value }}
 {% endfor %}
 {% endif %}
 {% if orchestrator.call_options.get('reasoning') %}
 
 [run.reasoning]
 {% for key, value in orchestrator.call_options['reasoning'].items() %}
-{% if value is boolean %}{{ key }} = {{ value | lower }}
-{% elif value is number %}{{ key }} = {{ value }}
-{% else %}{{ key }} = "{{ value }}"
-{% endif %}
+{{ key }} = {{ value | toml_value }}
 {% endfor %}
 {% endif %}
 

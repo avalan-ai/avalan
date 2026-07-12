@@ -14,6 +14,10 @@ from ....entities import (
 from ....model.engine import Engine
 from ....model.nlp import BaseNLPModel
 from ....model.provider import ProviderFamily
+from ....model.reasoning import (
+    ReasoningSummaryRequestCapability,
+    validate_reasoning_summary_request,
+)
 from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
     CanonicalStreamItem,
@@ -137,6 +141,7 @@ _TRANSFORMERS_PROVIDER_FAMILY = "transformers"
 _TRANSFORMERS_STREAM_SESSION_ID = "transformers-stream"
 _TRANSFORMERS_RUN_ID = "transformers-run"
 _TRANSFORMERS_TURN_ID = "transformers-turn"
+_UNSUPPORTED_REASONING_SUMMARY = ReasoningSummaryRequestCapability()
 
 
 class _StopOnEventCriteria(StoppingCriteria):
@@ -268,6 +273,45 @@ class TextGenerationModel(BaseNLPModel):
         )
 
     @property
+    def reasoning_summary_request_capability(
+        self,
+    ) -> ReasoningSummaryRequestCapability:
+        """Return the adapter's request-time summary capability."""
+        return _UNSUPPORTED_REASONING_SUMMARY
+
+    @property
+    def reasoning_summary_provider(self) -> str:
+        """Return the provider family used in summary capability errors."""
+        provider_modules = {
+            "avalan.model.nlp.text.ds4": "ds4",
+            "avalan.model.nlp.text.generation": "transformers",
+            "avalan.model.nlp.text.mlxlm": "mlx",
+            "avalan.model.nlp.text.vllm": "vllm",
+            "avalan.model.nlp.text.vendor": "vendor",
+            "avalan.model.nlp.text.vendor.anyscale": "anyscale",
+            "avalan.model.nlp.text.vendor.anthropic": "anthropic",
+            "avalan.model.nlp.text.vendor.bedrock": "bedrock",
+            "avalan.model.nlp.text.vendor.deepinfra": "deepinfra",
+            "avalan.model.nlp.text.vendor.deepseek": "deepseek",
+            "avalan.model.nlp.text.vendor.google": "google",
+            "avalan.model.nlp.text.vendor.groq": "groq",
+            "avalan.model.nlp.text.vendor.huggingface": "huggingface",
+            "avalan.model.nlp.text.vendor.hyperbolic": "hyperbolic",
+            "avalan.model.nlp.text.vendor.litellm": "litellm",
+            "avalan.model.nlp.text.vendor.ollama": "ollama",
+            "avalan.model.nlp.text.vendor.openai": "openai",
+            "avalan.model.nlp.text.vendor.openrouter": "openrouter",
+            "avalan.model.nlp.text.vendor.together": "together",
+        }
+        resolved_provider = "local"
+        for model_type in type(self).__mro__:
+            module_name = model_type.__module__
+            if module_name in provider_modules:
+                resolved_provider = provider_modules[module_name]
+                break
+        return resolved_provider
+
+    @property
     def supports_sample_generation(self) -> bool:
         return True
 
@@ -349,6 +393,8 @@ class TextGenerationModel(BaseNLPModel):
         tool: ToolManager | None = None,
         **kwargs: object,
     ) -> TextGenerationResponse:
+        settings = settings or GenerationSettings()
+        validate_reasoning_summary_request(self, settings)
         assert self._tokenizer, (
             f"Model {self._model} can't be executed "
             + "without a tokenizer loaded first"
@@ -358,8 +404,6 @@ class TextGenerationModel(BaseNLPModel):
             + "needs to be loaded first"
         )
 
-        if not settings:
-            settings = GenerationSettings()
         assert settings.temperature is None or (
             settings.temperature > 0 or settings.temperature == 0.0
         ), (

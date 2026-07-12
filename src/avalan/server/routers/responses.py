@@ -1,4 +1,5 @@
 from ...agent.orchestrator import Orchestrator
+from ...model.reasoning import ReasoningSummaryCapabilityError
 from ...model.stream import (
     StreamChannel,
     StreamConsumerProjection,
@@ -36,7 +37,7 @@ from logging import Logger
 from types import MappingProxyType
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 _MAX_COALESCED_DELTA_CHARS = 4096
@@ -421,9 +422,20 @@ async def create_response(
     assert request and request.messages
     model_id = resolve_model_id(orchestrator, request.model)
 
-    response, response_id, timestamp = await orchestrate(
-        request, logger, orchestrator
-    )
+    try:
+        response, response_id, timestamp = await orchestrate(
+            request, logger, orchestrator
+        )
+    except ReasoningSummaryCapabilityError as error:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "reasoning_summary_unsupported",
+                "message": str(error),
+                "provider": error.provider,
+                "requested_mode": error.requested_mode.value,
+            },
+        ) from error
     output_redaction_settings = coerce_server_output_redaction_settings(
         output_redaction_settings
     )

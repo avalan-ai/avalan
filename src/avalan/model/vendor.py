@@ -14,6 +14,10 @@ from .message import (
     TemplateMessageRole,
 )
 from .provider import ProviderFamily, provider_family_value
+from .reasoning import (
+    ReasoningSummaryRequestCapability,
+    validate_reasoning_summary_request,
+)
 from .stream import (
     CanonicalStreamItem,
     StreamItemKind,
@@ -32,9 +36,32 @@ from json import JSONDecodeError, dumps, loads
 from typing import Any, AsyncIterator, Awaitable, Iterable, TypeVar, cast
 
 _StreamItemT = TypeVar("_StreamItemT")
+_UNSUPPORTED_REASONING_SUMMARY = ReasoningSummaryRequestCapability()
 
 
 class TextGenerationVendor(ABC):
+    _reasoning_summary_provider = "vendor"
+
+    @property
+    def reasoning_summary_request_capability(
+        self,
+    ) -> ReasoningSummaryRequestCapability:
+        """Return the client's request-time summary capability."""
+        return _UNSUPPORTED_REASONING_SUMMARY
+
+    @property
+    def reasoning_summary_provider(self) -> str:
+        """Return the provider family used in capability errors."""
+        return self._reasoning_summary_provider
+
+    def _validate_reasoning_summary_request(
+        self,
+        settings: GenerationSettings | None,
+    ) -> None:
+        """Reject unsupported summary requests before provider dispatch."""
+        if settings is not None:
+            validate_reasoning_summary_request(self, settings)
+
     async def __call__(
         self,
         model_id: str,

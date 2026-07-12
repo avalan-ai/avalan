@@ -6,8 +6,8 @@ from .types import (
     assert_optional_positive_number,
 )
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import (
@@ -327,6 +327,12 @@ class ReasoningEffort(StrEnum):
     MAX = "max"
 
 
+class ReasoningSummaryMode(StrEnum):
+    AUTO = "auto"
+    CONCISE = "concise"
+    DETAILED = "detailed"
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class QuantizationSettings:
@@ -386,10 +392,19 @@ class EngineUri:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReasoningSettings:
     effort: ReasoningEffort | None = None
+    summary: ReasoningSummaryMode | None = None
     max_new_tokens: int | None = None
     enabled: bool = True
     stop_on_max_new_tokens: bool = False
     tag: ReasoningTag | None = None
+
+    def __post_init__(self) -> None:
+        assert self.summary is None or isinstance(
+            self.summary, ReasoningSummaryMode
+        ), "reasoning summary must be a ReasoningSummaryMode"
+        assert (
+            self.summary is None or self.enabled is not False
+        ), "reasoning summary cannot be requested when reasoning is disabled"
 
 
 @final
@@ -565,6 +580,27 @@ class GenerationSettings:
             self.openai_timeout_seconds,
             "openai_timeout_seconds",
         )
+
+
+def merge_generation_settings_options(
+    base: Mapping[str, Any] | None,
+    overrides: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Merge explicit nested generation overrides field by field."""
+    merged = dict(base or {})
+    for key, value in overrides.items():
+        current = merged.get(key)
+        if isinstance(current, (ChatSettings, ReasoningSettings)):
+            current = asdict(current)
+        if (
+            key in {"chat_settings", "reasoning"}
+            and isinstance(current, Mapping)
+            and isinstance(value, Mapping)
+        ):
+            merged[key] = {**current, **value}
+        else:
+            merged[key] = value
+    return merged
 
 
 @final

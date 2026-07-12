@@ -9,10 +9,15 @@ from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
 
 from avalan.agent.orchestrator import Orchestrator
-from avalan.entities import MessageContentFile, MessageContentText
+from avalan.entities import (
+    MessageContentFile,
+    MessageContentText,
+    ReasoningSummaryMode,
+)
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager, EventManagerMode
 from avalan.model import TextGenerationResponse
+from avalan.model.reasoning import ReasoningSummaryCapabilityError
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -151,6 +156,19 @@ class EventfulServerOrchestrator(Orchestrator):
         return None
 
 
+class UnsupportedSummaryOrchestrator(Orchestrator):
+    def __init__(self) -> None:  # type: ignore[no-untyped-def]
+        self._model_ids = {"server-model"}
+        self.calls = 0
+
+    async def __call__(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        raise ReasoningSummaryCapabilityError(
+            provider="bedrock",
+            requested_mode=ReasoningSummaryMode.AUTO,
+        )
+
+
 class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         from fastapi import FastAPI
@@ -237,6 +255,94 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
                 "total_tokens": 4,
             },
         )
+
+    async def test_response_endpoint_rejects_invalid_summary_with_422(
+        self,
+    ) -> None:
+        invalid_reasoning_values = (
+            {"summary": "unknown"},
+            {"summary": 1},
+            {"summary": True},
+            {"summary": {"value": "auto"}},
+            {"summary": "auto", "unknown": False},
+        )
+        for reasoning in invalid_reasoning_values:
+            with self.subTest(reasoning=reasoning):
+                app = self.FastAPI()
+                orchestrator = SimpleOrchestrator()
+                app.state.orchestrator = orchestrator
+                app.include_router(self.responses.router)
+                client = self.TestClient(app)
+
+                response = client.post(
+                    "/responses",
+                    json={"input": "hi", "reasoning": reasoning},
+                )
+
+                self.assertEqual(response.status_code, 422)
+                self.assertIsNone(orchestrator.last_messages)
+
+    async def test_response_endpoint_preserves_summary_authority_rejection(
+        self,
+    ) -> None:
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+        client = self.TestClient(app)
+
+        for reasoning in (
+            {"summary": {"mode": "auto"}},
+            {"summary": {"sandboxProfile": "unsafe"}},
+            {"summary": "auto", "sandboxProfile": "unsafe"},
+        ):
+            response = client.post(
+                "/responses",
+                json={"input": "hi", "reasoning": reasoning},
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("runtime authority", response.text)
+            self.assertIsNone(orchestrator.last_messages)
+
+    async def test_response_endpoint_rejects_unsupported_before_sse_headers(
+        self,
+    ) -> None:
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                app = self.FastAPI()
+                orchestrator = UnsupportedSummaryOrchestrator()
+                app.state.orchestrator = orchestrator
+                app.include_router(self.responses.router)
+                client = self.TestClient(app)
+
+                response = client.post(
+                    "/responses",
+                    json={
+                        "input": "hi",
+                        "stream": stream,
+                        "reasoning": {"summary": "auto"},
+                    },
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertNotIn(
+                    "text/event-stream",
+                    response.headers.get("content-type", ""),
+                )
+                self.assertEqual(
+                    response.json()["detail"],
+                    {
+                        "code": "reasoning_summary_unsupported",
+                        "message": (
+                            "Provider 'bedrock' does not support reasoning "
+                            "summary mode 'auto'"
+                        ),
+                        "provider": "bedrock",
+                        "requested_mode": "auto",
+                    },
+                )
+                self.assertEqual(orchestrator.calls, 1)
 
     async def test_response_endpoint_accepts_schema_mode_property(self):
         app = self.FastAPI()

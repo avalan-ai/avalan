@@ -3,7 +3,7 @@ from unittest import TestCase
 
 from pydantic import ValidationError
 
-from avalan.entities import MessageRole
+from avalan.entities import MessageRole, ReasoningSummaryMode
 from avalan.server import entities as server_entities
 from avalan.server.entities import (
     ChatCompletionChoice,
@@ -16,6 +16,7 @@ from avalan.server.entities import (
     EngineRequest,
     MCPFileDescriptor,
     MCPToolRequest,
+    ReasoningConfig,
     ResponseFormatJSONSchema,
     ResponsesRequest,
 )
@@ -1406,6 +1407,64 @@ class ChatEntitiesTestCase(TestCase):
         req = ResponsesRequest(input=[message])
 
         self.assertEqual(req.messages, [message])
+
+    def test_responses_reasoning_summary_is_typed_and_strict(self) -> None:
+        for mode in ReasoningSummaryMode:
+            request = ResponsesRequest.model_validate(
+                {
+                    "input": "hi",
+                    "reasoning": {"summary": mode.value},
+                }
+            )
+            self.assertIsNotNone(request.reasoning)
+            assert request.reasoning is not None
+            self.assertIs(request.reasoning.summary, mode)
+            self.assertEqual(
+                request.reasoning.model_fields_set,
+                {"summary"},
+            )
+
+        invalid_values = (
+            "unknown",
+            1,
+            True,
+            {"value": "auto"},
+            ["auto"],
+        )
+        for invalid_value in invalid_values:
+            with self.subTest(invalid_value=invalid_value):
+                with self.assertRaises(ValidationError):
+                    ResponsesRequest.model_validate(
+                        {
+                            "input": "hi",
+                            "reasoning": {"summary": invalid_value},
+                        }
+                    )
+
+        with self.assertRaises(ValidationError):
+            ReasoningConfig.model_validate(
+                {
+                    "summary": "auto",
+                    "unexpected": True,
+                }
+            )
+
+    def test_responses_reasoning_preserves_authority_rejection(self) -> None:
+        for reasoning in (
+            {"summary": {"mode": "auto"}},
+            {"summary": {"sandboxProfile": "unsafe"}},
+            {"summary": "auto", "sandboxProfile": "unsafe"},
+        ):
+            with self.assertRaisesRegex(
+                ValidationError,
+                "runtime authority",
+            ):
+                ResponsesRequest.model_validate(
+                    {
+                        "input": "hi",
+                        "reasoning": reasoning,
+                    }
+                )
 
     def test_responses_request_rejects_non_string_instructions(self) -> None:
         with self.assertRaises(ValidationError):

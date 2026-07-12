@@ -24,6 +24,10 @@ from avalan.entities import (
     MessageContentFile,
     MessageContentText,
     MessageRole,
+    ReasoningEffort,
+    ReasoningSettings,
+    ReasoningSummaryMode,
+    ReasoningTag,
     TransformerEngineSettings,
 )
 from avalan.event import EventType
@@ -136,6 +140,98 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["kwargs"]["maximum_tool_cycles"], 64)
         context = self.engine_agent.await_args.args[0]
         self.assertEqual(context.engine_args, {"max_new_tokens": 10})
+
+    async def test_call_applies_presence_aware_generation_options_override(
+        self,
+    ) -> None:
+        base_reasoning = {
+            "effort": ReasoningEffort.XHIGH,
+            "summary": ReasoningSummaryMode.AUTO,
+            "tag": ReasoningTag.CHANNEL,
+            "enabled": True,
+            "max_new_tokens": 77,
+            "stop_on_max_new_tokens": True,
+        }
+        self.orch._call_options = {
+            "reasoning": base_reasoning,
+            "max_new_tokens": 123,
+        }
+
+        cases = (
+            (
+                {"reasoning": {"summary": ReasoningSummaryMode.DETAILED}},
+                {
+                    **base_reasoning,
+                    "summary": ReasoningSummaryMode.DETAILED,
+                },
+            ),
+            (
+                {"reasoning": {"effort": ReasoningEffort.LOW}},
+                {**base_reasoning, "effort": ReasoningEffort.LOW},
+            ),
+            (
+                {"reasoning": {"summary": None}},
+                {**base_reasoning, "summary": None},
+            ),
+            ({"reasoning": {}}, base_reasoning),
+            (None, base_reasoning),
+        )
+        for override, expected_reasoning in cases:
+            self.engine_agent.reset_mock()
+            kwargs = (
+                {"generation_options_override": override}
+                if override is not None
+                else {}
+            )
+
+            await self.orch("hi", **kwargs)
+
+            context = self.engine_agent.await_args.args[0]
+            self.assertEqual(
+                context.engine_args,
+                {
+                    "reasoning": expected_reasoning,
+                    "max_new_tokens": 123,
+                },
+            )
+
+        typed_reasoning = ReasoningSettings(
+            effort=ReasoningEffort.HIGH,
+            summary=ReasoningSummaryMode.AUTO,
+            max_new_tokens=45,
+            enabled=True,
+            stop_on_max_new_tokens=True,
+            tag=ReasoningTag.THINK,
+        )
+        self.orch._call_options = {"reasoning": typed_reasoning}
+        self.engine_agent.reset_mock()
+
+        await self.orch(
+            "hi",
+            generation_options_override={
+                "reasoning": {"summary": ReasoningSummaryMode.CONCISE}
+            },
+        )
+
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(
+            context.engine_args["reasoning"],
+            {
+                **asdict(typed_reasoning),
+                "summary": ReasoningSummaryMode.CONCISE,
+            },
+        )
+
+        self.engine_agent.reset_mock()
+        await self.orch(
+            "hi",
+            reasoning={"summary": ReasoningSummaryMode.DETAILED},
+        )
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(
+            context.engine_args["reasoning"],
+            {"summary": ReasoningSummaryMode.DETAILED},
+        )
 
     async def test_call_consumes_max_tool_cycles_alias(self):
         captured = {}

@@ -8,6 +8,7 @@ from ...entities import (
     Operation,
     ReasoningEffort,
     ReasoningSettings,
+    ReasoningSummaryMode,
     ReasoningTag,
     TransformerEngineSettings,
 )
@@ -137,10 +138,22 @@ class ModalityRegistry:
         input_string: Input | None,
     ) -> Operation:
         modality = cls._normalize_modality(modality)
+        if (
+            getattr(args, "reasoning_summary", None) is not None
+            and modality is not Modality.TEXT_GENERATION
+        ):
+            raise ValueError(
+                "reasoning summary requires text_generation modality"
+            )
         reasoning_settings = ReasoningSettings(
             effort=(
                 ReasoningEffort(getattr(args, "reasoning_effort"))
                 if getattr(args, "reasoning_effort", None)
+                else None
+            ),
+            summary=(
+                ReasoningSummaryMode(getattr(args, "reasoning_summary"))
+                if getattr(args, "reasoning_summary", None)
                 else None
             ),
             max_new_tokens=getattr(args, "reasoning_max_new_tokens", None),

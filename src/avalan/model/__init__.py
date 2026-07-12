@@ -15,6 +15,15 @@ from .file_delivery import (
     resolve_file_delivery_profile as resolve_file_delivery_profile,
 )
 from .input import input_files as input_files
+from .reasoning import (
+    ReasoningSummaryCapabilityError as ReasoningSummaryCapabilityError,
+)
+from .reasoning import (
+    ReasoningSummaryRequestCapability as ReasoningSummaryRequestCapability,
+)
+from .reasoning import (
+    validate_reasoning_summary_request as validate_reasoning_summary_request,
+)
 from .response.text import TextGenerationResponse
 from .stream import CanonicalStreamItem
 from .vendor import TextGenerationVendorStream

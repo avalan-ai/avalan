@@ -448,6 +448,7 @@ class AnthropicStream(TextGenerationVendorStream):
 
 
 class AnthropicClient(TextGenerationVendor):
+    _reasoning_summary_provider = "anthropic"
     _RETIRED_MODEL_REPLACEMENTS = {
         "claude-3-5-sonnet-20240620": "claude-sonnet-4-6",
         "claude-3-5-sonnet-20241022": "claude-sonnet-4-6",
@@ -477,6 +478,7 @@ class AnthropicClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationVendorStream:
+        self._validate_reasoning_summary_request(settings)
         assert (
             instructions is None
         ), "Anthropic does not support provider instructions"

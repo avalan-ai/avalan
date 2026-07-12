@@ -10,6 +10,7 @@ from ...entities import (
     MessageContentText,
     MessageRole,
     TransformerEngineSettings,
+    merge_generation_settings_options,
 )
 from ...entities import Modality as Modality
 from ...event import Event, EventType
@@ -41,6 +42,7 @@ from ..renderer import Renderer, TemplateEngineAgent
 from .response.orchestrator_response import OrchestratorResponse
 
 import asyncio
+from collections.abc import Mapping
 from contextlib import ExitStack
 from dataclasses import asdict, replace
 from inspect import isawaitable
@@ -219,7 +221,11 @@ class Orchestrator:
         return self._renderer
 
     async def __call__(
-        self, input: Input, **kwargs: Any
+        self,
+        input: Input,
+        *,
+        generation_options_override: Mapping[str, Any] | None = None,
+        **kwargs: Any,
     ) -> OrchestratorResponse:
         tool_confirm = kwargs.pop("tool_confirm", None)
         if self.is_finished:
@@ -270,6 +276,11 @@ class Orchestrator:
 
         # Execute operation
         engine_args = {**(self._call_options or {}), **kwargs}
+        if generation_options_override:
+            engine_args = merge_generation_settings_options(
+                engine_args,
+                generation_options_override,
+            )
         maximum_tool_cycles = self._pop_maximum_tool_cycles(engine_args)
         block_repeated_tool_calls = self._pop_block_repeated_tool_calls(
             engine_args

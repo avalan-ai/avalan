@@ -9,7 +9,9 @@ from ...entities import (
     MessageContentImage,
     MessageContentText,
     MessageFile,
+    ReasoningEffort,
     ReasoningSettings,
+    ReasoningSummaryMode,
 )
 from ...server.entities import (
     ChatCompletionRequest,
@@ -21,7 +23,7 @@ from ...server.entities import (
 
 from logging import Logger
 from time import time
-from typing import TypeAlias, cast
+from typing import Any, TypeAlias, cast
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -63,11 +65,22 @@ async def orchestrate(
 
     stop_strings = request.stop
     response_format = request.response_format
+    reasoning_values: dict[str, object] = {}
     if isinstance(request, ResponsesRequest) and request.text is not None:
         if request.text.stop is not None:
             stop_strings = request.text.stop
         if request.text.format is not None:
             response_format = request.text.format
+    if isinstance(request, ResponsesRequest) and request.reasoning is not None:
+        reasoning_values = {
+            field_name: getattr(request.reasoning, field_name)
+            for field_name in request.reasoning.model_fields_set
+        }
+    elif (
+        isinstance(request, ChatCompletionRequest)
+        and request.reasoning_effort is not None
+    ):
+        reasoning_values["effort"] = request.reasoning_effort
 
     settings = GenerationSettings(
         use_async_generator=bool(request.stream),
@@ -77,12 +90,14 @@ async def orchestrate(
         top_p=request.top_p,
         num_return_sequences=request.n,
         reasoning=ReasoningSettings(
-            effort=(
-                request.reasoning.effort
-                if isinstance(request, ResponsesRequest)
-                and request.reasoning is not None
-                else getattr(request, "reasoning_effort", None)
-            )
+            effort=cast(
+                ReasoningEffort | None,
+                reasoning_values.get("effort"),
+            ),
+            summary=cast(
+                ReasoningSummaryMode | None,
+                reasoning_values.get("summary"),
+            ),
         ),
         response_format=(
             response_format.model_dump(by_alias=True, exclude_none=True)
@@ -91,7 +106,11 @@ async def orchestrate(
         ),
     )
 
-    call_kwargs: dict[str, object] = {"settings": settings}
+    call_kwargs: dict[str, Any] = {"settings": settings}
+    if isinstance(request, ResponsesRequest) and reasoning_values:
+        call_kwargs["generation_options_override"] = {
+            "reasoning": reasoning_values
+        }
     if (
         isinstance(request, ResponsesRequest)
         and request.instructions is not None

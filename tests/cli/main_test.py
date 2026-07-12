@@ -3,7 +3,7 @@ import logging
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr
 from datetime import datetime
 from io import StringIO
 from os import environ, pathsep
@@ -29,7 +29,8 @@ from avalan.cli.__main__ import (
 from avalan.cli.commands import agent as agent_cmds
 from avalan.cli.display import cli_stream_display_config
 from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
-from avalan.entities import Model
+from avalan.entities import Model, ReasoningSummaryMode
+from avalan.model.reasoning import ReasoningSummaryCapabilityError
 from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.shell import ShellGitToolSettings, ShellToolSettings
 from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
@@ -1683,6 +1684,71 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             await self.cli()
         main_mock.assert_awaited_once()
         help_mock.assert_not_called()
+
+    async def test_call_maps_unsupported_reasoning_summary_safely(self):
+        console = MagicMock(export_text=lambda: "")
+        stderr = StringIO()
+        failure = ReasoningSummaryCapabilityError(
+            provider="openai",
+            requested_mode=ReasoningSummaryMode.DETAILED,
+        )
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch(
+                "avalan.cli.__main__.translation",
+                return_value=self.translator,
+            ),
+            patch(
+                "avalan.cli.__main__.create_theme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=console),
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch.object(CLI, "_main", AsyncMock(side_effect=failure)),
+            redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as error,
+        ):
+            await self.cli()
+
+        self.assertEqual(error.exception.code, 1)
+        self.assertEqual(stderr.getvalue(), f"{failure}\n")
+        self.assertIn("openai", stderr.getvalue())
+        self.assertIn("detailed", stderr.getvalue())
+        self.assertNotIn("token", stderr.getvalue().lower())
+
+    async def test_non_text_reasoning_summary_exits_before_model_loading(self):
+        stderr = StringIO()
+        needs_token = AsyncMock()
+        main = AsyncMock()
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "model",
+                    "run",
+                    "model-id",
+                    "--modality",
+                    "embedding",
+                    "--reasoning-summary",
+                    "auto",
+                ],
+            ),
+            patch.object(CLI, "_needs_hf_token", needs_token),
+            patch.object(CLI, "_main", main),
+            redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as error,
+        ):
+            await self.cli()
+
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn(
+            "--reasoning-summary requires --modality text_generation",
+            stderr.getvalue(),
+        )
+        needs_token.assert_not_called()
+        main.assert_not_called()
 
     async def test_ordinary_help_exits_before_theme_construction(self):
         cases = [

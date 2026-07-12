@@ -5,6 +5,8 @@ from .openai import OpenAIClient, OpenAIModel
 
 
 class OpenRouterClient(OpenAIClient):
+    _reasoning_summary_provider = "openrouter"
+
     def __init__(self, api_key: str, base_url: str | None = None):
         super().__init__(
             api_key=api_key,

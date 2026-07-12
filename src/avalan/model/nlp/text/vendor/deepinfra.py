@@ -4,6 +4,8 @@ from .openai import OpenAIClient, OpenAIModel
 
 
 class DeepInfraClient(OpenAIClient):
+    _reasoning_summary_provider = "deepinfra"
+
     def __init__(self, api_key: str, base_url: str | None = None):
         super().__init__(
             api_key=api_key,

@@ -256,6 +256,7 @@ class LiteLLMStream(TextGenerationVendorStream):
 
 
 class LiteLLMClient(TextGenerationVendor):
+    _reasoning_summary_provider = "litellm"
     _api_key: str | None
     _base_url: str | None
 
@@ -275,6 +276,7 @@ class LiteLLMClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
+        self._validate_reasoning_summary_request(settings)
         assert (
             instructions is None
         ), "LiteLLM does not support provider instructions"
