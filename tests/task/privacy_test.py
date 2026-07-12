@@ -588,6 +588,59 @@ class PrivacyTest(TestCase):
         )
         self.assertNotIn("private token", str(event))
 
+    def test_event_redaction_rejects_observability_field_smuggling(
+        self,
+    ) -> None:
+        sentinel = "PRIVATE_OBSERVABILITY_SMUGGLING_SENTINEL"
+        smuggled_fields = {
+            "correlation": {"provider_request_id": sentinel},
+            "has_provider_payload": sentinel,
+            "protocol_item_id": sentinel,
+            "provider_event_type": sentinel,
+            "provider_family": sentinel,
+            "provider_output_index": sentinel,
+            "provider_request_id": sentinel,
+            "provider_summary_index": sentinel,
+            "reasoning_representation": sentinel,
+            "segment_instance_ordinal": sentinel,
+            "text_delta_length": sentinel,
+        }
+
+        event = PrivacySanitizer().sanitize_event(
+            "token_generated",
+            {
+                **smuggled_fields,
+                "canonical_stream": {
+                    "stream_session_id": "stream-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "sequence": 3,
+                    "kind": "reasoning.delta",
+                    "channel": "reasoning",
+                    "visibility": "private",
+                    **smuggled_fields,
+                    "summary": smuggled_fields,
+                },
+            },
+        )
+
+        self.assertEqual(
+            event,
+            {
+                "event_type": "token_generated",
+                "canonical_stream": {
+                    "stream_session_id": "stream-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "sequence": 3,
+                    "kind": "reasoning.delta",
+                    "channel": "reasoning",
+                    "visibility": "private",
+                },
+            },
+        )
+        self.assertNotIn(sentinel, repr(event))
+
     def test_pipeline_event_redaction_keeps_stage_status_only(self) -> None:
         sanitizer = PrivacySanitizer()
 

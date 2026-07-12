@@ -41,10 +41,13 @@ from avalan.entities import (
 )
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
+    REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
+    StreamVisibility,
     accumulate_canonical_stream_items,
 )
 from avalan.task.usage import (
@@ -1158,13 +1161,13 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.REASONING_DELTA,
                 StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                 StreamItemKind.TOOL_CALL_READY,
                 StreamItemKind.TOOL_CALL_DONE,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
@@ -2433,9 +2436,34 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         }
         events = [
             SimpleNamespace(
-                type="response.reasoning_text.delta", delta="plan "
+                type="response.reasoning_text.delta",
+                delta="plan ",
+                item_id="reasoning-1",
+                output_index=0,
+                summary_index=1,
             ),
             SimpleNamespace(type="response.reasoning_text.done"),
+            SimpleNamespace(
+                type="response.reasoning_text.delta",
+                delta="check ",
+                item_id="reasoning-1",
+                output_index=0,
+                summary_index=1,
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    id="reasoning-1",
+                    type="reasoning",
+                ),
+            ),
+            SimpleNamespace(
+                type="response.reasoning_text.delta",
+                delta="confirm ",
+                item_id="reasoning-1",
+                output_index=0,
+                summary_index=1,
+            ),
             SimpleNamespace(
                 type="response.output_item.added",
                 item=SimpleNamespace(
@@ -2486,19 +2514,21 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             [
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DELTA,
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                 StreamItemKind.TOOL_CALL_READY,
                 StreamItemKind.TOOL_CALL_DONE,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
                 StreamItemKind.USAGE_COMPLETED,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
-        self.assertEqual([item.sequence for item in items], list(range(12)))
+        self.assertEqual([item.sequence for item in items], list(range(14)))
         self.assertEqual({item.provider_family for item in items}, {"openai"})
         self.assertEqual(
             items[0].metadata["capabilities"]["provider_family"], "openai"
@@ -2515,11 +2545,57 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             },
             {"call-1"},
         )
-        self.assertEqual(items[5].data, {"name": "pkg.lookup"})
+        self.assertEqual(items[6].data, {"name": "pkg.lookup"})
 
         accumulator = accumulate_canonical_stream_items(items)
         self.assertEqual(accumulator.answer_text, "hi ")
-        self.assertEqual(accumulator.reasoning_text, "plan ")
+        self.assertEqual(accumulator.reasoning_text, "plan check confirm ")
+        reasoning = [
+            item
+            for item in items
+            if item.kind is StreamItemKind.REASONING_DELTA
+        ]
+        self.assertEqual(
+            [item.segment_instance_ordinal for item in reasoning],
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            [item.correlation.protocol_item_id for item in reasoning],
+            ["reasoning-1", "reasoning-1", "reasoning-1"],
+        )
+        self.assertEqual(
+            [item.correlation.provider_output_index for item in reasoning],
+            [0, 0, 0],
+        )
+        self.assertEqual(
+            [item.correlation.provider_summary_index for item in reasoning],
+            [1, 1, 1],
+        )
+        self.assertEqual(reasoning[0].metadata, {})
+        self.assertEqual(
+            [
+                item.metadata[REASONING_SEGMENT_BOUNDARY_METADATA_KEY]
+                for item in reasoning[1:]
+            ],
+            ["completed", "completed"],
+        )
+        self.assertTrue(
+            all(
+                item.reasoning_representation
+                is StreamReasoningRepresentation.NATIVE_TEXT
+                for item in reasoning
+            )
+        )
+        self.assertTrue(
+            all(
+                item.visibility is StreamVisibility.PRIVATE
+                for item in reasoning
+            )
+        )
+        self.assertEqual(
+            sum(item.kind is StreamItemKind.REASONING_DONE for item in items),
+            1,
+        )
         self.assertEqual(
             accumulator.tool_call_arguments,
             {"call-1": '{"city":"Paris"}'},
@@ -2579,9 +2655,9 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.REASONING_DELTA,
                 StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
                 StreamItemKind.USAGE_COMPLETED,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,

@@ -27,6 +27,7 @@ from avalan.model.response.parsers.tool import (
 from avalan.model.stream import (
     StreamItemKind,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
     StreamVisibility,
     normalize_provider_stream,
 )
@@ -128,7 +129,12 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
         last_flushed = flushed[-1]
         self.assertIsInstance(last_flushed, StreamProviderEvent)
         assert isinstance(last_flushed, StreamProviderEvent)
-        self.assertIs(last_flushed.kind, StreamItemKind.REASONING_DONE)
+        self.assertIs(last_flushed.kind, StreamItemKind.REASONING_DELTA)
+        self.assertIs(
+            last_flushed.reasoning_representation,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        self.assertEqual(last_flushed.segment_instance_ordinal, 0)
         parser._thinking = False
         parser._pending_tokens = [" leftover"]
         parser._pending_str = "leftover"
@@ -177,7 +183,6 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
                 " ",
                 "</thi",
                 "nk>",
-                None,
                 " ",
                 "tail",
             ],
@@ -187,7 +192,6 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
             [
                 False,
                 False,
-                True,
                 True,
                 True,
                 True,
@@ -253,11 +257,11 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [_output_text(item) for item in output],
-            ["lead ", "<think>", "hidden", "</think>", None, " tail"],
+            ["lead ", "<think>", "hidden", "</think>", " tail"],
         )
         self.assertEqual(
             [_is_reasoning_event(item) for item in output],
-            [False, True, True, True, True, False],
+            [False, True, True, True, False],
         )
         self.assertFalse(parser.is_thinking)
 
@@ -278,11 +282,9 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
                 "<think>",
                 "a",
                 "</think>",
-                None,
                 "<think>",
                 "b",
                 "</think>",
-                None,
                 "y",
             ],
         )
@@ -290,8 +292,6 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
             [_is_reasoning_event(item) for item in output],
             [
                 False,
-                True,
-                True,
                 True,
                 True,
                 True,
@@ -439,7 +439,7 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
         )
         self.assertFalse(any(isinstance(item, Event) for item in output))
 
-    async def test_flush_open_reasoning_without_delta_emits_empty_done(
+    async def test_flush_open_reasoning_without_delta_is_invisible(
         self,
     ) -> None:
         parser = ReasoningParser(
@@ -450,21 +450,7 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
 
         output = list(await parser.flush())
 
-        self.assertEqual(
-            [
-                item.kind
-                for item in output
-                if isinstance(item, StreamProviderEvent)
-            ],
-            [
-                StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
-            ],
-        )
-        first = output[0]
-        self.assertIsInstance(first, StreamProviderEvent)
-        assert isinstance(first, StreamProviderEvent)
-        self.assertEqual(first.text_delta, "")
+        self.assertEqual(output, [])
 
 
 class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):

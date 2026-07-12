@@ -25,8 +25,10 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamProducerBackend,
     StreamProviderCapabilities,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     TextGenerationSingleStream,
     TextGenerationStream,
     accumulate_canonical_stream_items,
@@ -588,6 +590,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="private",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="response-stream",
@@ -2158,6 +2165,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="private reasoning",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="response-stream",
@@ -2362,6 +2374,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                     kind=StreamItemKind.REASONING_DELTA,
                     channel=StreamChannel.REASONING,
                     text_delta="<think> private </think>",
+                    visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=(
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    segment_instance_ordinal=0,
                 ),
                 CanonicalStreamItem(
                     stream_session_id="response-stream",
@@ -2447,6 +2464,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                     kind=StreamItemKind.REASONING_DELTA,
                     channel=StreamChannel.REASONING,
                     text_delta="<think>a</think><think>b</think>",
+                    visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=(
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    segment_instance_ordinal=0,
                 ),
                 CanonicalStreamItem(
                     stream_session_id="response-stream",
@@ -2553,6 +2575,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="<think>",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="response-stream",
@@ -2562,6 +2589,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta=" private ",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="response-stream",
@@ -2571,6 +2603,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="</think>",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="response-stream",
@@ -2675,6 +2712,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="<think>a</think>",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="response-stream",
@@ -2684,6 +2726,12 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="<think>b</think>",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=1,
+                metadata={"reasoning.segment_boundary": "completed"},
             ),
             CanonicalStreamItem(
                 stream_session_id="response-stream",

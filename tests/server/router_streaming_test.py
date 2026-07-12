@@ -23,9 +23,11 @@ from avalan.model.stream import (
     StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     project_canonical_stream_item,
 )
 from avalan.server.routers.mcp import MCPResourceStore
@@ -1442,6 +1444,11 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="plan",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",

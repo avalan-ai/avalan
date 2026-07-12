@@ -6,19 +6,25 @@ from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
     ReasoningTokenLimitExceeded,
 )
-from avalan.model.stream import StreamItemKind, StreamProviderEvent
+from avalan.model.stream import (
+    StreamItemKind,
+    StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamVisibility,
+)
 
 
-def _reasoning_delta_text(item: object) -> str:
+def _reasoning_delta_text(item: object, ordinal: int = 0) -> str:
     assert isinstance(item, StreamProviderEvent)
     assert item.kind is StreamItemKind.REASONING_DELTA
     assert item.text_delta is not None
+    assert (
+        item.reasoning_representation
+        is StreamReasoningRepresentation.NATIVE_TEXT
+    )
+    assert item.segment_instance_ordinal == ordinal
+    assert item.visibility is StreamVisibility.PRIVATE
     return item.text_delta
-
-
-def _assert_reasoning_done(item: object) -> None:
-    assert isinstance(item, StreamProviderEvent)
-    assert item.kind is StreamItemKind.REASONING_DONE
 
 
 class ReasoningParserLimitTestCase(IsolatedAsyncioTestCase):
@@ -34,9 +40,8 @@ class ReasoningParserLimitTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_reasoning_delta_text(outputs[1]), "a")
         self.assertEqual(outputs[2], "b")
         self.assertEqual(outputs[3], "c")
-        self.assertEqual(_reasoning_delta_text(outputs[4]), "</think>")
-        _assert_reasoning_done(outputs[5])
-        self.assertEqual(outputs[6], "d")
+        self.assertEqual(_reasoning_delta_text(outputs[4], 1), "</think>")
+        self.assertEqual(outputs[5], "d")
         self.assertFalse(parser.is_thinking)
 
     async def test_token_limit_raises_exception(self) -> None:

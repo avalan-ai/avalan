@@ -19,6 +19,8 @@ from .....model.stream import (
     StreamProviderAdapterError,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamReasoningSegmentState,
     StreamVisibility,
     TextGenerationSingleStream,
     TextGenerationStream,
@@ -119,6 +121,7 @@ class BedrockStream(TextGenerationVendorStream):
     _canonical_tool_blocks: dict[int, dict[str, Any]]
     _canonical_ready_tool_call_ids: set[str]
     _canonical_done_tool_call_ids: set[str]
+    _reasoning_segments: StreamReasoningSegmentState
     _tool_manager: ToolManager | None
 
     def __init__(
@@ -131,6 +134,7 @@ class BedrockStream(TextGenerationVendorStream):
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
+        self._reasoning_segments = StreamReasoningSegmentState()
         self._tool_manager = tool
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
@@ -170,6 +174,7 @@ class BedrockStream(TextGenerationVendorStream):
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
+        self._reasoning_segments = StreamReasoningSegmentState()
         return self._provider_canonical_stream(
             self._provider_events(),
             stream_session_id=stream_session_id,
@@ -231,6 +236,11 @@ class BedrockStream(TextGenerationVendorStream):
                     ) from exc
                 for provider_event in provider_events:
                     yield provider_event
+                    if (
+                        provider_event.kind
+                        is not StreamItemKind.REASONING_DELTA
+                    ):
+                        self._reasoning_segments.complete_segment()
 
             if terminal_usage is not None:
                 self._usage = terminal_usage
@@ -332,11 +342,22 @@ class BedrockStream(TextGenerationVendorStream):
             )
         reasoning_value = _string(delta.get("reasoning"))
         if reasoning_value:
+            representation = StreamReasoningRepresentation.NATIVE_TEXT
+            correlation = StreamItemCorrelation(
+                provider_output_index=block_index
+            )
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.REASONING_DELTA,
                     text_delta=reasoning_value,
+                    correlation=correlation,
                     visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=representation,
+                    segment_instance_ordinal=(
+                        self._reasoning_segments.allocate(
+                            representation, correlation
+                        )
+                    ),
                     provider_payload=provider_payload,
                     provider_event_type="contentBlockDelta",
                 ),
@@ -361,6 +382,7 @@ class BedrockStream(TextGenerationVendorStream):
         content_stop: Mapping[str, Any],
         provider_payload: LooseJsonValue | None,
     ) -> tuple[StreamProviderEvent, ...]:
+        self._reasoning_segments.complete_segment()
         block_index = content_stop.get("contentBlockIndex")
         if not isinstance(block_index, int):
             raise ValueError("bedrock content block index must be an integer")

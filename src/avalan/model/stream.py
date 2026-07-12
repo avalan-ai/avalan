@@ -4,6 +4,7 @@ from .provider import ProviderFamily, provider_family_value
 
 from abc import ABC, abstractmethod
 from asyncio import CancelledError
+from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -63,6 +64,13 @@ class StreamVisibility(StrEnum):
     PRIVATE = "private"
     REDACTED = "redacted"
     DIAGNOSTIC = "diagnostic"
+
+
+class StreamReasoningRepresentation(StrEnum):
+    """Identify the provider-authored reasoning text representation."""
+
+    NATIVE_TEXT = "native_text"
+    SUMMARY = "summary"
 
 
 class StreamBackpressurePolicy(StrEnum):
@@ -162,6 +170,7 @@ class StreamProviderCapabilities:
     backend: StreamProducerBackend
     provider_family: ProviderFamily | str | None = None
     supports_reasoning: bool = False
+    supports_reasoning_summary: bool = False
     supports_tool_calls: bool = False
     supports_usage: bool = False
     supports_terminal_events: bool = False
@@ -173,6 +182,7 @@ class StreamProviderCapabilities:
         assert isinstance(self.backend, StreamProducerBackend)
         for field_name, value in (
             ("supports_reasoning", self.supports_reasoning),
+            ("supports_reasoning_summary", self.supports_reasoning_summary),
             ("supports_tool_calls", self.supports_tool_calls),
             ("supports_usage", self.supports_usage),
             ("supports_terminal_events", self.supports_terminal_events),
@@ -194,6 +204,7 @@ class StreamProviderCapabilities:
         result: dict[str, LooseJsonValue] = {
             "backend": self.backend.value,
             "supports_reasoning": self.supports_reasoning,
+            "supports_reasoning_summary": self.supports_reasoning_summary,
             "supports_tool_calls": self.supports_tool_calls,
             "supports_usage": self.supports_usage,
             "supports_terminal_events": self.supports_terminal_events,
@@ -340,6 +351,8 @@ class StreamItemCorrelation:
     node_id: str | None = None
     parent_sequence: int | None = None
     protocol_item_id: str | None = None
+    provider_output_index: int | None = None
+    provider_summary_index: int | None = None
     task_id: str | None = None
     artifact_id: str | None = None
 
@@ -364,6 +377,12 @@ class StreamItemCorrelation:
             assert (
                 self.parent_sequence >= 0
             ), "parent_sequence must not be negative"
+        for index_field_name, index_value in (
+            ("provider_output_index", self.provider_output_index),
+            ("provider_summary_index", self.provider_summary_index),
+        ):
+            if index_value is not None:
+                _assert_non_negative_int(index_value, index_field_name)
 
     def to_trace_dict(self) -> dict[str, object]:
         result: dict[str, object] = {}
@@ -375,6 +394,8 @@ class StreamItemCorrelation:
             ("node_id", self.node_id),
             ("parent_sequence", self.parent_sequence),
             ("protocol_item_id", self.protocol_item_id),
+            ("provider_output_index", self.provider_output_index),
+            ("provider_summary_index", self.provider_summary_index),
             ("task_id", self.task_id),
             ("artifact_id", self.artifact_id),
         ):
@@ -384,6 +405,129 @@ class StreamItemCorrelation:
 
 
 _EMPTY_STREAM_ITEM_CORRELATION = StreamItemCorrelation()
+REASONING_SEGMENT_BOUNDARY_METADATA_KEY = "reasoning.segment_boundary"
+
+
+@dataclass(slots=True)
+class StreamReasoningSegmentState:
+    """Allocate and validate response-local reasoning segment ordinals."""
+
+    _next_ordinal: int = 0
+    _active_identity: tuple[object, ...] | None = None
+    _active_ordinal: int | None = None
+
+    def allocate(
+        self,
+        representation: StreamReasoningRepresentation,
+        correlation: StreamItemCorrelation | None = None,
+    ) -> int:
+        """Return the ordinal for a contiguous reasoning delta.
+
+        Args:
+            representation: Provider-authored reasoning representation.
+            correlation: Optional provider reasoning identity.
+
+        Returns:
+            Zero-based response-local segment instance ordinal.
+        """
+        assert isinstance(representation, StreamReasoningRepresentation)
+        assert correlation is None or isinstance(
+            correlation, StreamItemCorrelation
+        )
+        identity = self._identity(representation, correlation)
+        if self._active_identity == identity:
+            assert self._active_ordinal is not None
+            return self._active_ordinal
+        ordinal = self._next_ordinal
+        self._next_ordinal += 1
+        self._active_identity = identity
+        self._active_ordinal = ordinal
+        return ordinal
+
+    def complete_segment(self) -> None:
+        """Mark the active reasoning segment complete."""
+        self._active_identity = None
+        self._active_ordinal = None
+
+    @property
+    def next_allocation_follows_boundary(self) -> bool:
+        """Return whether the next allocation follows a prior segment."""
+        return self._next_ordinal > 0 and self._active_identity is None
+
+    def observe(self, event: "StreamProviderEvent") -> None:
+        """Validate one provider event against response-local segment state.
+
+        Args:
+            event: Provider event to validate.
+        """
+        assert isinstance(event, StreamProviderEvent)
+        if event.kind is not StreamItemKind.REASONING_DELTA:
+            self.complete_segment()
+            return
+        assert event.reasoning_representation is not None
+        assert event.segment_instance_ordinal is not None
+        self.observe_delta(
+            event.reasoning_representation,
+            event.correlation,
+            event.segment_instance_ordinal,
+            follows_completion=(
+                event.metadata.get(REASONING_SEGMENT_BOUNDARY_METADATA_KEY)
+                == "completed"
+            ),
+        )
+
+    def observe_delta(
+        self,
+        representation: StreamReasoningRepresentation,
+        correlation: StreamItemCorrelation,
+        ordinal: int,
+        *,
+        follows_completion: bool = False,
+    ) -> None:
+        """Validate one reasoning delta against the current segment.
+
+        Args:
+            representation: Provider-authored reasoning representation.
+            correlation: Optional provider reasoning identity fields.
+            ordinal: Response-local segment instance ordinal.
+            follows_completion: Whether an explicit hidden segment
+                completion preceded this delta.
+        """
+        assert isinstance(representation, StreamReasoningRepresentation)
+        assert isinstance(correlation, StreamItemCorrelation)
+        _assert_non_negative_int(ordinal, "segment_instance_ordinal")
+        assert isinstance(follows_completion, bool)
+        if follows_completion:
+            self.complete_segment()
+        identity = self._identity(representation, correlation)
+        if self._active_identity == identity:
+            assert self._active_ordinal is not None
+            if ordinal == self._active_ordinal:
+                return
+            raise StreamValidationError(
+                "reasoning segment ordinal changed without a boundary"
+            )
+        elif ordinal != self._next_ordinal:
+            raise StreamValidationError(
+                "reasoning segment ordinal does not match its boundary"
+            )
+        self._next_ordinal += 1
+        self._active_identity = identity
+        self._active_ordinal = ordinal
+
+    @staticmethod
+    def _identity(
+        representation: StreamReasoningRepresentation,
+        correlation: StreamItemCorrelation | None,
+    ) -> tuple[object, ...]:
+        resolved = correlation or _EMPTY_STREAM_ITEM_CORRELATION
+        return (
+            representation,
+            resolved.protocol_item_id,
+            resolved.provider_output_index,
+            resolved.provider_summary_index,
+            resolved.model_continuation_id,
+        )
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -396,6 +540,8 @@ class StreamProviderEvent:
         default_factory=StreamItemCorrelation
     )
     visibility: StreamVisibility = StreamVisibility.PUBLIC
+    reasoning_representation: StreamReasoningRepresentation | None = None
+    segment_instance_ordinal: int | None = None
     metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
     provider_payload: LooseJsonValue | None = None
     provider_event_type: str | None = None
@@ -413,6 +559,12 @@ class StreamProviderEvent:
             _assert_non_empty_string(
                 self.provider_event_type, "provider_event_type"
             )
+        _validate_reasoning_fields(
+            self.kind,
+            self.visibility,
+            self.reasoning_representation,
+            self.segment_instance_ordinal,
+        )
 
 
 class StreamProviderAdapterError(Exception):
@@ -728,6 +880,8 @@ class CanonicalStreamItem:
     usage: LooseJsonValue | None = None
     terminal_outcome: StreamTerminalOutcome | None = None
     visibility: StreamVisibility = StreamVisibility.PUBLIC
+    reasoning_representation: StreamReasoningRepresentation | None = None
+    segment_instance_ordinal: int | None = None
     metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
     provider_payload: LooseJsonValue | None = None
     provider_family: str | None = None
@@ -760,6 +914,12 @@ class CanonicalStreamItem:
             assert self.provider_event_type.strip()
         if self.timestamp is not None:
             assert isinstance(self.timestamp, datetime)
+        _validate_reasoning_fields(
+            self.kind,
+            self.visibility,
+            self.reasoning_representation,
+            self.segment_instance_ordinal,
+        )
         self._validate_kind_payload()
 
     @property
@@ -780,6 +940,12 @@ class CanonicalStreamItem:
             "channel": self.channel.value,
             "visibility": self.visibility.value,
         }
+        if self.reasoning_representation is not None:
+            result["reasoning_representation"] = (
+                self.reasoning_representation.value
+            )
+        if self.segment_instance_ordinal is not None:
+            result["segment_instance_ordinal"] = self.segment_instance_ordinal
         correlation = self.correlation.to_trace_dict()
         if correlation:
             result["correlation"] = correlation
@@ -803,7 +969,11 @@ class CanonicalStreamItem:
         return result
 
     def _validate_kind_payload(self) -> None:
-        if self.kind in _TEXT_DELTA_KINDS:
+        if self.kind is StreamItemKind.REASONING_DELTA:
+            assert (
+                self.text_delta
+            ), "reasoning deltas must carry non-empty text"
+        elif self.kind in _TEXT_DELTA_KINDS:
             assert self.text_delta is not None
         elif self.text_delta is not None:
             assert self.kind is StreamItemKind.STREAM_DIAGNOSTIC
@@ -839,6 +1009,8 @@ class StreamConsumerProjection:
     usage: LooseJsonValue | None = None
     terminal_outcome: StreamTerminalOutcome | None = None
     visibility: StreamVisibility = StreamVisibility.PUBLIC
+    reasoning_representation: StreamReasoningRepresentation | None = None
+    segment_instance_ordinal: int | None = None
     metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
     provider_family: str | None = None
     provider_event_type: str | None = None
@@ -871,10 +1043,20 @@ class StreamConsumerProjection:
             _assert_non_empty_string(
                 self.provider_event_type, "provider_event_type"
             )
+        _validate_reasoning_fields(
+            self.kind,
+            self.visibility,
+            self.reasoning_representation,
+            self.segment_instance_ordinal,
+        )
         self._validate_kind_payload()
 
     def _validate_kind_payload(self) -> None:
-        if self.kind in _TEXT_DELTA_KINDS:
+        if self.kind is StreamItemKind.REASONING_DELTA:
+            assert (
+                self.text_delta
+            ), "reasoning deltas must carry non-empty text"
+        elif self.kind in _TEXT_DELTA_KINDS:
             assert self.text_delta is not None
         elif self.text_delta is not None:
             assert self.kind is StreamItemKind.STREAM_DIAGNOSTIC
@@ -914,6 +1096,8 @@ class StreamConsumerProjection:
             usage=item.usage,
             terminal_outcome=item.terminal_outcome,
             visibility=item.visibility,
+            reasoning_representation=item.reasoning_representation,
+            segment_instance_ordinal=item.segment_instance_ordinal,
             metadata=dict(item.metadata),
             provider_family=item.provider_family,
             provider_event_type=item.provider_event_type,
@@ -951,6 +1135,8 @@ def canonical_item_from_consumer_projection(
         usage=projection.usage,
         terminal_outcome=projection.terminal_outcome,
         visibility=projection.visibility,
+        reasoning_representation=projection.reasoning_representation,
+        segment_instance_ordinal=projection.segment_instance_ordinal,
         metadata=dict(projection.metadata),
         provider_family=projection.provider_family,
         provider_event_type=projection.provider_event_type,
@@ -1191,22 +1377,31 @@ def _stream_observability_summary(
     summary: dict[str, object] = {}
     if item.text_delta is not None:
         summary["text_delta_length"] = len(item.text_delta)
-    if isinstance(item.data, dict):
-        data_keys, data_keys_truncated = observability_key_sample(item.data)
-        summary["data_keys"] = data_keys
-        if data_keys_truncated:
-            summary["data_key_count"] = len(item.data)
-            summary["data_keys_truncated"] = True
-    elif item.data is not None:
-        summary["data_type"] = type(item.data).__name__
-    if item.metadata:
-        metadata_keys, metadata_keys_truncated = observability_key_sample(
-            item.metadata
+    if item.reasoning_representation is not None:
+        summary["reasoning_representation"] = (
+            item.reasoning_representation.value
         )
-        summary["metadata_keys"] = metadata_keys
-        if metadata_keys_truncated:
-            summary["metadata_key_count"] = len(item.metadata)
-            summary["metadata_keys_truncated"] = True
+    if item.segment_instance_ordinal is not None:
+        summary["segment_instance_ordinal"] = item.segment_instance_ordinal
+    if item.kind is not StreamItemKind.REASONING_DELTA:
+        if isinstance(item.data, dict):
+            data_keys, data_keys_truncated = observability_key_sample(
+                item.data
+            )
+            summary["data_keys"] = data_keys
+            if data_keys_truncated:
+                summary["data_key_count"] = len(item.data)
+                summary["data_keys_truncated"] = True
+        elif item.data is not None:
+            summary["data_type"] = type(item.data).__name__
+        if item.metadata:
+            metadata_keys, metadata_keys_truncated = observability_key_sample(
+                item.metadata
+            )
+            summary["metadata_keys"] = metadata_keys
+            if metadata_keys_truncated:
+                summary["metadata_key_count"] = len(item.metadata)
+                summary["metadata_keys_truncated"] = True
     if item.provider_payload is not None:
         summary["has_provider_payload"] = True
     return summary
@@ -1395,6 +1590,29 @@ def _assert_non_negative_int(value: object, field_name: str) -> None:
     assert isinstance(value, int), f"{field_name} must be an integer"
     assert not isinstance(value, bool), f"{field_name} must be an integer"
     assert value >= 0, f"{field_name} must not be negative"
+
+
+def _validate_reasoning_fields(
+    kind: StreamItemKind,
+    visibility: StreamVisibility,
+    representation: StreamReasoningRepresentation | None,
+    segment_instance_ordinal: int | None,
+) -> None:
+    if kind is StreamItemKind.REASONING_DELTA:
+        assert isinstance(
+            representation, StreamReasoningRepresentation
+        ), "reasoning_representation must be a StreamReasoningRepresentation"
+        assert visibility is StreamVisibility.PRIVATE
+        _assert_non_negative_int(
+            segment_instance_ordinal, "segment_instance_ordinal"
+        )
+        return
+    assert (
+        representation is None
+    ), "reasoning_representation is only valid on reasoning deltas"
+    assert (
+        segment_instance_ordinal is None
+    ), "segment_instance_ordinal is only valid on reasoning deltas"
 
 
 def _assert_non_empty_string(value: object, field_name: str) -> None:
@@ -1717,6 +1935,7 @@ def validate_canonical_stream_items(
     closed = False
     answer_boundary = _TextChannelBoundaryState()
     reasoning_boundary = _TextChannelBoundaryState()
+    reasoning_segments = _CanonicalReasoningValidationState()
     usage_completed = False
     tool_call_states: dict[str, _ToolCallBoundaryState] = {}
     tool_execution_states: dict[str, _ToolExecutionBoundaryState] = {}
@@ -1727,6 +1946,7 @@ def validate_canonical_stream_items(
         _validate_sequence_identity(item, session_id, run_id, turn_id)
         last_sequence = _validate_sequence_order(item, last_sequence)
         _validate_parent_sequence(item)
+        _observe_canonical_reasoning_segment(reasoning_segments, item)
 
         if closed:
             raise StreamValidationError("stream item emitted after closed")
@@ -1859,6 +2079,44 @@ def _validate_answer_boundary(
         delta_kind=StreamItemKind.ANSWER_DELTA,
         done_kind=StreamItemKind.ANSWER_DONE,
         channel_name="answer",
+    )
+
+
+@dataclass(slots=True)
+class _CanonicalReasoningValidationState:
+    segments: StreamReasoningSegmentState = field(
+        default_factory=StreamReasoningSegmentState
+    )
+    continuation_id: str | None = None
+    initialized: bool = False
+
+
+def _observe_canonical_reasoning_segment(
+    state: _CanonicalReasoningValidationState,
+    item: CanonicalStreamItem,
+) -> None:
+    if item.kind is not StreamItemKind.REASONING_DELTA:
+        state.segments.complete_segment()
+        return
+    assert item.reasoning_representation is not None
+    assert item.segment_instance_ordinal is not None
+    continuation_id = item.correlation.model_continuation_id
+    if not state.initialized:
+        state.continuation_id = continuation_id
+        state.initialized = True
+    elif continuation_id is not None and (
+        continuation_id != state.continuation_id
+    ):
+        state.segments = StreamReasoningSegmentState()
+        state.continuation_id = continuation_id
+    state.segments.observe_delta(
+        item.reasoning_representation,
+        item.correlation,
+        item.segment_instance_ordinal,
+        follows_completion=(
+            item.metadata.get(REASONING_SEGMENT_BOUNDARY_METADATA_KEY)
+            == "completed"
+        ),
     )
 
 
@@ -2058,6 +2316,7 @@ class CanonicalStreamAccumulator:
         self._closed = False
         self._answer_boundary = _TextChannelBoundaryState()
         self._reasoning_boundary = _TextChannelBoundaryState()
+        self._reasoning_segments = _CanonicalReasoningValidationState()
         self._usage_completed = False
         self._tool_call_states: dict[str, _ToolCallBoundaryState] = {}
         self._tool_execution_states: dict[str, _ToolExecutionBoundaryState] = (
@@ -2203,6 +2462,7 @@ class CanonicalStreamAccumulator:
             raise StreamValidationError("stream closed before terminal")
 
         self._validate_usage(item)
+        _observe_canonical_reasoning_segment(self._reasoning_segments, item)
         _validate_answer_boundary(item, self._answer_boundary)
         _validate_reasoning_boundary(item, self._reasoning_boundary)
         _validate_tool_call_boundary(item, self._tool_call_states)
@@ -2494,6 +2754,20 @@ async def normalize_provider_stream(
         await close_provider_stream()
 
 
+@dataclass(frozen=True, slots=True)
+class _LocalTextSourceFragment:
+    text: str
+    metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
+    source_index: int | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.text, str)
+        assert self.text
+        assert isinstance(self.metadata, dict)
+        if self.source_index is not None:
+            _assert_non_negative_int(self.source_index, "source_index")
+
+
 @dataclass(slots=True)
 class _LocalTextStreamParser:
     _reasoning_start_tag: str = "<think>"
@@ -2501,37 +2775,57 @@ class _LocalTextStreamParser:
     _tool_start_tag: str = "<tool_call"
     _tool_end_tag: str = "</tool_call>"
     _reasoning_buffer: str = ""
+    _reasoning_fragments: deque[_LocalTextSourceFragment] = field(
+        default_factory=deque
+    )
     _reasoning_active: bool = False
-    _reasoning_delta_emitted: bool = False
     _reasoning_done_pending: bool = False
+    _reasoning_segments: StreamReasoningSegmentState = field(
+        default_factory=StreamReasoningSegmentState
+    )
     _tool_buffer: str = ""
+    _tool_fragments: deque[_LocalTextSourceFragment] = field(
+        default_factory=deque
+    )
     _tool_state: str = "outside"
     _tool_call_id: str | None = None
     _tool_call_index: int = 0
     _tool_name: str | None = None
     _tool_argument_deltas: list[str] = field(default_factory=list)
+    _next_source_index: int = 0
 
-    def push(self, token: str) -> tuple[StreamProviderEvent, ...]:
+    def push(
+        self,
+        token: str,
+        metadata: dict[str, LooseJsonValue] | None = None,
+    ) -> tuple[StreamProviderEvent, ...]:
         assert isinstance(token, str)
-        events: list[StreamProviderEvent] = []
-        for event in self._push_reasoning(token):
-            if event.kind is StreamItemKind.ANSWER_DELTA:
-                assert event.text_delta is not None
-                events.extend(self._push_tool(event.text_delta))
-            else:
-                events.append(event)
-        return tuple(events)
+        assert metadata is None or isinstance(metadata, dict)
+        if not token:
+            return ()
+        source_index = None
+        if metadata is not None:
+            source_index = self._next_source_index
+            self._next_source_index += 1
+        fragment = _LocalTextSourceFragment(
+            text=token,
+            metadata=dict(metadata or {}),
+            source_index=source_index,
+        )
+        return self._push_reasoning(fragment)
 
     def flush(self) -> tuple[StreamProviderEvent, ...]:
         events: list[StreamProviderEvent] = []
         if self._reasoning_buffer:
-            text = self._reasoning_buffer
+            fragments = self._take_reasoning_fragments(
+                len(self._reasoning_buffer)
+            )
             self._reasoning_buffer = ""
             if self._reasoning_active:
-                events.append(self._reasoning_delta(text))
+                self._append_reasoning_fragments(events, fragments)
             else:
                 self._append_pending_reasoning_done(events)
-                events.extend(self._push_tool(text))
+                events.extend(self._push_tool_fragments(fragments))
         if self._reasoning_active:
             self._reasoning_active = False
             self._append_reasoning_done(events)
@@ -2539,8 +2833,11 @@ class _LocalTextStreamParser:
         events.extend(self._flush_tool())
         return tuple(events)
 
-    def _push_reasoning(self, token: str) -> tuple[StreamProviderEvent, ...]:
-        self._reasoning_buffer += token
+    def _push_reasoning(
+        self, fragment: _LocalTextSourceFragment
+    ) -> tuple[StreamProviderEvent, ...]:
+        self._reasoning_buffer += fragment.text
+        self._append_source_fragment(self._reasoning_fragments, fragment)
         events: list[StreamProviderEvent] = []
         while self._reasoning_buffer:
             if self._reasoning_active:
@@ -2548,13 +2845,18 @@ class _LocalTextStreamParser:
                     self._reasoning_end_tag
                 )
                 if end_index != -1:
-                    self._append_reasoning_delta(
-                        events, self._reasoning_buffer[:end_index]
+                    self._append_reasoning_fragments(
+                        events,
+                        self._take_reasoning_fragments(end_index),
+                    )
+                    self._discard_reasoning_fragments(
+                        len(self._reasoning_end_tag)
                     )
                     self._reasoning_buffer = self._reasoning_buffer[
                         end_index + len(self._reasoning_end_tag) :
                     ]
                     self._reasoning_active = False
+                    self._reasoning_segments.complete_segment()
                     self._reasoning_done_pending = True
                     continue
                 flush_length = self._flushable_prefix_length(
@@ -2563,8 +2865,9 @@ class _LocalTextStreamParser:
                 )
                 if not flush_length:
                     break
-                self._append_reasoning_delta(
-                    events, self._reasoning_buffer[:flush_length]
+                self._append_reasoning_fragments(
+                    events,
+                    self._take_reasoning_fragments(flush_length),
                 )
                 self._reasoning_buffer = self._reasoning_buffer[flush_length:]
                 continue
@@ -2574,21 +2877,23 @@ class _LocalTextStreamParser:
             )
             if start_index != -1:
                 visible_prefix = self._reasoning_buffer[:start_index]
+                visible_fragments = self._take_reasoning_fragments(start_index)
                 continuing_reasoning = self._reasoning_done_pending
                 if continuing_reasoning and (
                     not visible_prefix or visible_prefix.isspace()
                 ):
-                    self._append_reasoning_delta(events, visible_prefix)
+                    self._append_reasoning_fragments(events, visible_fragments)
                 else:
                     self._append_pending_reasoning_done(events)
-                    events.extend(self._push_tool(visible_prefix))
+                    events.extend(self._push_tool_fragments(visible_fragments))
+                self._discard_reasoning_fragments(
+                    len(self._reasoning_start_tag)
+                )
                 self._reasoning_buffer = self._reasoning_buffer[
                     start_index + len(self._reasoning_start_tag) :
                 ]
                 self._reasoning_active = True
                 self._reasoning_done_pending = False
-                if not continuing_reasoning:
-                    self._reasoning_delta_emitted = False
                 continue
             if (
                 self._reasoning_done_pending
@@ -2603,22 +2908,30 @@ class _LocalTextStreamParser:
                 break
             self._append_pending_reasoning_done(events)
             events.extend(
-                self._push_tool(self._reasoning_buffer[:flush_length])
+                self._push_tool_fragments(
+                    self._take_reasoning_fragments(flush_length)
+                )
             )
             self._reasoning_buffer = self._reasoning_buffer[flush_length:]
         return tuple(events)
 
-    def _push_tool(self, text: str) -> tuple[StreamProviderEvent, ...]:
-        if not text:
+    def _push_tool_fragments(
+        self, fragments: Iterable[_LocalTextSourceFragment]
+    ) -> tuple[StreamProviderEvent, ...]:
+        fragments = tuple(fragments)
+        if not fragments:
             return ()
-        self._tool_buffer += text
+        self._tool_buffer += "".join(fragment.text for fragment in fragments)
+        for fragment in fragments:
+            self._append_source_fragment(self._tool_fragments, fragment)
         events: list[StreamProviderEvent] = []
         while self._tool_buffer:
             if self._tool_state == "outside":
                 start_index = self._tool_start_index()
                 if start_index is not None:
-                    self._append_answer_delta(
-                        events, self._tool_buffer[:start_index]
+                    self._append_answer_fragments(
+                        events,
+                        self._take_tool_fragments(start_index),
                     )
                     self._tool_buffer = self._tool_buffer[start_index:]
                     self._tool_state = "opening"
@@ -2627,8 +2940,9 @@ class _LocalTextStreamParser:
                 flush_length = self._tool_flushable_prefix_length()
                 if not flush_length:
                     break
-                self._append_answer_delta(
-                    events, self._tool_buffer[:flush_length]
+                self._append_answer_fragments(
+                    events,
+                    self._take_tool_fragments(flush_length),
                 )
                 self._tool_buffer = self._tool_buffer[flush_length:]
                 continue
@@ -2639,15 +2953,18 @@ class _LocalTextStreamParser:
                     break
                 opening_tag = self._tool_buffer[: tag_end + 1]
                 self._tool_name = self._tool_name_from_opening_tag(opening_tag)
+                self._discard_tool_fragments(tag_end + 1)
                 self._tool_buffer = self._tool_buffer[tag_end + 1 :]
                 self._tool_state = "body"
                 continue
 
             end_index = self._tool_buffer.find(self._tool_end_tag)
             if end_index != -1:
-                self._append_tool_argument_delta(
-                    events, self._tool_buffer[:end_index]
+                self._append_tool_argument_fragments(
+                    events,
+                    self._take_tool_fragments(end_index),
                 )
+                self._discard_tool_fragments(len(self._tool_end_tag))
                 self._tool_buffer = self._tool_buffer[
                     end_index + len(self._tool_end_tag) :
                 ]
@@ -2660,20 +2977,22 @@ class _LocalTextStreamParser:
             )
             if not flush_length:
                 break
-            self._append_tool_argument_delta(
-                events, self._tool_buffer[:flush_length]
+            self._append_tool_argument_fragments(
+                events,
+                self._take_tool_fragments(flush_length),
             )
             self._tool_buffer = self._tool_buffer[flush_length:]
         return tuple(events)
 
     def _flush_tool(self) -> tuple[StreamProviderEvent, ...]:
         events: list[StreamProviderEvent] = []
+        fragments = self._take_tool_fragments(len(self._tool_buffer))
         if self._tool_state == "outside":
-            self._append_answer_delta(events, self._tool_buffer)
+            self._append_answer_fragments(events, fragments)
             self._tool_buffer = ""
             return tuple(events)
 
-        self._append_tool_argument_delta(events, self._tool_buffer)
+        self._append_tool_argument_fragments(events, fragments)
         self._tool_buffer = ""
         assert self._tool_call_id is not None
         events.append(
@@ -2744,36 +3063,37 @@ class _LocalTextStreamParser:
             return None, False
         return parsed, True
 
-    def _append_answer_delta(
+    def _append_answer_fragments(
         self,
         events: list[StreamProviderEvent],
-        text: str,
+        fragments: Iterable[_LocalTextSourceFragment],
     ) -> None:
-        if text:
+        for fragment in fragments:
+            self._reasoning_segments.complete_segment()
             events.append(
                 StreamProviderEvent(
                     kind=StreamItemKind.ANSWER_DELTA,
-                    text_delta=text,
+                    text_delta=fragment.text,
+                    metadata=dict(fragment.metadata),
                 )
             )
 
-    def _append_reasoning_delta(
+    def _append_reasoning_fragments(
         self,
         events: list[StreamProviderEvent],
-        text: str,
+        fragments: Iterable[_LocalTextSourceFragment],
     ) -> None:
-        if text:
-            self._reasoning_delta_emitted = True
-            events.append(self._reasoning_delta(text))
+        for fragment in fragments:
+            events.append(
+                self._reasoning_delta(fragment.text, fragment.metadata)
+            )
 
     def _append_reasoning_done(
         self,
         events: list[StreamProviderEvent],
     ) -> None:
-        if not self._reasoning_delta_emitted:
-            events.append(self._reasoning_delta(""))
-        self._reasoning_delta_emitted = False
-        events.append(StreamProviderEvent(kind=StreamItemKind.REASONING_DONE))
+        assert isinstance(events, list)
+        self._reasoning_segments.complete_segment()
 
     def _append_pending_reasoning_done(
         self,
@@ -2784,31 +3104,117 @@ class _LocalTextStreamParser:
         self._reasoning_done_pending = False
         self._append_reasoning_done(events)
 
-    def _reasoning_delta(self, text: str) -> StreamProviderEvent:
+    def _reasoning_delta(
+        self,
+        text: str,
+        metadata: dict[str, LooseJsonValue] | None = None,
+    ) -> StreamProviderEvent:
+        representation = StreamReasoningRepresentation.NATIVE_TEXT
+        follows_boundary = (
+            self._reasoning_segments.next_allocation_follows_boundary
+        )
+        event_metadata = dict(metadata or {})
+        if follows_boundary:
+            event_metadata[REASONING_SEGMENT_BOUNDARY_METADATA_KEY] = (
+                "completed"
+            )
         return StreamProviderEvent(
             kind=StreamItemKind.REASONING_DELTA,
             text_delta=text,
             visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=representation,
+            segment_instance_ordinal=self._reasoning_segments.allocate(
+                representation
+            ),
+            metadata=event_metadata,
         )
 
-    def _append_tool_argument_delta(
+    def _append_tool_argument_fragments(
         self,
         events: list[StreamProviderEvent],
-        text: str,
+        fragments: Iterable[_LocalTextSourceFragment],
     ) -> None:
-        if not text:
-            return
-        assert self._tool_call_id is not None
-        self._tool_argument_deltas.append(text)
-        events.append(
-            StreamProviderEvent(
-                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                text_delta=text,
-                correlation=StreamItemCorrelation(
-                    tool_call_id=self._tool_call_id
-                ),
+        for fragment in fragments:
+            self._reasoning_segments.complete_segment()
+            assert self._tool_call_id is not None
+            self._tool_argument_deltas.append(fragment.text)
+            events.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    text_delta=fragment.text,
+                    correlation=StreamItemCorrelation(
+                        tool_call_id=self._tool_call_id
+                    ),
+                    metadata=dict(fragment.metadata),
+                )
             )
-        )
+
+    def _take_reasoning_fragments(
+        self, length: int
+    ) -> tuple[_LocalTextSourceFragment, ...]:
+        return self._take_source_fragments(self._reasoning_fragments, length)
+
+    def _discard_reasoning_fragments(self, length: int) -> None:
+        self._take_reasoning_fragments(length)
+
+    def _take_tool_fragments(
+        self, length: int
+    ) -> tuple[_LocalTextSourceFragment, ...]:
+        return self._take_source_fragments(self._tool_fragments, length)
+
+    def _discard_tool_fragments(self, length: int) -> None:
+        self._take_tool_fragments(length)
+
+    @staticmethod
+    def _take_source_fragments(
+        fragments: deque[_LocalTextSourceFragment],
+        length: int,
+    ) -> tuple[_LocalTextSourceFragment, ...]:
+        _assert_non_negative_int(length, "length")
+        remaining = length
+        result: list[_LocalTextSourceFragment] = []
+        while remaining:
+            assert fragments, "local text provenance must match buffered text"
+            fragment = fragments.popleft()
+            if len(fragment.text) <= remaining:
+                result.append(fragment)
+                remaining -= len(fragment.text)
+                continue
+            result.append(
+                _LocalTextSourceFragment(
+                    text=fragment.text[:remaining],
+                    metadata=dict(fragment.metadata),
+                    source_index=fragment.source_index,
+                )
+            )
+            fragments.appendleft(
+                _LocalTextSourceFragment(
+                    text=fragment.text[remaining:],
+                    metadata=dict(fragment.metadata),
+                    source_index=fragment.source_index,
+                )
+            )
+            remaining = 0
+        return tuple(result)
+
+    @staticmethod
+    def _append_source_fragment(
+        fragments: deque[_LocalTextSourceFragment],
+        fragment: _LocalTextSourceFragment,
+    ) -> None:
+        if (
+            fragments
+            and fragments[-1].source_index is None
+            and fragment.source_index is None
+        ):
+            previous = fragments.pop()
+            fragments.append(
+                _LocalTextSourceFragment(
+                    text=previous.text + fragment.text,
+                )
+            )
+            return
+        fragments.append(fragment)
 
     def _next_tool_call_id(self) -> str:
         self._tool_call_index += 1
@@ -2890,9 +3296,14 @@ class LocalTextStreamEventParser:
         default_factory=_LocalTextStreamParser
     )
 
-    def push(self, text: str) -> tuple[StreamProviderEvent, ...]:
+    def push(
+        self,
+        text: str,
+        metadata: dict[str, LooseJsonValue] | None = None,
+    ) -> tuple[StreamProviderEvent, ...]:
         assert isinstance(text, str)
-        return self._parser.push(text)
+        assert metadata is None or isinstance(metadata, dict)
+        return self._parser.push(text, metadata)
 
     def flush(self) -> tuple[StreamProviderEvent, ...]:
         return self._parser.flush()
@@ -3007,6 +3418,9 @@ class _ProviderStreamNormalizer:
     _reasoning_started: bool = False
     _reasoning_done: bool = False
     _usage_completed: bool = False
+    _reasoning_segments: StreamReasoningSegmentState = field(
+        default_factory=StreamReasoningSegmentState
+    )
     _tool_call_states: dict[str, _ProviderToolCallState] = field(
         default_factory=dict
     )
@@ -3026,6 +3440,14 @@ class _ProviderStreamNormalizer:
         self, event: StreamProviderEvent
     ) -> tuple[CanonicalStreamItem, ...]:
         assert isinstance(event, StreamProviderEvent)
+        if (
+            event.kind is StreamItemKind.REASONING_DELTA
+            and event.text_delta == ""
+        ):
+            return ()
+        self._reasoning_segments.observe(event)
+        if event.kind is StreamItemKind.REASONING_DONE:
+            return ()
         if event.kind is StreamItemKind.STREAM_COMPLETED:
             return self._complete(usage=event.usage, provider_event=event)
         if event.kind is StreamItemKind.STREAM_ERRORED:
@@ -3050,6 +3472,8 @@ class _ProviderStreamNormalizer:
             usage=event.usage,
             correlation=event.correlation,
             visibility=event.visibility,
+            reasoning_representation=event.reasoning_representation,
+            segment_instance_ordinal=event.segment_instance_ordinal,
             metadata=event.metadata,
             provider_payload=event.provider_payload,
             provider_event_type=event.provider_event_type,
@@ -3220,6 +3644,8 @@ class _ProviderStreamNormalizer:
         usage: LooseJsonValue | None = None,
         correlation: StreamItemCorrelation | None = None,
         visibility: StreamVisibility = StreamVisibility.PUBLIC,
+        reasoning_representation: StreamReasoningRepresentation | None = None,
+        segment_instance_ordinal: int | None = None,
         metadata: dict[str, LooseJsonValue] | None = None,
         provider_payload: LooseJsonValue | None = None,
         provider_event_type: str | None = None,
@@ -3242,6 +3668,8 @@ class _ProviderStreamNormalizer:
             usage=usage,
             terminal_outcome=terminal_outcome,
             visibility=visibility,
+            reasoning_representation=reasoning_representation,
+            segment_instance_ordinal=segment_instance_ordinal,
             metadata={} if metadata is None else metadata,
             provider_payload=provider_payload,
             provider_family=self.provider_family,

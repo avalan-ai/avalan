@@ -34,9 +34,11 @@ from avalan.model.stream import (
     StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     project_canonical_stream_item,
 )
 from avalan.server.container_policy import RemoteContainerRequestPolicy
@@ -1186,6 +1188,11 @@ class MCPUtilityTestCase(TestCase):
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta="private",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
         control = CanonicalStreamItem(
             stream_session_id="s",
@@ -1930,7 +1937,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertIn("runtime authority", str(exc.exception.detail))
         self.assertEqual(manager.calls, [])
 
-    async def test_reasoning_notification_skips_empty_delta_projection(
+    async def test_reasoning_notification_skips_suppressed_delta_projection(
         self,
     ) -> None:
         state = mcp_router._MCPStreamProjectionState(
@@ -1948,6 +1955,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             kind=StreamItemKind.STREAM_STARTED,
             channel=StreamChannel.CONTROL,
         )
+        await mcp_router._mcp_canonical_stream_item_notifications(
+            start,
+            state,
+            "progress",
+        )
         item = CanonicalStreamItem(
             stream_session_id="s",
             run_id="r",
@@ -1955,13 +1967,12 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             sequence=1,
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
-            text_delta="",
-        )
-
-        await mcp_router._mcp_canonical_stream_item_notifications(
-            start,
-            state,
-            "progress",
+            text_delta="private reasoning",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
         with patch.object(
             mcp_router,
@@ -2080,6 +2091,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="# Reasoning Skill\n\n",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",
@@ -2089,6 +2105,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="Instructions: keep this private.\n\n",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",
@@ -2101,6 +2122,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                     "Secret reasoning skill body.\n"
                     "Source: /tmp/skills/demo/SKILL.md"
                 ),
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
         ]
         answer_items = [
@@ -2407,6 +2433,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="thinking",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",
@@ -3039,6 +3070,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="plan",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",
@@ -3948,6 +3984,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="canonical plan",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",
@@ -4060,6 +4101,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                     "Secret final reasoning skill body.\n"
                     "Source: /tmp/skills/demo/SKILL.md"
                 ),
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",
@@ -4175,6 +4221,11 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                     "Use when reasoning privately.\n\n"
                     "Secret final reasoning skill body."
                 ),
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",

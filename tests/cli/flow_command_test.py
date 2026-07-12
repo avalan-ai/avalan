@@ -80,6 +80,8 @@ from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamReasoningRepresentation,
+    StreamVisibility,
     stream_observability_payload,
 )
 from avalan.task import (
@@ -496,6 +498,11 @@ class FlowRunCommandTestCase(TestCase):
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta="private reasoning",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
         event = sanitize_raw_task_event(
             Event(

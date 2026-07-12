@@ -10,6 +10,7 @@ from avalan.model.stream import (
     StreamGoldenTrace,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
     StreamVisibility,
@@ -35,6 +36,8 @@ def _item(
     correlation: StreamItemCorrelation | None = None,
     visibility: StreamVisibility = StreamVisibility.PUBLIC,
 ) -> CanonicalStreamItem:
+    if kind is StreamItemKind.REASONING_DELTA:
+        visibility = StreamVisibility.PRIVATE
     return CanonicalStreamItem(
         stream_session_id=_STREAM_SESSION_ID,
         run_id=_RUN_ID,
@@ -68,6 +71,14 @@ def _item(
         usage=usage,  # type: ignore[arg-type]
         terminal_outcome=terminal_outcome,
         visibility=visibility,
+        reasoning_representation=(
+            StreamReasoningRepresentation.NATIVE_TEXT
+            if kind is StreamItemKind.REASONING_DELTA
+            else None
+        ),
+        segment_instance_ordinal=(
+            0 if kind is StreamItemKind.REASONING_DELTA else None
+        ),
     )
 
 

@@ -24,6 +24,8 @@ from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamReasoningRepresentation,
+    StreamVisibility,
     stream_observability_payload,
 )
 
@@ -126,6 +128,45 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
             EventDeliveryPolicy.DROP,
         )
         self.assertEqual(subscriber.config.queue_limit, 32)
+
+    async def test_private_reasoning_observability_omits_arbitrary_keys(
+        self,
+    ) -> None:
+        sentinel = "PRIVATE_REASONING_KEY_SENTINEL"
+        manager = EventManager(history_config=EventHistoryConfig(max_events=4))
+        called: list[Event] = []
+
+        async def listener(event: Event) -> None:
+            called.append(event)
+
+        manager.add_observability_listener(
+            listener,
+            [EventType.TOKEN_GENERATED],
+            include_token_events=True,
+        )
+        item = CanonicalStreamItem(
+            stream_session_id="session-1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=0,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta="private reasoning",
+            data={sentinel: "private data"},
+            metadata={sentinel: "private metadata"},
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
+        )
+
+        await manager.trigger_stream_item(item)
+        await asyncio.sleep(0)
+
+        self.assertEqual(len(called), 1)
+        self.assertNotIn(sentinel, repr(called[0].payload))
+        self.assertNotIn(sentinel, repr(manager.history))
 
     async def test_trigger_stream_item_skips_default_token_without_subscriber(
         self,

@@ -39,7 +39,7 @@ from asyncio import (
 from asyncio import (
     Event as AsyncEvent,
 )
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -83,6 +83,8 @@ from avalan.model.stream import (
     StreamProjectionState,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamReasoningSegmentState,
     StreamRetentionPolicy,
     StreamRuntimeContract,
     StreamSessionLifecycle,
@@ -137,12 +139,22 @@ def _item(
     usage: object | None = None,
     terminal_outcome: StreamTerminalOutcome | None = None,
     visibility: StreamVisibility = StreamVisibility.PUBLIC,
+    reasoning_representation: StreamReasoningRepresentation | None = None,
+    segment_instance_ordinal: int | None = None,
     metadata: dict[str, object] | None = None,
     provider_payload: object | None = None,
     provider_family: str | None = None,
     provider_event_type: str | None = None,
     timestamp: datetime | None = None,
 ) -> CanonicalStreamItem:
+    if kind is StreamItemKind.REASONING_DELTA:
+        if reasoning_representation is None:
+            reasoning_representation = (
+                StreamReasoningRepresentation.NATIVE_TEXT
+            )
+        if segment_instance_ordinal is None:
+            segment_instance_ordinal = 0
+        visibility = StreamVisibility.PRIVATE
     return CanonicalStreamItem(
         stream_session_id=stream_session_id,
         run_id=run_id,
@@ -156,6 +168,8 @@ def _item(
         usage=usage,  # type: ignore[arg-type]
         terminal_outcome=terminal_outcome,
         visibility=visibility,
+        reasoning_representation=reasoning_representation,
+        segment_instance_ordinal=segment_instance_ordinal,
         metadata={} if metadata is None else metadata,  # type: ignore[arg-type]
         provider_payload=provider_payload,  # type: ignore[arg-type]
         provider_family=provider_family,
@@ -2515,6 +2529,640 @@ def _class_defines_canonical_stream(node: ClassDef) -> bool:
 
 
 class StreamContractTestCase(TestCase):
+    def test_summary_reuses_canonical_reasoning_channel(self) -> None:
+        item = _item(
+            StreamItemKind.REASONING_DELTA,
+            0,
+            text_delta="summary",
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=3,
+        )
+
+        self.assertIs(item.kind, StreamItemKind.REASONING_DELTA)
+        self.assertIs(item.channel, StreamChannel.REASONING)
+        self.assertIs(
+            item.reasoning_representation,
+            StreamReasoningRepresentation.SUMMARY,
+        )
+        self.assertIs(
+            project_canonical_stream_item(item).channel,
+            StreamChannel.REASONING,
+        )
+
+    def test_reasoning_representation_is_not_relabelled(self) -> None:
+        items = run(
+            _collect_provider_items(
+                _provider_events(
+                    (
+                        StreamProviderEvent(
+                            kind=StreamItemKind.REASONING_DELTA,
+                            text_delta="native",
+                            visibility=StreamVisibility.PRIVATE,
+                            reasoning_representation=(
+                                StreamReasoningRepresentation.NATIVE_TEXT
+                            ),
+                            segment_instance_ordinal=0,
+                            provider_event_type=(
+                                "response.reasoning_summary_text.delta"
+                            ),
+                        ),
+                    )
+                )
+            )
+        )
+        delta = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.REASONING_DELTA
+        )
+
+        self.assertIs(
+            delta.reasoning_representation,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        self.assertEqual(
+            delta.provider_event_type,
+            "response.reasoning_summary_text.delta",
+        )
+
+    def test_summary_uses_only_reasoning_channel(self) -> None:
+        provider_event = StreamProviderEvent(
+            kind=StreamItemKind.REASONING_DELTA,
+            text_delta="provider summary",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=0,
+        )
+        canonical = _item(
+            StreamItemKind.REASONING_DELTA,
+            0,
+            text_delta="canonical summary",
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=0,
+        )
+        projection = project_canonical_stream_item(canonical)
+
+        self.assertIs(provider_event.kind, StreamItemKind.REASONING_DELTA)
+        self.assertIs(canonical.channel, StreamChannel.REASONING)
+        self.assertIs(projection.channel, StreamChannel.REASONING)
+        self.assertNotIn("summary", canonical.channel.value)
+
+    def test_summary_reuses_reasoning_kinds(self) -> None:
+        summary = _item(
+            StreamItemKind.REASONING_DELTA,
+            0,
+            text_delta="summary",
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=0,
+        )
+        done = _item(StreamItemKind.REASONING_DONE, 1)
+
+        self.assertEqual(
+            (summary.kind, done.kind),
+            (
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+            ),
+        )
+        self.assertIsNone(done.reasoning_representation)
+        self.assertIsNone(done.segment_instance_ordinal)
+
+    def test_no_summary_specific_canonical_kind(self) -> None:
+        self.assertFalse(
+            any("summary" in kind.name.lower() for kind in StreamItemKind)
+        )
+        self.assertFalse(
+            any("summary" in kind.value for kind in StreamItemKind)
+        )
+        self.assertEqual(
+            {
+                kind
+                for kind in StreamItemKind
+                if kind.name.startswith("REASONING_")
+            },
+            {
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+            },
+        )
+
+    def test_reasoning_representation_validation(self) -> None:
+        def provider_builder(**overrides: Any) -> StreamProviderEvent:
+            values: dict[str, Any] = {
+                "kind": StreamItemKind.REASONING_DELTA,
+                "text_delta": "reasoning",
+                "visibility": StreamVisibility.PRIVATE,
+                "reasoning_representation": (
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                "segment_instance_ordinal": 0,
+            }
+            values.update(overrides)
+            return StreamProviderEvent(**values)
+
+        def canonical_builder(**overrides: Any) -> CanonicalStreamItem:
+            values: dict[str, Any] = {
+                "stream_session_id": "stream",
+                "run_id": "run",
+                "turn_id": "turn",
+                "sequence": 0,
+                "kind": StreamItemKind.REASONING_DELTA,
+                "channel": StreamChannel.REASONING,
+                "text_delta": "reasoning",
+                "visibility": StreamVisibility.PRIVATE,
+                "reasoning_representation": (
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                "segment_instance_ordinal": 0,
+            }
+            values.update(overrides)
+            return CanonicalStreamItem(**values)
+
+        def projection_builder(**overrides: Any) -> StreamConsumerProjection:
+            values: dict[str, Any] = {
+                "stream_session_id": "stream",
+                "run_id": "run",
+                "turn_id": "turn",
+                "sequence": 0,
+                "kind": StreamItemKind.REASONING_DELTA,
+                "channel": StreamChannel.REASONING,
+                "correlation": StreamItemCorrelation(),
+                "text_delta": "reasoning",
+                "visibility": StreamVisibility.PRIVATE,
+                "reasoning_representation": (
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                "segment_instance_ordinal": 0,
+            }
+            values.update(overrides)
+            return StreamConsumerProjection(**values)
+
+        builders: tuple[Callable[..., object], ...] = (
+            provider_builder,
+            canonical_builder,
+            projection_builder,
+        )
+        invalid_representations = (None, "native_text", object())
+        invalid_ordinals = (None, True, "0", 0.0, object(), -1)
+        for builder in builders:
+            for representation in invalid_representations:
+                with self.assertRaises(AssertionError):
+                    builder(reasoning_representation=cast(Any, representation))
+            for ordinal in invalid_ordinals:
+                with self.assertRaises(AssertionError):
+                    builder(segment_instance_ordinal=cast(Any, ordinal))
+            for visibility in (
+                StreamVisibility.PUBLIC,
+                StreamVisibility.REDACTED,
+                StreamVisibility.DIAGNOSTIC,
+            ):
+                with self.assertRaises(AssertionError):
+                    builder(visibility=visibility)
+
+        for kind in StreamItemKind:
+            if kind is StreamItemKind.REASONING_DELTA:
+                continue
+            with self.assertRaisesRegex(
+                AssertionError, "reasoning_representation"
+            ):
+                canonical_builder(
+                    kind=kind,
+                    channel=stream_channel_for_kind(kind),
+                    text_delta=None,
+                    reasoning_representation=(
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    segment_instance_ordinal=None,
+                )
+            with self.assertRaisesRegex(
+                AssertionError, "segment_instance_ordinal"
+            ):
+                projection_builder(
+                    kind=kind,
+                    channel=stream_channel_for_kind(kind),
+                    text_delta=None,
+                    reasoning_representation=None,
+                    segment_instance_ordinal=0,
+                )
+
+        accepted = tuple(builder() for builder in builders)
+        self.assertTrue(
+            all(
+                item.correlation == StreamItemCorrelation()
+                for item in accepted
+            )
+        )
+
+    def test_reasoning_identity_is_structured_without_payload(self) -> None:
+        event = StreamProviderEvent(
+            kind=StreamItemKind.REASONING_DELTA,
+            text_delta="native",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=StreamReasoningRepresentation.NATIVE_TEXT,
+            segment_instance_ordinal=0,
+        )
+        items = run(_collect_provider_items(_provider_events((event,))))
+        item = next(
+            candidate
+            for candidate in items
+            if candidate.kind is StreamItemKind.REASONING_DELTA
+        )
+
+        self.assertEqual(item.correlation, StreamItemCorrelation())
+        self.assertIsNone(item.provider_payload)
+        self.assertIs(
+            item.reasoning_representation,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        self.assertEqual(item.segment_instance_ordinal, 0)
+
+    def test_represented_reasoning_is_private(self) -> None:
+        for representation in StreamReasoningRepresentation:
+            item = _item(
+                StreamItemKind.REASONING_DELTA,
+                0,
+                text_delta=representation.value,
+                reasoning_representation=representation,
+                segment_instance_ordinal=0,
+            )
+            projection = project_canonical_stream_item(item)
+            self.assertIs(item.visibility, StreamVisibility.PRIVATE)
+            self.assertIs(projection.visibility, StreamVisibility.PRIVATE)
+
+    def test_every_summary_delta_is_typed(self) -> None:
+        summary = StreamReasoningRepresentation.SUMMARY
+        events = (
+            StreamProviderEvent(
+                kind=StreamItemKind.REASONING_DELTA,
+                text_delta="one",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=summary,
+                segment_instance_ordinal=0,
+            ),
+            StreamProviderEvent(
+                kind=StreamItemKind.REASONING_DELTA,
+                text_delta=" two",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=summary,
+                segment_instance_ordinal=0,
+            ),
+            StreamProviderEvent(
+                kind=StreamItemKind.ANSWER_DELTA,
+                text_delta="answer",
+            ),
+            StreamProviderEvent(
+                kind=StreamItemKind.REASONING_DELTA,
+                text_delta="three",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=summary,
+                segment_instance_ordinal=1,
+            ),
+        )
+        items = run(_collect_provider_items(_provider_events(events)))
+        deltas = tuple(
+            item
+            for item in items
+            if item.kind is StreamItemKind.REASONING_DELTA
+        )
+
+        self.assertEqual(
+            [item.segment_instance_ordinal for item in deltas], [0, 0, 1]
+        )
+        self.assertTrue(
+            all(
+                item.reasoning_representation is summary
+                and item.visibility is StreamVisibility.PRIVATE
+                for item in deltas
+            )
+        )
+        self.assertEqual(
+            sum(item.kind is StreamItemKind.REASONING_DONE for item in items),
+            1,
+        )
+
+    def test_reasoning_identity_round_trip_preserves_optional_correlations(
+        self,
+    ) -> None:
+        correlation = StreamItemCorrelation(
+            provider_request_id="request-1",
+            model_continuation_id="continuation-1",
+            protocol_item_id="reasoning-1",
+            provider_output_index=4,
+            provider_summary_index=2,
+        )
+        payload_sentinel = {"opaque": "PROVIDER_PAYLOAD_SENTINEL"}
+        event = StreamProviderEvent(
+            kind=StreamItemKind.REASONING_DELTA,
+            text_delta="summary",
+            correlation=correlation,
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=7,
+            metadata={"safe": "metadata"},
+            provider_payload=payload_sentinel,
+            provider_event_type="response.reasoning_summary_text.delta",
+        )
+        # A standalone normalized response starts at ordinal zero. Preserve a
+        # non-zero identity through the direct canonical round trip instead.
+        canonical = CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=0,
+            kind=event.kind,
+            channel=StreamChannel.REASONING,
+            correlation=event.correlation,
+            text_delta=event.text_delta,
+            visibility=event.visibility,
+            reasoning_representation=event.reasoning_representation,
+            segment_instance_ordinal=event.segment_instance_ordinal,
+            metadata=dict(event.metadata),
+            provider_payload=event.provider_payload,
+            provider_family="openai",
+            provider_event_type=event.provider_event_type,
+        )
+        projection = project_canonical_stream_item(canonical)
+        restored = canonical_item_from_consumer_projection(projection)
+        trace = restored.to_trace_dict()
+
+        self.assertIs(
+            projection.reasoning_representation,
+            StreamReasoningRepresentation.SUMMARY,
+        )
+        self.assertEqual(projection.segment_instance_ordinal, 7)
+        self.assertIs(projection.correlation, correlation)
+        self.assertFalse(hasattr(projection, "provider_payload"))
+        self.assertIs(
+            restored.reasoning_representation,
+            StreamReasoningRepresentation.SUMMARY,
+        )
+        self.assertEqual(restored.segment_instance_ordinal, 7)
+        self.assertIs(restored.correlation, correlation)
+        self.assertEqual(restored.metadata, {"safe": "metadata"})
+        self.assertEqual(restored.provider_family, "openai")
+        self.assertEqual(
+            restored.provider_event_type,
+            "response.reasoning_summary_text.delta",
+        )
+        self.assertIsNone(restored.provider_payload)
+        self.assertEqual(trace["reasoning_representation"], "summary")
+        self.assertEqual(trace["segment_instance_ordinal"], 7)
+        self.assertEqual(trace["correlation"], correlation.to_trace_dict())
+        self.assertNotIn("provider_payload", trace)
+
+    def test_reasoning_segment_boundaries_and_response_resets(self) -> None:
+        native = StreamReasoningRepresentation.NATIVE_TEXT
+        summary = StreamReasoningRepresentation.SUMMARY
+        first = StreamItemCorrelation(
+            protocol_item_id="item-1",
+            provider_output_index=0,
+        )
+        second = StreamItemCorrelation(
+            protocol_item_id="item-2",
+            provider_output_index=1,
+        )
+        state = StreamReasoningSegmentState()
+
+        self.assertEqual(state.allocate(native, first), 0)
+        self.assertEqual(state.allocate(native, first), 0)
+        self.assertEqual(state.allocate(summary, first), 1)
+        self.assertEqual(state.allocate(summary, second), 2)
+        self.assertEqual(state.allocate(summary), 3)
+        state.complete_segment()
+        self.assertEqual(state.allocate(summary), 4)
+        state.observe(
+            StreamProviderEvent(
+                kind=StreamItemKind.ANSWER_DELTA,
+                text_delta="boundary",
+            )
+        )
+        self.assertEqual(state.allocate(summary), 5)
+        self.assertEqual(StreamReasoningSegmentState().allocate(native), 0)
+        self.assertEqual(StreamReasoningSegmentState().allocate(native), 0)
+
+        observed = StreamReasoningSegmentState()
+        observed.observe_delta(native, first, 0)
+        observed.observe_delta(native, first, 0)
+        with self.assertRaisesRegex(
+            StreamValidationError, "changed without a boundary"
+        ):
+            observed.observe_delta(native, first, 1)
+        observed.observe_delta(
+            native,
+            first,
+            1,
+            follows_completion=True,
+        )
+        observed.complete_segment()
+        with self.assertRaisesRegex(
+            StreamValidationError, "does not match its boundary"
+        ):
+            observed.observe_delta(native, first, 1)
+        with self.assertRaisesRegex(
+            StreamValidationError, "does not match its boundary"
+        ):
+            observed.observe_delta(native, first, 3)
+        observed.observe_delta(native, first, 2)
+
+    def test_reasoning_empty_deltas_are_operationally_invisible(self) -> None:
+        representation = StreamReasoningRepresentation.NATIVE_TEXT
+        local_parser = LocalTextStreamEventParser()
+        self.assertEqual(local_parser.push("", {"token_id": 1}), ())
+        canonical_arguments = {
+            "stream_session_id": "stream",
+            "run_id": "run",
+            "turn_id": "turn",
+            "sequence": 0,
+            "kind": StreamItemKind.REASONING_DELTA,
+            "channel": StreamChannel.REASONING,
+            "text_delta": "",
+            "visibility": StreamVisibility.PRIVATE,
+            "reasoning_representation": representation,
+            "segment_instance_ordinal": 0,
+        }
+        with self.assertRaisesRegex(AssertionError, "non-empty text"):
+            CanonicalStreamItem(**cast(Any, canonical_arguments))
+        with self.assertRaisesRegex(AssertionError, "non-empty text"):
+            StreamConsumerProjection(
+                **cast(
+                    Any,
+                    {
+                        **canonical_arguments,
+                        "correlation": StreamItemCorrelation(),
+                    },
+                )
+            )
+        items = run(
+            _collect_provider_items(
+                _provider_events(
+                    (
+                        StreamProviderEvent(
+                            kind=StreamItemKind.REASONING_DELTA,
+                            text_delta="",
+                            visibility=StreamVisibility.PRIVATE,
+                            reasoning_representation=representation,
+                            segment_instance_ordinal=0,
+                        ),
+                        StreamProviderEvent(
+                            kind=StreamItemKind.REASONING_DELTA,
+                            text_delta="nonempty",
+                            visibility=StreamVisibility.PRIVATE,
+                            reasoning_representation=representation,
+                            segment_instance_ordinal=0,
+                        ),
+                    )
+                )
+            )
+        )
+        empty_tag_items = run(
+            _collect_local_items(_local_text_chunks(("a<think></think>b",)))
+        )
+        whitespace_items = run(
+            _collect_local_items(_local_text_chunks(("a<think> \n</think>b",)))
+        )
+
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.REASONING_DELTA
+            ],
+            ["nonempty"],
+        )
+        self.assertNotIn(
+            StreamItemKind.REASONING_DONE,
+            [item.kind for item in empty_tag_items],
+        )
+        self.assertFalse(
+            any(
+                item.kind is StreamItemKind.REASONING_DELTA
+                for item in empty_tag_items
+            )
+        )
+        whitespace_delta = next(
+            item
+            for item in whitespace_items
+            if item.kind is StreamItemKind.REASONING_DELTA
+        )
+        self.assertEqual(whitespace_delta.text_delta, " \n")
+        self.assertEqual(
+            sum(
+                item.kind is StreamItemKind.REASONING_DONE
+                for item in whitespace_items
+            ),
+            1,
+        )
+
+    def test_reasoning_segment_allocator_is_constant_space_for_ten_thousand_segments(  # noqa: E501
+        self,
+    ) -> None:
+        state = StreamReasoningSegmentState()
+        slots = tuple(StreamReasoningSegmentState.__slots__)
+        before = tuple(getattr(state, name) for name in slots)
+
+        with self.assertRaises(AssertionError):
+            state.allocate(
+                StreamReasoningRepresentation.NATIVE_TEXT,
+                cast(Any, object()),
+            )
+
+        for ordinal in range(10_000):
+            self.assertEqual(
+                state.allocate(StreamReasoningRepresentation.NATIVE_TEXT),
+                ordinal,
+            )
+            state.complete_segment()
+
+        after = tuple(getattr(state, name) for name in slots)
+        self.assertEqual(
+            slots,
+            ("_next_ordinal", "_active_identity", "_active_ordinal"),
+        )
+        self.assertEqual(before, (0, None, None))
+        self.assertEqual(after, (10_000, None, None))
+        self.assertFalse(
+            any(isinstance(value, (dict, list, set)) for value in after)
+        )
+
+    def test_provider_capabilities_serialize_native_and_summary_support(
+        self,
+    ) -> None:
+        native_only = StreamProviderCapabilities(
+            backend=StreamProducerBackend.LOCAL,
+            provider_family="transformers",
+            supports_reasoning=True,
+        )
+        summary_capable = StreamProviderCapabilities(
+            backend=StreamProducerBackend.HOSTED,
+            provider_family=ProviderFamily.OPENAI,
+            supports_reasoning=True,
+            supports_reasoning_summary=True,
+        )
+
+        self.assertEqual(native_only.to_metadata()["supports_reasoning"], True)
+        self.assertEqual(
+            native_only.to_metadata()["supports_reasoning_summary"], False
+        )
+        self.assertEqual(
+            summary_capable.to_metadata()["supports_reasoning"], True
+        )
+        self.assertEqual(
+            summary_capable.to_metadata()["supports_reasoning_summary"], True
+        )
+        with self.assertRaisesRegex(AssertionError, "boolean"):
+            StreamProviderCapabilities(
+                backend=StreamProducerBackend.HOSTED,
+                supports_reasoning_summary=cast(Any, 1),
+            )
+
+    def test_reasoning_observability_is_content_free(self) -> None:
+        text_sentinel = "PRIVATE_REASONING_TEXT_SENTINEL"
+        payload_sentinel = "OPAQUE_PROVIDER_PAYLOAD_SENTINEL"
+        data_key_sentinel = "PRIVATE_REASONING_DATA_KEY_SENTINEL"
+        metadata_key_sentinel = "PRIVATE_REASONING_METADATA_KEY_SENTINEL"
+        correlation = StreamItemCorrelation(
+            provider_request_id="request-safe",
+            model_continuation_id="continuation-safe",
+            protocol_item_id="item-safe",
+            provider_output_index=2,
+            provider_summary_index=1,
+        )
+        item = CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=4,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            correlation=correlation,
+            text_delta=text_sentinel,
+            data={data_key_sentinel: text_sentinel},
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=9,
+            metadata={metadata_key_sentinel: text_sentinel},
+            provider_payload={"opaque": payload_sentinel},
+            provider_family="openai",
+            provider_event_type="response.reasoning_summary_text.delta",
+        )
+
+        payload = stream_observability_payload(item)
+        serialized = repr(payload)
+        self.assertEqual(payload["correlation"], correlation.to_trace_dict())
+        self.assertEqual(
+            payload["summary"],
+            {
+                "text_delta_length": len(text_sentinel),
+                "reasoning_representation": "summary",
+                "segment_instance_ordinal": 9,
+                "has_provider_payload": True,
+            },
+        )
+        self.assertNotIn(text_sentinel, serialized)
+        self.assertNotIn(payload_sentinel, serialized)
+        self.assertNotIn(data_key_sentinel, serialized)
+        self.assertNotIn(metadata_key_sentinel, serialized)
+
     def test_taxonomy_maps_every_kind_to_channel_and_terminal_outcome(
         self,
     ) -> None:
@@ -5756,6 +6404,7 @@ class StreamContractTestCase(TestCase):
                 "backend": "hosted",
                 "provider_family": "openai",
                 "supports_reasoning": True,
+                "supports_reasoning_summary": False,
                 "supports_tool_calls": True,
                 "supports_usage": True,
                 "supports_terminal_events": True,
@@ -5838,6 +6487,10 @@ class StreamContractTestCase(TestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 text_delta="private",
                 visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
                 provider_event_type="response.reasoning_text.delta",
             ),
             StreamProviderEvent(
@@ -5971,6 +6624,10 @@ class StreamContractTestCase(TestCase):
                             kind=StreamItemKind.REASONING_DELTA,
                             text_delta="reason",
                             visibility=StreamVisibility.PRIVATE,
+                            reasoning_representation=(
+                                StreamReasoningRepresentation.NATIVE_TEXT
+                            ),
+                            segment_instance_ordinal=0,
                         ),
                         StreamProviderEvent(
                             kind=StreamItemKind.USAGE_COMPLETED,
@@ -6023,7 +6680,7 @@ class StreamContractTestCase(TestCase):
         parsed_reasoning_items = run(
             _collect_local_items(_local_text_chunks(("<think>r</think>a",)))
         )
-        self.assertLess(
+        self.assertGreater(
             _first_sequence(
                 parsed_reasoning_items, StreamItemKind.REASONING_DONE
             ),
@@ -6239,11 +6896,11 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                 StreamItemKind.TOOL_CALL_READY,
                 StreamItemKind.TOOL_CALL_DONE,
                 StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
@@ -6259,13 +6916,13 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(items[1].text_delta, "answer ")
         self.assertIs(items[2].visibility, StreamVisibility.PRIVATE)
         self.assertEqual(
-            items[4].correlation.tool_call_id, "local-tool-call-1"
+            items[3].correlation.tool_call_id, "local-tool-call-1"
         )
         self.assertEqual(
-            items[5].data, {"name": "math", "arguments": {"x": 1}}
+            items[4].data, {"name": "math", "arguments": {"x": 1}}
         )
         self.assertEqual(
-            items[6].correlation.tool_call_id, "local-tool-call-1"
+            items[5].correlation.tool_call_id, "local-tool-call-1"
         )
         accumulator = accumulate_canonical_stream_items(items)
         self.assertEqual(accumulator.answer_text, "answer ")
@@ -6468,9 +7125,9 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
@@ -6478,7 +7135,7 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(items[1].text_delta, "pre ")
         self.assertEqual(items[2].text_delta, " private ")
         self.assertIs(items[2].visibility, StreamVisibility.PRIVATE)
-        self.assertEqual(items[4].text_delta, " post")
+        self.assertEqual(items[3].text_delta, " post")
         accumulator = accumulate_canonical_stream_items(items)
         self.assertEqual(accumulator.answer_text, "pre  post")
         self.assertEqual(accumulator.reasoning_text, " private ")
@@ -6507,9 +7164,9 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.REASONING_DELTA,
                 StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
@@ -6517,7 +7174,7 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(items[1].text_delta, "  before \n")
         self.assertEqual(items[2].text_delta, "\n  first")
         self.assertEqual(items[3].text_delta, "\nsecond  ")
-        self.assertEqual(items[5].text_delta, "\n after  ")
+        self.assertEqual(items[4].text_delta, "\n after  ")
         accumulator = accumulate_canonical_stream_items(items)
         self.assertEqual(accumulator.answer_text, "  before \n\n after  ")
         self.assertEqual(accumulator.reasoning_text, "\n  first\nsecond  ")
@@ -6539,7 +7196,7 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(accumulator.reasoning_text, "\n  private\t")
         self.assertNotIn("<think>", accumulator.answer_text)
         self.assertNotIn("</think>", accumulator.reasoning_text)
-        self.assertLess(
+        self.assertGreater(
             _first_sequence(items, StreamItemKind.REASONING_DONE),
             _last_sequence(items, StreamItemKind.ANSWER_DELTA),
         )
@@ -6567,7 +7224,7 @@ class StreamContractTestCase(TestCase):
             reasoning_done_items[0].sequence,
             _last_sequence(items, StreamItemKind.REASONING_DELTA),
         )
-        self.assertLess(
+        self.assertGreater(
             reasoning_done_items[0].sequence,
             _last_sequence(items, StreamItemKind.ANSWER_DELTA),
         )
@@ -6675,11 +7332,16 @@ class StreamContractTestCase(TestCase):
                 self.assertEqual("".join(reasoning_deltas), reasoning_text)
                 self.assertEqual(accumulator.reasoning_text, reasoning_text)
                 if label == "empty":
-                    self.assertEqual(reasoning_deltas, [""])
-                self.assertIn(
-                    StreamItemKind.REASONING_DONE,
-                    [item.kind for item in items],
-                )
+                    self.assertEqual(reasoning_deltas, [])
+                    self.assertNotIn(
+                        StreamItemKind.REASONING_DONE,
+                        [item.kind for item in items],
+                    )
+                else:
+                    self.assertIn(
+                        StreamItemKind.REASONING_DONE,
+                        [item.kind for item in items],
+                    )
 
     def test_local_stream_normalizer_closes_unterminated_reasoning(
         self,
@@ -6696,8 +7358,8 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
@@ -6742,8 +7404,8 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.REASONING_DELTA,
                 StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
@@ -7552,6 +8214,10 @@ class StreamContractTestCase(TestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 text_delta="late",
                 visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
@@ -8089,7 +8755,6 @@ class StreamContractTestCase(TestCase):
             [
                 (StreamItemKind.ANSWER_DELTA, "a"),
                 (StreamItemKind.REASONING_DELTA, "r"),
-                (StreamItemKind.REASONING_DONE, None),
                 (StreamItemKind.TOOL_CALL_ARGUMENT_DELTA, '{"q"'),
                 (StreamItemKind.TOOL_CALL_ARGUMENT_DELTA, ':"v"}'),
                 (StreamItemKind.TOOL_CALL_READY, None),

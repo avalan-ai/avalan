@@ -23,7 +23,9 @@ from avalan.model.stream import (
     StreamChannel,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
+    StreamVisibility,
     iter_stream_consumer_projections,
 )
 from avalan.server.entities import ChatCompletionRequest, ChatMessage
@@ -109,6 +111,13 @@ def _stream_item(
     kind: StreamItemKind,
     **kwargs: object,
 ) -> CanonicalStreamItem:
+    if kind is StreamItemKind.REASONING_DELTA:
+        kwargs.setdefault("visibility", StreamVisibility.PRIVATE)
+        kwargs.setdefault(
+            "reasoning_representation",
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        kwargs.setdefault("segment_instance_ordinal", 0)
     return CanonicalStreamItem(
         stream_session_id="stream-1",
         run_id="run-1",

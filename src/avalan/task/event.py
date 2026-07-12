@@ -10,7 +10,7 @@ from ..types import (
 from ..types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
-from .privacy import REDACTED_MARKER, PrivacySanitizer
+from .privacy import REDACTED_MARKER, PrivacySafeValue, PrivacySanitizer
 from .usage import (
     USAGE_COUNTER_NAMES,
     TaskUsageMetadata,
@@ -59,6 +59,13 @@ _RAW_EVENT_SHAPE_ATTRIBUTES = frozenset(
         "started",
         "finished",
         "elapsed",
+    }
+)
+_REASONING_OBSERVABILITY_SUMMARY_FIELDS = frozenset(
+    {
+        "reasoning_representation",
+        "segment_instance_ordinal",
+        "text_delta_length",
     }
 )
 
@@ -195,10 +202,51 @@ def sanitize_raw_task_event(
         event_type,
         _raw_event_payload(event),
     )
+    assert isinstance(payload, dict)
+    _restore_reasoning_observability_summary(event, payload)
     return SanitizedTaskEventDraft(
         event_type=event_type,
         category=task_event_category(event_type),
         payload=cast(TaskEventValue, payload),
+    )
+
+
+def _restore_reasoning_observability_summary(
+    event: object,
+    payload: dict[str, PrivacySafeValue],
+) -> None:
+    observability_payload = getattr(event, "observability_payload", None)
+    if (
+        not isinstance(observability_payload, EventObservabilityPayload)
+        or observability_payload.kind is not EventPayloadKind.CANONICAL_STREAM
+    ):
+        return
+    canonical_stream = payload.get("canonical_stream")
+    if not isinstance(canonical_stream, dict):
+        return
+    source = observability_payload.data
+    if source.get("kind") != "reasoning.delta":
+        return
+    source_summary = source.get("summary")
+    if not isinstance(source_summary, Mapping):
+        return
+    summary: dict[str, PrivacySafeValue] = {}
+    for field_name in _REASONING_OBSERVABILITY_SUMMARY_FIELDS:
+        value = source_summary.get(field_name)
+        if _is_safe_reasoning_observability_summary_field(field_name, value):
+            summary[field_name] = cast(PrivacySafeValue, value)
+    if summary:
+        canonical_stream["summary"] = summary
+
+
+def _is_safe_reasoning_observability_summary_field(
+    field_name: str,
+    value: object,
+) -> bool:
+    if field_name == "reasoning_representation":
+        return isinstance(value, str) and value in {"native_text", "summary"}
+    return (
+        isinstance(value, int) and not isinstance(value, bool) and value >= 0
     )
 
 

@@ -31,7 +31,9 @@ from avalan.entities import (
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
+    StreamVisibility,
     accumulate_canonical_stream_items,
 )
 from avalan.task.usage import (
@@ -243,6 +245,18 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(accumulator.reasoning_text, "think")
+        reasoning = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.REASONING_DELTA
+        )
+        self.assertIs(
+            reasoning.reasoning_representation,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        self.assertEqual(reasoning.segment_instance_ordinal, 0)
+        self.assertIs(reasoning.visibility, StreamVisibility.PRIVATE)
+        self.assertEqual(reasoning.correlation.provider_output_index, 0)
         self.assertEqual(accumulator.answer_text, "hi")
         self.assertEqual(
             accumulator.tool_call_arguments,

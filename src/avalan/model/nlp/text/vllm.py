@@ -129,6 +129,7 @@ class VllmStream(TextGenerationVendorStream):
             or StreamProviderCapabilities(
                 backend=StreamProducerBackend.LOCAL,
                 provider_family=self._provider_family,
+                supports_reasoning=True,
                 supports_cancellation=self._supports_cancellation,
             ),
             close_after_terminal=close_after_terminal,
@@ -170,7 +171,10 @@ class VllmStream(TextGenerationVendorStream):
         *,
         provider_event_type: str,
     ) -> StreamProviderEvent:
-        if event.kind is StreamItemKind.ANSWER_DELTA:
+        if event.kind in (
+            StreamItemKind.ANSWER_DELTA,
+            StreamItemKind.REASONING_DELTA,
+        ):
             event_metadata = {**event.metadata, **metadata}
         else:
             event_metadata = event.metadata

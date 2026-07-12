@@ -5,19 +5,25 @@ from avalan.entities import ReasoningSettings
 from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
 )
-from avalan.model.stream import StreamItemKind, StreamProviderEvent
+from avalan.model.stream import (
+    StreamItemKind,
+    StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamVisibility,
+)
 
 
 def _reasoning_delta_text(item: object) -> str:
     assert isinstance(item, StreamProviderEvent)
     assert item.kind is StreamItemKind.REASONING_DELTA
     assert item.text_delta is not None
+    assert (
+        item.reasoning_representation
+        is StreamReasoningRepresentation.NATIVE_TEXT
+    )
+    assert item.segment_instance_ordinal == 0
+    assert item.visibility is StreamVisibility.PRIVATE
     return item.text_delta
-
-
-def _assert_reasoning_done(item: object) -> None:
-    assert isinstance(item, StreamProviderEvent)
-    assert item.kind is StreamItemKind.REASONING_DONE
 
 
 class ReasoningParserTestCase(IsolatedAsyncioTestCase):
@@ -33,8 +39,7 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_reasoning_delta_text(tokens[1]), "<think>")
         self.assertEqual(_reasoning_delta_text(tokens[2]), "b")
         self.assertEqual(_reasoning_delta_text(tokens[3]), "</think>")
-        _assert_reasoning_done(tokens[4])
-        self.assertEqual(tokens[5], "c")
+        self.assertEqual(tokens[4], "c")
 
     async def test_without_thinking_tags(self):
         parser = ReasoningParser(
