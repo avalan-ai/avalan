@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "cancellation",
+  "responses": [
+    {
+      "continuation_id": "continuation-1",
+      "cancel_after_event": 3,
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_cancel", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_cancel", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_cancel", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": "Visible before cancellation."},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_cancel", "output_index": 0, "summary_index": 0, "sequence_number": 3, "delta": "Must not be pulled."}
+      ]
+    }
+  ]
+}

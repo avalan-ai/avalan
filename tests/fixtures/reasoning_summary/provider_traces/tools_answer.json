@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "name": "tools_answer",
+  "responses": [
+    {
+      "continuation_id": "continuation-tool",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_tool", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_tool", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_tool", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": "Use the lookup tool."},
+        {"type": "response.reasoning_summary_text.done", "item_id": "rs_tool", "output_index": 0, "summary_index": 0, "sequence_number": 3, "text": "Use the lookup tool."},
+        {"type": "response.reasoning_summary_part.done", "item_id": "rs_tool", "output_index": 0, "summary_index": 0, "sequence_number": 4, "part": {"type": "summary_text", "text": "Use the lookup tool."}},
+        {"type": "response.output_item.done", "output_index": 0, "sequence_number": 5, "item": {"id": "rs_tool", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Use the lookup tool."}], "encrypted_content": "cipher-tool"}},
+        {"type": "response.output_item.added", "output_index": 1, "sequence_number": 6, "item": {"id": "fc_tool", "call_id": "call-tool", "type": "function_call", "name": "lookup", "arguments": "", "status": "in_progress"}},
+        {"type": "response.function_call_arguments.delta", "item_id": "fc_tool", "output_index": 1, "sequence_number": 7, "delta": "{\"id\":1}"},
+        {"type": "response.function_call_arguments.done", "item_id": "fc_tool", "output_index": 1, "sequence_number": 8, "name": "lookup", "arguments": "{\"id\":1}"},
+        {"type": "response.output_item.done", "output_index": 1, "sequence_number": 9, "item": {"id": "fc_tool", "call_id": "call-tool", "type": "function_call", "name": "lookup", "arguments": "{\"id\":1}", "status": "completed"}},
+        {"type": "response.completed", "sequence_number": 10, "response": {"id": "resp-tool", "created_at": 0.0, "error": null, "incomplete_details": null, "instructions": null, "metadata": null, "model": "gpt-5", "object": "response", "output": [{"id": "rs_tool", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Use the lookup tool."}], "encrypted_content": "cipher-tool"}, {"id": "fc_tool", "call_id": "call-tool", "type": "function_call", "name": "lookup", "arguments": "{\"id\":1}", "status": "completed"}], "parallel_tool_calls": true, "temperature": null, "tool_choice": "auto", "tools": [], "top_p": null, "status": "completed"}}
+      ]
+    },
+    {
+      "continuation_id": "continuation-answer",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_answer", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_answer", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_answer", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": "Use the tool result."},
+        {"type": "response.reasoning_summary_text.done", "item_id": "rs_answer", "output_index": 0, "summary_index": 0, "sequence_number": 3, "text": "Use the tool result."},
+        {"type": "response.reasoning_summary_part.done", "item_id": "rs_answer", "output_index": 0, "summary_index": 0, "sequence_number": 4, "part": {"type": "summary_text", "text": "Use the tool result."}},
+        {"type": "response.output_item.done", "output_index": 0, "sequence_number": 5, "item": {"id": "rs_answer", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Use the tool result."}], "encrypted_content": "cipher-answer"}},
+        {"type": "response.output_item.added", "output_index": 1, "sequence_number": 6, "item": {"id": "msg_answer", "type": "message", "role": "assistant", "status": "in_progress", "content": []}},
+        {"type": "response.content_part.added", "item_id": "msg_answer", "output_index": 1, "content_index": 0, "sequence_number": 7, "part": {"type": "output_text", "text": "", "annotations": [], "logprobs": []}},
+        {"type": "response.output_text.delta", "item_id": "msg_answer", "output_index": 1, "content_index": 0, "sequence_number": 8, "delta": "{\"ok\":true}", "logprobs": []},
+        {"type": "response.output_text.done", "item_id": "msg_answer", "output_index": 1, "content_index": 0, "sequence_number": 9, "text": "{\"ok\":true}", "logprobs": []},
+        {"type": "response.content_part.done", "item_id": "msg_answer", "output_index": 1, "content_index": 0, "sequence_number": 10, "part": {"type": "output_text", "text": "{\"ok\":true}", "annotations": [], "logprobs": []}},
+        {"type": "response.output_item.done", "output_index": 1, "sequence_number": 11, "item": {"id": "msg_answer", "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "{\"ok\":true}", "annotations": [], "logprobs": []}]}},
+        {"type": "response.completed", "sequence_number": 12, "response": {"id": "resp-answer", "created_at": 0.0, "error": null, "incomplete_details": null, "instructions": null, "metadata": null, "model": "gpt-5", "object": "response", "output": [{"id": "rs_answer", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Use the tool result."}], "encrypted_content": "cipher-answer"}, {"id": "msg_answer", "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "{\"ok\":true}", "annotations": [], "logprobs": []}]}], "parallel_tool_calls": true, "temperature": null, "tool_choice": "auto", "tools": [], "top_p": null, "status": "completed"}}
+      ]
+    }
+  ]
+}

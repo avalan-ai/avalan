@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "name": "malformed",
+  "expected": "invalid",
+  "responses": [
+    {
+      "continuation_id": "bad-index-type",
+      "expected_error": "summary_index must be an integer",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": true, "sequence_number": 2, "delta": "bad"}
+      ]
+    },
+    {
+      "continuation_id": "bad-negative-index",
+      "expected_error": "output_index must not be negative",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": -1, "summary_index": 0, "sequence_number": 2, "delta": "bad"}
+      ]
+    },
+    {
+      "continuation_id": "bad-missing-id",
+      "expected_error": "item_id must be a string",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": "bad"}
+      ]
+    },
+    {
+      "continuation_id": "bad-delta-type",
+      "expected_error": "delta must be a string",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": {"text": "bad"}}
+      ]
+    }
+  ]
+}

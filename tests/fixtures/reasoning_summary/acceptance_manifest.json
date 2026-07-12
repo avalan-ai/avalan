@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "feature": "reasoning_summary",
+  "active_phase": 0,
+  "dimensions": {
+    "phase 0 infrastructure": [
+      "tests/reasoning_summary_phase0_test.py::test_provider_trace_inventory_is_complete_and_valid",
+      "tests/reasoning_summary_phase0_test.py::test_positive_summary_traces_obey_part_before_delta_order",
+      "tests/reasoning_summary_phase0_test.py::test_malformed_trace_locks_required_negative_provider_shapes",
+      "tests/reasoning_summary_phase0_test.py::test_strict_trace_validator_rejects_contract_mutations",
+      "tests/reasoning_summary_phase0_test.py::test_cancellation_fixture_stops_before_pending_provider_pull",
+      "tests/reasoning_summary_phase0_test.py::test_typed_reasoning_delta_builder_preserves_identity",
+      "tests/reasoning_summary_phase0_test.py::test_typed_reasoning_delta_builder_rejects_invalid_identity",
+      "tests/reasoning_summary_phase0_test.py::test_phase0_retention_contract_reconciles_existing_policy_defaults",
+      "tests/reasoning_summary_phase0_test.py::test_phase0_retention_contract_locks_owners_and_overflow",
+      "tests/reasoning_summary_phase0_test.py::test_benchmark_protocol_is_locked",
+      "tests/reasoning_summary_phase0_test.py::test_benchmark_execution_report_matches_locked_protocol",
+      "tests/reasoning_summary_phase0_test.py::test_benchmark_observer_counts_each_materialization_call",
+      "tests/reasoning_summary_phase0_test.py::test_benchmark_cli_writes_json_report",
+      "tests/reasoning_summary_phase0_test.py::test_phase0_baseline_records_quality_and_benchmark_evidence",
+      "tests/reasoning_summary_phase0_test.py::test_requirement_traceability_is_complete",
+      "tests/reasoning_summary_phase0_test.py::test_acceptance_manifest_is_schema_versioned_and_phase_scoped",
+      "tests/reasoning_summary_phase0_test.py::test_acceptance_manifest_pins_complete_phase0_catalog",
+      "tests/reasoning_summary_phase0_test.py::test_phase0_contract_file_is_checked_in_location"
+    ],
+    "acceptance runner enforcement": [
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_runner_collects_and_executes_exact_node",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_runner_rejects_missing_uncollected_node",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_runner_rejects_deselected_node",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_runner_rejects_nonpassing_runtime_outcomes",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_runner_rejects_importorskip_collection",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_manifest_rejects_duplicate_nodes",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_probe_rejects_nonzero_process_with_payload",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_collection_rejects_nonzero_pytest_exit",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_runner_rejects_node_paths_outside_root",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_runner_rejects_manifest_outside_root",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_manifest_rejects_invalid_schema",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_execution_rejects_nonzero_and_xfail_xpass",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_execution_rejects_unexpected_and_duplicate_reports",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_probe_rejects_malformed_payloads",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_runner_rejects_symlink_escape",
+      "tests/reasoning_summary_acceptance_test.py::test_acceptance_runner_sanitizes_ambient_pytest_environment"
+    ],
+    "canonical native reasoning baseline": [
+      "tests/model/model_stream_contract_test.py::StreamContractTestCase::test_provider_stream_normalizer_assigns_identity_and_metadata",
+      "tests/model/model_stream_contract_test.py::StreamContractTestCase::test_local_stream_normalizer_parses_split_reasoning_tags"
+    ],
+    "OpenAI omission retry and replay baseline": [
+      "tests/model/nlp/vendor_openai_test.py::OpenAITestCase::test_canonical_stream_preserves_hosted_reasoning_whitespace",
+      "tests/model/nlp/vendor_openai_test.py::OpenAITestCase::test_reasoning_profile_tools_request_encrypted_reasoning_content",
+      "tests/model/nlp/vendor_openai_test.py::TemplateAndToolSchemaTestCase::test_template_messages_replays_stateless_reasoning_items",
+      "tests/model/nlp/vendor_openai_test.py::OpenAITestCase::test_stream_retries_empty_response_failed_before_output",
+      "tests/model/nlp/vendor_openai_test.py::OpenAITestCase::test_stream_does_not_retry_response_failed_after_output"
+    ],
+    "aggregate lifecycle baseline": [
+      "tests/agent/orchestrator_response_test.py::OrchestratorResponseCanonicalLifecycleTestCase::test_inner_done_items_wait_for_outer_completion"
+    ],
+    "CLI privacy baseline": [
+      "tests/cli/stream_presenter_test.py::LegacyThemeStreamPresenterTestCase::test_live_adapter_respects_hidden_reasoning_config",
+      "tests/cli/stream_presenter_test.py::LegacyThemeStreamPresenterTestCase::test_live_adapter_enables_reasoning_when_configured"
+    ],
+    "protocol projection baseline": [
+      "tests/server/streaming_conformance_test.py::test_canonical_trace_conforms_across_public_stream_surfaces",
+      "tests/server/protocol_streaming_e2e_test.py::test_same_canonical_stream_projects_through_protocols",
+      "tests/server/create_response_sse_test.py::CreateResponseSSEEventsTestCase::test_streaming_emits_canonical_items",
+      "tests/server/mcp_router_test.py::MCPRouterAsyncTestCase::test_stream_response_emits_canonical_notifications",
+      "tests/server/a2a_v1_router_test.py::test_translator_projects_reasoning_tool_and_terminal_states"
+    ]
+  }
+}

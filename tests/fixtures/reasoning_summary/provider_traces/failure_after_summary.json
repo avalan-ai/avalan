@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "failure_after_summary",
+  "responses": [
+    {
+      "continuation_id": "continuation-failed",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_failed", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_failed", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_failed", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": "Visible before failure."},
+        {"type": "response.failed", "sequence_number": 3, "response": {"id": "resp-failed", "created_at": 0.0, "error": {"code": "server_error", "message": "failed after output"}, "incomplete_details": null, "instructions": null, "metadata": null, "model": "gpt-5", "object": "response", "output": [{"id": "rs_failed", "type": "reasoning", "status": "incomplete", "summary": []}], "parallel_tool_calls": true, "temperature": null, "tool_choice": "auto", "tools": [], "top_p": null, "status": "failed"}}
+      ]
+    }
+  ]
+}

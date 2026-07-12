@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "feature": "reasoning_summary",
+  "recorded_at": "2026-07-11T20:51:50.119925+00:00",
+  "git": {
+    "branch": "reasoning",
+    "head": "7cf4d79fe45a4909afae1c146259be833c6cdae9",
+    "head_subject": "Address shell tool review feedback",
+    "equals_origin_main": true,
+    "upstream": null,
+    "tracked_changes": [],
+    "unrelated_untracked": ["docs/examples/skills/code/"]
+  },
+  "ignored_specs": {
+    "rule": ".gitignore:6:specs/",
+    "policy": "never_track_remain_ignored",
+    "must_remain_ignored": true,
+    "must_never_be_committed": true,
+    "tracked_tests_are_self_contained": true,
+    "local_human_reference_paths": [
+      "specs/TOOL-REASONING.md",
+      "specs/TOOL-REASONING-AGENDA.md"
+    ]
+  },
+  "quality_gate": [
+    {
+      "command": "poetry run pytest --verbose -s tests/model/nlp/vendor_openai_test.py tests/model/model_stream_contract_test.py tests/model/reasoning_stop_on_limit_test.py tests/agent/reasoning_orchestrator_test.py tests/agent/reasoning_parser_test.py tests/agent/reasoning_parser_edge_test.py tests/agent/reasoning_parser_extra_test.py tests/agent/reasoning_parser_limit_test.py tests/agent/reasoning_parser_split_tag_test.py tests/agent/reasoning_parser_tag_test.py tests/cli/model_reasoning_tag_test.py tests/cli/agent_options_test.py tests/cli/agent_reasoning_tag_test.py tests/cli/get_orchestrator_settings_test.py tests/server/responses_test.py tests/server/create_response_sse_test.py tests/server/mcp_router_test.py tests/server/a2a_v1_router_test.py tests/server/protocol_streaming_e2e_test.py",
+      "exit_code": 0,
+      "passed": 677,
+      "subtests": 807,
+      "seconds": 14.75
+    },
+    {
+      "command": "make lint",
+      "exit_code": 0,
+      "mypy_source_files": 409,
+      "left_tracked_diff": false
+    },
+    {
+      "command": "poetry run pytest --verbose -s",
+      "exit_code": 0,
+      "passed": 9452,
+      "skipped": 66,
+      "subtests": 7380,
+      "seconds": 107.32
+    },
+    {
+      "command": "make test coverage no-install",
+      "exit_code": 0,
+      "passed": 9452,
+      "skipped": 66,
+      "subtests": 7380,
+      "coverage_percent": 100.0,
+      "seconds": 140.05
+    },
+    {
+      "command": "make test-coverage -- -100 src/",
+      "exit_code": 0,
+      "stdout": ""
+    },
+    {
+      "command": "jq -e '[.files[] | select(.summary.percent_covered < 100)] | length == 0' coverage.json",
+      "exit_code": 0,
+      "result": true,
+      "covered_statements": 94294,
+      "total_statements": 94294
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "stdout": ""
+    }
+  ],
+  "preexisting_stream_benchmark": {
+    "accumulated_projection_per_item_us": 5.569,
+    "canonical_projection_per_item_us": 3.781,
+    "local_stream_first_item_ms": 0.021,
+    "local_stream_first_answer_ms": 0.039,
+    "local_stream_median_per_item_us": 9.24,
+    "local_stream_max_per_item_us": 15.102,
+    "long_projection_per_item_us": 6.036,
+    "retention_current_bytes": 121976,
+    "retention_peak_bytes": 122912,
+    "retention_elapsed_ms": 243.92,
+    "slow_consumer_max_read_ahead": 0,
+    "cancellation_latency_ms": 0.057
+  },
+  "locked_runner": {
+    "command": "poetry run python scripts/benchmark_reasoning_summary.py --json-out /tmp/reasoning-summary-phase0-benchmark.json",
+    "suite": "reasoning-summary-canonical-stream",
+    "python": "3.11.15 (main, Mar  3 2026, 00:52:57) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "python_implementation": "CPython",
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "protocol": {
+      "warmups": 3,
+      "samples": 20,
+      "delta_counts": [4096, 8192],
+      "delta_text": "x",
+      "elapsed_clock": "perf_counter",
+      "peak_memory_probe": "tracemalloc",
+      "percentile_method": "nearest_rank",
+      "gc_before_each_sample": true,
+      "reset_state_before_each_sample": true,
+      "gc_before_memory_probe": true,
+      "memory_probe_scopes": [
+        "processing_excluding_source_fixture",
+        "retained_total_including_source_fixture"
+      ],
+      "memory_subprocess_timeout_seconds": 60,
+      "network_allowed": false,
+      "network_guard": "deny_socket_creation_and_resolution"
+    },
+    "workloads": [
+      {
+        "delta_count": 4096,
+        "item_count": 4100,
+        "median_microseconds": 12038.396511343308,
+        "p95_microseconds": 12144.37501039356,
+        "median_per_item_microseconds": 2.9361942710593434,
+        "p95_per_item_microseconds": 2.962042685461844,
+        "peak_processing_bytes_excluding_source_fixture": 111637,
+        "current_retained_bytes_including_source_fixture": 1618036,
+        "peak_total_bytes_including_source_fixture": 1655437,
+        "deterministic": {
+          "source_reads": 4100,
+          "emitted_items": 4100,
+          "projected_items": 4100,
+          "reasoning_deltas": 4096,
+          "harness_canonical_item_factory_calls": 4100,
+          "harness_projection_observations": 4100,
+          "harness_projection_state_factory_calls": 1,
+          "production_accumulator_instances": 1,
+          "production_accumulator_add_calls": 4100,
+          "production_reasoning_text_property_reads": 1,
+          "retained_canonical_items": 4096,
+          "retained_reasoning_characters": 4096,
+          "retained_reasoning_utf8_bytes": 4096,
+          "max_read_ahead": 0
+        },
+        "sample_microseconds": [12081.666005542502, 12081.167020369321, 12101.20800533332, 12098.582985345274, 12091.915996279567, 11829.166003735736, 11892.666982021183, 11856.208002427593, 11929.917003726587, 11914.750008145347, 11927.832994842902, 12144.37501039356, 12116.750003769994, 12149.7499931138, 12040.083995088935, 12036.70902759768, 11914.834001800045, 11838.2090004161, 11949.708015890792, 12067.37500615418]
+      },
+      {
+        "delta_count": 8192,
+        "item_count": 8196,
+        "median_microseconds": 25814.770997385494,
+        "p95_microseconds": 26238.99999889545,
+        "median_per_item_microseconds": 3.149679233453574,
+        "p95_per_item_microseconds": 3.2014397265611825,
+        "peak_processing_bytes_excluding_source_fixture": 149909,
+        "current_retained_bytes_including_source_fixture": 3192308,
+        "peak_total_bytes_including_source_fixture": 3233805,
+        "deterministic": {
+          "source_reads": 8196,
+          "emitted_items": 8196,
+          "projected_items": 8196,
+          "reasoning_deltas": 8192,
+          "harness_canonical_item_factory_calls": 8196,
+          "harness_projection_observations": 8196,
+          "harness_projection_state_factory_calls": 1,
+          "production_accumulator_instances": 1,
+          "production_accumulator_add_calls": 8196,
+          "production_reasoning_text_property_reads": 1,
+          "retained_canonical_items": 4096,
+          "retained_reasoning_characters": 8192,
+          "retained_reasoning_utf8_bytes": 8192,
+          "max_read_ahead": 0
+        },
+        "sample_microseconds": [26182.125002378598, 25795.624998863786, 26658.91600190662, 26238.99999889545, 26180.624990956858, 25344.166002469137, 25583.75001535751, 25878.624990582466, 25913.707999279723, 25955.08299418725, 25765.45800548047, 25402.08399295807, 25833.916995907202, 26145.750016439706, 26045.958016766235, 25492.665998172015, 25358.83299424313, 25609.16601214558, 25738.707976415753, 25756.125018233433]
+      }
+    ],
+    "known_phase5_target": "retained canonical items are bounded at 4096 while compatibility reasoning text grows from 4096 to 8192 characters; Phase 5 must replace that unbounded owner with the locked shared bounded segment owner"
+  }
+}
