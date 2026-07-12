@@ -12,6 +12,7 @@ from ..entities import (
     OperationTextParameters,
     ReasoningEffort,
     ReasoningSettings,
+    ReasoningSummaryMode,
     ReasoningTag,
 )
 from ..event import Event, EventType
@@ -410,6 +411,9 @@ class EngineAgent(ABC):
             effort = reasoning_config.get("effort")
             if isinstance(effort, str):
                 reasoning_config["effort"] = ReasoningEffort(effort)
+            summary = reasoning_config.get("summary")
+            if type(summary) is str:
+                reasoning_config["summary"] = ReasoningSummaryMode(summary)
             tag = reasoning_config.get("tag")
             if isinstance(tag, str):
                 reasoning_config["tag"] = ReasoningTag(tag)

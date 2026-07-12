@@ -1,8 +1,14 @@
 from argparse import Namespace
+from unittest.mock import patch
 
 import pytest
 
-from avalan.entities import Modality, ReasoningEffort, ReasoningTag
+from avalan.entities import (
+    Modality,
+    ReasoningEffort,
+    ReasoningSummaryMode,
+    ReasoningTag,
+)
 from avalan.model.modalities import ModalityRegistry
 
 
@@ -70,3 +76,102 @@ def test_get_operation_from_arguments_maps_reasoning_effort():
     )
     assert operation.generation_settings.openai_timeout_seconds == 30
     assert operation.input == "hi"
+
+
+@pytest.mark.parametrize("summary", tuple(ReasoningSummaryMode))
+def test_get_operation_from_arguments_maps_reasoning_summary(
+    summary: ReasoningSummaryMode,
+) -> None:
+    args = Namespace(
+        cache_strategy=None,
+        chat_disable_thinking=False,
+        do_sample=False,
+        enable_gradient_calculation=False,
+        max_new_tokens=32,
+        min_p=None,
+        no_reasoning=False,
+        openai_max_retries=None,
+        openai_response_failed_retries=None,
+        openai_response_failed_retry_delay_seconds=None,
+        openai_timeout_seconds=None,
+        reasoning_effort="high",
+        reasoning_max_new_tokens=None,
+        reasoning_stop_on_max_new_tokens=False,
+        reasoning_summary=summary.value,
+        reasoning_tag=None,
+        repetition_penalty=1.0,
+        temperature=0.25,
+        top_k=4,
+        top_p=0.9,
+        use_cache=False,
+    )
+
+    with patch.object(
+        ModalityRegistry, "get", side_effect=NotImplementedError
+    ):
+        operation = ModalityRegistry.get_operation_from_arguments(
+            Modality.TEXT_GENERATION,
+            args,
+            "hi",
+        )
+
+    reasoning = operation.generation_settings.reasoning
+    assert reasoning is not None
+    assert reasoning.effort is ReasoningEffort.HIGH
+    assert reasoning.summary is summary
+
+
+def test_get_operation_from_arguments_maps_summary_only() -> None:
+    args = Namespace(
+        cache_strategy=None,
+        chat_disable_thinking=False,
+        do_sample=False,
+        enable_gradient_calculation=False,
+        max_new_tokens=32,
+        min_p=None,
+        no_reasoning=False,
+        openai_max_retries=None,
+        openai_response_failed_retries=None,
+        openai_response_failed_retry_delay_seconds=None,
+        openai_timeout_seconds=None,
+        reasoning_effort=None,
+        reasoning_max_new_tokens=None,
+        reasoning_stop_on_max_new_tokens=False,
+        reasoning_summary="auto",
+        reasoning_tag=None,
+        repetition_penalty=1.0,
+        temperature=0.25,
+        top_k=4,
+        top_p=0.9,
+        use_cache=False,
+    )
+
+    with patch.object(
+        ModalityRegistry, "get", side_effect=NotImplementedError
+    ):
+        operation = ModalityRegistry.get_operation_from_arguments(
+            Modality.TEXT_GENERATION,
+            args,
+            "hi",
+        )
+
+    reasoning = operation.generation_settings.reasoning
+    assert reasoning is not None
+    assert reasoning.effort is None
+    assert reasoning.summary is ReasoningSummaryMode.AUTO
+
+
+def test_non_text_reasoning_summary_rejects_before_handler_dispatch() -> None:
+    args = Namespace(reasoning_summary="auto")
+
+    with (
+        patch.object(ModalityRegistry, "get") as get_handler,
+        pytest.raises(ValueError, match="text_generation"),
+    ):
+        ModalityRegistry.get_operation_from_arguments(
+            Modality.EMBEDDING,
+            args,
+            "hi",
+        )
+
+    get_handler.assert_not_called()

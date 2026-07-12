@@ -22,12 +22,14 @@ from ..entities import (
     EngineUri,
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
+    ReasoningSummaryMode,
     ToolCallRecoveryFormat,
     ToolFormat,
     ToolManagerSettings,
     ToolNamePolicyMode,
     ToolNamePolicySettings,
     TransformerEngineSettings,
+    merge_generation_settings_options,
 )
 from ..event import Event, EventType
 from ..event.manager import EventManager, EventManagerMode
@@ -433,6 +435,34 @@ def _shell_tool_runtime_settings(
     return None, None
 
 
+def _normalize_file_run_reasoning(config: dict[str, Any]) -> None:
+    """Validate and normalize file-loaded reasoning summary settings."""
+    run_options = config.get("run")
+    if run_options is None:
+        return
+    assert isinstance(run_options, dict), "Run section must be a mapping"
+    reasoning_options = run_options.get("reasoning")
+    if reasoning_options is None:
+        return
+    assert isinstance(
+        reasoning_options, dict
+    ), "run.reasoning section must be a mapping"
+    summary = reasoning_options.get("summary")
+    if summary is None:
+        return
+    assert type(summary) is str, "run.reasoning.summary must be a string"
+    try:
+        normalized_summary = ReasoningSummaryMode(summary)
+    except ValueError as error:
+        raise AssertionError(
+            "run.reasoning.summary must be auto, concise, or detailed"
+        ) from error
+    assert (
+        reasoning_options.get("enabled") is not False
+    ), "run.reasoning.summary cannot be requested when reasoning is disabled"
+    reasoning_options["summary"] = normalized_summary
+
+
 class OrchestratorLoader:
     DEFAULT_SENTENCE_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
     DEFAULT_SENTENCE_MODEL_MAX_TOKENS = 500
@@ -480,6 +510,7 @@ class OrchestratorLoader:
             agent_id: UUID,
             disable_memory: bool,
             uri: str | None,
+            call_options_override: Mapping[str, Any] | None,
             tool_settings: ToolSettingsContext | None,
             event_manager_mode: EventManagerMode,
         ) -> Orchestrator:
@@ -730,6 +761,7 @@ class OrchestratorLoader:
             path=path,
         )
         cls.validate_agent_config(config)
+        _normalize_file_run_reasoning(config)
         return config
 
     @classmethod
@@ -1162,6 +1194,7 @@ class OrchestratorLoader:
         agent_id: UUID | None,
         disable_memory: bool = False,
         uri: str | None = None,
+        call_options_override: Mapping[str, Any] | None = None,
         tool_settings: ToolSettingsContext | None = None,
         tool_name_policy: ToolNamePolicySettings | None = None,
         event_manager_mode: EventManagerMode = EventManagerMode.SDK,
@@ -1181,6 +1214,7 @@ class OrchestratorLoader:
             config,
             path=path,
         )
+        _normalize_file_run_reasoning(config)
         # Validate settings
 
         assert "agent" in config, "No agent section in configuration"
@@ -1276,6 +1310,11 @@ class OrchestratorLoader:
             ), "Run section must be a mapping"
         if call_options and "chat" in call_options:
             call_options["chat_settings"] = call_options.pop("chat")
+        if call_options_override:
+            call_options = merge_generation_settings_options(
+                call_options,
+                call_options_override,
+            )
         template_vars = config["template"] if "template" in config else None
 
         # Memory configuration
@@ -1518,16 +1557,23 @@ class OrchestratorLoader:
             assert (
                 self._runtime_envelope_loader is not None
             ), "runtime.container requires an envelope-aware agent loader"
+            envelope_load_kwargs: dict[str, Any] = {
+                "path": path,
+                "agent_id": agent_id,
+                "disable_memory": disable_memory,
+                "uri": uri,
+                "tool_settings": tool_settings,
+                "event_manager_mode": event_manager_mode,
+            }
+            if call_options_override:
+                envelope_load_kwargs["call_options_override"] = (
+                    call_options_override
+                )
             return (
                 await (
                     self._runtime_envelope_loader.load_agent_runtime_envelope(
                         runtime_envelope_plan,
-                        path=path,
-                        agent_id=agent_id,
-                        disable_memory=disable_memory,
-                        uri=uri,
-                        tool_settings=tool_settings,
-                        event_manager_mode=event_manager_mode,
+                        **envelope_load_kwargs,
                     )
                 )
             )

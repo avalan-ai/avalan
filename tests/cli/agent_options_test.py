@@ -1,5 +1,5 @@
 from argparse import Namespace
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from logging import Logger
 from tempfile import NamedTemporaryFile
@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from avalan.cli.__main__ import CLI
 from avalan.cli.commands import agent as agent_cmds
+from avalan.entities import Modality
 
 
 class AgentParserOptionsTestCase(TestCase):
@@ -217,6 +218,144 @@ class AgentParserOptionsTestCase(TestCase):
             ]
         )
         self.assertEqual(args.run_reasoning_effort, "xhigh")
+
+    def test_run_and_init_reasoning_summary_aliases(self) -> None:
+        for command, option in (
+            (("agent", "run", "spec.toml"), "--reasoning-summary"),
+            (("agent", "run", "spec.toml"), "--run-reasoning-summary"),
+            (("agent", "init"), "--reasoning-summary"),
+            (("agent", "init"), "--run-reasoning-summary"),
+        ):
+            with self.subTest(command=command, option=option):
+                args = self.parser.parse_args([*command, option, "detailed"])
+                self.assertEqual(args.run_reasoning_summary, "detailed")
+
+    def test_reasoning_summary_choices_are_enum_derived(self) -> None:
+        for mode in ("auto", "concise", "detailed"):
+            with self.subTest(mode=mode):
+                model_args = self.parser.parse_args(
+                    [
+                        "model",
+                        "run",
+                        "model-id",
+                        "--reasoning-summary",
+                        mode,
+                    ]
+                )
+                agent_args = self.parser.parse_args(
+                    [
+                        "agent",
+                        "run",
+                        "spec.toml",
+                        "--reasoning-summary",
+                        mode,
+                    ]
+                )
+                self.assertEqual(model_args.reasoning_summary, mode)
+                self.assertEqual(agent_args.run_reasoning_summary, mode)
+
+    def test_invalid_reasoning_summary_choices_exit_two(self) -> None:
+        for command in (
+            ["model", "run", "model-id"],
+            ["agent", "run", "spec.toml"],
+            ["agent", "init"],
+        ):
+            stderr = StringIO()
+            with (
+                self.subTest(command=command),
+                redirect_stderr(stderr),
+                self.assertRaises(SystemExit) as error,
+            ):
+                self.parser.parse_args(
+                    [
+                        *command,
+                        "--reasoning-summary",
+                        "verbose",
+                    ]
+                )
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("invalid choice", stderr.getvalue())
+
+    def test_reasoning_summary_and_disabled_reasoning_exit_two(self) -> None:
+        stderr = StringIO()
+        with (
+            redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as error,
+        ):
+            self.parser.parse_args(
+                [
+                    "model",
+                    "run",
+                    "model-id",
+                    "--reasoning-summary",
+                    "auto",
+                    "--no-reasoning",
+                ]
+            )
+
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("not allowed with argument", stderr.getvalue())
+
+    def test_non_text_reasoning_summary_choices_exit_two(self) -> None:
+        for modality in Modality:
+            if modality is Modality.TEXT_GENERATION:
+                continue
+            stderr = StringIO()
+            with (
+                redirect_stderr(stderr),
+                self.assertRaises(SystemExit) as error,
+            ):
+                self.parser.parse_args(
+                    [
+                        "model",
+                        "run",
+                        "model-id",
+                        "--modality",
+                        modality.value,
+                        "--reasoning-summary",
+                        "auto",
+                    ]
+                )
+
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn(
+                "requires --modality text_generation", stderr.getvalue()
+            )
+
+    def test_unhonored_agent_surfaces_reject_reasoning_summary(self) -> None:
+        for command in (
+            ["agent", "serve", "spec.toml"],
+            ["agent", "proxy", "spec.toml"],
+            [
+                "agent",
+                "message",
+                "search",
+                "spec.toml",
+                "--function",
+                "l2_distance",
+                "--id",
+                "agent-id",
+                "--participant",
+                "participant-id",
+                "--session",
+                "session-id",
+            ],
+        ):
+            stderr = StringIO()
+            with (
+                self.subTest(command=command),
+                redirect_stderr(stderr),
+                self.assertRaises(SystemExit) as error,
+            ):
+                self.parser.parse_args(
+                    [
+                        *command,
+                        "--reasoning-summary",
+                        "auto",
+                    ]
+                )
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("unrecognized arguments", stderr.getvalue())
 
 
 class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):

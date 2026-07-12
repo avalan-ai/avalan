@@ -60,12 +60,21 @@ _RESPONSE_STREAM_EVENT: TypeAdapter[ResponseStreamEvent] = TypeAdapter(
 _PHASE0_MANIFEST_DIMENSIONS_SHA256 = (
     "8dd3ce6150b052cf59abd3fbd02c283870ab7ba94f77d040cbc8cb003e3e8480"
 )
+_PHASE0_MANIFEST_DIMENSION_NAMES = (
+    "phase 0 infrastructure",
+    "acceptance runner enforcement",
+    "canonical native reasoning baseline",
+    "OpenAI omission retry and replay baseline",
+    "aggregate lifecycle baseline",
+    "CLI privacy baseline",
+    "protocol projection baseline",
+)
 _REQUIREMENTS_CATALOG_SHA256 = (
     "ffb70eee04a87b05ccf5202b6b55da3324184492a5553dd8ecf79313e7bfa368"
 )
 _ACCEPTANCE_INTEGER_CATALOG = (
     2,
-    "5da44d7a68e8d6375a01e7a4d454d66667da68d4549516505477ff37dda56f83",
+    "bb22bb6ee54ad1feaa0598f6abb4be005ef60e04a8acf89736fdf222bd3527a6",
 )
 _CONTRACT_INTEGER_CATALOG = (
     95,
@@ -506,13 +515,21 @@ def _assert_provider_terminal_scalar_catalog(payload: object) -> None:
 def _assert_exact_phase0_manifest_catalog(
     dimensions: dict[str, tuple[str, ...]],
 ) -> None:
+    assert set(_PHASE0_MANIFEST_DIMENSION_NAMES).issubset(dimensions)
+    phase0_dimensions = {
+        dimension: dimensions[dimension]
+        for dimension in _PHASE0_MANIFEST_DIMENSION_NAMES
+    }
     node_ids = tuple(
-        node_id for nodes in dimensions.values() for node_id in nodes
+        node_id for nodes in phase0_dimensions.values() for node_id in nodes
     )
     assert len(node_ids) == 49
     assert len(set(node_ids)) == 49
     canonical = dumps(
-        {dimension: list(nodes) for dimension, nodes in dimensions.items()},
+        {
+            dimension: list(nodes)
+            for dimension, nodes in phase0_dimensions.items()
+        },
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
@@ -3414,17 +3431,9 @@ def test_acceptance_manifest_is_schema_versioned_and_phase_scoped() -> None:
         _ACCEPTANCE_INTEGER_CATALOG,
     )
 
-    assert manifest.active_phase == 0
+    assert manifest.active_phase == 1
     assert len(manifest.node_ids) == len(set(manifest.node_ids))
-    assert set(manifest.dimensions) == {
-        "phase 0 infrastructure",
-        "acceptance runner enforcement",
-        "canonical native reasoning baseline",
-        "OpenAI omission retry and replay baseline",
-        "aggregate lifecycle baseline",
-        "CLI privacy baseline",
-        "protocol projection baseline",
-    }
+    assert set(_PHASE0_MANIFEST_DIMENSION_NAMES).issubset(manifest.dimensions)
     _assert_exact_phase0_manifest_catalog(manifest.dimensions)
 
 

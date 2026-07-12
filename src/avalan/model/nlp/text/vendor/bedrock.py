@@ -499,6 +499,7 @@ class BedrockStream(TextGenerationVendorStream):
 
 
 class BedrockClient(TextGenerationVendor):
+    _reasoning_summary_provider = "bedrock"
     _client: Any | None
     _endpoint_url: str | None
     _exit_stack: AsyncExitStack
@@ -540,6 +541,7 @@ class BedrockClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
+        self._validate_reasoning_summary_request(settings)
         assert (
             instructions is None
         ), "Amazon Bedrock does not support provider instructions"

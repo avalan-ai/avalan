@@ -18,11 +18,14 @@ from avalan.entities import (
     MessageContentText,
     MessageRole,
     ReasoningEffort,
+    ReasoningSettings,
+    ReasoningSummaryMode,
     ToolCallToken,
 )
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager, EventManagerMode
 from avalan.model import TextGenerationResponse
+from avalan.model.reasoning import ReasoningSummaryCapabilityError
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -305,6 +308,96 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
 
         settings = orch.await_args.kwargs["settings"]
         self.assertEqual(settings.reasoning.effort, ReasoningEffort.HIGH)
+
+    async def test_create_response_forwards_only_explicit_reasoning_fields(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        for reasoning, expected in (
+            (
+                ReasoningConfig(summary=ReasoningSummaryMode.CONCISE),
+                {"summary": ReasoningSummaryMode.CONCISE},
+            ),
+            (
+                ReasoningConfig(effort=ReasoningEffort.HIGH),
+                {"effort": ReasoningEffort.HIGH},
+            ),
+            (ReasoningConfig(), None),
+            (None, None),
+        ):
+            with self.subTest(reasoning=reasoning):
+                orch = AsyncMock(spec=DummyOrchestrator)
+                orch.return_value = TextGenerationResponse(
+                    lambda: "ok",
+                    logger=getLogger(),
+                    use_async_generator=False,
+                )
+                req = ResponsesRequest(
+                    model="m",
+                    input="hi",
+                    reasoning=reasoning,
+                )
+
+                with patch("avalan.server.routers.time", return_value=1):
+                    await self.responses.create_response(req, logger, orch)
+
+                settings = orch.await_args.kwargs["settings"]
+                if reasoning is None or not reasoning.model_fields_set:
+                    self.assertEqual(settings.reasoning, ReasoningSettings())
+                    self.assertNotIn(
+                        "generation_options_override",
+                        orch.await_args.kwargs,
+                    )
+                else:
+                    self.assertEqual(
+                        orch.await_args.kwargs["generation_options_override"],
+                        {"reasoning": expected},
+                    )
+                    self.assertEqual(
+                        settings.reasoning.summary,
+                        getattr(reasoning, "summary", None),
+                    )
+                    self.assertEqual(
+                        settings.reasoning.effort,
+                        getattr(reasoning, "effort", None),
+                    )
+
+    async def test_create_response_maps_unsupported_summary_before_stream(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                orch = AsyncMock(spec=DummyOrchestrator)
+                orch.side_effect = ReasoningSummaryCapabilityError(
+                    provider="anthropic",
+                    requested_mode=ReasoningSummaryMode.DETAILED,
+                )
+                req = ResponsesRequest(
+                    model="m",
+                    input="hi",
+                    stream=stream,
+                    reasoning=ReasoningConfig(
+                        summary=ReasoningSummaryMode.DETAILED
+                    ),
+                )
+
+                with self.assertRaises(HTTPException) as caught:
+                    await self.responses.create_response(req, logger, orch)
+
+                self.assertEqual(caught.exception.status_code, 400)
+                self.assertEqual(
+                    caught.exception.detail,
+                    {
+                        "code": "reasoning_summary_unsupported",
+                        "message": (
+                            "Provider 'anthropic' does not support reasoning "
+                            "summary mode 'detailed'"
+                        ),
+                        "provider": "anthropic",
+                        "requested_mode": "detailed",
+                    },
+                )
 
     async def test_create_response_forwards_text_format(self) -> None:
         logger = AsyncMock(spec=Logger)

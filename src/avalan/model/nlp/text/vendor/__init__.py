@@ -5,6 +5,7 @@ from .....entities import (
     TransformerEngineSettings,
 )
 from .....model.nlp.text.generation import TextGenerationModel
+from .....model.reasoning import validate_reasoning_summary_request
 from .....model.response.text import TextGenerationResponse
 from .....model.vendor import TextGenerationVendor
 from .....tool.manager import ToolManager
@@ -153,8 +154,9 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         instructions: str | None = None,
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
-        messages = self._messages(input, system_prompt, developer_prompt, tool)
         gen_settings = settings or GenerationSettings()
+        validate_reasoning_summary_request(self, gen_settings)
+        messages = self._messages(input, system_prompt, developer_prompt, tool)
         instruction_kwargs: dict[str, str] = (
             {"instructions": instructions} if instructions is not None else {}
         )

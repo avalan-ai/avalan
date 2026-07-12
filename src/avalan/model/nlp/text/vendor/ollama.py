@@ -131,6 +131,7 @@ class OllamaStream(TextGenerationVendorStream):
 
 
 class OllamaClient(TextGenerationVendor):
+    _reasoning_summary_provider = "ollama"
     _client: Any
 
     def __init__(self, base_url: str | None = None):
@@ -149,6 +150,7 @@ class OllamaClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
+        self._validate_reasoning_summary_request(settings)
         assert (
             instructions is None
         ), "Ollama does not support provider instructions"

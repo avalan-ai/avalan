@@ -40,6 +40,7 @@ from avalan.entities import (
     OperationTextParameters,
     OrchestratorSettings,
     ReasoningSettings,
+    ReasoningSummaryMode,
     ReasoningToken,
     Token,
     TokenDetail,
@@ -1323,6 +1324,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             run_openai_response_failed_retry_delay_seconds=0.5,
             run_openai_timeout_seconds=30,
             run_reasoning_effort="xhigh",
+            run_reasoning_summary="detailed",
             run_chat_add_generation_prompt=False,
             run_chat_enable_thinking=True,
             tool=["math.calculator"],
@@ -1365,6 +1367,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("enable_thinking = true", output)
         self.assertIn("[run.reasoning]", output)
         self.assertIn('effort = "xhigh"', output)
+        self.assertIn('summary = "detailed"', output)
         self.assertIn("[tool]", output)
         self.assertIn('format = "json"', output)
         self.assertIn('"math.calculator"', output)
@@ -3754,6 +3757,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_conversation_prints_blank(self):
         self.args.conversation = True
+        self.args.display_reasoning = True
         self.orch.return_value = MagicMock(
             spec=agent_cmds.OrchestratorResponse
         )
@@ -3767,7 +3771,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds.OrchestratorLoader,
                 "from_file",
                 new=AsyncMock(return_value=self.orch),
-            ),
+            ) as from_file,
             patch.object(
                 agent_cmds, "token_generation", new_callable=AsyncMock
             ),
@@ -3776,10 +3780,15 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
         self.console.print.assert_any_call("")
+        self.assertNotIn(
+            "call_options_override",
+            from_file.call_args.kwargs,
+        )
 
     async def test_run_watch_reloads_when_file_changes(self):
         self.args.conversation = True
         self.args.watch = True
+        self.args.run_reasoning_summary = "concise"
         second_orch = AsyncMock()
         second_orch.engine_agent = True
         second_orch.engine = MagicMock(model_id="m")
@@ -3820,6 +3829,15 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(ff.await_count, 2)
+        for load_call in ff.await_args_list:
+            self.assertEqual(
+                load_call.kwargs["call_options_override"],
+                {
+                    "reasoning": {
+                        "summary": ReasoningSummaryMode.CONCISE,
+                    }
+                },
+            )
 
     async def test_run_watch_start_session_after_reload(self):
         self.args.conversation = True

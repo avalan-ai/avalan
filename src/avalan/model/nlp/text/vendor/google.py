@@ -128,6 +128,7 @@ class GoogleStream(TextGenerationVendorStream):
 
 
 class GoogleClient(TextGenerationVendor):
+    _reasoning_summary_provider = "google"
     _client: Client
 
     def __init__(self, api_key: str):
@@ -143,6 +144,7 @@ class GoogleClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
+        self._validate_reasoning_summary_request(settings)
         assert (
             instructions is None
         ), "Google does not support provider instructions"

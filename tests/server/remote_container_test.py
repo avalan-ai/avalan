@@ -99,6 +99,29 @@ class RemoteContainerProfileSelectionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(exc.exception.status_code, 400)
         self.assertIn("runtime authority", str(exc.exception.detail))
 
+    async def test_rejects_authority_nested_inside_reasoning_summary(
+        self,
+    ) -> None:
+        for summary in (
+            {"mode": "auto"},
+            {"sandboxProfile": "workspace-readonly"},
+        ):
+            request = _Request(
+                {
+                    "input": "hi",
+                    "reasoning": {"summary": summary},
+                }
+            )
+
+            with self.assertRaises(HTTPException) as exc:
+                await validate_remote_container_profile_selection(request)
+
+            self.assertEqual(exc.exception.status_code, 400)
+            self.assertIn("runtime authority", str(exc.exception.detail))
+            self.assertFalse(
+                hasattr(request.state, "remote_container_profile")
+            )
+
 
 class _Request:
     def __init__(self, payload: object) -> None:

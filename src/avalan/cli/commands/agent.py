@@ -26,6 +26,7 @@ from ...entities import (
     Model,
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
+    ReasoningSummaryMode,
     ToolCall,
     ToolCallRecoveryFormat,
     ToolFormat,
@@ -225,11 +226,7 @@ def get_orchestrator_settings(
         for k, v in vars(args).items()
         if k.startswith("run_chat_") and v is not None
     }
-    reasoning_settings = {
-        k[len("run_reasoning_") :]: v
-        for k, v in vars(args).items()
-        if k.startswith("run_reasoning_") and v is not None
-    }
+    reasoning_settings = _agent_reasoning_overrides(args)
     call_options = {
         "max_new_tokens": call_tokens,
         "skip_special_tokens": args.run_skip_special_tokens,
@@ -1177,6 +1174,19 @@ def _agent_enabled_tools(args: Namespace) -> list[str] | None:
     if tools:
         return tools
     return None
+
+
+def _agent_reasoning_overrides(args: Namespace) -> dict[str, object]:
+    """Return only explicit nested reasoning CLI overrides."""
+    overrides = {
+        key.removeprefix("run_reasoning_"): value
+        for key, value in vars(args).items()
+        if key.startswith("run_reasoning_") and value is not None
+    }
+    summary = overrides.get("summary")
+    if isinstance(summary, str):
+        overrides["summary"] = ReasoningSummaryMode(summary)
+    return overrides
 
 
 def _agent_tool_format(args: Namespace) -> ToolFormat | None:
@@ -2329,12 +2339,19 @@ async def agent_run(
                 participant_id,
             )
 
+            reasoning_overrides = _agent_reasoning_overrides(args)
+            file_load_kwargs: dict[str, Any] = {}
+            if reasoning_overrides:
+                file_load_kwargs["call_options_override"] = {
+                    "reasoning": reasoning_overrides
+                }
             orchestrator = await loader.from_file(
                 specs_path,
                 agent_id=agent_id,
                 disable_memory=args.no_session,
                 tool_settings=_agent_tool_settings(args),
                 **_agent_tool_name_policy_kwargs(args),
+                **file_load_kwargs,
                 event_manager_mode=EventManagerMode.CLI,
             )
         else:

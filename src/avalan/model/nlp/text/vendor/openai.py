@@ -9,6 +9,7 @@ from .....entities import (
     ToolCallResult,
 )
 from .....model.provider import ProviderFamily, provider_string_option
+from .....model.reasoning import validate_reasoning_summary_request
 from .....model.response.text import TextGenerationResponse
 from .....model.stream import (
     CanonicalStreamItem,
@@ -1149,6 +1150,7 @@ class OpenAIClient(TextGenerationVendor):
     _stream_response_failed_retries: int
     _stream_response_failed_retry_delay_seconds: float
     _stateless_response_items: list[dict[str, Any]]
+    _reasoning_summary_provider = "openai"
 
     def __init__(
         self,
@@ -1220,6 +1222,7 @@ class OpenAIClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
+        self._validate_reasoning_summary_request(settings)
         template_messages = self._template_messages(messages, tool=tool)
         if not self._has_function_call_context(template_messages):
             self._stateless_response_items.clear()
@@ -1346,6 +1349,16 @@ class OpenAIClient(TextGenerationVendor):
             if self._is_azure
             else ProviderFamily.OPENAI
         )
+
+    @property
+    def reasoning_summary_provider(self) -> str:
+        """Return the configured OpenAI client provider family."""
+        compatible_provider = super().reasoning_summary_provider
+        if compatible_provider != "openai":
+            return compatible_provider
+        if self._is_azure:
+            return "azure_openai"
+        return "openai"
 
     @staticmethod
     def _response_failed_retries(
@@ -2040,6 +2053,27 @@ class OpenAINonStreamingResponse(TextGenerationResponse):
 
 
 class OpenAIModel(TextGenerationVendorModel):
+    @property
+    def reasoning_summary_provider(self) -> str:
+        """Return the configured OpenAI provider family."""
+        compatible_provider = super().reasoning_summary_provider
+        if compatible_provider != "openai":
+            return compatible_provider
+        client_is_azure = getattr(
+            getattr(self, "_model", None),
+            "_is_azure",
+            None,
+        )
+        if client_is_azure is True:
+            return "azure_openai"
+        if client_is_azure is False:
+            return "openai"
+        settings = getattr(self, "_settings", None)
+        base_url = getattr(settings, "base_url", None)
+        if OpenAIClient._is_azure_base_url(base_url):
+            return "azure_openai"
+        return "openai"
+
     def _load_model(
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
@@ -2102,6 +2136,7 @@ class OpenAIModel(TextGenerationVendorModel):
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
         generation_settings = settings or GenerationSettings()
+        validate_reasoning_summary_request(self, generation_settings)
         messages = self._messages(input, system_prompt, developer_prompt, tool)
         streamer = await self._model(
             self._model_id,

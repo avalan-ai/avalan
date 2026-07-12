@@ -3,6 +3,7 @@ from ....entities import (
     Input,
     TransformerEngineSettings,
 )
+from ....model.reasoning import validate_reasoning_summary_request
 from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
     CanonicalStreamItem,
@@ -420,6 +421,7 @@ class MlxLmModel(TextGenerationModel):
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
         settings = settings or GenerationSettings()
+        validate_reasoning_summary_request(self, settings)
         inputs = super()._tokenize_input(
             input,
             system_prompt=system_prompt,

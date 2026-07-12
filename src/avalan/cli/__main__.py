@@ -15,6 +15,7 @@ from ..entities import (
     Modality,
     ParallelStrategy,
     ReasoningEffort,
+    ReasoningSummaryMode,
     ReasoningTag,
     TextGenerationLoaderClass,
     TimestepSpacing,
@@ -28,6 +29,7 @@ from ..entities import (
 )
 from ..filesystem import read_text
 from ..model.manager import ModelManager
+from ..model.reasoning import ReasoningSummaryCapabilityError
 from ..server_output_redaction import (
     SERVER_OUTPUT_REDACTION_CHANNELS,
     SERVER_OUTPUT_REDACTION_PROTOCOLS,
@@ -289,6 +291,18 @@ hf_logging = _HFLoggingProxy()
 
 
 class _TaskArgumentParser(ArgumentParser):
+    def _validate_reasoning_summary(self, parsed: Namespace) -> None:
+        if (
+            getattr(parsed, "command", None) == "model"
+            and getattr(parsed, "model_command", None) == "run"
+            and getattr(parsed, "reasoning_summary", None) is not None
+            and getattr(parsed, "modality", None)
+            not in {Modality.TEXT_GENERATION, Modality.TEXT_GENERATION.value}
+        ):
+            self.error(
+                "--reasoning-summary requires --modality text_generation"
+            )
+
     def parse_args(
         self,
         args: Sequence[str] | None = None,
@@ -296,9 +310,11 @@ class _TaskArgumentParser(ArgumentParser):
     ) -> Namespace:
         parsed, extras = self.parse_known_args(args, namespace)
         if extras and _consume_task_input_field_args(parsed, extras):
+            self._validate_reasoning_summary(parsed)
             return parsed
         if extras:
             self.error("unrecognized arguments")
+        self._validate_reasoning_summary(parsed)
         return parsed
 
 
@@ -1516,6 +1532,7 @@ class CLI:
         CLI._add_ds4_backend_options(agent_run_parser)
 
         CLI._add_agent_settings_arguments(agent_run_parser)
+        CLI._add_agent_reasoning_summary_argument(agent_run_parser)
         CLI._add_tool_settings_arguments(
             agent_run_parser,
             prefix="browser",
@@ -1604,6 +1621,7 @@ class CLI:
             parents=[global_parser],
         )
         CLI._add_agent_settings_arguments(agent_init_parser)
+        CLI._add_agent_reasoning_summary_argument(agent_init_parser)
         CLI._add_tool_name_policy_arguments(agent_init_parser)
         CLI._add_tool_settings_arguments(
             agent_init_parser,
@@ -3320,7 +3338,10 @@ class CLI:
             default=False,
             help="Disable thinking tokens in chat template",
         )
-        model_run_parser.add_argument(
+        model_reasoning_request_group = (
+            model_run_parser.add_mutually_exclusive_group()
+        )
+        model_reasoning_request_group.add_argument(
             "--no-reasoning",
             action="store_true",
             default=False,
@@ -3337,6 +3358,12 @@ class CLI:
             type=str,
             choices=[e.value for e in ReasoningEffort],
             help="Reasoning effort level",
+        )
+        model_reasoning_request_group.add_argument(
+            "--reasoning-summary",
+            type=str,
+            choices=[mode.value for mode in ReasoningSummaryMode],
+            help="Reasoning summary mode",
         )
         model_run_parser.add_argument(
             "--reasoning-max-new-tokens",
@@ -3953,6 +3980,20 @@ class CLI:
             help="Enable tools matching namespace",
         )
         return group
+
+    @staticmethod
+    def _add_agent_reasoning_summary_argument(
+        parser: ArgumentParser,
+    ) -> None:
+        """Add honored reasoning-summary aliases to an agent command."""
+        parser.add_argument(
+            "--reasoning-summary",
+            "--run-reasoning-summary",
+            type=str,
+            choices=[mode.value for mode in ReasoningSummaryMode],
+            dest="run_reasoning_summary",
+            help="Reasoning summary mode",
+        )
 
     @staticmethod
     def _add_tool_settings_arguments(
@@ -4840,6 +4881,9 @@ class CLI:
             with _direct_keyboard_interrupts():
                 try:
                     await self._main(args, theme, console, hub)
+                except ReasoningSummaryCapabilityError as error:
+                    print(str(error), file=sys.stderr)
+                    raise SystemExit(1) from error
                 except (
                     CancelledError,
                     KeyboardInterrupt,

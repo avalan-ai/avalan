@@ -5,6 +5,7 @@ from ....entities import (
 )
 from ....model.nlp.text.generation import TextGenerationModel
 from ....model.provider import provider_family_value
+from ....model.reasoning import validate_reasoning_summary_request
 from ....model.stream import (
     CanonicalStreamItem,
     LocalTextStreamEventParser,
@@ -384,6 +385,7 @@ class VllmModel(TextGenerationModel):
         tool: ToolManager | None = None,
     ) -> TextGenerationVendorStream | str:
         settings = settings or GenerationSettings()
+        validate_reasoning_summary_request(self, settings)
         prompt = self._prompt(
             input,
             system_prompt,

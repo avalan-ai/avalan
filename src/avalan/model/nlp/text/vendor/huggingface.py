@@ -122,6 +122,7 @@ class HuggingfaceStream(TextGenerationVendorStream):
 
 
 class HuggingfaceClient(TextGenerationVendor):
+    _reasoning_summary_provider = "huggingface"
     _client: AsyncInferenceClient
 
     def __init__(self, api_key: str, base_url: str | None = None):
@@ -137,6 +138,7 @@ class HuggingfaceClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
+        self._validate_reasoning_summary_request(settings)
         assert (
             instructions is None
         ), "Hugging Face does not support provider instructions"

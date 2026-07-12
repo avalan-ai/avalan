@@ -16,6 +16,7 @@ from ...entities import (
 )
 from ...tool.manager import ToolManager
 from ..criteria import KeywordStoppingCriteria
+from ..reasoning import validate_reasoning_summary_request
 from .registry import ModalityRegistry
 
 from argparse import Namespace
@@ -340,6 +341,10 @@ class TextGenerationModality:
         operation: Operation,
         tool: ToolManager | None = None,
     ) -> Any:
+        generation_settings = (
+            operation.generation_settings or GenerationSettings()
+        )
+        validate_reasoning_summary_request(model, generation_settings)
         assert operation.input and operation.parameters["text"]
 
         mlx_model = _get_mlx_model() if engine_uri.is_local else None

@@ -31,6 +31,7 @@ from ....entities import (
     ToolCall,
     TransformerEngineSettings,
 )
+from ....model.reasoning import validate_reasoning_summary_request
 from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
     CanonicalStreamItem,
@@ -1833,6 +1834,7 @@ class Ds4Model(TextGenerationModel):
     ) -> TextGenerationResponse:
         _ = skip_special_tokens
         generation_settings = settings or GenerationSettings()
+        validate_reasoning_summary_request(self, generation_settings)
         parse_dsml_tools = self._uses_dsml_tools(input, tool)
         rendered_system_prompt = _combine_instructions(
             instructions,

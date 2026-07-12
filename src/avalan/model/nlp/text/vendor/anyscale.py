@@ -4,6 +4,8 @@ from .openai import OpenAIClient, OpenAIModel
 
 
 class AnyScaleClient(OpenAIClient):
+    _reasoning_summary_provider = "anyscale"
+
     def __init__(self, api_key: str, base_url: str | None = None):
         super().__init__(
             api_key=api_key,

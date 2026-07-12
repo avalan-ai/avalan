@@ -2,6 +2,7 @@ from ..entities import (
     MessageRole,
     OrchestratorSettings,
     ReasoningEffort,
+    ReasoningSummaryMode,
     ToolNamePolicySettings,
 )
 from ..server_output_redaction import (
@@ -1196,7 +1197,10 @@ class ChatMessage(BaseModel):
 
 
 class ReasoningConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     effort: ReasoningEffort | None = None
+    summary: ReasoningSummaryMode | None = None
 
 
 class ResponsesTextConfig(BaseModel):

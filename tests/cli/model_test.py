@@ -52,6 +52,7 @@ from avalan.entities import (
     Modality,
     ReasoningEffort,
     ReasoningSettings,
+    ReasoningSummaryMode,
     ReasoningToken,
     Token,
     TokenDetail,
@@ -9748,6 +9749,7 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
             no_reasoning=False,
             reasoning_tag=None,
             reasoning_effort="xhigh",
+            reasoning_summary="detailed",
             reasoning_max_new_tokens=None,
             reasoning_stop_on_max_new_tokens=False,
         )
@@ -9807,7 +9809,11 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
 
         settings = captured["settings"]
         self.assertEqual(
-            settings.reasoning, ReasoningSettings(effort=ReasoningEffort.XHIGH)
+            settings.reasoning,
+            ReasoningSettings(
+                effort=ReasoningEffort.XHIGH,
+                summary=ReasoningSummaryMode.DETAILED,
+            ),
         )
 
     async def test_model_run_sets_output_hidden_states(self):
