@@ -74,7 +74,7 @@ _REQUIREMENTS_CATALOG_SHA256 = (
 )
 _ACCEPTANCE_INTEGER_CATALOG = (
     2,
-    "a29719bb75947df0c3e28fe61c9b7102073a1f87d5b7d818cf9424f71973cbcd",
+    "250f5ed19c7c9ab47ce88be5900706b44f79e512d2df1ba638e924d8ece95e7d",
 )
 _CONTRACT_INTEGER_CATALOG = (
     95,
@@ -3431,7 +3431,7 @@ def test_acceptance_manifest_is_schema_versioned_and_phase_scoped() -> None:
         _ACCEPTANCE_INTEGER_CATALOG,
     )
 
-    assert manifest.active_phase == 4
+    assert manifest.active_phase == 5
     assert len(manifest.node_ids) == len(set(manifest.node_ids))
     assert set(_PHASE0_MANIFEST_DIMENSION_NAMES).issubset(manifest.dimensions)
     _assert_exact_phase0_manifest_catalog(manifest.dimensions)

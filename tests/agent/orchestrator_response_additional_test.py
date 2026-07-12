@@ -56,6 +56,7 @@ from avalan.model.stream import (
     StreamTerminalOutcome,
     StreamValidationError,
     StreamVisibility,
+    TextGenerationNonStreamResult,
     TextGenerationSingleStream,
     stream_channel_for_kind,
     validate_canonical_stream_items,
@@ -1406,9 +1407,34 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         agent_id = uuid4()
         participant_id = uuid4()
         session_id = uuid4()
+        provider_correlation = StreamItemCorrelation(
+            provider_request_id="provider-request",
+            model_continuation_id="provider-continuation",
+            tool_call_id="provider-tool",
+            protocol_item_id="provider-item",
+            provider_output_index=2,
+            provider_summary_index=3,
+        )
+        non_stream_result = TextGenerationNonStreamResult(
+            (
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta="ab",
+                    correlation=provider_correlation,
+                ),
+                StreamProviderEvent(kind=StreamItemKind.ANSWER_DONE),
+                StreamProviderEvent(kind=StreamItemKind.STREAM_COMPLETED),
+            ),
+            answer_text="ab",
+            provider_family="openai",
+        )
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _dummy_response(async_gen=False),
+            TextGenerationResponse(
+                non_stream_result,
+                logger=getLogger(),
+                use_async_generator=False,
+            ),
             agent,
             operation,
             {},
@@ -1426,6 +1452,17 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(item.run_id, str(agent_id))
             self.assertEqual(item.turn_id, str(participant_id))
             self.assertEqual(item.correlation.task_id, str(agent_id))
+        answer_item = next(
+            item
+            for item in response.canonical_items
+            if item.kind is StreamItemKind.ANSWER_DELTA
+        )
+        expected_trace = provider_correlation.to_trace_dict()
+        expected_trace["task_id"] = str(agent_id)
+        self.assertEqual(
+            answer_item.correlation.to_trace_dict(),
+            expected_trace,
+        )
 
     async def test_react_uses_explicit_output(self):
         engine = _DummyEngine()
@@ -1856,6 +1893,51 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_non_stream_response_text_and_calls_direct_parser_stage(
+        self,
+    ) -> None:
+        base_parser = ToolCallParser()
+        manager = MagicMock()
+        manager.tool_format = None
+        manager.is_potential_tool_call.side_effect = (
+            base_parser.is_potential_tool_call
+        )
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        manager.get_calls.side_effect = base_parser
+        tool_text = (
+            'before <tool_call>{"name": "calc", '
+            '"arguments": {"x": 1}}</tool_call> after'
+        )
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            _dummy_operation(),
+            {},
+            enable_tool_parsing=False,
+        )
+        response._tool_parser = ToolCallResponseParser(manager, None)
+
+        text, calls = await response._non_stream_response_text_and_calls(
+            tool_text
+        )
+
+        self.assertEqual(text, "before  after")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].name, "calc")
+        self.assertEqual(calls[0].arguments, {"x": 1})
+        self.assertNotIn(
+            "<tool_call",
+            "".join(
+                item.text_delta or ""
+                for item in response.canonical_items
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ),
+        )
+
     async def test_non_stream_response_text_and_calls_skips_plain_parser(
         self,
     ) -> None:
@@ -1871,6 +1953,14 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             {},
             enable_tool_parsing=False,
         )
+
+        text, calls = await response._non_stream_response_text_and_calls(
+            "plain"
+        )
+
+        self.assertEqual(text, "plain")
+        self.assertEqual(calls, [])
+
         response._tool_parser = cast(
             ToolCallResponseParser, _NonCanonicalizingParser()
         )
@@ -3458,14 +3548,23 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
                 self.cancel_called = False
                 self.started = AsyncioEvent()
 
-            async def to_str(self) -> str:
+            def canonical_stream(
+                self,
+                **_: object,
+            ) -> AsyncIterator[CanonicalStreamItem]:
+                return self._blocking_canonical_stream()
+
+            async def _blocking_canonical_stream(
+                self,
+            ) -> AsyncIterator[CanonicalStreamItem]:
                 self.started.set()
                 try:
                     await sleep(1)
                 except CancelledError:
                     self.cancelled = True
                     raise
-                return "late"
+                for item in _canonical_answer_items("late"):
+                    yield item
 
             async def cancel(self) -> None:
                 self.cancel_called = True
@@ -3511,4 +3610,17 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertIn(
             StreamItemKind.STREAM_CANCELLED,
             [item.kind for item in resp.canonical_items],
+        )
+        self.assertEqual(
+            [
+                (item.kind, item.terminal_outcome)
+                for item in resp.canonical_items
+                if item.terminal_outcome is not None
+            ],
+            [
+                (
+                    StreamItemKind.STREAM_CANCELLED,
+                    StreamTerminalOutcome.CANCELLED,
+                )
+            ],
         )

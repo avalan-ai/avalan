@@ -1,7 +1,7 @@
 """Test OpenAI reasoning-summary requests, retry, and opaque replay."""
 
 from ast import Name, Yield, parse, walk
-from asyncio import CancelledError, Event, create_task, run, wait_for
+from asyncio import CancelledError, Event, create_task, gather, run, wait_for
 from collections.abc import AsyncIterator, Iterator, Mapping
 from copy import deepcopy
 from inspect import getsource
@@ -16,6 +16,21 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from openai.types.responses import ResponseStreamEvent
+from openai.types.responses.response_function_tool_call import (
+    ResponseFunctionToolCall,
+)
+from openai.types.responses.response_function_web_search import (
+    ResponseFunctionWebSearch,
+)
+from openai.types.responses.response_reasoning_item import (
+    Content as ResponseReasoningContent,
+)
+from openai.types.responses.response_reasoning_item import (
+    ResponseReasoningItem,
+)
+from openai.types.responses.response_reasoning_item import (
+    Summary as ResponseReasoningSummary,
+)
 from pydantic import TypeAdapter, ValidationError
 
 from avalan.entities import (
@@ -47,6 +62,7 @@ from avalan.model.stream import (
     StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamVisibility,
+    TextGenerationNonStreamResult,
     accumulate_canonical_stream_items,
     project_canonical_stream_item,
     stream_observability_payload,
@@ -220,6 +236,51 @@ def _completed_event(*, text: str | None = None) -> object:
 
 def _non_stream_response() -> object:
     return SimpleNamespace(output=[], usage=None)
+
+
+def _rich_non_stream_response(*, include_tool: bool = True) -> object:
+    output: list[object] = [
+        SimpleNamespace(
+            id="rs_non_stream",
+            type="reasoning",
+            status="completed",
+            encrypted_content=_PRIVATE_ENCRYPTED_SENTINEL,
+            summary=[
+                SimpleNamespace(type="summary_text", text="first"),
+                SimpleNamespace(type="summary_text", text="second"),
+            ],
+        )
+    ]
+    if include_tool:
+        output.append(
+            SimpleNamespace(
+                id="fc_non_stream",
+                type="function_call",
+                status="completed",
+                call_id="call_non_stream",
+                name="lookup",
+                arguments='{"id":1}',
+            )
+        )
+    output.append(
+        SimpleNamespace(
+            id="msg_non_stream",
+            type="message",
+            status="completed",
+            content=[SimpleNamespace(type="output_text", text='{"ok":true}')],
+        )
+    )
+    return SimpleNamespace(
+        id="resp_non_stream",
+        status="completed",
+        output=output,
+        usage=SimpleNamespace(
+            input_tokens=4,
+            output_tokens=6,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=3),
+            total_tokens=10,
+        ),
+    )
 
 
 def _reasoning_item(
@@ -9003,9 +9064,7 @@ def test_optional_sdk_type_discovery_fails_closed(
     )
     monkeypatch.setattr(openai_module, "import_module", import_types)
 
-    assert not openai_module._is_trusted_openai_response_stream_event(
-        object()
-    )
+    assert not openai_module._is_trusted_openai_response_stream_event(object())
     assert not openai_module._is_trusted_openai_response_output_item(object())
     assert import_types.call_count == 2
 
@@ -9410,9 +9469,7 @@ def test_trusted_sdk_output_item_fingerprints_are_strict(
                 "type": self.type,
                 "status": self.status,
                 "encrypted_content": self.encrypted_content,
-                "summary": [
-                    {"type": "summary_text", "text": "safe-summary"}
-                ],
+                "summary": [{"type": "summary_text", "text": "safe-summary"}],
             }
 
     class TrustedDoneEvent:
@@ -9502,3 +9559,643 @@ def test_trusted_sdk_output_item_fingerprints_are_strict(
         output_index=0,
         summary_index=0,
     )
+
+
+def test_non_stream_openai_preserves_summary_tool_and_answer() -> None:
+    client = _client(AsyncMock(return_value=_rich_non_stream_response()))
+
+    result = run(
+        client(
+            "plain-model",
+            [Message(role=MessageRole.USER, content="hello")],
+            use_async_generator=False,
+        )
+    )
+
+    assert isinstance(result, TextGenerationNonStreamResult)
+    assert result.answer_text == '{"ok":true}'
+    assert run(result.to_str()) == '{"ok":true}'
+    assert [event.text_delta for event in result.events[:2]] == [
+        "first",
+        "second",
+    ]
+    assert all(
+        event.kind is StreamItemKind.REASONING_DELTA
+        for event in result.events[:2]
+    )
+    assert [
+        event.correlation.provider_summary_index for event in result.events[:2]
+    ] == [0, 1]
+    assert all(
+        event.correlation.protocol_item_id == "rs_non_stream"
+        and event.correlation.provider_output_index == 0
+        and event.reasoning_representation
+        is StreamReasoningRepresentation.SUMMARY
+        for event in result.events[:2]
+    )
+    tool_done = next(
+        event
+        for event in result.events
+        if event.kind is StreamItemKind.TOOL_CALL_DONE
+    )
+    assert tool_done.correlation.tool_call_id == "call_non_stream"
+    assert tool_done.correlation.protocol_item_id == "fc_non_stream"
+    assert all(event.provider_payload is None for event in result.events)
+    assert _PRIVATE_ENCRYPTED_SENTINEL not in repr(result.events)
+    assert result.events[-1].kind is StreamItemKind.STREAM_COMPLETED
+    assert result.usage["output_tokens_details"]["reasoning_tokens"] == 3
+
+
+def test_non_stream_openai_unknown_output_item_is_ignored() -> None:
+    response = SimpleNamespace(
+        output=[
+            SimpleNamespace(type="computer_call", id="unknown"),
+            SimpleNamespace(
+                type="message",
+                id="msg_after_unknown",
+                status="completed",
+                content=[SimpleNamespace(type="output_text", text="answer")],
+            ),
+        ],
+        usage=None,
+    )
+
+    result = run(
+        _client(AsyncMock(return_value=response))(
+            "plain-model",
+            [],
+            use_async_generator=False,
+        )
+    )
+
+    assert isinstance(result, TextGenerationNonStreamResult)
+    assert result.answer_text == "answer"
+    assert [event.kind for event in result.events] == [
+        StreamItemKind.ANSWER_DELTA,
+        StreamItemKind.ANSWER_DONE,
+        StreamItemKind.STREAM_COMPLETED,
+    ]
+
+
+def test_non_stream_response_events_preserve_fallback_terminal_metadata() -> (
+    None
+):
+    fallback_events = OpenAIClient._non_stream_response_events(
+        SimpleNamespace(output=None, output_text="fallback")
+    )
+
+    assert fallback_events[0]["output_index"] == 0
+    assert fallback_events[0]["item"] == {
+        "id": "msg_non_stream_output_text",
+        "type": "message",
+        "status": "in_progress",
+        "content": [],
+    }
+    fallback_done = cast(dict[str, object], fallback_events[1]["item"])
+    assert fallback_done["content"] == [
+        {"type": "output_text", "text": "fallback"}
+    ]
+
+    error = {"code": "provider_failure"}
+    failed_terminal = OpenAIClient._non_stream_response_events(
+        SimpleNamespace(output=[], error=error)
+    )[-1]
+    failed_response = cast(dict[str, object], failed_terminal["response"])
+    assert failed_terminal["type"] == "response.failed"
+    assert failed_response["status"] == "failed"
+    assert failed_response["error"] is error
+
+    details = {"reason": "max_output_tokens"}
+    incomplete_terminal = OpenAIClient._non_stream_response_events(
+        SimpleNamespace(output=[], incomplete_details=details)
+    )[-1]
+    incomplete_response = cast(
+        dict[str, object], incomplete_terminal["response"]
+    )
+    assert incomplete_terminal["type"] == "response.incomplete"
+    assert incomplete_response["status"] == "incomplete"
+    assert incomplete_response["incomplete_details"] is details
+
+
+@pytest.mark.parametrize(
+    ("response", "field"),
+    (
+        (SimpleNamespace(output=object()), "response.output"),
+        (
+            SimpleNamespace(output=[], output_text=object()),
+            "response.output_text",
+        ),
+        (SimpleNamespace(output=[], status=object()), "response.status"),
+        (SimpleNamespace(output=[], status="unexpected"), "response.status"),
+    ),
+)
+def test_non_stream_response_events_reject_invalid_aggregate_shapes(
+    response: object,
+    field: str,
+) -> None:
+    with pytest.raises(
+        openai_module._OpenAIReasoningSummaryEventError
+    ) as error:
+        OpenAIClient._non_stream_response_events(response)
+
+    assert error.value.field == field
+
+
+@pytest.mark.parametrize(
+    ("content", "field"),
+    (
+        (object(), "item.content"),
+        (
+            [SimpleNamespace(type="summary_text", text="wrong")],
+            "item.content.type",
+        ),
+        (
+            [SimpleNamespace(type="reasoning_text", text=object())],
+            "item.content.text",
+        ),
+    ),
+)
+def test_non_stream_native_reasoning_rejects_invalid_content(
+    content: object,
+    field: str,
+) -> None:
+    response = SimpleNamespace(
+        output=[
+            SimpleNamespace(
+                id="reasoning-invalid-content",
+                type="reasoning",
+                status="completed",
+                summary=[],
+                content=content,
+            )
+        ]
+    )
+
+    with pytest.raises(
+        openai_module._OpenAIReasoningSummaryEventError
+    ) as error:
+        OpenAIClient._non_stream_response_events(response)
+
+    assert error.value.field == field
+    assert error.value.output_index == 0
+
+
+def test_non_stream_output_item_inference_preserves_supported_shapes() -> None:
+    direct_message = OpenAIClient._non_stream_output_item(
+        SimpleNamespace(text="direct"),
+        0,
+    )
+    nested_tool = OpenAIClient._non_stream_output_item(
+        SimpleNamespace(
+            call=SimpleNamespace(
+                id="nested-call-item",
+                call_id="nested-call",
+                name="lookup",
+                arguments='{"id":1}',
+            )
+        ),
+        1,
+    )
+
+    assert direct_message == {
+        "id": "msg_non_stream_0",
+        "type": "message",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": "direct"}],
+    }
+    assert nested_tool == {
+        "id": "fc_non_stream_1",
+        "type": "function_call",
+        "status": "completed",
+        "call_id": "nested-call",
+        "name": "lookup",
+        "arguments": '{"id":1}',
+    }
+    assert OpenAIClient._non_stream_output_item(SimpleNamespace(), 2) is None
+
+
+def test_non_stream_reasoning_normalizes_absent_and_opaque_parts() -> None:
+    absent = OpenAIClient._non_stream_reasoning_item(
+        SimpleNamespace(
+            id="reasoning-absent",
+            status="completed",
+            summary=None,
+        ),
+        0,
+    )
+    opaque_summary = object()
+    opaque_content = object()
+    opaque = OpenAIClient._non_stream_reasoning_item(
+        SimpleNamespace(
+            id="reasoning-opaque",
+            status="completed",
+            summary=opaque_summary,
+            content=opaque_content,
+        ),
+        1,
+    )
+
+    assert absent["summary"] == []
+    assert opaque["summary"] is opaque_summary
+    assert opaque["content"] is opaque_content
+
+
+@pytest.mark.parametrize(
+    ("item", "field"),
+    (
+        (SimpleNamespace(type=object()), "item.type"),
+        (
+            SimpleNamespace(
+                type="function_call",
+                id="missing-call-id",
+                call=SimpleNamespace(name="lookup", arguments="{}"),
+            ),
+            "item.call_id",
+        ),
+        (
+            SimpleNamespace(
+                type="reasoning",
+                id=" ",
+                status="completed",
+                summary=[],
+            ),
+            "item.id",
+        ),
+        (
+            SimpleNamespace(
+                type="message",
+                id="invalid-status",
+                status="pending",
+                content=[],
+            ),
+            "item.status",
+        ),
+    ),
+)
+def test_non_stream_output_items_reject_invalid_required_fields(
+    item: object,
+    field: str,
+) -> None:
+    with pytest.raises(
+        openai_module._OpenAIReasoningSummaryEventError
+    ) as error:
+        OpenAIClient._non_stream_output_item(item, 0)
+
+    assert error.value.field == field
+    assert error.value.output_index == 0
+
+
+def test_non_stream_added_and_terminal_items_enforce_internal_contracts() -> (
+    None
+):
+    with pytest.raises(
+        AssertionError,
+        match="unsupported non-stream item at index 3",
+    ):
+        OpenAIClient._non_stream_added_item(
+            {"id": "unsupported", "type": "unsupported"},
+            3,
+        )
+
+    incomplete_tool = SimpleNamespace(
+        type="function_call",
+        id="incomplete-tool-item",
+        status="incomplete",
+        call_id="incomplete-tool",
+        name="lookup",
+        arguments="{}",
+    )
+    with pytest.raises(
+        openai_module._OpenAIReasoningSummaryEventError
+    ) as error:
+        OpenAIClient._non_stream_response_events(
+            SimpleNamespace(output=[incomplete_tool], status="completed")
+        )
+
+    assert error.value.field == "item.status"
+    assert error.value.output_index == 0
+
+
+def test_non_stream_openai_replay_owner_follows_valid_tool_cycle() -> None:
+    create = AsyncMock(
+        side_effect=[
+            _rich_non_stream_response(),
+            SimpleNamespace(
+                output=[
+                    SimpleNamespace(
+                        id="msg_continuation",
+                        type="message",
+                        status="completed",
+                        content=[
+                            SimpleNamespace(
+                                type="output_text",
+                                text="continued",
+                            )
+                        ],
+                    )
+                ],
+                usage=None,
+            ),
+        ]
+    )
+    client = _client(create)
+
+    first = run(client("plain-model", [], use_async_generator=False))
+    owner = cast(Any, client)._replay_owners_by_call_id["call_non_stream"]
+
+    second = run(
+        client(
+            "plain-model",
+            [_tool_result("call_non_stream", "value")],
+            use_async_generator=False,
+        )
+    )
+
+    assert isinstance(first, TextGenerationNonStreamResult)
+    assert isinstance(second, TextGenerationNonStreamResult)
+    assert second.answer_text == "continued"
+    assert owner.release_count == 1
+    assert cast(Any, client)._replay_owners_by_call_id == {}
+    assert cast(Any, client)._active_replay_owners == {}
+    assert cast(Any, client)._active_replay_streams == {}
+
+
+def test_non_stream_openai_no_tool_releases_replay_owner() -> None:
+    client = _client(
+        AsyncMock(return_value=_rich_non_stream_response(include_tool=False))
+    )
+    owners: list[Any] = []
+    original = cast(Any, client)._replay_owner_for_messages
+
+    def capture_owner(messages: list[Message]) -> Any:
+        owner = original(messages)
+        owners.append(owner)
+        return owner
+
+    cast(Any, client)._replay_owner_for_messages = capture_owner
+
+    result = run(client("plain-model", [], use_async_generator=False))
+
+    assert isinstance(result, TextGenerationNonStreamResult)
+    assert len(owners) == 1
+    assert owners[0].release_count == 1
+    assert cast(Any, client)._replay_owners_by_call_id == {}
+    assert cast(Any, client)._active_replay_owners == {}
+    assert cast(Any, client)._active_replay_streams == {}
+
+
+def test_non_stream_openai_mapping_failure_rolls_back_owner() -> None:
+    response = SimpleNamespace(
+        output=[
+            SimpleNamespace(
+                type="reasoning",
+                status="completed",
+                summary=[],
+            )
+        ]
+    )
+    client = _client(AsyncMock(return_value=response))
+    owners: list[Any] = []
+    original = cast(Any, client)._replay_owner_for_messages
+
+    def capture_owner(messages: list[Message]) -> Any:
+        owner = original(messages)
+        owners.append(owner)
+        return owner
+
+    cast(Any, client)._replay_owner_for_messages = capture_owner
+
+    with pytest.raises(openai_module._OpenAIReasoningSummaryEventError):
+        run(client("plain-model", [], use_async_generator=False))
+
+    assert len(owners) == 1
+    assert owners[0].release_count == 1
+    assert cast(Any, client)._active_replay_owners == {}
+    assert cast(Any, client)._active_replay_streams == {}
+
+
+def test_openai_stream_and_non_stream_semantics_are_equivalent() -> None:
+    reasoning_item = ResponseReasoningItem(
+        id="rs_sdk",
+        type="reasoning",
+        status="completed",
+        content=[
+            ResponseReasoningContent(
+                type="reasoning_text",
+                text="native sdk",
+            )
+        ],
+        summary=[
+            ResponseReasoningSummary(
+                type="summary_text",
+                text="summary sdk",
+            )
+        ],
+        encrypted_content=_PRIVATE_ENCRYPTED_SENTINEL,
+    )
+    ignored_item = ResponseFunctionWebSearch(
+        id="web_index_0",
+        type="web_search_call",
+        status="completed",
+        action={"type": "search", "query": "lookup"},
+    )
+    completed_reasoning = {
+        "id": "rs_sdk",
+        "type": "reasoning",
+        "status": "completed",
+        "content": [{"type": "reasoning_text", "text": "native sdk"}],
+        "summary": [{"type": "summary_text", "text": "summary sdk"}],
+        "encrypted_content": _PRIVATE_ENCRYPTED_SENTINEL,
+    }
+    provider_trace = [
+        {
+            "type": "response.output_item.added",
+            "output_index": 1,
+            "item": {
+                "id": "rs_sdk",
+                "type": "reasoning",
+                "status": "in_progress",
+                "summary": [],
+            },
+        },
+        {
+            "type": "response.reasoning_text.delta",
+            "item_id": "rs_sdk",
+            "output_index": 1,
+            "content_index": 0,
+            "delta": "native sdk",
+        },
+        {
+            "type": "response.reasoning_text.done",
+            "item_id": "rs_sdk",
+            "output_index": 1,
+            "content_index": 0,
+            "text": "native sdk",
+        },
+        {
+            "type": "response.output_item.done",
+            "output_index": 1,
+            "item": completed_reasoning,
+        },
+        {
+            "type": "response.completed",
+            "response": {"id": "resp_sdk", "status": "completed"},
+        },
+    ]
+    final_response = SimpleNamespace(
+        id="resp_sdk",
+        status="completed",
+        output=[ignored_item, reasoning_item],
+        usage=None,
+    )
+    streaming = run(
+        _consume_provider_events(OpenAIStream(_AsyncEvents(provider_trace)))
+    )
+    non_stream = run(
+        _client(AsyncMock(return_value=final_response))(
+            "plain-model",
+            [],
+            use_async_generator=False,
+        )
+    )
+    assert isinstance(non_stream, TextGenerationNonStreamResult)
+
+    def semantic(
+        events: list[StreamProviderEvent] | tuple[StreamProviderEvent, ...],
+    ) -> list[tuple[object, ...]]:
+        return [
+            (
+                event.kind,
+                event.text_delta,
+                event.correlation,
+                event.visibility,
+                event.reasoning_representation,
+                event.segment_instance_ordinal,
+                event.metadata,
+                event.data,
+                event.usage,
+            )
+            for event in events
+        ]
+
+    assert semantic(streaming) == semantic(non_stream.events)
+    reasoning = [
+        event
+        for event in non_stream.events
+        if event.kind is StreamItemKind.REASONING_DELTA
+    ]
+    assert [event.text_delta for event in reasoning] == [
+        "native sdk",
+        "summary sdk",
+    ]
+    assert [event.reasoning_representation for event in reasoning] == [
+        StreamReasoningRepresentation.NATIVE_TEXT,
+        StreamReasoningRepresentation.SUMMARY,
+    ]
+    assert [event.segment_instance_ordinal for event in reasoning] == [0, 1]
+    assert all(
+        event.correlation.protocol_item_id == "rs_sdk"
+        and event.correlation.provider_output_index == 1
+        for event in reasoning
+    )
+    assert [
+        event.correlation.provider_summary_index for event in reasoning
+    ] == [None, 0]
+    assert reasoning[1].metadata == {
+        REASONING_SEGMENT_BOUNDARY_METADATA_KEY: "completed"
+    }
+    assert non_stream.answer_text == ""
+    assert all(event.provider_payload is None for event in non_stream.events)
+    assert _PRIVATE_ENCRYPTED_SENTINEL not in repr(non_stream.events)
+
+
+def test_non_stream_openai_incomplete_tool_is_not_executable() -> None:
+    response = SimpleNamespace(
+        id="resp_incomplete_tool",
+        status="incomplete",
+        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output=[
+            ResponseFunctionToolCall(
+                id="fc_incomplete",
+                type="function_call",
+                status="incomplete",
+                call_id="call_incomplete",
+                name="lookup",
+                arguments='{"id":1}',
+            )
+        ],
+        usage=None,
+    )
+    client = _client(AsyncMock(return_value=response))
+
+    result = run(client("plain-model", [], use_async_generator=False))
+
+    assert isinstance(result, TextGenerationNonStreamResult)
+    assert [event.kind for event in result.events] == [
+        StreamItemKind.STREAM_ERRORED
+    ]
+    assert (
+        cast(dict[str, Any], result.events[0].data)["error"]["code"]
+        == "response_incomplete"
+    )
+    assert result.answer_text == ""
+    assert cast(Any, client)._replay_owners_by_call_id == {}
+    assert cast(Any, client)._active_replay_owners == {}
+    assert cast(Any, client)._active_replay_streams == {}
+
+
+def test_non_stream_openai_client_close_owns_temporary_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> tuple[object, list[Any]]:
+        started = Event()
+        release = Event()
+
+        async def blocking_source(
+            events: tuple[dict[str, object], ...],
+        ) -> AsyncIterator[object]:
+            started.set()
+            await release.wait()
+            for event in events:
+                yield event
+
+        monkeypatch.setattr(
+            OpenAIClient,
+            "_iterate_non_stream_events",
+            staticmethod(blocking_source),
+        )
+        client = _client(
+            AsyncMock(
+                return_value=_rich_non_stream_response(include_tool=False)
+            )
+        )
+        owners: list[Any] = []
+        original = cast(Any, client)._replay_owner_for_messages
+
+        def capture_owner(messages: list[Message]) -> Any:
+            owner = original(messages)
+            owners.append(owner)
+            return owner
+
+        cast(Any, client)._replay_owner_for_messages = capture_owner
+        call = create_task(
+            client("plain-model", [], use_async_generator=False)
+        )
+        await wait_for(started.wait(), timeout=1.0)
+        try:
+            await wait_for(client.aclose(), timeout=1.0)
+            result = (await gather(call, return_exceptions=True))[0]
+        finally:
+            release.set()
+            if not call.done():
+                call.cancel()
+                await gather(call, return_exceptions=True)
+        assert cast(Any, client)._active_replay_owners == {}
+        assert cast(Any, client)._active_replay_streams == {}
+        return result, owners
+
+    result, owners = run(exercise())
+
+    assert isinstance(result, openai_module.StreamConsumerClosure)
+    assert len(owners) == 1
+    assert owners[0].release_count == 1

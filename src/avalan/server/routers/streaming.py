@@ -4,6 +4,8 @@ from ...model.stream import (
     StreamConsumerProjection,
     StreamItemKind,
     StreamProjectionState,
+    StreamReasoningSegment,
+    StreamReasoningTruncation,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
     canonical_item_from_consumer_projection,
@@ -29,7 +31,7 @@ from asyncio import (
 )
 from collections.abc import AsyncIterator, Awaitable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Any, cast
 
@@ -94,6 +96,10 @@ class ProtocolStreamSnapshot:
     flow_items: tuple[CanonicalStreamItem, ...]
     usage_items: tuple[CanonicalStreamItem, ...]
     control_items: tuple[CanonicalStreamItem, ...]
+    reasoning_segments: tuple[StreamReasoningSegment, ...] = ()
+    reasoning_truncation: StreamReasoningTruncation = field(
+        default_factory=StreamReasoningTruncation
+    )
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -149,6 +155,14 @@ class ProtocolStreamAccumulator:
     @property
     def reasoning_text(self) -> str:
         return self._accumulator.reasoning_text
+
+    @property
+    def reasoning_segments(self) -> tuple[StreamReasoningSegment, ...]:
+        return self._accumulator.reasoning_segments
+
+    @property
+    def reasoning_truncation(self) -> StreamReasoningTruncation:
+        return self._accumulator.reasoning_truncation
 
     @property
     def usage(self) -> LooseJsonValue | None:
@@ -220,6 +234,8 @@ class ProtocolStreamAccumulator:
             flow_items=self.flow_items,
             usage_items=self.usage_items,
             control_items=self.control_items,
+            reasoning_segments=self.reasoning_segments,
+            reasoning_truncation=self.reasoning_truncation,
         )
 
     def validate_complete(self) -> None:

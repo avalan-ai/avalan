@@ -9,6 +9,7 @@ from ..stream import (
     StreamProviderCapabilities,
     StreamTerminalOutcome,
     StreamValidationError,
+    TextGenerationNonStreamResult,
     TextGenerationSingleStream,
     TextGenerationStream,
     canonical_item_from_consumer_projection,
@@ -105,6 +106,8 @@ def _is_legacy_base_canonical_stream(class_method: object) -> bool:
 
 
 def _text_from_non_stream_result(result: object) -> str:
+    if isinstance(result, TextGenerationNonStreamResult):
+        return result.answer_text
     if isinstance(result, TextGenerationSingleStream):
         return result.accumulator.answer_text
     if type(result) is str:
@@ -275,7 +278,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             return
 
         result = self._output_fn(*self._args, **self._kwargs)
-        if isinstance(result, TextGenerationSingleStream):
+        if isinstance(
+            result, (TextGenerationNonStreamResult, TextGenerationSingleStream)
+        ):
             self._output = result
         text = _text_from_non_stream_result(result)
 
@@ -363,9 +368,33 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             self._ensure_non_stream_prefetched()
             prefetched_text = self._prefetched_text or ""
             prefetched_usage = self._provider_usage()
+            structured_result = (
+                self._output
+                if isinstance(self._output, TextGenerationNonStreamResult)
+                else None
+            )
             self._reset_iteration_state()
+            self._output_closed = False
             self._output_token_count = len(prefetched_text)
             self._final_text = None
+            if structured_result is not None:
+                structured_items = structured_result.canonical_stream(
+                    stream_session_id=stream_session_id,
+                    run_id=run_id,
+                    turn_id=turn_id,
+                    provider_family=provider_family,
+                    capabilities=capabilities
+                    or self._default_stream_capabilities(provider_family),
+                    close_after_terminal=close_after_terminal,
+                )
+                return _ResponseOwnedStreamIterator(
+                    self._record_canonical_stream_final_text(
+                        structured_items,
+                        count_output=False,
+                    ),
+                    self.aclose,
+                    self._is_stream_closed,
+                )
             return _ResponseOwnedStreamIterator(
                 self._record_canonical_stream_final_text(
                     self._canonical_stream_from_final_text(

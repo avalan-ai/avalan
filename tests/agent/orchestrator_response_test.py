@@ -69,6 +69,7 @@ from avalan.model.call import ModelCallContext
 from avalan.model.nlp.text.vendor.openai import OpenAIStream
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import (
+    REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
     CanonicalStreamItem,
     StreamChannel,
     StreamConsumerProjection,
@@ -79,10 +80,13 @@ from avalan.model.stream import (
     StreamTerminalOutcome,
     StreamValidationError,
     StreamVisibility,
+    TextGenerationNonStreamResult,
+    project_canonical_stream_item,
     stream_channel_for_kind,
     validate_canonical_stream_items,
     validate_tool_lifecycle_items,
 )
+from avalan.server.routers.streaming import ProtocolStreamAccumulator
 from avalan.tool import Tool, ToolSet
 from avalan.tool.database import DatabaseToolSet, DatabaseToolSettings
 from avalan.tool.display import (
@@ -565,6 +569,89 @@ def _response_from_items(
         use_async_generator=True,
         generation_settings=resolved_settings,
         settings=resolved_settings,
+    )
+
+
+def _structured_non_stream_response() -> TextGenerationResponse:
+    events = (
+        StreamProviderEvent(
+            kind=StreamItemKind.REASONING_DELTA,
+            text_delta="summary first",
+            correlation=StreamItemCorrelation(
+                protocol_item_id="reasoning-item",
+                provider_output_index=0,
+                provider_summary_index=0,
+            ),
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=0,
+            provider_event_type="response.output_item.done",
+        ),
+        StreamProviderEvent(
+            kind=StreamItemKind.REASONING_DELTA,
+            text_delta="summary second",
+            correlation=StreamItemCorrelation(
+                protocol_item_id="reasoning-item",
+                provider_output_index=0,
+                provider_summary_index=1,
+            ),
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=1,
+            metadata={REASONING_SEGMENT_BOUNDARY_METADATA_KEY: "completed"},
+            provider_event_type="response.output_item.done",
+        ),
+        StreamProviderEvent(
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            text_delta='{"id":1}',
+            correlation=StreamItemCorrelation(
+                tool_call_id="call-structured",
+                protocol_item_id="function-item",
+            ),
+            provider_event_type="response.output_item.done",
+        ),
+        StreamProviderEvent(
+            kind=StreamItemKind.TOOL_CALL_READY,
+            data={"name": "lookup"},
+            correlation=StreamItemCorrelation(
+                tool_call_id="call-structured",
+                protocol_item_id="function-item",
+            ),
+            provider_event_type="response.output_item.done",
+        ),
+        StreamProviderEvent(
+            kind=StreamItemKind.TOOL_CALL_DONE,
+            correlation=StreamItemCorrelation(
+                tool_call_id="call-structured",
+                protocol_item_id="function-item",
+            ),
+            provider_event_type="response.output_item.done",
+        ),
+        StreamProviderEvent(
+            kind=StreamItemKind.ANSWER_DELTA,
+            text_delta='{"ok":true}',
+            provider_event_type="response.output_item.done",
+        ),
+        StreamProviderEvent(kind=StreamItemKind.ANSWER_DONE),
+        StreamProviderEvent(
+            kind=StreamItemKind.USAGE_COMPLETED,
+            usage={"output_tokens": 9, "reasoning_tokens": 4},
+        ),
+        StreamProviderEvent(kind=StreamItemKind.STREAM_COMPLETED),
+    )
+    result = TextGenerationNonStreamResult(
+        events,
+        answer_text='{"ok":true}',
+        provider_family="openai",
+        usage={"output_tokens": 9, "reasoning_tokens": 4},
+    )
+    settings = GenerationSettings()
+    return TextGenerationResponse(
+        result,
+        logger=getLogger(),
+        use_async_generator=False,
+        generation_settings=settings,
+        settings=settings,
     )
 
 
@@ -8864,6 +8951,132 @@ def _openai_completed_message_response(text: str) -> TextGenerationResponse:
 
 
 class OrchestratorResponseMethodsTestCase(IsolatedAsyncioTestCase):
+    async def test_non_stream_structured_response_uses_canonical_path(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _structured_non_stream_response(),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+
+        self.assertEqual(await resp.to_str(), '{"ok":true}')
+        self.assertEqual(await resp.to_json(), '{"ok":true}')
+
+        canonical_items = resp.canonical_items
+        reasoning = [
+            item
+            for item in canonical_items
+            if item.kind is StreamItemKind.REASONING_DELTA
+        ]
+        self.assertEqual(
+            [item.text_delta for item in reasoning],
+            ["summary first", "summary second"],
+        )
+        self.assertEqual(
+            [
+                (
+                    item.correlation.protocol_item_id,
+                    item.correlation.provider_output_index,
+                    item.correlation.provider_summary_index,
+                    item.segment_instance_ordinal,
+                )
+                for item in reasoning
+            ],
+            [
+                ("reasoning-item", 0, 0, 0),
+                ("reasoning-item", 0, 1, 1),
+            ],
+        )
+        self.assertTrue(
+            all(
+                item.reasoning_representation
+                is StreamReasoningRepresentation.SUMMARY
+                and item.visibility is StreamVisibility.PRIVATE
+                for item in reasoning
+            )
+        )
+        tool_items = [
+            item
+            for item in canonical_items
+            if item.kind
+            in {
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+            }
+        ]
+        self.assertEqual(len(tool_items), 3)
+        self.assertTrue(
+            all(
+                item.correlation.tool_call_id == "call-structured"
+                and item.correlation.protocol_item_id == "function-item"
+                for item in tool_items
+            )
+        )
+        self.assertNotIn("summary", await resp.to_str())
+        self.assertEqual(
+            sum(
+                item.kind is StreamItemKind.STREAM_COMPLETED
+                for item in canonical_items
+            ),
+            1,
+        )
+        validate_canonical_stream_items(canonical_items)
+
+        protocol = ProtocolStreamAccumulator()
+        for item in canonical_items:
+            protocol.add(project_canonical_stream_item(item))
+        snapshot = protocol.snapshot()
+        self.assertEqual(snapshot.answer_text, '{"ok":true}')
+        self.assertEqual(
+            snapshot.reasoning_text,
+            "summary first\n\nsummary second",
+        )
+        self.assertEqual(len(snapshot.reasoning_segments), 2)
+        self.assertEqual(
+            [
+                (
+                    segment.representation,
+                    segment.provider_item_id,
+                    segment.output_index,
+                    segment.summary_index,
+                    segment.segment_instance_ordinal,
+                    segment.completed,
+                )
+                for segment in snapshot.reasoning_segments
+            ],
+            [
+                (
+                    StreamReasoningRepresentation.SUMMARY,
+                    "reasoning-item",
+                    0,
+                    0,
+                    0,
+                    True,
+                ),
+                (
+                    StreamReasoningRepresentation.SUMMARY,
+                    "reasoning-item",
+                    0,
+                    1,
+                    1,
+                    True,
+                ),
+            ],
+        )
+        self.assertFalse(snapshot.reasoning_truncation.truncated)
+        self.assertEqual(
+            snapshot.tool_call_arguments,
+            {"call-structured": '{"id":1}'},
+        )
+        protocol.validate_complete()
+
     async def test_counts_and_conversions(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
@@ -8913,6 +9126,8 @@ class OrchestratorResponseMethodsTestCase(IsolatedAsyncioTestCase):
             [item.kind for item in canonical_items],
             [
                 StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
