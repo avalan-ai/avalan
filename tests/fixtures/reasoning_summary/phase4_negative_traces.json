@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "error_code": "invalid_reasoning_summary_event",
+  "transition_rows": [
+    {
+      "id": "delta_before_part_added",
+      "prefix": [
+        {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}}
+      ],
+      "event": {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "delta": "late"},
+      "field": "part",
+      "value_shape": "not_added"
+    },
+    {
+      "id": "text_done_before_part_added",
+      "prefix": [
+        {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}}
+      ],
+      "event": {"type": "response.reasoning_summary_text.done", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "text": ""},
+      "field": "part",
+      "value_shape": "not_added"
+    },
+    {
+      "id": "part_done_before_part_added",
+      "prefix": [
+        {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}}
+      ],
+      "event": {"type": "response.reasoning_summary_part.done", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}},
+      "field": "text.done",
+      "value_shape": "missing"
+    },
+    {
+      "id": "part_done_before_text_done",
+      "prefix": [
+        {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "delta": "prefix"}
+      ],
+      "event": {"type": "response.reasoning_summary_part.done", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": "prefix"}},
+      "field": "text.done",
+      "value_shape": "missing"
+    },
+    {
+      "id": "duplicate_added_with_conflict",
+      "prefix": [
+        {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}}
+      ],
+      "event": {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": "conflict"}},
+      "field": "part.text",
+      "value_shape": "unexpected_value"
+    },
+    {
+      "id": "mismatched_item_identity",
+      "prefix": [
+        {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}}
+      ],
+      "event": {"type": "response.reasoning_summary_part.added", "item_id": "rs_other", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}},
+      "field": "item.identity",
+      "value_shape": "conflict"
+    },
+    {
+      "id": "mismatched_part_identity",
+      "prefix": [
+        {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}}
+      ],
+      "event": {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": 1, "delta": "conflict"},
+      "field": "part",
+      "value_shape": "not_added"
+    },
+    {
+      "id": "content_after_part_done",
+      "prefix": [
+        {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "delta": "prefix"},
+        {"type": "response.reasoning_summary_text.done", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "text": "prefix"},
+        {"type": "response.reasoning_summary_part.done", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": "prefix"}}
+      ],
+      "event": {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "delta": "late"},
+      "field": "part",
+      "value_shape": "closed"
+    },
+    {
+      "id": "content_after_item_done",
+      "prefix": [
+        {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "delta": "prefix"},
+        {"type": "response.reasoning_summary_text.done", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "text": "prefix"},
+        {"type": "response.reasoning_summary_part.done", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": "prefix"}},
+        {"type": "response.output_item.done", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "prefix"}], "encrypted_content": "cipher"}}
+      ],
+      "event": {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "delta": "late"},
+      "field": "item",
+      "value_shape": "closed"
+    }
+  ],
+  "response_terminal_row": {
+    "id": "open_content_at_response_close",
+    "prefix": [
+      {"type": "response.output_item.added", "output_index": 0, "item": {"id": "rs_bad", "type": "reasoning", "status": "in_progress", "summary": []}},
+      {"type": "response.reasoning_summary_part.added", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}},
+      {"type": "response.reasoning_summary_text.delta", "item_id": "rs_bad", "output_index": 0, "summary_index": 0, "delta": "visible-prefix"}
+    ],
+    "event": {"type": "response.completed", "response": {"usage": {}}},
+    "field": "item",
+    "value_shape": "open"
+  },
+  "index_targets": [
+    {"event_type": "response.output_item.added", "fields": ["output_index"]},
+    {"event_type": "response.reasoning_summary_part.added", "fields": ["output_index", "summary_index"]},
+    {"event_type": "response.reasoning_summary_text.delta", "fields": ["output_index", "summary_index"]},
+    {"event_type": "response.reasoning_summary_text.done", "fields": ["output_index", "summary_index"]},
+    {"event_type": "response.reasoning_summary_part.done", "fields": ["output_index", "summary_index"]},
+    {"event_type": "response.output_item.done", "fields": ["output_index"]}
+  ],
+  "invalid_indices": [
+    {"shape": "boolean", "value": true},
+    {"shape": "string", "value": "0"},
+    {"shape": "float", "value": 0.5},
+    {"shape": "negative_integer", "value": -1},
+    {"shape": "object", "value": {"fixture_marker": "object"}}
+  ],
+  "invalid_deltas": [
+    {"shape": "null", "value": null},
+    {"shape": "boolean", "value": true},
+    {"shape": "integer", "value": 1},
+    {"shape": "float", "value": 1.5},
+    {"shape": "mapping", "value": {"text": "private"}},
+    {"shape": "sequence", "value": ["private"]},
+    {"shape": "object", "value": {"fixture_marker": "object"}}
+  ]
+}

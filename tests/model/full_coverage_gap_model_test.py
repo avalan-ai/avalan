@@ -498,5 +498,24 @@ class OpenAiAdditionalCoverageTestCase(TestCase):
         )
         error_data = items[1].data
         assert isinstance(error_data, dict)
-        self.assertEqual(error_data["error_type"], "ValueError")
-        self.assertIn("id", error_data["message"])
+        self.assertIsNone(items[1].provider_payload)
+        self.assertEqual(
+            error_data,
+            {
+                "message": (
+                    "response tool call id must be a non-empty string"
+                ),
+                "error": {
+                    "type": "invalid_provider_event",
+                    "code": "invalid_reasoning_summary_event",
+                    "message": "OpenAI reasoning summary event is invalid.",
+                    "event_type": "response.output_item.added",
+                    "field": "item.call_id",
+                    "index": {
+                        "output_index": None,
+                        "summary_index": None,
+                    },
+                    "value_shape": "integer",
+                },
+            },
+        )
