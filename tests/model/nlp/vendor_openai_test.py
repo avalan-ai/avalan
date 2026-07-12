@@ -3,6 +3,7 @@ import sys
 import types
 from asyncio import CancelledError, Event, create_task, wait_for
 from collections.abc import AsyncIterable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from json import loads
@@ -345,8 +346,9 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         StreamMock.assert_called_once_with(
             stream=stream_instance,
             provider_family="openai",
-            output_item_sink=client._record_stateless_response_item,
-            output_item_rollback=client._rollback_stateless_response_items,
+            replay_owner=ANY,
+            replay_owner_retainer=client._retain_replay_owner,
+            replay_owner_releaser=client._discard_replay_owner,
             stream_factory=ANY,
             stream_retry_delay_seconds=(
                 client._STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS
@@ -1016,6 +1018,84 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             base_url="http://localhost:9001/v1", api_key=None
         )
         self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_client_aclose_uses_async_sdk_close_once(self):
+        sdk_client = self.openai_stub.AsyncOpenAI.return_value
+        sdk_client.close = AsyncMock(return_value=None)
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+
+        await client.aclose()
+        await client.aclose()
+
+        sdk_client.close.assert_awaited_once_with()
+
+    async def test_client_aclose_falls_back_to_legacy_aclose(self):
+        legacy_aclose = AsyncMock(return_value=None)
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        client._client = SimpleNamespace(aclose=legacy_aclose)
+
+        await client.aclose()
+
+        legacy_aclose.assert_awaited_once_with()
+
+    async def test_auto_loaded_model_uses_instance_exit_stack_for_cleanup(
+        self,
+    ):
+        sdk_client = self.openai_stub.AsyncOpenAI.return_value
+        sdk_client.close = AsyncMock(return_value=None)
+        exit_stack = AsyncExitStack()
+        settings = TransformerEngineSettings(
+            auto_load_model=True,
+            auto_load_tokenizer=False,
+            access_token="t",
+            base_url="u",
+        )
+        model = self.mod.OpenAIModel("m", settings, exit_stack=exit_stack)
+
+        self.assertIs(model._exit_stack, exit_stack)
+        await exit_stack.aclose()
+        await model._model.aclose()
+
+        sdk_client.close.assert_awaited_once_with()
+
+    async def test_derived_openai_models_register_cleanup_once(self):
+        model_types = []
+        for module_name, type_name in (
+            ("anyscale", "AnyScaleModel"),
+            ("deepinfra", "DeepInfraModel"),
+            ("deepseek", "DeepSeekModel"),
+            ("groq", "GroqModel"),
+            ("hyperbolic", "HyperbolicModel"),
+            ("openrouter", "OpenRouterModel"),
+            ("together", "TogetherModel"),
+        ):
+            module = importlib.reload(
+                importlib.import_module(
+                    f"avalan.model.nlp.text.vendor.{module_name}"
+                )
+            )
+            model_types.append(getattr(module, type_name))
+        sdk_clients = [
+            SimpleNamespace(
+                responses=MagicMock(),
+                close=AsyncMock(return_value=None),
+            )
+            for _ in model_types
+        ]
+        self.openai_stub.AsyncOpenAI.side_effect = sdk_clients
+        settings = TransformerEngineSettings(
+            auto_load_model=True,
+            auto_load_tokenizer=False,
+            access_token="t",
+        )
+
+        models = [model_type("m", settings) for model_type in model_types]
+        for model in models:
+            await model._exit_stack.aclose()
+            await model._model.aclose()
+
+        for sdk_client in sdk_clients:
+            sdk_client.close.assert_awaited_once_with()
 
     async def test_model_loads_with_azure_api_version(self):
         with patch.object(self.mod, "OpenAIClient") as ClientMock:
@@ -1699,7 +1779,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             items = await _stream_items(stream)
 
         self.assertEqual(create_mock.await_count, 2)
-        self.assertEqual(client._stateless_response_items, [])
+        self.assertEqual(client._replay_owners_by_call_id, {})
         self.assertEqual(
             accumulate_canonical_stream_items(items).answer_text,
             "ok",
@@ -2009,8 +2089,9 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         stream_mock.assert_called_once_with(
             stream=stream_instance,
             provider_family="openai",
-            output_item_sink=client._record_stateless_response_item,
-            output_item_rollback=client._rollback_stateless_response_items,
+            replay_owner=ANY,
+            replay_owner_retainer=client._retain_replay_owner,
+            replay_owner_releaser=client._discard_replay_owner,
             stream_factory=ANY,
             stream_retry_delay_seconds=2.5,
             stream_retries=0,
@@ -3254,7 +3335,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 [SimpleNamespace(type="response.failed", error=OpaqueError())],
                 StreamItemKind.STREAM_ERRORED,
                 StreamTerminalOutcome.ERRORED,
-                {"error": {"message": "opaque response"}},
+                {"error": {"message": "provider error"}},
             ),
             (
                 [
@@ -4872,7 +4953,9 @@ class TemplateAndToolSchemaTestCase(TestCase):
         self,
     ):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
-        client._record_stateless_response_item(
+        owner = self.mod._OpenAIReplayOwner(self.mod.StreamRetentionPolicy())
+        owner.begin_attempt()
+        owner.admit(
             {
                 "type": "reasoning",
                 "id": "rs_1",
@@ -4881,7 +4964,8 @@ class TemplateAndToolSchemaTestCase(TestCase):
         )
 
         templated = client._template_messages(
-            [Message(role=MessageRole.USER, content="hi")]
+            [Message(role=MessageRole.USER, content="hi")],
+            replay_items=owner.replay_items(),
         )
 
         self.assertEqual(templated, [{"role": "user", "content": "hi"}])
@@ -4889,16 +4973,18 @@ class TemplateAndToolSchemaTestCase(TestCase):
     def test_record_stateless_response_item_skips_unencrypted_reasoning(
         self,
     ):
-        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        owner = self.mod._OpenAIReplayOwner(self.mod.StreamRetentionPolicy())
+        owner.begin_attempt()
 
-        client._record_stateless_response_item(
+        admitted = owner.admit(
             {
                 "type": "reasoning",
                 "id": "rs_1",
             }
         )
 
-        self.assertEqual(client._stateless_response_items, [])
+        self.assertFalse(admitted)
+        self.assertEqual(owner.item_count, 0)
 
     def test_template_messages_replays_stateless_reasoning_items(self):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
@@ -4914,8 +5000,10 @@ class TemplateAndToolSchemaTestCase(TestCase):
             "name": "rg",
             "arguments": '{"pattern": "needle"}',
         }
-        client._record_stateless_response_item(reasoning_item)
-        client._record_stateless_response_item(call_item)
+        owner = self.mod._OpenAIReplayOwner(self.mod.StreamRetentionPolicy())
+        owner.begin_attempt()
+        owner.admit(reasoning_item)
+        owner.admit(call_item)
         call = ToolCall(
             id="call_1",
             name="shell.rg",
@@ -4933,7 +5021,8 @@ class TemplateAndToolSchemaTestCase(TestCase):
             [
                 Message(role=MessageRole.USER, content="search"),
                 Message(role=MessageRole.TOOL, tool_call_result=result),
-            ]
+            ],
+            replay_items=owner.replay_items(),
         )
 
         self.assertEqual(
@@ -4987,10 +5076,12 @@ class TemplateAndToolSchemaTestCase(TestCase):
             "name": "rg",
             "arguments": '{"pattern": "b"}',
         }
-        client._record_stateless_response_item(reasoning_item)
-        client._record_stateless_response_item(missing_call_item)
-        client._record_stateless_response_item(call_item_a)
-        client._record_stateless_response_item(call_item_b)
+        owner = self.mod._OpenAIReplayOwner(self.mod.StreamRetentionPolicy())
+        owner.begin_attempt()
+        owner.admit(reasoning_item)
+        owner.admit(missing_call_item)
+        owner.admit(call_item_a)
+        owner.admit(call_item_b)
         call_a = ToolCall(
             id="call_a",
             name="shell.rg",
@@ -5021,7 +5112,8 @@ class TemplateAndToolSchemaTestCase(TestCase):
                 Message(role=MessageRole.USER, content="search"),
                 Message(role=MessageRole.TOOL, tool_call_result=result_b),
                 Message(role=MessageRole.TOOL, tool_call_result=result_a),
-            ]
+            ],
+            replay_items=owner.replay_items(),
         )
 
         self.assertEqual(
@@ -5062,18 +5154,9 @@ class TemplateAndToolSchemaTestCase(TestCase):
         self,
     ):
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
-        client._record_stateless_response_item(
-            {
-                "type": "message",
-                "id": "msg_1",
-            }
-        )
-        client._record_stateless_response_item(
-            {
-                "type": "function_call",
-                "name": "rg",
-                "arguments": "{}",
-            }
+        replay_items = (
+            {"type": "message", "id": "msg_1"},
+            {"type": "function_call", "name": "rg", "arguments": "{}"},
         )
         call = ToolCall(id="call_1", name="shell.rg", arguments={})
         result = ToolCallResult(
@@ -5085,7 +5168,8 @@ class TemplateAndToolSchemaTestCase(TestCase):
         )
 
         templated = client._template_messages(
-            [Message(role=MessageRole.TOOL, tool_call_result=result)]
+            [Message(role=MessageRole.TOOL, tool_call_result=result)],
+            replay_items=replay_items,
         )
 
         self.assertEqual(

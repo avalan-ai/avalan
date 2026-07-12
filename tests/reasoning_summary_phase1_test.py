@@ -63,7 +63,22 @@ from avalan.model.reasoning import (
     ReasoningSummaryRequestCapability,
     validate_reasoning_summary_request,
 )
+from avalan.model.stream import StreamRetentionPolicy
 from avalan.server.entities import ResponsesRequest
+
+
+def _initialize_openai_client_state(client: OpenAIClient) -> None:
+    cast(Any, client)._extra_query = None
+    cast(Any, client)._stream_response_failed_retries = 24
+    cast(Any, client)._stream_response_failed_retry_delay_seconds = 1.0
+    cast(Any, client)._stream_retention_policy = StreamRetentionPolicy()
+    cast(Any, client)._replay_owners_by_call_id = {}
+    cast(Any, client)._active_replay_owners = {}
+    cast(Any, client)._active_replay_streams = {}
+    cast(Any, client)._active_replay_call_ids = {}
+    cast(Any, client)._ambiguous_replay_call_ids = {}
+    cast(Any, client)._replay_association_poisoned = False
+    cast(Any, client)._closed = False
 
 
 def _summary_settings(
@@ -262,6 +277,7 @@ def test_direct_vendor_clients_reject_before_request_side_effects() -> None:
             for mode in ReasoningSummaryMode:
                 for use_async_generator in (False, True):
                     client = object.__new__(client_type)
+                    _initialize_openai_client_state(client)
                     template_messages = MagicMock()
                     provider_client = MagicMock()
                     provider_client.responses.create = AsyncMock()
@@ -277,9 +293,9 @@ def test_direct_vendor_clients_reject_before_request_side_effects() -> None:
                     cast(Any, client)._client = provider_client
                     cast(Any, client)._client_instance = client_instance
                     cast(Any, client)._is_azure = is_azure
-                    cast(Any, client)._stateless_response_items = [
-                        {"id": "kept"}
-                    ]
+                    cast(Any, client)._replay_owners_by_call_id = {
+                        "kept": object()
+                    }
                     cast(Any, client)._template_messages = template_messages
 
                     with pytest.raises(
@@ -305,9 +321,9 @@ def test_direct_vendor_clients_reject_before_request_side_effects() -> None:
                     provider_client.aio.models.generate_content.assert_not_called()
                     provider_client.aio.models.generate_content_stream.assert_not_called()
                     client_instance.assert_not_awaited()
-                    assert cast(Any, client)._stateless_response_items == [
-                        {"id": "kept"}
-                    ]
+                    assert list(
+                        cast(Any, client)._replay_owners_by_call_id
+                    ) == ["kept"]
 
         litellm_completion.assert_not_awaited()
 
@@ -706,17 +722,14 @@ def test_raw_vendor_omission_keeps_exact_provider_payloads() -> None:
     )
     for client_type, is_azure in openai_types:
         openai = object.__new__(client_type)
+        _initialize_openai_client_state(openai)
         openai_create = AsyncMock(
             return_value=SimpleNamespace(output=[], usage=None)
         )
         cast(Any, openai)._client = SimpleNamespace(
             responses=SimpleNamespace(create=openai_create)
         )
-        cast(Any, openai)._extra_query = None
         cast(Any, openai)._is_azure = is_azure
-        cast(Any, openai)._stateless_response_items = []
-        cast(Any, openai)._stream_response_failed_retries = 24
-        cast(Any, openai)._stream_response_failed_retry_delay_seconds = 1.0
         cast(Any, openai)._template_messages = MagicMock(return_value=[])
         for settings in (None, default_settings):
             run(
