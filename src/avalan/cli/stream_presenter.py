@@ -1,7 +1,11 @@
 """Define CLI stream presenter contracts."""
 
 from ..event import EventStats
-from ..model.stream import StreamChannel, StreamItemKind
+from ..model.stream import (
+    StreamChannel,
+    StreamItemKind,
+    StreamReasoningRepresentation,
+)
 from .display import CliStreamDisplayConfig
 from .display_snapshot import (
     CliDisplayTokenCandidateSnapshot,
@@ -20,7 +24,14 @@ from typing import Any, Literal, Protocol, TypeAlias, cast
 from rich.console import RenderableType
 
 StreamPresenterMode = Literal["live", "answer"]
-StreamFrameRole = Literal["stream", "events", "tools", "stats", "answer"]
+StreamFrameRole = Literal[
+    "stream",
+    "events",
+    "reasoning",
+    "tools",
+    "stats",
+    "answer",
+]
 TokenFrameStream: TypeAlias = AsyncIterator[
     tuple["_ThemeTokenRenderDisplayToken | None", RenderableType]
 ]
@@ -137,12 +148,23 @@ class CliStreamRenderableFrame:
     renderable: RenderableType
     role: StreamFrameRole = "stream"
     current_token: CliDisplayTokenSnapshot | None = None
+    stderr_append: bool = False
 
     def __post_init__(self) -> None:
-        assert self.role in ("stream", "events", "tools", "stats", "answer")
+        assert self.role in (
+            "stream",
+            "events",
+            "reasoning",
+            "tools",
+            "stats",
+            "answer",
+        )
         assert self.current_token is None or isinstance(
             self.current_token, CliDisplayTokenSnapshot
         )
+        assert isinstance(self.stderr_append, bool)
+        if self.stderr_append:
+            assert self.role == "reasoning"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -161,6 +183,19 @@ class CliStreamAnswerTextChunk:
 CliStreamPresenterItem: TypeAlias = (
     CliStreamRenderableFrame | CliStreamAnswerTextChunk
 )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CliReasoningDisplayBlock:
+    """Represent one contiguous reasoning display block."""
+
+    representation: StreamReasoningRepresentation
+    text: str
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.representation, StreamReasoningRepresentation)
+        assert isinstance(self.text, str)
+        assert self.text
 
 
 class CliStreamPresenter(Protocol):
@@ -360,6 +395,14 @@ def _snapshot_diagnostic_frames(
     display_config = request.display_config
     role_texts: tuple[tuple[StreamFrameRole, str], ...] = (
         (
+            "reasoning",
+            (
+                reasoning_display_text(snapshot)
+                if snapshot.display.show_reasoning
+                else ""
+            ),
+        ),
+        (
             "tools",
             _tool_summary(snapshot) if display_config.show_tools else "",
         ),
@@ -377,6 +420,84 @@ def _snapshot_diagnostic_frames(
         for role, text in role_texts
         if text
     )
+
+
+def reasoning_display_blocks(
+    snapshot: CliStreamSnapshot,
+) -> tuple[CliReasoningDisplayBlock, ...]:
+    """Return contiguous reasoning blocks grouped by representation."""
+    assert isinstance(snapshot, CliStreamSnapshot)
+    blocks: list[CliReasoningDisplayBlock] = []
+    active_representation: StreamReasoningRepresentation | None = None
+    active_parts: list[str] = []
+    previous_text: str | None = None
+    for segment in snapshot.reasoning_segments:
+        separator = (
+            ""
+            if previous_text is None
+            else _reasoning_paragraph_separator(previous_text, segment.text)
+        )
+        if active_representation is not segment.representation:
+            if active_representation is not None:
+                blocks.append(
+                    CliReasoningDisplayBlock(
+                        representation=active_representation,
+                        text="".join(active_parts),
+                    )
+                )
+            active_representation = segment.representation
+            active_parts = []
+        elif separator:
+            active_parts.append(separator)
+        active_parts.append(segment.text)
+        previous_text = segment.text
+    if active_representation is not None:
+        blocks.append(
+            CliReasoningDisplayBlock(
+                representation=active_representation,
+                text="".join(active_parts),
+            )
+        )
+    return tuple(blocks)
+
+
+def reasoning_display_label(
+    representation: StreamReasoningRepresentation,
+) -> str:
+    """Return the user-facing label for a reasoning representation."""
+    assert isinstance(representation, StreamReasoningRepresentation)
+    if representation is StreamReasoningRepresentation.NATIVE_TEXT:
+        return "Reasoning"
+    assert representation is StreamReasoningRepresentation.SUMMARY
+    return "Reasoning summary"
+
+
+def reasoning_display_text(snapshot: CliStreamSnapshot) -> str:
+    """Return labeled reasoning text for generic presenters."""
+    assert isinstance(snapshot, CliStreamSnapshot)
+    return "\n\n".join(
+        f"{reasoning_display_label(block.representation)}:\n{block.text}"
+        for block in reasoning_display_blocks(snapshot)
+    )
+
+
+def _reasoning_paragraph_separator(left: str, right: str) -> str:
+    assert isinstance(left, str)
+    assert isinstance(right, str)
+    trailing_line_feeds = _edge_line_feeds(left, reverse=True)
+    leading_line_feeds = _edge_line_feeds(right, reverse=False)
+    return "\n" * max(0, 2 - trailing_line_feeds - leading_line_feeds)
+
+
+def _edge_line_feeds(text: str, *, reverse: bool) -> int:
+    count = 0
+    characters = reversed(text) if reverse else iter(text)
+    for character in characters:
+        if not character.isspace():
+            break
+        if character == "\n":
+            count += 1
+    return count
 
 
 def _tool_summary(snapshot: CliStreamSnapshot) -> str:

@@ -64,6 +64,7 @@ def _display_config(
     stats: bool = True,
     display_tools: bool = False,
     display_events: bool = False,
+    display_reasoning: bool = False,
     record: bool = False,
     interactive: bool = True,
 ) -> CliStreamDisplayConfig:
@@ -85,6 +86,7 @@ def _display_config(
         display_probabilities_sample_minimum=0.1,
         display_time_to_n_token=None,
         display_reasoning_time=True,
+        display_reasoning=display_reasoning,
     )
 
 
@@ -174,6 +176,12 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
                 CliStreamRenderableFrame(renderable="event", role="events")
             )
             await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable="reasoning",
+                    role="reasoning",
+                )
+            )
+            await coordinator.handle_item(
                 CliStreamRenderableFrame(renderable="tool", role="tools")
             )
             await coordinator.handle_item(
@@ -186,7 +194,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(fake_live.updates[-1], Group)
         self.assertEqual(
             list(cast(Group, fake_live.updates[-1]).renderables),
-            ["event", "tool", "stats", "token"],
+            ["event", "reasoning", "tool", "stats", "token"],
         )
 
     async def test_gate_coalesces_mixed_roles_and_records_flushes(
@@ -456,6 +464,40 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         diagnostic_console.print.assert_called_once()
         console.print.assert_not_called()
 
+    async def test_stderr_reasoning_append_preserves_repeated_suffixes(
+        self,
+    ) -> None:
+        diagnostic_console = MagicMock()
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(
+                stats=False,
+                display_reasoning=True,
+                interactive=False,
+            ),
+            diagnostic_console=diagnostic_console,
+            live_factory=MagicMock(),
+        )
+
+        async with coordinator:
+            for suffix in ("Reasoning summary:\nx", "x", "\n"):
+                await coordinator.handle_item(
+                    CliStreamRenderableFrame(
+                        renderable=suffix,
+                        role="reasoning",
+                        stderr_append=True,
+                    )
+                )
+
+        diagnostic_console.print.assert_has_calls(
+            [
+                call("Reasoning summary:\nx", end=""),
+                call("x", end=""),
+                call("\n", end=""),
+            ]
+        )
+        self.assertEqual(diagnostic_console.print.call_count, 3)
+
     async def test_stderr_empty_frame_clears_deduplication_key(self) -> None:
         console = MagicMock()
         diagnostic_console = MagicMock()
@@ -522,6 +564,46 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
             [("update", "frame"), ("save", ("frame.svg", True))],
         )
         console.save_svg.assert_called_once_with("frame.svg", clear=True)
+
+    async def test_answer_chunks_do_not_rerecord_closed_reasoning_role(
+        self,
+    ) -> None:
+        fake_live = _FakeLive()
+        console = MagicMock()
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(
+                stats=False,
+                display_reasoning=True,
+                record=True,
+            ),
+            live_factory=MagicMock(return_value=fake_live),
+            record_filename_factory=lambda: "reasoning.svg",
+        )
+
+        async with coordinator:
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable="Reasoning: plan",
+                    role="reasoning",
+                )
+            )
+            await coordinator.handle_item(CliStreamAnswerTextChunk(text="a"))
+            await coordinator.handle_item(CliStreamAnswerTextChunk(text="b"))
+
+        self.assertEqual(fake_live.updates, ["Reasoning: plan"])
+        self.assertEqual(fake_live.entered, 1)
+        self.assertEqual(fake_live.exited, 1)
+        console.save_svg.assert_called_once_with(
+            "reasoning.svg",
+            clear=True,
+        )
+        console.print.assert_has_calls(
+            [
+                call("a", end=""),
+                call("b", end=""),
+            ]
+        )
 
     async def test_recorder_error_closes_owner(self) -> None:
         fake_live = _FakeLive()

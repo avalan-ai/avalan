@@ -23,6 +23,7 @@ from rich.spinner import Spinner
 
 _FRAME_ROLE_ORDER: tuple[StreamFrameRole, ...] = (
     "events",
+    "reasoning",
     "tools",
     "stats",
     "stream",
@@ -358,6 +359,18 @@ class CliStreamCoordinator:
         return self._live
 
     def _render_stderr_frame(self, frame: CliStreamRenderableFrame) -> None:
+        if frame.stderr_append:
+            has_content = (
+                bool(frame.renderable)
+                if isinstance(frame.renderable, str)
+                else bool(_stderr_renderable_key(frame.renderable))
+            )
+            if has_content:
+                self._ensure_diagnostic_console().print(
+                    frame.renderable,
+                    end="",
+                )
+            return
         key = _stderr_renderable_key(frame.renderable)
         if not key:
             self._stderr_role_renderables.pop(frame.role, None)

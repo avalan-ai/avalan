@@ -29,6 +29,8 @@ from avalan.model.stream import (
     StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
+    StreamRetentionPolicy,
     StreamTerminalOutcome,
 )
 from avalan.tool.display import ToolDisplayProjection
@@ -53,6 +55,7 @@ def _config(**overrides: object) -> CliStreamDisplayConfig:
         "display_probabilities_sample_minimum": 0.1,
         "display_time_to_n_token": None,
         "display_reasoning_time": True,
+        "display_reasoning": False,
     }
     values.update(overrides)
     return CliStreamDisplayConfig(**values)
@@ -74,6 +77,28 @@ def _answer_projection(
         correlation=StreamItemCorrelation(),
         text_delta=text,
         metadata={} if metadata is None else metadata,
+    )
+
+
+def _terminal_projection(
+    *,
+    sequence: int,
+    outcome: StreamTerminalOutcome = StreamTerminalOutcome.COMPLETED,
+) -> StreamConsumerProjection:
+    kind = {
+        StreamTerminalOutcome.COMPLETED: StreamItemKind.STREAM_COMPLETED,
+        StreamTerminalOutcome.ERRORED: StreamItemKind.STREAM_ERRORED,
+        StreamTerminalOutcome.CANCELLED: StreamItemKind.STREAM_CANCELLED,
+    }[outcome]
+    return StreamConsumerProjection(
+        stream_session_id="session",
+        run_id="run",
+        turn_id="turn",
+        sequence=sequence,
+        kind=kind,
+        channel=StreamChannel.CONTROL,
+        correlation=StreamItemCorrelation(),
+        terminal_outcome=outcome,
     )
 
 
@@ -183,6 +208,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
             display_tokens=2,
             display_probabilities=True,
             display_time_to_n_token=32,
+            display_reasoning=True,
         )
         builder = CliStreamSnapshotBuilder(config)
         arguments = {"password": "secret", "query": "weather"}
@@ -356,6 +382,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.build_stats.snapshots_built, 1)
         self.assertEqual(snapshot.build_stats.answer_chunks, 2)
         self.assertEqual(snapshot.build_stats.text_materializations, 3)
+        self.assertEqual(snapshot.build_stats.reasoning_materializations, 1)
         self.assertEqual(snapshot.build_stats.history_materializations, 8)
         self.assertEqual(snapshot.build_stats.retained_display_tokens, 2)
 
@@ -681,6 +708,164 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.projection_metadata_summaries, ())
         self.assertEqual(snapshot.display_tokens, ())
 
+    def test_hidden_reasoning_has_no_text_owner_or_retained_content(
+        self,
+    ) -> None:
+        builder = CliStreamSnapshotBuilder(
+            _config(stats=True, display_reasoning=False)
+        )
+
+        builder.append_reasoning_text("")
+        builder.append_reasoning_text("private")
+        builder.append_reasoning_text(
+            "summary",
+            representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+        builder.observe_reasoning_projection(_terminal_projection(sequence=2))
+        snapshot = builder.snapshot()
+
+        self.assertFalse(snapshot.display.show_reasoning)
+        self.assertEqual(snapshot.retention.reasoning_segment_limit, 0)
+        self.assertEqual(snapshot.retention.reasoning_character_limit, 0)
+        self.assertEqual(snapshot.retention.reasoning_text_byte_limit, 0)
+        self.assertEqual(snapshot.reasoning_text, "")
+        self.assertEqual(snapshot.reasoning_segments, ())
+        self.assertFalse(snapshot.reasoning_truncation.truncated)
+        self.assertEqual(snapshot.build_stats.reasoning_chunks, 2)
+        self.assertEqual(snapshot.build_stats.reasoning_characters, 14)
+        self.assertEqual(snapshot.build_stats.retained_reasoning_segments, 0)
+        self.assertEqual(snapshot.build_stats.retained_reasoning_characters, 0)
+        self.assertEqual(snapshot.build_stats.retained_reasoning_utf8_bytes, 0)
+        self.assertEqual(snapshot.build_stats.reasoning_materializations, 0)
+
+    def test_visible_reasoning_retains_structured_identity_and_completion(
+        self,
+    ) -> None:
+        builder = CliStreamSnapshotBuilder(
+            _config(display_reasoning=True),
+            retention_policy=StreamRetentionPolicy(
+                cli_reasoning_segment_limit=2,
+                cli_reasoning_character_limit=4,
+                cli_reasoning_text_byte_limit=4,
+            ),
+        )
+        first_correlation = StreamItemCorrelation(
+            protocol_item_id="reasoning-1",
+            provider_output_index=3,
+            provider_summary_index=4,
+            model_continuation_id="continuation-1",
+        )
+        second_correlation = StreamItemCorrelation(
+            protocol_item_id="reasoning-2",
+            provider_output_index=5,
+            provider_summary_index=6,
+            model_continuation_id="continuation-1",
+        )
+
+        builder.append_reasoning_text(
+            "a",
+            representation=StreamReasoningRepresentation.NATIVE_TEXT,
+            segment_instance_ordinal=0,
+            correlation=first_correlation,
+        )
+        builder.append_reasoning_text(
+            "b",
+            representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=1,
+            correlation=second_correlation,
+            follows_completion=True,
+        )
+        builder.observe_reasoning_projection(_terminal_projection(sequence=2))
+        snapshot = builder.snapshot()
+
+        self.assertEqual(snapshot.reasoning_text, "a\n\nb")
+        self.assertFalse(snapshot.reasoning_truncation.truncated)
+        self.assertEqual(len(snapshot.reasoning_segments), 2)
+        first, second = snapshot.reasoning_segments
+        self.assertEqual(
+            first.representation,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        self.assertEqual(first.segment_instance_ordinal, 0)
+        self.assertEqual(first.provider_item_id, "reasoning-1")
+        self.assertEqual(first.output_index, 3)
+        self.assertEqual(first.summary_index, 4)
+        self.assertEqual(first.continuation_id, "continuation-1")
+        self.assertTrue(first.completed)
+        self.assertEqual(
+            second.representation,
+            StreamReasoningRepresentation.SUMMARY,
+        )
+        self.assertEqual(second.provider_item_id, "reasoning-2")
+        self.assertEqual(second.output_index, 5)
+        self.assertEqual(second.summary_index, 6)
+        self.assertTrue(second.completed)
+        self.assertEqual(snapshot.build_stats.retained_reasoning_segments, 2)
+        self.assertEqual(snapshot.build_stats.retained_reasoning_characters, 4)
+        self.assertEqual(snapshot.build_stats.retained_reasoning_utf8_bytes, 4)
+        self.assertEqual(snapshot.build_stats.reasoning_materializations, 2)
+
+    def test_visible_reasoning_limits_charge_separator_and_unicode_bytes(
+        self,
+    ) -> None:
+        cases = (
+            ("segment", 1, 100, 100, "a", "b", 1, 3, 3),
+            ("character-minus-one", 2, 3, 100, "a", "b", 1, 3, 3),
+            ("character-equal", 2, 4, 100, "a", "a\n\nb", 0, 0, 0),
+            ("character-plus-one", 2, 5, 100, "a", "a\n\nb", 0, 0, 0),
+            ("byte-minus-one", 2, 100, 7, "é", "🙂", 1, 3, 4),
+            ("byte-equal", 2, 100, 8, "é", "é\n\n🙂", 0, 0, 0),
+            ("byte-plus-one", 2, 100, 9, "é", "é\n\n🙂", 0, 0, 0),
+        )
+        for (
+            label,
+            segment_limit,
+            character_limit,
+            byte_limit,
+            first_text,
+            expected,
+            dropped_segments,
+            dropped_characters,
+            dropped_bytes,
+        ) in cases:
+            with self.subTest(label=label):
+                builder = CliStreamSnapshotBuilder(
+                    _config(display_reasoning=True),
+                    retention_policy=StreamRetentionPolicy(
+                        cli_reasoning_segment_limit=segment_limit,
+                        cli_reasoning_character_limit=character_limit,
+                        cli_reasoning_text_byte_limit=byte_limit,
+                    ),
+                )
+                builder.append_reasoning_text(
+                    first_text,
+                    representation=StreamReasoningRepresentation.SUMMARY,
+                    segment_instance_ordinal=0,
+                )
+                builder.append_reasoning_text(
+                    "🙂" if label.startswith("byte") else "b",
+                    representation=StreamReasoningRepresentation.SUMMARY,
+                    segment_instance_ordinal=1,
+                    follows_completion=True,
+                )
+                snapshot = builder.snapshot()
+
+                self.assertEqual(snapshot.reasoning_text, expected)
+                self.assertEqual(
+                    snapshot.reasoning_truncation.dropped_segments,
+                    dropped_segments,
+                )
+                self.assertEqual(
+                    snapshot.reasoning_truncation.dropped_characters,
+                    dropped_characters,
+                )
+                self.assertEqual(
+                    snapshot.reasoning_truncation.dropped_utf8_bytes,
+                    dropped_bytes,
+                )
+
     def test_add_tool_event_summary_records_enabled_summary(self) -> None:
         builder = CliStreamSnapshotBuilder(_config(display_tools=True))
 
@@ -868,7 +1053,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.answer_text, "x" * 50)
         self.assertEqual(snapshot.build_stats.answer_chunks, 50)
         self.assertEqual(snapshot.build_stats.answer_characters, 50)
-        self.assertEqual(snapshot.build_stats.text_materializations, 3)
+        self.assertEqual(snapshot.build_stats.text_materializations, 2)
         self.assertEqual(snapshot.build_stats.history_materializations, 8)
         self.assertEqual(snapshot.build_stats.retained_completed_tools, 2)
         self.assertEqual(snapshot.build_stats.retained_events, 4)
@@ -897,7 +1082,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.build_stats.snapshots_built, 1)
         self.assertEqual(snapshot.build_stats.answer_chunks, 10_000)
         self.assertEqual(snapshot.build_stats.answer_characters, 10_000)
-        self.assertEqual(snapshot.build_stats.text_materializations, 3)
+        self.assertEqual(snapshot.build_stats.text_materializations, 2)
         self.assertEqual(snapshot.build_stats.history_materializations, 8)
 
     def test_finite_and_unbounded_tool_history_are_bounded(self) -> None:

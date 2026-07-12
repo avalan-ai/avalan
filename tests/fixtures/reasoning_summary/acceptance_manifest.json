@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "reasoning_summary",
-  "active_phase": 5,
+  "active_phase": 6,
   "dimensions": {
     "phase 0 infrastructure": [
       "tests/reasoning_summary_phase0_test.py::test_provider_trace_inventory_is_complete_and_valid",
@@ -352,6 +352,25 @@
       "tests/model/nlp/vendor_openai_test.py::TemplateMessagesFormatTestCase::test_non_stream_tool_call_output",
       "tests/agent/orchestrator_response_test.py::OrchestratorResponseMethodsTestCase::test_non_stream_structured_response_uses_canonical_path",
       "tests/agent/engine_agent_test.py::EngineAgentRunTestCase::test_sync_messages_keeps_rich_reasoning_out_of_memory"
+    ],
+    "phase 6 CLI visibility themes and recording": [
+      "tests/reasoning_summary_phase6_manifest_test.py::test_phase6_acceptance_manifest_pins_exact_catalog",
+      "tests/cli/display_test.py::CliStreamDisplayConfigTestCase::test_noninteractive_reasoning_uses_stderr_diagnostics",
+      "tests/cli/display_snapshot_test.py::DisplaySnapshotBuilderTestCase::test_visible_reasoning_retains_structured_identity_and_completion",
+      "tests/cli/display_snapshot_test.py::DisplaySnapshotBuilderTestCase::test_hidden_reasoning_has_no_text_owner_or_retained_content",
+      "tests/reasoning_summary_phase6_manifest_test.py::test_phase6_separator_limit_matrix_acceptance",
+      "tests/cli/display_reducer_test.py::DisplayReducerTestCase::test_hidden_reasoning_updates_metrics_without_retaining_or_refreshing",
+      "tests/cli/stream_presenter_test.py::StreamPresenterContractTestCase::test_reasoning_blocks_group_contiguous_representations",
+      "tests/cli/theme_basic_test.py::BasicStreamPresenterTestCase::test_reasoning_live_frame_is_opt_in_bounded_and_labeled",
+      "tests/cli/theme_basic_test.py::BasicStreamPresenterTestCase::test_stderr_reasoning_emits_only_unseen_suffixes_before_tool",
+      "tests/cli/theme_fancy_test.py::FancyStreamPresenterTestCase::test_reasoning_gate_prevents_hidden_panel_construction",
+      "tests/cli/theme_fancy_test.py::FancyStreamPresenterTestCase::test_reasoning_panels_label_mixed_representations",
+      "tests/cli/stream_coordinator_test.py::CliStreamCoordinatorTestCase::test_live_roles_share_one_owner",
+      "tests/cli/stream_coordinator_test.py::CliStreamCoordinatorTestCase::test_confirm_tool_call_records_once_after_prompt_resume",
+      "tests/cli/stream_coordinator_test.py::CliStreamCoordinatorTestCase::test_stderr_reasoning_append_preserves_repeated_suffixes",
+      "tests/reasoning_summary_phase6_manifest_test.py::test_phase6_pairwise_matrix_oracle_acceptance",
+      "tests/reasoning_summary_phase6_manifest_test.py::test_phase6_reducer_presenter_matrix_acceptance",
+      "tests/reasoning_summary_phase6_manifest_test.py::test_phase6_public_boundary_matrix_acceptance"
     ]
   }
 }

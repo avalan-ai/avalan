@@ -123,6 +123,35 @@ def _reasoning_accumulator(
 
 
 class StreamRetentionIsolationTestCase(TestCase):
+    def test_cli_reasoning_retention_limits_are_independent_and_validated(
+        self,
+    ) -> None:
+        policy = StreamRetentionPolicy(
+            reasoning_segment_limit=1,
+            reasoning_character_limit=2,
+            reasoning_text_byte_limit=3,
+            cli_reasoning_segment_limit=4,
+            cli_reasoning_character_limit=5,
+            cli_reasoning_text_byte_limit=6,
+        )
+
+        self.assertEqual(policy.reasoning_segment_limit, 1)
+        self.assertEqual(policy.reasoning_character_limit, 2)
+        self.assertEqual(policy.reasoning_text_byte_limit, 3)
+        self.assertEqual(policy.cli_reasoning_segment_limit, 4)
+        self.assertEqual(policy.cli_reasoning_character_limit, 5)
+        self.assertEqual(policy.cli_reasoning_text_byte_limit, 6)
+
+        invalid_factories = (
+            lambda: StreamRetentionPolicy(cli_reasoning_segment_limit=-1),
+            lambda: StreamRetentionPolicy(cli_reasoning_character_limit=-1),
+            lambda: StreamRetentionPolicy(cli_reasoning_text_byte_limit=-1),
+        )
+        for factory in invalid_factories:
+            with self.subTest(factory=factory):
+                with self.assertRaises(AssertionError):
+                    factory()
+
     def test_accumulator_instances_do_not_share_retained_histories(
         self,
     ) -> None:

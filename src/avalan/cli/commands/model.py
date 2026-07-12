@@ -915,6 +915,7 @@ async def token_generation(
             display_config.show_stats
             or display_config.show_tools
             or display_config.show_events
+            or display_config.show_reasoning
         )
         and (
             display_config.live_enabled

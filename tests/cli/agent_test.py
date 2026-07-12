@@ -4786,6 +4786,28 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(agent_cmds._agent_tool_format(self.args))
 
+    def test_structured_response_detection_only_matches_json_formats(self):
+        cases = (
+            (None, False),
+            ({}, False),
+            ({"response_format": None}, False),
+            ({"response_format": {"type": []}}, False),
+            ({"response_format": {"type": {}}}, False),
+            ({"response_format": {"type": "text"}}, False),
+            ({"response_format": {"type": "json_object"}}, True),
+            ({"response_format": {"type": "json_schema"}}, True),
+        )
+
+        for call_options, expected in cases:
+            with self.subTest(call_options=call_options):
+                orchestrator = SimpleNamespace(_call_options=call_options)
+                self.assertEqual(
+                    agent_cmds._agent_structured_response_requested(
+                        orchestrator
+                    ),
+                    expected,
+                )
+
     async def test_run_engine_uri_only_generates_id(self):
         self.args.specifications_file = None
         self.args.engine_uri = "engine"

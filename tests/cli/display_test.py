@@ -44,6 +44,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     "show_stats": False,
                     "show_tools": False,
                     "show_events": False,
+                    "show_reasoning": False,
                     "display_tools_events": None,
                     "display_reasoning": False,
                     "diagnostic_channel": "none",
@@ -56,7 +57,8 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 True,
                 {
                     "display_reasoning": True,
-                    "diagnostic_channel": "none",
+                    "show_reasoning": True,
+                    "diagnostic_channel": "live",
                     "answer_stdout_only": False,
                 },
             ),
@@ -68,6 +70,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     "show_stats": True,
                     "show_tools": False,
                     "show_events": False,
+                    "show_reasoning": False,
                     "diagnostic_channel": "live",
                     "answer_stdout_only": False,
                 },
@@ -260,6 +263,18 @@ class CliStreamDisplayConfigTestCase(TestCase):
 
         self.assertTrue(config.show_tools)
         self.assertTrue(config.record_enabled)
+        self.assertFalse(config.show_reasoning)
+
+    def test_noninteractive_reasoning_uses_stderr_diagnostics(self) -> None:
+        config = cli_stream_display_config(
+            _args(display_reasoning=True),
+            refresh_per_second=3,
+            interactive=False,
+        )
+
+        self.assertTrue(config.show_reasoning)
+        self.assertEqual(config.diagnostic_channel, "stderr")
+        self.assertTrue(config.answer_stdout_only)
 
     def test_direct_config_rejects_invalid_values(self) -> None:
         base = {

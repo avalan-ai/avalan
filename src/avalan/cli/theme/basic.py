@@ -1,9 +1,12 @@
 from ...entities import Model, User
 from ...event import EventStats
+from ...model.stream import StreamReasoningRepresentation
 from ...tool.display import ToolDisplayProjection
 from ..display_safety import safe_text as _safe_text
 from ..stream_presenter import (
     pretty_json_answer_text,
+    reasoning_display_blocks,
+    reasoning_display_label,
     structured_answer_started,
 )
 from . import Theme
@@ -28,6 +31,7 @@ from dataclasses import dataclass
 from json import JSONDecodeError, loads
 from logging import Logger
 from re import IGNORECASE, MULTILINE, Pattern, compile
+from textwrap import wrap
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +47,8 @@ _BASIC_DATABASE_SQL_PREVIEW_LIMIT = 72
 _BASIC_TOOL_RUNNING_THRESHOLD_SECONDS = 1.0
 _BASIC_TOOL_DYNAMIC_MAX_SECONDS = 3600.0
 _BASIC_TOOL_RUNNING_STYLE = "cyan"
+_BASIC_REASONING_CONTENT_LINES = 6
+_BASIC_REASONING_STYLE = "light_pink1"
 
 if TYPE_CHECKING:
     from ...agent.orchestrator import Orchestrator
@@ -357,6 +363,13 @@ class BasicStreamPresenter:
         self._last_visible_answer_text = ""
         self._visible_roles: set[StreamFrameRole] = set()
         self._stderr_tool_line_keys: set[str] = set()
+        self._stderr_reasoning_cursor = 0
+        self._stderr_reasoning_open = False
+        self._stderr_reasoning_representation: (
+            StreamReasoningRepresentation | None
+        ) = None
+        self._stderr_reasoning_trailing_line_feeds = 0
+        self._live_reasoning_revision: tuple[int, ...] | None = None
         self._live_tool_history_line_keys: set[str] = set()
         self._active_model_continuations: dict[
             str, tuple[float | None, float | None]
@@ -373,6 +386,11 @@ class BasicStreamPresenter:
         self._last_visible_answer_text = ""
         self._visible_roles.clear()
         self._stderr_tool_line_keys.clear()
+        self._stderr_reasoning_cursor = 0
+        self._stderr_reasoning_open = False
+        self._stderr_reasoning_representation = None
+        self._stderr_reasoning_trailing_line_feeds = 0
+        self._live_reasoning_revision = None
         self._live_tool_history_line_keys.clear()
         self._active_model_continuations.clear()
         self._completed_model_continuation_keys.clear()
@@ -384,6 +402,10 @@ class BasicStreamPresenter:
         """Yield Basic answer chunks before optional diagnostic frames."""
         assert isinstance(request, CliStreamPresenterRequest)
         _ = self._event_stats, self._logger
+        if request.mode != "answer":
+            reasoning_frame = self._reasoning_frame(request)
+            if reasoning_frame is not None:
+                yield reasoning_frame
         pre_answer_frame = self._pre_answer_tool_frame(request)
         if pre_answer_frame is not None:
             yield pre_answer_frame
@@ -447,6 +469,118 @@ class BasicStreamPresenter:
             frame = self._role_frame(role, renderable)
             if frame is not None:
                 yield frame
+
+    def _reasoning_frame(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> CliStreamRenderableFrame | None:
+        if request.display_config.diagnostic_channel == "stderr":
+            return self._stderr_reasoning_frame(request)
+        snapshot = request.snapshot
+        if (
+            not snapshot.display.show_reasoning
+            or not snapshot.reasoning_segments
+        ):
+            self._live_reasoning_revision = None
+            return self._role_frame("reasoning", None)
+        revision = _basic_reasoning_revision(request)
+        if revision == self._live_reasoning_revision:
+            return None
+        self._live_reasoning_revision = revision
+        renderable = _basic_reasoning_renderable(request)
+        return self._role_frame("reasoning", renderable)
+
+    def _stderr_reasoning_frame(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> CliStreamRenderableFrame | None:
+        snapshot = request.snapshot
+        if not snapshot.display.show_reasoning:
+            return None
+        text = self._stderr_reasoning_suffix(request)
+        if _basic_reasoning_followed_by_activity(request):
+            text += self._close_stderr_reasoning()
+        if not text:
+            return None
+        return CliStreamRenderableFrame(
+            renderable=text,
+            role="reasoning",
+            stderr_append=True,
+        )
+
+    def _stderr_reasoning_suffix(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> str:
+        snapshot = request.snapshot
+        retained_text = snapshot.reasoning_text
+        tail_start = snapshot.reasoning_truncation.dropped_characters
+        tail_end = tail_start + len(retained_text)
+        output: list[str] = []
+        if self._stderr_reasoning_cursor < tail_start:
+            output.append(self._restart_stderr_reasoning_after_gap())
+        cursor = min(max(self._stderr_reasoning_cursor, tail_start), tail_end)
+        relative_cursor = cursor - tail_start
+        relative_position = 0
+        segments = snapshot.reasoning_segments
+        for index, segment in enumerate(segments):
+            segment_start = relative_position
+            segment_end = segment_start + len(segment.text)
+            if relative_cursor < segment_end:
+                assert relative_cursor >= segment_start
+                if (
+                    not self._stderr_reasoning_open
+                    or self._stderr_reasoning_representation
+                    is not segment.representation
+                ):
+                    output.append(
+                        reasoning_display_label(segment.representation) + ":\n"
+                    )
+                output.append(
+                    segment.text[max(0, relative_cursor - segment_start) :]
+                )
+                self._stderr_reasoning_open = True
+                self._stderr_reasoning_representation = segment.representation
+                relative_cursor = segment_end
+            separator = _basic_reasoning_separator_after(segments, index)
+            separator_end = segment_end + len(separator)
+            if relative_cursor < separator_end:
+                output.append(separator[relative_cursor - segment_end :])
+                relative_cursor = separator_end
+            relative_position = separator_end
+
+        assert relative_cursor == len(retained_text)
+        self._stderr_reasoning_cursor = tail_end
+        result = "".join(output)
+        if result:
+            self._stderr_reasoning_trailing_line_feeds = (
+                _basic_trailing_line_feeds(result)
+            )
+        return result
+
+    def _restart_stderr_reasoning_after_gap(self) -> str:
+        if not self._stderr_reasoning_open:
+            return ""
+        separator = "\n" * max(
+            0,
+            2 - self._stderr_reasoning_trailing_line_feeds,
+        )
+        self._stderr_reasoning_open = False
+        self._stderr_reasoning_representation = None
+        self._stderr_reasoning_trailing_line_feeds = 0
+        return separator
+
+    def _close_stderr_reasoning(self) -> str:
+        if not self._stderr_reasoning_open:
+            return ""
+        separator = "\n" * max(
+            0,
+            1 - self._stderr_reasoning_trailing_line_feeds,
+        )
+        self._stderr_reasoning_open = False
+        self._stderr_reasoning_representation = None
+        self._stderr_reasoning_trailing_line_feeds = 0
+        return separator
 
     def _tool_frame(
         self,
@@ -643,6 +777,126 @@ class BasicStreamPresenter:
             )
         self._active_model_continuations = active
         return tuple(completed)
+
+
+def _basic_reasoning_renderable(
+    request: CliStreamPresenterRequest,
+) -> RenderableType | None:
+    blocks = reasoning_display_blocks(request.snapshot)
+    if not blocks:
+        return None
+    width = max(1, request.context.console_width)
+    remaining_lines = _BASIC_REASONING_CONTENT_LINES
+    retained: list[tuple[str, list[str]]] = []
+    for block in reversed(blocks):
+        if remaining_lines <= 1:
+            break
+        lines = _basic_wrapped_reasoning_lines(block.text, width)
+        content_limit = remaining_lines - 1
+        retained.append(
+            (
+                reasoning_display_label(block.representation),
+                lines[-content_limit:],
+            )
+        )
+        remaining_lines -= 1 + min(len(lines), content_limit)
+    output = Text()
+    for block_index, (label, lines) in enumerate(reversed(retained)):
+        if block_index:
+            output.append("\n")
+        output.append(label, style=f"bold {_BASIC_REASONING_STYLE}")
+        output.append("\n")
+        output.append("\n".join(lines), style=_BASIC_REASONING_STYLE)
+    return output if output.plain else None
+
+
+def _basic_reasoning_revision(
+    request: CliStreamPresenterRequest,
+) -> tuple[int, ...]:
+    snapshot = request.snapshot
+    stats = snapshot.build_stats
+    truncation = snapshot.reasoning_truncation
+    return (
+        stats.reasoning_chunks,
+        stats.reasoning_characters,
+        stats.retained_reasoning_segments,
+        stats.retained_reasoning_characters,
+        stats.retained_reasoning_utf8_bytes,
+        truncation.dropped_segments,
+        truncation.dropped_characters,
+        truncation.dropped_utf8_bytes,
+        int(truncation.leading_segment_partial),
+    )
+
+
+def _basic_wrapped_reasoning_lines(text: str, width: int) -> list[str]:
+    assert isinstance(text, str)
+    assert isinstance(width, int) and width > 0
+    lines: list[str] = []
+    for line in text.splitlines() or [""]:
+        lines.extend(
+            wrap(
+                line,
+                width=width,
+                replace_whitespace=False,
+                drop_whitespace=False,
+            )
+            or [""]
+        )
+    return lines
+
+
+def _basic_reasoning_separator_after(
+    segments: Sequence[Any],
+    index: int,
+) -> str:
+    assert isinstance(index, int)
+    if index + 1 >= len(segments):
+        return ""
+    left = segments[index].text
+    right = segments[index + 1].text
+    return "\n" * max(
+        0,
+        2
+        - _basic_trailing_line_feeds(left)
+        - _basic_leading_line_feeds(right),
+    )
+
+
+def _basic_leading_line_feeds(text: str) -> int:
+    count = 0
+    for character in text:
+        if not character.isspace():
+            break
+        if character == "\n":
+            count += 1
+    return count
+
+
+def _basic_trailing_line_feeds(text: str) -> int:
+    count = 0
+    for character in reversed(text):
+        if not character.isspace():
+            break
+        if character == "\n":
+            count += 1
+    return count
+
+
+def _basic_reasoning_followed_by_activity(
+    request: CliStreamPresenterRequest,
+) -> bool:
+    snapshot = request.snapshot
+    return bool(
+        snapshot.answer_text
+        or snapshot.tool_call_request_text
+        or snapshot.active_tools
+        or snapshot.completed_tools
+        or snapshot.tool_results
+        or snapshot.tool_diagnostics
+        or snapshot.tool_events
+        or snapshot.active_model_continuations
+    )
 
 
 def _basic_answer_request(
