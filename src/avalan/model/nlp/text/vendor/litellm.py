@@ -7,6 +7,8 @@ from .....model.stream import (
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamReasoningSegmentState,
     StreamVisibility,
     TextGenerationSingleStream,
     TextGenerationStream,
@@ -30,11 +32,13 @@ class LiteLLMStream(TextGenerationVendorStream):
     _stream: AsyncIterator[Any]
     _tool_call_ids_by_index: dict[int, str]
     _tool_call_names_by_id: dict[str, str]
+    _reasoning_segments: StreamReasoningSegmentState
 
     def __init__(self, stream: AsyncIterator[Any]) -> None:
         self._stream = stream
         self._tool_call_ids_by_index = {}
         self._tool_call_names_by_id = {}
+        self._reasoning_segments = StreamReasoningSegmentState()
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -70,6 +74,9 @@ class LiteLLMStream(TextGenerationVendorStream):
         capabilities: StreamProviderCapabilities | None = None,
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
+        self._tool_call_ids_by_index = {}
+        self._tool_call_names_by_id = {}
+        self._reasoning_segments = StreamReasoningSegmentState()
         return self._provider_canonical_stream(
             self._provider_events(),
             stream_session_id=stream_session_id,
@@ -94,6 +101,8 @@ class LiteLLMStream(TextGenerationVendorStream):
             async for chunk in self._stream:
                 async for event in self._provider_events_from_chunk(chunk):
                     yield event
+                    if event.kind is not StreamItemKind.REASONING_DELTA:
+                        self._reasoning_segments.complete_segment()
         finally:
             await self.aclose()
 
@@ -127,11 +136,20 @@ class LiteLLMStream(TextGenerationVendorStream):
         delta = LiteLLMClient._field(choice, "delta")
         if delta is not None:
             reasoning = LiteLLMClient._reasoning_text(delta)
-            if reasoning is not None:
+            if reasoning:
+                representation = StreamReasoningRepresentation.NATIVE_TEXT
+                correlation = self._reasoning_correlation(choice)
                 yield StreamProviderEvent(
                     kind=StreamItemKind.REASONING_DELTA,
                     text_delta=reasoning,
+                    correlation=correlation,
                     visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=representation,
+                    segment_instance_ordinal=(
+                        self._reasoning_segments.allocate(
+                            representation, correlation
+                        )
+                    ),
                     provider_payload=provider_payload,
                     provider_event_type="chat.completion.reasoning.delta",
                 )
@@ -186,6 +204,17 @@ class LiteLLMStream(TextGenerationVendorStream):
 
         for event in self._usage_events(chunk, provider_payload):
             yield event
+
+    @staticmethod
+    def _reasoning_correlation(choice: object) -> StreamItemCorrelation:
+        index = LiteLLMClient._field(choice, "index")
+        if index is None:
+            return StreamItemCorrelation()
+        if type(index) is not int or index < 0:
+            raise ValueError(
+                "chat reasoning choice index must be a non-negative integer"
+            )
+        return StreamItemCorrelation(provider_output_index=index)
 
     def _usage_events(
         self,

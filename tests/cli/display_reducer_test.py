@@ -19,8 +19,10 @@ from avalan.model.stream import (
     StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     canonical_item_from_consumer_projection,
     validate_canonical_stream_items,
 )
@@ -80,6 +82,19 @@ def _projection(
         data=data,  # type: ignore[arg-type]
         usage=usage,  # type: ignore[arg-type]
         terminal_outcome=terminal_outcome,
+        visibility=(
+            StreamVisibility.PRIVATE
+            if kind is StreamItemKind.REASONING_DELTA
+            else StreamVisibility.PUBLIC
+        ),
+        reasoning_representation=(
+            StreamReasoningRepresentation.NATIVE_TEXT
+            if kind is StreamItemKind.REASONING_DELTA
+            else None
+        ),
+        segment_instance_ordinal=(
+            0 if kind is StreamItemKind.REASONING_DELTA else None
+        ),
         metadata={} if metadata is None else metadata,  # type: ignore[arg-type]
         provider_family=provider_family,
         provider_event_type=provider_event_type,

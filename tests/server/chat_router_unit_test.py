@@ -31,8 +31,10 @@ from avalan.model.stream import (
     StreamChannel,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     project_canonical_stream_item,
 )
 from avalan.server.entities import (
@@ -1295,6 +1297,11 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="plan",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             )
             yield CanonicalStreamItem(
                 stream_session_id="s",
@@ -1850,6 +1857,11 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                     kind=StreamItemKind.REASONING_DELTA,
                     channel=StreamChannel.REASONING,
                     text_delta="r",
+                    visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=(
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    segment_instance_ordinal=0,
                 ),
                 CanonicalStreamItem(
                     stream_session_id="s",
@@ -2036,6 +2048,11 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta="plan",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
         answer = CanonicalStreamItem(
             stream_session_id="s",

@@ -26,6 +26,7 @@ from avalan.model.stream import (
     StreamChannel,
     StreamConsumerProjection,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
     StreamVisibility,
@@ -734,6 +735,8 @@ def _canonical_semantics(item: CanonicalStreamItem) -> tuple[object, ...]:
         item.kind,
         item.channel,
         item.visibility,
+        item.reasoning_representation,
+        item.segment_instance_ordinal,
         item.correlation.to_trace_dict(),
         item.text_delta,
         item.data,
@@ -748,6 +751,8 @@ def _semantic_entry(
     kind: StreamItemKind,
     *,
     visibility: StreamVisibility = StreamVisibility.PUBLIC,
+    reasoning_representation: StreamReasoningRepresentation | None = None,
+    segment_instance_ordinal: int | None = None,
     correlation: dict[str, object] | None = None,
     text_delta: str | None = None,
     data: object | None = None,
@@ -755,11 +760,21 @@ def _semantic_entry(
     terminal_outcome: StreamTerminalOutcome | None = None,
     metadata: dict[str, object] | None = None,
 ) -> tuple[object, ...]:
+    if kind is StreamItemKind.REASONING_DELTA:
+        visibility = StreamVisibility.PRIVATE
+        reasoning_representation = (
+            reasoning_representation
+            or StreamReasoningRepresentation.NATIVE_TEXT
+        )
+        if segment_instance_ordinal is None:
+            segment_instance_ordinal = 0
     return (
         sequence,
         kind,
         stream_channel(kind),
         visibility,
+        reasoning_representation,
+        segment_instance_ordinal,
         correlation or {},
         text_delta,
         data,

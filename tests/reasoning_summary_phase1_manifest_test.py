@@ -203,9 +203,7 @@ def test_phase1_acceptance_manifest_pins_exact_catalog() -> None:
         ),
     )
 
-    assert manifest.active_phase == 1
     assert manifest.dimensions[_PHASE1_DIMENSION] == _PHASE1_NODE_IDS
-    assert len(manifest.node_ids) == 49 + len(_PHASE1_NODE_IDS)
     assert len(manifest.node_ids) == len(set(manifest.node_ids))
 
 

@@ -10,8 +10,10 @@ from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
 )
 
 
@@ -93,6 +95,11 @@ class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
                     kind=StreamItemKind.REASONING_DELTA,
                     channel=StreamChannel.REASONING,
                     text_delta="r",
+                    visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=(
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    segment_instance_ordinal=0,
                 ),
                 CanonicalStreamItem(
                     stream_session_id="response-stream",
@@ -191,6 +198,11 @@ class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
                     kind=StreamItemKind.REASONING_DELTA,
                     channel=StreamChannel.REASONING,
                     text_delta="<think>a</think><think>b</think>",
+                    visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=(
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    segment_instance_ordinal=0,
                 ),
                 CanonicalStreamItem(
                     stream_session_id="response-stream",
@@ -274,6 +286,11 @@ class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
                     kind=StreamItemKind.REASONING_DELTA,
                     channel=StreamChannel.REASONING,
                     text_delta="private",
+                    visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=(
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    segment_instance_ordinal=0,
                 ),
                 CanonicalStreamItem(
                     stream_session_id="response-stream",

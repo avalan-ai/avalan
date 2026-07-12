@@ -14,6 +14,7 @@ from avalan.model.stream import (
     StreamGoldenTrace,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
     StreamVisibility,
@@ -102,6 +103,8 @@ def _reasoning_delta(sequence: int, text_delta: str) -> CanonicalStreamItem:
         kind=StreamItemKind.REASONING_DELTA,
         channel=StreamChannel.REASONING,
         visibility=StreamVisibility.PRIVATE,
+        reasoning_representation=StreamReasoningRepresentation.NATIVE_TEXT,
+        segment_instance_ordinal=0,
         text_delta=text_delta,
     )
 
@@ -141,6 +144,14 @@ def _semantic_trace(
             semantic["correlation"] = correlation
         if item.text_delta is not None:
             semantic["text_delta"] = item.text_delta
+        if item.reasoning_representation is not None:
+            semantic["reasoning_representation"] = (
+                item.reasoning_representation
+            )
+        if item.segment_instance_ordinal is not None:
+            semantic["segment_instance_ordinal"] = (
+                item.segment_instance_ordinal
+            )
         if item.data is not None:
             semantic["data"] = item.data
         if item.usage is not None:
@@ -211,6 +222,12 @@ def _protocol_item(
     metadata: dict[str, object] | None = None,
     visibility: StreamVisibility = StreamVisibility.PUBLIC,
 ) -> CanonicalStreamItem:
+    reasoning_representation = None
+    segment_instance_ordinal = None
+    if kind is StreamItemKind.REASONING_DELTA:
+        reasoning_representation = StreamReasoningRepresentation.NATIVE_TEXT
+        segment_instance_ordinal = 0
+        visibility = StreamVisibility.PRIVATE
     return CanonicalStreamItem(
         stream_session_id=_STREAM_SESSION_ID,
         run_id=_RUN_ID,
@@ -233,6 +250,8 @@ def _protocol_item(
         data=data,  # type: ignore[arg-type]
         metadata={} if metadata is None else metadata,  # type: ignore[arg-type]
         visibility=visibility,
+        reasoning_representation=reasoning_representation,
+        segment_instance_ordinal=segment_instance_ordinal,
     )
 
 
@@ -315,6 +334,10 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                     "kind": StreamItemKind.REASONING_DELTA,
                     "channel": StreamChannel.REASONING,
                     "visibility": StreamVisibility.PRIVATE,
+                    "reasoning_representation": (
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    "segment_instance_ordinal": 0,
                     "text_delta": "<thi",
                 },
                 {
@@ -322,6 +345,10 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                     "kind": StreamItemKind.REASONING_DELTA,
                     "channel": StreamChannel.REASONING,
                     "visibility": StreamVisibility.PRIVATE,
+                    "reasoning_representation": (
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    "segment_instance_ordinal": 0,
                     "text_delta": "nk>",
                 },
                 {
@@ -329,6 +356,10 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                     "kind": StreamItemKind.REASONING_DELTA,
                     "channel": StreamChannel.REASONING,
                     "visibility": StreamVisibility.PRIVATE,
+                    "reasoning_representation": (
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    "segment_instance_ordinal": 0,
                     "text_delta": " private ",
                 },
                 {
@@ -336,6 +367,10 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                     "kind": StreamItemKind.REASONING_DELTA,
                     "channel": StreamChannel.REASONING,
                     "visibility": StreamVisibility.PRIVATE,
+                    "reasoning_representation": (
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    "segment_instance_ordinal": 0,
                     "text_delta": "</think>",
                 },
                 {

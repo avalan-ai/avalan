@@ -76,8 +76,10 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamPerformanceBudget,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     project_canonical_stream_item,
     stream_channel_for_kind,
 )
@@ -194,6 +196,11 @@ def _canonical_reasoning_answer_stream_items(
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta=delta,
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             )
         )
         sequence += 1
@@ -518,6 +525,11 @@ class CliModelTestCase(TestCase):
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta="plan",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
         answer = CanonicalStreamItem(
             stream_session_id="s",
@@ -1593,6 +1605,19 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                     else StreamItemCorrelation()
                 ),
                 text_delta=text_delta,
+                visibility=(
+                    StreamVisibility.PRIVATE
+                    if kind is StreamItemKind.REASONING_DELTA
+                    else StreamVisibility.PUBLIC
+                ),
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                    if kind is StreamItemKind.REASONING_DELTA
+                    else None
+                ),
+                segment_instance_ordinal=(
+                    0 if kind is StreamItemKind.REASONING_DELTA else None
+                ),
                 usage=(
                     {} if kind is StreamItemKind.STREAM_COMPLETED else None
                 ),
@@ -4875,6 +4900,11 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="plan",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="stream",
@@ -6051,6 +6081,11 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="plan",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="stream",
@@ -6422,6 +6457,11 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="plan",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="stream",
@@ -14745,6 +14785,11 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
                         kind=StreamItemKind.REASONING_DELTA,
                         channel=StreamChannel.REASONING,
                         text_delta="PLAN",
+                        visibility=StreamVisibility.PRIVATE,
+                        reasoning_representation=(
+                            StreamReasoningRepresentation.NATIVE_TEXT
+                        ),
+                        segment_instance_ordinal=0,
                     )
                     yield CanonicalStreamItem(
                         stream_session_id="s",
@@ -15095,11 +15140,20 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
             [event.text_delta for event in reasoning_deltas],
             ["<think>", "ra", "rb", "</think>"],
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 isinstance(t, StreamProviderEvent)
                 and t.kind is StreamItemKind.REASONING_DONE
                 for t in tokens
+            )
+        )
+        self.assertTrue(
+            all(
+                event.reasoning_representation
+                is StreamReasoningRepresentation.NATIVE_TEXT
+                and event.segment_instance_ordinal == 0
+                and event.visibility is StreamVisibility.PRIVATE
+                for event in reasoning_deltas
             )
         )
         self.assertEqual(

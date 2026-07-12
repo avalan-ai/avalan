@@ -22,7 +22,6 @@ from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
     CanonicalStreamItem,
     LocalTextStreamEventParser,
-    StreamItemKind,
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
@@ -561,8 +560,13 @@ class TextGenerationModel(BaseNLPModel):
 
                 for event in parser.flush():
                     yield event
-            except (CancelledError, GeneratorExit):
+            except GeneratorExit:
                 stop_event.set()
+                raise
+            except (CancelledError, Exception):
+                stop_event.set()
+                for event in parser.flush():
+                    yield event
                 raise
             finally:
                 stop_event.set()
@@ -681,107 +685,138 @@ class TextGenerationModel(BaseNLPModel):
 
         _l(f"Generated {len(generated_sequences)} sequences")
 
+        parser = LocalTextStreamEventParser()
         total_tokens = 0
-        for step, token_id in enumerate(generated_sequences):
-            _l(f"Got step {step} token {token_id}")
+        try:
+            for step, token_id in enumerate(generated_sequences):
+                _l(f"Got step {step} token {token_id}")
 
-            # logits are the raw-unnormalized scores output by the final
-            # linear layer
-            tensor = scores[step]  # scores is (batch_size, vocab_size)
-            logits = tensor[0]  # first element in batch dimension
+                # logits are the raw-unnormalized scores output by the final
+                # linear layer
+                tensor = scores[step]  # scores is (batch_size, vocab_size)
+                logits = tensor[0]  # first element in batch dimension
 
-            # apply probabilty  distribution over last tensor layer, vocab_size
-            logits_probs = (
-                log_softmax(logits, dim=-1)
-                if probability_distribution == "log_softmax"
-                else (
-                    gumbel_softmax(
-                        logits,
-                        tau=temperature,
-                        hard=False,
-                        dim=-1,
-                    )
-                    if probability_distribution == "gumbel_softmax"
+                # Normalize the final logits into token probabilities.
+                logits_probs = (
+                    log_softmax(logits, dim=-1)
+                    if probability_distribution == "log_softmax"
                     else (
-                        entmax.sparsemax(logits, dim=-1)
-                        if enable_entmax
-                        and probability_distribution == "sparsemax"
+                        gumbel_softmax(
+                            logits,
+                            tau=temperature,
+                            hard=False,
+                            dim=-1,
+                        )
+                        if probability_distribution == "gumbel_softmax"
                         else (
-                            entmax.entmax15(logits, dim=-1)
+                            entmax.sparsemax(logits, dim=-1)
                             if enable_entmax
-                            and probability_distribution == "entmax"
-                            else softmax(logits / temperature, dim=-1)
+                            and probability_distribution == "sparsemax"
+                            else (
+                                entmax.entmax15(logits, dim=-1)
+                                if enable_entmax
+                                and probability_distribution == "entmax"
+                                else softmax(logits / temperature, dim=-1)
+                            )
                         )
                     )
                 )
-            )
 
-            token_id_value = _non_negative_token_id(token_id)
-            token_decode_id = (
-                token_id_value if token_id_value is not None else token_id
-            )
-            token_text = self._tokenizer.decode(
-                token_decode_id,
-                skip_special_tokens=skip_special_tokens,
-            )
+                token_id_value = _non_negative_token_id(token_id)
+                token_decode_id = (
+                    token_id_value if token_id_value is not None else token_id
+                )
+                token_text = self._tokenizer.decode(
+                    token_decode_id,
+                    skip_special_tokens=skip_special_tokens,
+                )
 
-            candidate_metadata: (
-                list[tuple[str, int | None, float | None]] | None
-            ) = None
-            pick_count = pick or 0
-            if pick_count > 0:
-                picked_logits = topk(logits_probs, pick_count)
-                picked_logits_ids = picked_logits.indices.tolist()
-                picked_logits_probs = picked_logits.values.tolist()
-                candidate_metadata = []
-                for i, candidate_id in enumerate(picked_logits_ids):
-                    candidate_token_id = _non_negative_token_id(candidate_id)
-                    candidate_decode_id = (
-                        candidate_token_id
-                        if candidate_token_id is not None
-                        else candidate_id
-                    )
-                    candidate_text = self._tokenizer.decode(
-                        candidate_decode_id,
-                        skip_special_tokens=skip_special_tokens,
-                    )
-                    if not candidate_text:
-                        continue
-                    candidate_metadata.append(
-                        (
-                            candidate_text,
-                            candidate_token_id,
-                            _probability_value(picked_logits_probs[i]),
+                candidate_metadata: (
+                    list[tuple[str, int | None, float | None]] | None
+                ) = None
+                pick_count = pick or 0
+                if pick_count > 0:
+                    picked_logits = topk(logits_probs, pick_count)
+                    picked_logits_ids = picked_logits.indices.tolist()
+                    picked_logits_probs = picked_logits.values.tolist()
+                    candidate_metadata = []
+                    for i, candidate_id in enumerate(picked_logits_ids):
+                        candidate_token_id = _non_negative_token_id(
+                            candidate_id
                         )
-                    )
+                        candidate_decode_id = (
+                            candidate_token_id
+                            if candidate_token_id is not None
+                            else candidate_id
+                        )
+                        candidate_text = self._tokenizer.decode(
+                            candidate_decode_id,
+                            skip_special_tokens=skip_special_tokens,
+                        )
+                        if not candidate_text:
+                            continue
+                        candidate_metadata.append(
+                            (
+                                candidate_text,
+                                candidate_token_id,
+                                _probability_value(picked_logits_probs[i]),
+                            )
+                        )
 
-            metadata = stream_token_metadata(
-                token_id=token_id_value,
-                probability=_probability_value(logits_probs[token_id]),
-                step=step,
-                probability_distribution=probability_distribution,
-                candidates=(
-                    tuple(candidate_metadata)
-                    if candidate_metadata is not None
-                    else None
-                ),
-            )
+                metadata = stream_token_metadata(
+                    token_id=token_id_value,
+                    probability=_probability_value(logits_probs[token_id]),
+                    step=step,
+                    probability_distribution=probability_distribution,
+                    candidates=(
+                        tuple(candidate_metadata)
+                        if candidate_metadata is not None
+                        else None
+                    ),
+                )
 
-            _l(f"Yielding step {step} token metadata {metadata.__repr__()}")
+                _l(
+                    f"Yielding step {step} token metadata "
+                    f"{metadata.__repr__()}"
+                )
 
-            if token_text:
-                yield StreamProviderEvent(
-                    kind=StreamItemKind.ANSWER_DELTA,
-                    text_delta=token_text,
-                    metadata=metadata,
+                if token_text:
+                    for event in parser.push(token_text, metadata):
+                        yield self._local_event_with_provider_type(
+                            event,
+                            provider_event_type="transformers.token",
+                        )
+
+                total_tokens = total_tokens + 1
+        except (CancelledError, Exception):
+            for event in parser.flush():
+                yield self._local_event_with_provider_type(
+                    event,
                     provider_event_type="transformers.token",
                 )
+            raise
 
-            total_tokens = total_tokens + 1
+        for event in parser.flush():
+            yield self._local_event_with_provider_type(
+                event,
+                provider_event_type="transformers.token",
+            )
 
         _l(f"Yielded {total_tokens}")
 
         await sleep(0)  # and just like that, a generator is an async generator
+
+    @staticmethod
+    def _local_event_with_provider_type(
+        event: StreamProviderEvent,
+        *,
+        provider_event_type: str,
+    ) -> StreamProviderEvent:
+        return replace(
+            event,
+            provider_event_type=event.provider_event_type
+            or provider_event_type,
+        )
 
     def _tokenize_input(
         self,

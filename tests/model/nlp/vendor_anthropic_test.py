@@ -33,7 +33,10 @@ from avalan.entities import (
     TransformerEngineSettings,
 )
 from avalan.model.stream import (
+    StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
+    StreamVisibility,
     accumulate_canonical_stream_items,
 )
 from avalan.task.usage import (
@@ -165,6 +168,16 @@ def test_stream_variants(anthropic_mod):
         StreamItemKind.STREAM_CLOSED,
     ]
     assert accumulator.reasoning_text == "think"
+    reasoning = next(
+        item for item in items if item.kind is StreamItemKind.REASONING_DELTA
+    )
+    assert (
+        reasoning.reasoning_representation
+        is StreamReasoningRepresentation.NATIVE_TEXT
+    )
+    assert reasoning.segment_instance_ordinal == 0
+    assert reasoning.visibility is StreamVisibility.PRIVATE
+    assert reasoning.correlation.provider_output_index == 0
     assert accumulator.answer_text == "txt"
     assert accumulator.tool_call_arguments == {"tid": '{"a":1}frag'}
     ready = next(
@@ -440,6 +453,21 @@ def test_canonical_stream_maps_anthropic_events(anthropic_mod):
         item for item in items if item.kind is StreamItemKind.TOOL_CALL_READY
     )
     assert ready.data == {"name": "lookup"}
+    reasoning = next(
+        item for item in items if item.kind is StreamItemKind.REASONING_DELTA
+    )
+    assert (
+        reasoning.reasoning_representation
+        is StreamReasoningRepresentation.NATIVE_TEXT
+    )
+    assert reasoning.segment_instance_ordinal == 0
+    assert reasoning.visibility is StreamVisibility.PRIVATE
+    assert reasoning.correlation.provider_output_index == 0
+    assert mod.AnthropicStream._reasoning_correlation({}) == (
+        StreamItemCorrelation()
+    )
+    with pytest.raises(ValueError, match="non-negative integer"):
+        mod.AnthropicStream._reasoning_correlation({"index": True})
 
 
 def test_canonical_stream_uses_tool_name_policy(anthropic_mod):

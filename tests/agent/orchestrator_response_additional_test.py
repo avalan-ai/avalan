@@ -52,8 +52,10 @@ from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     TextGenerationSingleStream,
     stream_channel_for_kind,
     validate_canonical_stream_items,
@@ -118,6 +120,19 @@ def _canonical_item(
         usage=cast(Any, usage),
         correlation=correlation or StreamItemCorrelation(),
         terminal_outcome=terminal_outcome or outcomes.get(kind),
+        visibility=(
+            StreamVisibility.PRIVATE
+            if kind is StreamItemKind.REASONING_DELTA
+            else StreamVisibility.PUBLIC
+        ),
+        reasoning_representation=(
+            StreamReasoningRepresentation.NATIVE_TEXT
+            if kind is StreamItemKind.REASONING_DELTA
+            else None
+        ),
+        segment_instance_ordinal=(
+            0 if kind is StreamItemKind.REASONING_DELTA else None
+        ),
     )
 
 
@@ -1069,6 +1084,11 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         response._append_canonical_item(
             StreamItemKind.REASONING_DELTA,
             text_delta="thinking",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
         response._finish_canonical_stream(StreamItemKind.STREAM_COMPLETED)
 

@@ -3,19 +3,25 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import ReasoningSettings, ReasoningTag
 from avalan.model.response.parsers.reasoning import ReasoningParser
-from avalan.model.stream import StreamItemKind, StreamProviderEvent
+from avalan.model.stream import (
+    StreamItemKind,
+    StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamVisibility,
+)
 
 
 def _reasoning_delta_text(item: object) -> str:
     assert isinstance(item, StreamProviderEvent)
     assert item.kind is StreamItemKind.REASONING_DELTA
     assert item.text_delta is not None
+    assert (
+        item.reasoning_representation
+        is StreamReasoningRepresentation.NATIVE_TEXT
+    )
+    assert item.segment_instance_ordinal == 0
+    assert item.visibility is StreamVisibility.PRIVATE
     return item.text_delta
-
-
-def _assert_reasoning_done(item: object) -> None:
-    assert isinstance(item, StreamProviderEvent)
-    assert item.kind is StreamItemKind.REASONING_DONE
 
 
 class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
@@ -31,8 +37,7 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_reasoning_delta_text(tokens[1]), "<think>")
         self.assertEqual(_reasoning_delta_text(tokens[2]), "b")
         self.assertEqual(_reasoning_delta_text(tokens[3]), "</think>")
-        _assert_reasoning_done(tokens[4])
-        self.assertEqual(tokens[5], "c")
+        self.assertEqual(tokens[4], "c")
 
     async def test_channel_tag(self):
         start = "<|channel|>analysis<|message|>"
@@ -48,8 +53,7 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_reasoning_delta_text(tokens[1]), start)
         self.assertEqual(_reasoning_delta_text(tokens[2]), "y")
         self.assertEqual(_reasoning_delta_text(tokens[3]), end)
-        _assert_reasoning_done(tokens[4])
-        self.assertEqual(tokens[5], "z")
+        self.assertEqual(tokens[4], "z")
 
     async def test_auto_tag_think(self):
         parser = ReasoningParser(
@@ -61,7 +65,7 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
             tokens.extend(await parser.push(t))
         self.assertEqual(_reasoning_delta_text(tokens[1]), "<think>")
         self.assertEqual(_reasoning_delta_text(tokens[3]), "</think>")
-        _assert_reasoning_done(tokens[4])
+        self.assertEqual(tokens[4], "c")
 
     async def test_auto_tag_channel(self):
         start = "<|channel|>analysis<|message|>"
@@ -76,4 +80,4 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
             tokens.extend(await parser.push(t))
         self.assertEqual(_reasoning_delta_text(tokens[1]), start)
         self.assertEqual(_reasoning_delta_text(tokens[3]), end)
-        _assert_reasoning_done(tokens[4])
+        self.assertEqual(tokens[4], "z")

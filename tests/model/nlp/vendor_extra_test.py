@@ -26,7 +26,9 @@ from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
+    StreamVisibility,
     accumulate_canonical_stream_items,
 )
 from avalan.task.usage import (
@@ -1468,10 +1470,11 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
                     {
                         "choices": [
                             {
+                                "index": 0,
                                 "delta": {
                                     "reasoning_content": "think ",
                                     "content": "hi ",
-                                }
+                                },
                             }
                         ]
                     },
@@ -1565,6 +1568,18 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         accumulator = accumulate_canonical_stream_items(items)
         self.assertEqual(accumulator.answer_text, "hi ")
         self.assertEqual(accumulator.reasoning_text, "think ")
+        reasoning = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.REASONING_DELTA
+        )
+        self.assertIs(
+            reasoning.reasoning_representation,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        self.assertEqual(reasoning.segment_instance_ordinal, 0)
+        self.assertIs(reasoning.visibility, StreamVisibility.PRIVATE)
+        self.assertEqual(reasoning.correlation.provider_output_index, 0)
         self.assertEqual(
             accumulator.tool_call_arguments,
             {"call-1": '{"city":"Paris"}'},

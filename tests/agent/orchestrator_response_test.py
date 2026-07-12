@@ -11,7 +11,7 @@ from asyncio import (
 )
 from base64 import b64encode
 from collections.abc import AsyncIterator, Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from io import StringIO
 from json import dumps, loads
@@ -75,6 +75,7 @@ from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
     StreamVisibility,
@@ -215,6 +216,13 @@ def _canonical_item(
     usage: object | None = None,
     terminal_outcome: StreamTerminalOutcome | None = None,
     correlation: StreamItemCorrelation | None = None,
+    visibility: StreamVisibility | None = None,
+    reasoning_representation: StreamReasoningRepresentation | None = None,
+    segment_instance_ordinal: int | None = None,
+    metadata: dict[str, object] | None = None,
+    provider_payload: object | None = None,
+    provider_family: str | None = None,
+    provider_event_type: str | None = None,
 ) -> CanonicalStreamItem:
     outcomes = {
         StreamItemKind.STREAM_COMPLETED: StreamTerminalOutcome.COMPLETED,
@@ -233,6 +241,32 @@ def _canonical_item(
         usage=cast(Any, usage),
         terminal_outcome=terminal_outcome or outcomes.get(kind),
         correlation=correlation or StreamItemCorrelation(),
+        visibility=(
+            visibility
+            or (
+                StreamVisibility.PRIVATE
+                if kind is StreamItemKind.REASONING_DELTA
+                else StreamVisibility.PUBLIC
+            )
+        ),
+        reasoning_representation=(
+            reasoning_representation
+            or (
+                StreamReasoningRepresentation.NATIVE_TEXT
+                if kind is StreamItemKind.REASONING_DELTA
+                else None
+            )
+        ),
+        segment_instance_ordinal=(
+            0
+            if kind is StreamItemKind.REASONING_DELTA
+            and segment_instance_ordinal is None
+            else segment_instance_ordinal
+        ),
+        metadata=cast(Any, metadata or {}),
+        provider_payload=cast(Any, provider_payload),
+        provider_family=provider_family,
+        provider_event_type=provider_event_type,
     )
 
 
@@ -1562,6 +1596,263 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
 
 
 class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
+    async def test_reasoning_provenance_survives_provider_and_canonical_copy_paths(  # noqa: E501
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        correlation = StreamItemCorrelation(
+            protocol_item_id="reasoning-item-1",
+            provider_output_index=2,
+            provider_summary_index=3,
+        )
+
+        provider_response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_text_response(),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+        provider_response.__aiter__()
+        provider_event = StreamProviderEvent(
+            kind=StreamItemKind.REASONING_DELTA,
+            text_delta="provider reasoning",
+            correlation=correlation,
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
+            metadata={"safe": "provider metadata"},
+            provider_payload={"opaque": "provider payload"},
+            provider_event_type="provider.reasoning.delta",
+        )
+
+        provider_response._queue_parser_output(provider_event)
+
+        provider_copy = provider_response.canonical_items[-1]
+        self.assertEqual(provider_copy.text_delta, "provider reasoning")
+        self.assertEqual(provider_copy.correlation, correlation)
+        self.assertIs(provider_copy.visibility, StreamVisibility.PRIVATE)
+        self.assertIs(
+            provider_copy.reasoning_representation,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        self.assertEqual(provider_copy.segment_instance_ordinal, 0)
+        self.assertEqual(provider_copy.metadata, {"safe": "provider metadata"})
+        self.assertEqual(
+            provider_copy.provider_event_type,
+            "provider.reasoning.delta",
+        )
+        self.assertIsNone(provider_copy.provider_payload)
+        provider_count = len(provider_response.canonical_items)
+        provider_response._queue_parser_output(
+            replace(provider_event, text_delta="")
+        )
+        self.assertEqual(
+            len(provider_response.canonical_items), provider_count
+        )
+
+        canonical_response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_text_response(),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+        canonical_response.__aiter__()
+        canonical_source = _canonical_item(
+            StreamItemKind.REASONING_DELTA,
+            17,
+            text_delta="canonical reasoning",
+            correlation=correlation,
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
+            metadata={"safe": "canonical metadata"},
+            provider_family="anthropic",
+            provider_event_type="content_block_delta",
+        )
+
+        canonical_response._queue_parser_output(canonical_source)
+
+        canonical_copy = canonical_response.canonical_items[-1]
+        self.assertEqual(canonical_copy.text_delta, "canonical reasoning")
+        self.assertEqual(canonical_copy.correlation, correlation)
+        self.assertIs(canonical_copy.visibility, StreamVisibility.PRIVATE)
+        self.assertIs(
+            canonical_copy.reasoning_representation,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        self.assertEqual(canonical_copy.segment_instance_ordinal, 0)
+        self.assertEqual(
+            canonical_copy.metadata, {"safe": "canonical metadata"}
+        )
+        self.assertEqual(canonical_copy.provider_family, "anthropic")
+        self.assertEqual(
+            canonical_copy.provider_event_type,
+            "content_block_delta",
+        )
+        canonical_count = len(canonical_response.canonical_items)
+        with self.assertRaisesRegex(AssertionError, "non-empty text"):
+            replace(canonical_source, text_delta="")
+        self.assertEqual(
+            len(canonical_response.canonical_items), canonical_count
+        )
+
+    async def test_two_tool_continuations_preserve_reasoning_identity(
+        self,
+    ) -> None:
+        def with_reasoning(
+            items: tuple[CanonicalStreamItem, ...],
+            text: str,
+        ) -> TextGenerationResponse:
+            prefixed = [items[0]]
+            prefixed.extend(
+                (
+                    _canonical_item(
+                        StreamItemKind.REASONING_DELTA,
+                        1,
+                        text_delta=text,
+                    ),
+                    _canonical_item(StreamItemKind.REASONING_DONE, 2),
+                )
+            )
+            prefixed.extend(
+                replace(item, sequence=item.sequence + 2) for item in items[1:]
+            )
+            return _response_from_items(*prefixed)
+
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        first_call = ToolCall(
+            id="call-1", name="lookup", arguments={"value": 1}
+        )
+        second_call = ToolCall(
+            id="call-2", name="lookup", arguments={"value": 2}
+        )
+        first_continuation = with_reasoning(
+            _canonical_tool_call_stream_items(second_call),
+            "first continuation reasoning",
+        )
+        second_continuation = with_reasoning(
+            _canonical_answer_items("done"),
+            "second continuation reasoning",
+        )
+        agent.side_effect = [first_continuation, second_continuation]
+
+        async def execute(
+            call: ToolCall,
+            _context: ToolCallContext,
+            **_kwargs: object,
+        ) -> ToolCallResult:
+            return ToolCallResult(
+                id=f"result-{call.id}",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result={"value": call.arguments},
+            )
+
+        tool = AsyncMock(spec=ToolManager, side_effect=execute)
+        tool.is_empty = False
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(first_call),
+            agent,
+            operation,
+            {},
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+
+        await _collect_stream_items(response)
+
+        continuation_ids = [
+            item.correlation.model_continuation_id
+            for item in response.canonical_items
+            if item.kind is StreamItemKind.MODEL_CONTINUATION_STARTED
+        ]
+        reasoning = [
+            item
+            for item in response.canonical_items
+            if item.kind is StreamItemKind.REASONING_DELTA
+        ]
+        self.assertEqual(len(continuation_ids), 2)
+        self.assertNotEqual(continuation_ids[0], continuation_ids[1])
+        self.assertEqual(
+            [
+                (
+                    item.correlation.model_continuation_id,
+                    item.segment_instance_ordinal,
+                )
+                for item in reasoning
+            ],
+            [(continuation_ids[0], 0), (continuation_ids[1], 0)],
+        )
+        self.assertTrue(
+            all(
+                item.reasoning_representation
+                is StreamReasoningRepresentation.NATIVE_TEXT
+                and item.visibility is StreamVisibility.PRIVATE
+                for item in reasoning
+            )
+        )
+        validate_canonical_stream_items(response.canonical_items)
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_conflicting_reasoning_continuation_is_rejected(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_text_response(),
+            agent,
+            _dummy_operation(),
+            {},
+            enable_tool_parsing=False,
+        )
+        response.__aiter__()
+        active_id = "active-continuation"
+        response._append_canonical_model_continuation(
+            StreamItemKind.MODEL_CONTINUATION_STARTED,
+            active_id,
+        )
+        response._set_active_model_continuation(active_id)
+        same_correlation = StreamItemCorrelation(
+            model_continuation_id=active_id
+        )
+        self.assertIs(
+            response._canonical_response_correlation(same_correlation),
+            same_correlation,
+        )
+        conflicting = _canonical_item(
+            StreamItemKind.REASONING_DELTA,
+            1,
+            text_delta="reasoning",
+            correlation=StreamItemCorrelation(
+                model_continuation_id="different-continuation"
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "model continuation id conflicts with the active continuation",
+        ):
+            response._queue_parser_output(conflicting)
+
     async def test_iteration_skips_parser_empty_chunks_without_recursion(
         self,
     ) -> None:

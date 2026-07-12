@@ -8,6 +8,8 @@ from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamReasoningRepresentation,
+    StreamVisibility,
     stream_observability_payload,
 )
 from avalan.task import (
@@ -99,6 +101,11 @@ class SanitizedTaskEventTest(TestCase):
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta="private reasoning",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
         draft = sanitize_raw_task_event(
             Event(
@@ -127,8 +134,113 @@ class SanitizedTaskEventTest(TestCase):
         )
         self.assertEqual(canonical_stream["channel"], "reasoning")
         self.assertEqual(canonical_stream["sequence"], 7)
-        self.assertNotIn("summary", canonical_stream)
-        self.assertNotIn("private", str(payload))
+        self.assertEqual(
+            canonical_stream["summary"],
+            {
+                "text_delta_length": len("private reasoning"),
+                "reasoning_representation": "native_text",
+                "segment_instance_ordinal": 0,
+            },
+        )
+        self.assertNotIn("private reasoning", str(payload))
+
+        invalid_summary = sanitize_raw_task_event(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        {
+                            "kind": "reasoning.delta",
+                            "summary": "not structured observability",
+                        }
+                    )
+                ),
+            ),
+            PrivacySanitizer(),
+        )
+        invalid_payload = cast(dict[str, object], invalid_summary.payload)
+        invalid_canonical = cast(
+            dict[str, object], invalid_payload["canonical_stream"]
+        )
+        self.assertNotIn("summary", invalid_canonical)
+
+        sentinel = "PRIVATE_OBSERVABILITY_KEY_SENTINEL"
+        malicious_source = {
+            "stream_session_id": "stream-1",
+            "run_id": "run-1",
+            "turn_id": "turn-1",
+            "sequence": 8,
+            "kind": "reasoning.delta",
+            "channel": "reasoning",
+            "visibility": "private",
+            "provider_family": sentinel,
+            "provider_event_type": sentinel,
+            "correlation": {sentinel: sentinel},
+            "data": {sentinel: sentinel},
+            "metadata": {sentinel: sentinel},
+            "summary": {
+                "text_delta_length": 17,
+                "reasoning_representation": "native_text",
+                "segment_instance_ordinal": 0,
+                "has_provider_payload": True,
+                sentinel: sentinel,
+            },
+        }
+        malicious = sanitize_raw_task_event(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        malicious_source
+                    )
+                ),
+            ),
+            PrivacySanitizer(),
+        )
+        malicious_payload = cast(dict[str, object], malicious.payload)
+        malicious_canonical = cast(
+            dict[str, object], malicious_payload["canonical_stream"]
+        )
+        self.assertEqual(
+            malicious_canonical["summary"],
+            {
+                "text_delta_length": 17,
+                "reasoning_representation": "native_text",
+                "segment_instance_ordinal": 0,
+            },
+        )
+        self.assertNotIn("has_provider_payload", repr(malicious_payload))
+        self.assertNotIn(sentinel, repr(malicious_payload))
+
+        invalid_field_values = sanitize_raw_task_event(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        {
+                            **malicious_source,
+                            "summary": {
+                                "text_delta_length": "/private/path",
+                                "reasoning_representation": {
+                                    sentinel: sentinel
+                                },
+                                "segment_instance_ordinal": True,
+                                "has_provider_payload": sentinel,
+                            },
+                        }
+                    )
+                ),
+            ),
+            PrivacySanitizer(),
+        )
+        invalid_values_payload = cast(
+            dict[str, object], invalid_field_values.payload
+        )
+        invalid_values_canonical = cast(
+            dict[str, object], invalid_values_payload["canonical_stream"]
+        )
+        self.assertNotIn("summary", invalid_values_canonical)
+        self.assertNotIn(sentinel, repr(invalid_values_payload))
 
     def test_tool_model_engine_and_memory_events_keep_safe_metadata(
         self,

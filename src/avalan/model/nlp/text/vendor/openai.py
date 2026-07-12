@@ -12,6 +12,7 @@ from .....model.provider import ProviderFamily, provider_string_option
 from .....model.reasoning import validate_reasoning_summary_request
 from .....model.response.text import TextGenerationResponse
 from .....model.stream import (
+    REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
     CanonicalStreamItem,
     StreamItemCorrelation,
     StreamItemKind,
@@ -19,6 +20,8 @@ from .....model.stream import (
     StreamProviderAdapterError,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamReasoningSegmentState,
     StreamValidationError,
     StreamVisibility,
     TextGenerationSingleStream,
@@ -101,6 +104,7 @@ class OpenAIStream(TextGenerationVendorStream):
     _last_text_delta_alias_event_type: str | None
     _attempt_output_item_count: int
     _output_item_rollback: Callable[[int], None] | None
+    _reasoning_segments: StreamReasoningSegmentState
 
     def __init__(
         self,
@@ -132,6 +136,7 @@ class OpenAIStream(TextGenerationVendorStream):
         self._last_text_delta_alias_key = None
         self._last_text_delta_alias_event_type = None
         self._attempt_output_item_count = 0
+        self._reasoning_segments = StreamReasoningSegmentState()
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -224,6 +229,11 @@ class OpenAIStream(TextGenerationVendorStream):
                         if self._is_model_output_event(provider_event):
                             output_seen = True
                         yield provider_event
+                        if (
+                            provider_event.kind
+                            is not StreamItemKind.REASONING_DELTA
+                        ):
+                            self._reasoning_segments.complete_segment()
                 if not retry:
                     break
                 await self._close_current_stream()
@@ -296,6 +306,7 @@ class OpenAIStream(TextGenerationVendorStream):
         return event.kind in {
             StreamItemKind.ANSWER_DELTA,
             StreamItemKind.ANSWER_DONE,
+            StreamItemKind.REASONING_DELTA,
             StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
             StreamItemKind.TOOL_CALL_READY,
             StreamItemKind.TOOL_CALL_DONE,
@@ -334,6 +345,7 @@ class OpenAIStream(TextGenerationVendorStream):
         self._last_text_delta_alias_key = None
         self._last_text_delta_alias_event_type = None
         self._attempt_output_item_count = 0
+        self._reasoning_segments = StreamReasoningSegmentState()
 
     def _rollback_response_attempt_output_items(self) -> None:
         if self._attempt_output_item_count <= 0:
@@ -490,26 +502,37 @@ class OpenAIStream(TextGenerationVendorStream):
                 ),
             )
         if event_type in self._REASONING_DELTA_EVENTS:
+            delta = self._response_string_field(event, "delta", event_type)
+            if not delta:
+                return ()
+            representation = StreamReasoningRepresentation.NATIVE_TEXT
+            correlation = self._reasoning_correlation(event)
+            follows_boundary = (
+                self._reasoning_segments.next_allocation_follows_boundary
+            )
+            segment_instance_ordinal = self._reasoning_segments.allocate(
+                representation, correlation
+            )
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.REASONING_DELTA,
-                    text_delta=self._response_string_field(
-                        event, "delta", event_type
-                    ),
+                    text_delta=delta,
+                    correlation=correlation,
                     visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=representation,
+                    segment_instance_ordinal=segment_instance_ordinal,
+                    metadata=(
+                        {REASONING_SEGMENT_BOUNDARY_METADATA_KEY: "completed"}
+                        if follows_boundary
+                        else {}
+                    ),
                     provider_payload=provider_payload,
                     provider_event_type=event_type,
                 ),
             )
         if event_type in self._REASONING_DONE_EVENTS:
-            return (
-                StreamProviderEvent(
-                    kind=StreamItemKind.REASONING_DONE,
-                    visibility=StreamVisibility.PRIVATE,
-                    provider_payload=provider_payload,
-                    provider_event_type=event_type,
-                ),
-            )
+            self._reasoning_segments.complete_segment()
+            return ()
         if event_type == "response.output_item.added":
             self._record_output_item(event)
             return ()
@@ -521,8 +544,42 @@ class OpenAIStream(TextGenerationVendorStream):
             return self._tool_ready_events(event, provider_payload, event_type)
         if event_type == "response.output_item.done":
             self._record_done_output_item(event)
+            item = OpenAIClient._response_field(event, "item")
+            if OpenAIClient._response_field(item, "type") == "reasoning":
+                self._reasoning_segments.complete_segment()
+                return ()
             return self._tool_done_events(event, provider_payload, event_type)
         return ()
+
+    @staticmethod
+    def _reasoning_correlation(event: object) -> StreamItemCorrelation:
+        item_id = OpenAIClient._response_field(event, "item_id")
+        if item_id is not None and (
+            not isinstance(item_id, str) or not item_id.strip()
+        ):
+            raise ValueError(
+                "response reasoning item id must be a non-empty string"
+            )
+
+        indices: dict[str, int] = {}
+        for source_name, target_name in (
+            ("output_index", "provider_output_index"),
+            ("summary_index", "provider_summary_index"),
+        ):
+            value = OpenAIClient._response_field(event, source_name)
+            if value is None:
+                continue
+            if type(value) is not int or value < 0:
+                raise ValueError(
+                    f"response reasoning {source_name} must be a "
+                    "non-negative integer"
+                )
+            indices[target_name] = value
+        return StreamItemCorrelation(
+            protocol_item_id=item_id,
+            provider_output_index=indices.get("provider_output_index"),
+            provider_summary_index=indices.get("provider_summary_index"),
+        )
 
     def _record_done_output_item(self, event: object) -> None:
         if self._output_item_sink is None:

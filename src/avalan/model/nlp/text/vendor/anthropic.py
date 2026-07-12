@@ -20,6 +20,8 @@ from .....model.stream import (
     StreamProviderAdapterError,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamReasoningSegmentState,
     StreamVisibility,
     TextGenerationSingleStream,
 )
@@ -96,6 +98,7 @@ class AnthropicStream(TextGenerationVendorStream):
     _canonical_tool_blocks: dict[int, dict[str, Any]]
     _canonical_ready_tool_call_ids: set[str]
     _canonical_done_tool_call_ids: set[str]
+    _reasoning_segments: StreamReasoningSegmentState
     _tool_manager: ToolManager | None
 
     def __init__(
@@ -108,6 +111,7 @@ class AnthropicStream(TextGenerationVendorStream):
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
+        self._reasoning_segments = StreamReasoningSegmentState()
         self._tool_manager = tool
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
@@ -147,6 +151,7 @@ class AnthropicStream(TextGenerationVendorStream):
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
+        self._reasoning_segments = StreamReasoningSegmentState()
         return self._provider_canonical_stream(
             self._provider_events(),
             stream_session_id=stream_session_id,
@@ -222,6 +227,11 @@ class AnthropicStream(TextGenerationVendorStream):
                     ) from exc
                 for provider_event in provider_events:
                     yield provider_event
+                    if (
+                        provider_event.kind
+                        is not StreamItemKind.REASONING_DELTA
+                    ):
+                        self._reasoning_segments.complete_segment()
         finally:
             await self.aclose()
 
@@ -279,11 +289,20 @@ class AnthropicStream(TextGenerationVendorStream):
         delta = getattr(event, "delta")
         thinking = getattr(delta, "thinking", None)
         if isinstance(thinking, str) and thinking:
+            representation = StreamReasoningRepresentation.NATIVE_TEXT
+            correlation = self._reasoning_correlation(event)
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.REASONING_DELTA,
                     text_delta=thinking,
+                    correlation=correlation,
                     visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=representation,
+                    segment_instance_ordinal=(
+                        self._reasoning_segments.allocate(
+                            representation, correlation
+                        )
+                    ),
                     provider_payload=provider_payload,
                     provider_event_type=event_type,
                 ),
@@ -333,6 +352,7 @@ class AnthropicStream(TextGenerationVendorStream):
         provider_payload: LooseJsonValue | None,
         event_type: str | None,
     ) -> tuple[StreamProviderEvent, ...]:
+        self._reasoning_segments.complete_segment()
         block = _field(event, "content_block")
         index = _field(event, "index")
         if not isinstance(index, int):
@@ -368,6 +388,18 @@ class AnthropicStream(TextGenerationVendorStream):
         )
         self._canonical_done_tool_call_ids.add(call_id)
         return tuple(result)
+
+    @staticmethod
+    def _reasoning_correlation(event: object) -> StreamItemCorrelation:
+        index = _field(event, "index")
+        if index is None:
+            return StreamItemCorrelation()
+        if type(index) is not int or index < 0:
+            raise ValueError(
+                "anthropic reasoning block index must be a non-negative "
+                "integer"
+            )
+        return StreamItemCorrelation(provider_output_index=index)
 
     def _tool_argument_from_stop_block(
         self,

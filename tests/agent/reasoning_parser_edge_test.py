@@ -3,7 +3,12 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import ReasoningSettings
 from avalan.model.response.parsers.reasoning import ReasoningParser
-from avalan.model.stream import StreamItemKind, StreamProviderEvent
+from avalan.model.stream import (
+    StreamItemKind,
+    StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamVisibility,
+)
 
 
 def _reasoning_delta_texts(items: object) -> list[str]:
@@ -13,13 +18,14 @@ def _reasoning_delta_texts(items: object) -> list[str]:
         assert isinstance(item, StreamProviderEvent)
         assert item.kind is StreamItemKind.REASONING_DELTA
         assert item.text_delta is not None
+        assert (
+            item.reasoning_representation
+            is StreamReasoningRepresentation.NATIVE_TEXT
+        )
+        assert item.segment_instance_ordinal == 0
+        assert item.visibility is StreamVisibility.PRIVATE
         texts.append(item.text_delta)
     return texts
-
-
-def _assert_reasoning_done(item: object) -> None:
-    assert isinstance(item, StreamProviderEvent)
-    assert item.kind is StreamItemKind.REASONING_DONE
 
 
 class FakeStartTag:
@@ -75,8 +81,7 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
         parser._pending_tokens = ["a", "b"]
         parser._pending_str = "ab"
         tokens = list(await parser.flush())
-        self.assertEqual(_reasoning_delta_texts(tokens[:-1]), ["a", "b"])
-        _assert_reasoning_done(tokens[-1])
+        self.assertEqual(_reasoning_delta_texts(tokens), ["a", "b"])
         self.assertEqual(parser._pending_tokens, [])
         self.assertEqual(parser._pending_str, "")
 

@@ -1,5 +1,12 @@
 from ....entities import ReasoningSettings, ReasoningTag
-from ...stream import StreamItemKind, StreamProviderEvent, StreamVisibility
+from ...stream import (
+    REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
+    StreamItemKind,
+    StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamReasoningSegmentState,
+    StreamVisibility,
+)
 
 from logging import Logger
 from typing import Any, Iterable
@@ -26,7 +33,7 @@ class ReasoningParser:
     _thinking_turns: int
     _max_thinking_turns: int
     _thinking_budget_exhausted: bool
-    _reasoning_delta_emitted: bool
+    _reasoning_segments: StreamReasoningSegmentState
     _token_count: int
     _pending_tokens: list[str]
     _pending_str: str
@@ -59,12 +66,15 @@ class ReasoningParser:
         self._thinking_turns = 0
         self._max_thinking_turns = max_thinking_turns
         self._thinking_budget_exhausted = False
-        self._reasoning_delta_emitted = False
+        self._reasoning_segments = StreamReasoningSegmentState()
         self._token_count = 0
         self._pending_tokens = []
         self._pending_str = ""
 
     def set_thinking(self, thinking: bool) -> None:
+        assert isinstance(thinking, bool)
+        if self._thinking and not thinking:
+            self._reasoning_segments.complete_segment()
         self._thinking = thinking
 
     @property
@@ -89,6 +99,7 @@ class ReasoningParser:
                 result.extend(self._flush_pending(self._thinking))
                 if self._thinking:
                     return self._thinking_token_result(token, result)
+                self._reasoning_segments.complete_segment()
                 result.append(token)
                 return result
             candidate = self._pending_str + token_clean
@@ -142,6 +153,7 @@ class ReasoningParser:
         if self._thinking:
             return self._thinking_token_result(token, result)
 
+        self._reasoning_segments.complete_segment()
         result.append(token)
         return result
 
@@ -333,6 +345,7 @@ class ReasoningParser:
         self._logger.debug(
             'Adding reasoning token "%s" after budget exceeded', token
         )
+        self._reasoning_segments.complete_segment()
         result.append(token)
         return result
 
@@ -341,25 +354,28 @@ class ReasoningParser:
         return [self._reasoning_delta(t)]
 
     def _reasoning_delta(self, token: str) -> StreamProviderEvent:
-        self._reasoning_delta_emitted = True
+        representation = StreamReasoningRepresentation.NATIVE_TEXT
+        follows_boundary = (
+            self._reasoning_segments.next_allocation_follows_boundary
+        )
         return StreamProviderEvent(
             kind=StreamItemKind.REASONING_DELTA,
             text_delta=token,
             visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=representation,
+            segment_instance_ordinal=self._reasoning_segments.allocate(
+                representation
+            ),
+            metadata=(
+                {REASONING_SEGMENT_BOUNDARY_METADATA_KEY: "completed"}
+                if follows_boundary
+                else {}
+            ),
         )
 
     def _reasoning_done_result(self) -> list[Any]:
-        result: list[Any] = []
-        if not self._reasoning_delta_emitted:
-            result.append(self._reasoning_delta(""))
-        self._reasoning_delta_emitted = False
-        return [
-            *result,
-            StreamProviderEvent(
-                kind=StreamItemKind.REASONING_DONE,
-                visibility=StreamVisibility.PRIVATE,
-            ),
-        ]
+        self._reasoning_segments.complete_segment()
+        return []
 
     def _flush_pending(self, as_reasoning: bool) -> list[Any]:
         result: list[Any] = []
@@ -370,6 +386,8 @@ class ReasoningParser:
                     t,
                     as_reasoning,
                 )
+                if not as_reasoning:
+                    self._reasoning_segments.complete_segment()
                 result.extend(self._wrap(t) if as_reasoning else [t])
             self._pending_tokens.clear()
             self._pending_str = ""

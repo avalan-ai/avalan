@@ -29,6 +29,7 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamPerformanceBudget,
     StreamProjectionState,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamVisibility,
 )
@@ -442,6 +443,10 @@ def _fixture_items(
                 StreamItemKind.REASONING_DELTA,
                 text_delta=delta_text,
                 visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             )
         )
     items.extend(
@@ -472,6 +477,8 @@ def _item(
     visibility: StreamVisibility = StreamVisibility.PUBLIC,
     usage: object | None = None,
     terminal_outcome: StreamTerminalOutcome | None = None,
+    reasoning_representation: StreamReasoningRepresentation | None = None,
+    segment_instance_ordinal: int | None = None,
 ) -> CanonicalStreamItem:
     channel = (
         StreamChannel.REASONING
@@ -490,6 +497,8 @@ def _item(
         visibility=visibility,
         usage=cast(Any, usage),
         terminal_outcome=terminal_outcome,
+        reasoning_representation=reasoning_representation,
+        segment_instance_ordinal=segment_instance_ordinal,
     )
 
 

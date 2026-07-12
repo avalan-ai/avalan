@@ -7,7 +7,7 @@ from ....model.reasoning import validate_reasoning_summary_request
 from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
     CanonicalStreamItem,
-    StreamItemKind,
+    LocalTextStreamEventParser,
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
@@ -18,7 +18,7 @@ from ....types import LooseJsonValue
 from ...vendor import TextGenerationVendorStream
 from .generation import TextGenerationModel
 
-from asyncio import get_running_loop
+from asyncio import CancelledError, get_running_loop
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
@@ -193,6 +193,7 @@ class MlxLmStream(TextGenerationVendorStream):
             or StreamProviderCapabilities(
                 backend=StreamProducerBackend.LOCAL,
                 provider_family="mlx",
+                supports_reasoning=True,
                 supports_cancellation=True,
             ),
             close_after_terminal=close_after_terminal,
@@ -201,22 +202,48 @@ class MlxLmStream(TextGenerationVendorStream):
     async def _provider_events(
         self,
     ) -> AsyncGenerator[StreamProviderEvent, None]:
+        parser = LocalTextStreamEventParser()
         try:
-            while True:
-                chunk = await self._next_raw()
-                if chunk is self._SENTINEL:
-                    return
-                text, metadata = self._chunk_text_and_metadata(chunk)
-                if text is None:
-                    continue
-                yield StreamProviderEvent(
-                    kind=StreamItemKind.ANSWER_DELTA,
-                    text_delta=text,
-                    metadata=metadata,
+            try:
+                while True:
+                    chunk = await self._next_raw()
+                    if chunk is self._SENTINEL:
+                        break
+                    text, metadata = self._chunk_text_and_metadata(chunk)
+                    if not text:
+                        continue
+                    for event in parser.push(text, metadata):
+                        yield self._event_with_provider_type(
+                            event,
+                            provider_event_type="mlx_lm.delta",
+                        )
+            except (CancelledError, Exception):
+                for event in parser.flush():
+                    yield self._event_with_provider_type(
+                        event,
+                        provider_event_type="mlx_lm.delta",
+                    )
+                raise
+
+            for event in parser.flush():
+                yield self._event_with_provider_type(
+                    event,
                     provider_event_type="mlx_lm.delta",
                 )
         finally:
             self.close()
+
+    @staticmethod
+    def _event_with_provider_type(
+        event: StreamProviderEvent,
+        *,
+        provider_event_type: str,
+    ) -> StreamProviderEvent:
+        return replace(
+            event,
+            provider_event_type=event.provider_event_type
+            or provider_event_type,
+        )
 
     @staticmethod
     def _chunk_text_and_metadata(

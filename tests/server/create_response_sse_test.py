@@ -27,8 +27,10 @@ from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamPerformanceBudget,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     project_canonical_stream_item,
 )
 from avalan.server.entities import (
@@ -152,6 +154,11 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="r",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",
@@ -772,6 +779,11 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                             kind=StreamItemKind.REASONING_DELTA,
                             channel=StreamChannel.REASONING,
                             text_delta=f"{reasoning_safe} /tmp",
+                            visibility=StreamVisibility.PRIVATE,
+                            reasoning_representation=(
+                                StreamReasoningRepresentation.NATIVE_TEXT
+                            ),
+                            segment_instance_ordinal=0,
                         ),
                         CanonicalStreamItem(
                             stream_session_id="s",
@@ -1778,6 +1790,11 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="plan",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",
@@ -2882,6 +2899,11 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 text_delta="r1r2",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.NATIVE_TEXT
+                ),
+                segment_instance_ordinal=0,
             ),
             CanonicalStreamItem(
                 stream_session_id="s",

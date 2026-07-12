@@ -14,7 +14,9 @@ from avalan.model.stream import (
     StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
+    StreamVisibility,
 )
 from avalan.server.a2a import router as a2a_router
 from avalan.server.a2a.router import (
@@ -1793,6 +1795,11 @@ async def test_translator_redacts_answer_and_reasoning_skill_echoes(
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta="#",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
     )
     await translator.process(
@@ -1804,6 +1811,11 @@ async def test_translator_redacts_answer_and_reasoning_skill_echoes(
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta=" Reasoning Skill\n\n",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
     )
     await translator.process(
@@ -1815,6 +1827,11 @@ async def test_translator_redacts_answer_and_reasoning_skill_echoes(
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta="Instructions: keep this skill body hidden.\n\n",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
     )
     await translator.process(
@@ -1829,6 +1846,11 @@ async def test_translator_redacts_answer_and_reasoning_skill_echoes(
                 "Secret reasoning skill body.\n"
                 "Source: C:/Users/me/skills/demo/SCOPE.md"
             ),
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
     )
 
@@ -1892,6 +1914,11 @@ async def test_translator_respects_model_text_channel_filters(
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta=reasoning_echo,
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
     )
     await translator.finish()
@@ -1961,6 +1988,11 @@ async def test_translator_flushes_buffered_model_text_in_source_order(
             kind=StreamItemKind.REASONING_DELTA,
             channel=StreamChannel.REASONING,
             text_delta="# Imagegen\n",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
         )
     )
     await translator.process(
@@ -2340,6 +2372,13 @@ def _item(
     kind: StreamItemKind,
     **kwargs: object,
 ) -> CanonicalStreamItem:
+    if kind is StreamItemKind.REASONING_DELTA:
+        kwargs.setdefault("visibility", StreamVisibility.PRIVATE)
+        kwargs.setdefault(
+            "reasoning_representation",
+            StreamReasoningRepresentation.NATIVE_TEXT,
+        )
+        kwargs.setdefault("segment_instance_ordinal", 0)
     return CanonicalStreamItem(
         stream_session_id="s",
         run_id="r",

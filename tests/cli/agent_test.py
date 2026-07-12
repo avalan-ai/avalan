@@ -58,7 +58,12 @@ from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
 from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
-from avalan.model.stream import StreamItemKind, StreamProviderEvent
+from avalan.model.stream import (
+    StreamItemKind,
+    StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamVisibility,
+)
 from avalan.sandbox import BubblewrapSandboxBackend, SeatbeltSandboxBackend
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
@@ -5394,11 +5399,20 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
             [event.text_delta for event in reasoning_deltas],
             ["<think>", "ra", "rb", "</think>"],
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 isinstance(t, StreamProviderEvent)
                 and t.kind is StreamItemKind.REASONING_DONE
                 for t in tokens
+            )
+        )
+        self.assertTrue(
+            all(
+                event.visibility is StreamVisibility.PRIVATE
+                and event.reasoning_representation
+                is StreamReasoningRepresentation.NATIVE_TEXT
+                and event.segment_instance_ordinal == 0
+                for event in reasoning_deltas
             )
         )
         self.assertEqual(

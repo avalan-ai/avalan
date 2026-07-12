@@ -28,8 +28,11 @@ from ....model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamProviderEvent,
+    StreamReasoningRepresentation,
+    StreamReasoningSegmentState,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     canonical_item_from_consumer_projection,
     stream_channel_for_kind,
     stream_observability_payload,
@@ -162,6 +165,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _canonical_answer_done: bool
     _canonical_reasoning_started: bool
     _canonical_reasoning_done: bool
+    _canonical_reasoning_segments: StreamReasoningSegmentState
     _canonical_item_available: AsyncioEvent
     _canonical_tool_call_lifecycles: dict[str, _CanonicalToolCallLifecycle]
     _canonical_tool_call_argument_delta_ids: set[str]
@@ -251,6 +255,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._canonical_answer_done = False
         self._canonical_reasoning_started = False
         self._canonical_reasoning_done = False
+        self._canonical_reasoning_segments = StreamReasoningSegmentState()
         self._canonical_item_available = AsyncioEvent()
         self._canonical_tool_call_lifecycles = {}
         self._canonical_tool_call_argument_delta_ids = set()
@@ -345,8 +350,25 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         event: StreamProviderEvent,
     ) -> CanonicalStreamItem | None:
         assert isinstance(event, StreamProviderEvent)
+        if (
+            event.kind is StreamItemKind.REASONING_DELTA
+            and event.text_delta == ""
+        ):
+            return None
+        correlation = self._canonical_response_correlation(event.correlation)
+        self._validate_canonical_reasoning_segment(
+            event.kind,
+            visibility=event.visibility,
+            reasoning_representation=event.reasoning_representation,
+            segment_instance_ordinal=event.segment_instance_ordinal,
+            correlation=correlation,
+            metadata=event.metadata,
+        )
         if event.kind in _TOOL_CALL_LIFECYCLE_KINDS:
-            return self._append_canonical_provider_tool_call_item(event)
+            return self._append_canonical_provider_tool_call_item(
+                event,
+                correlation=correlation,
+            )
         if event.kind in (
             StreamItemKind.ANSWER_DONE,
             StreamItemKind.REASONING_DONE,
@@ -369,22 +391,29 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             text_delta=event.text_delta,
             data=event.data,
             usage=event.usage,
-            correlation=event.correlation,
+            correlation=correlation,
+            visibility=event.visibility,
+            reasoning_representation=event.reasoning_representation,
+            segment_instance_ordinal=event.segment_instance_ordinal,
+            metadata=event.metadata,
+            provider_event_type=event.provider_event_type,
         )
 
     def _append_canonical_provider_tool_call_item(
         self,
         event: StreamProviderEvent,
+        *,
+        correlation: StreamItemCorrelation,
     ) -> CanonicalStreamItem | None:
         assert event.kind in _TOOL_CALL_LIFECYCLE_KINDS
-        tool_call_id = event.correlation.tool_call_id
+        tool_call_id = correlation.tool_call_id
         if not self._is_valid_tool_call_id(tool_call_id):
             return self._append_canonical_tool_call_lifecycle_diagnostic(
                 tool_call_id=None,
                 code="orchestrator.tool_call.missing_id",
                 message="Tool-call lifecycle item is missing tool_call_id.",
                 details={"kind": event.kind.value},
-                correlation=event.correlation,
+                correlation=correlation,
             )
         assert tool_call_id is not None
         if (
@@ -393,7 +422,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         ):
             tool_call_id = self._canonical_lifecycle_tool_call_id(tool_call_id)
             correlation = replace(
-                event.correlation,
+                correlation,
                 tool_call_id=tool_call_id,
             )
             state = self._canonical_tool_call_lifecycle(tool_call_id)
@@ -414,21 +443,36 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             event.kind,
             text_delta=event.text_delta,
             data=event.data,
-            correlation=event.correlation,
+            correlation=correlation,
+            visibility=event.visibility,
+            metadata=event.metadata,
+            provider_event_type=event.provider_event_type,
         )
 
     def _append_canonical_response_item(
         self, item: CanonicalStreamItem
     ) -> CanonicalStreamItem | None:
         assert isinstance(item, CanonicalStreamItem)
+        correlation = self._canonical_response_correlation(item.correlation)
+        self._validate_canonical_reasoning_segment(
+            item.kind,
+            visibility=item.visibility,
+            reasoning_representation=item.reasoning_representation,
+            segment_instance_ordinal=item.segment_instance_ordinal,
+            correlation=correlation,
+            metadata=item.metadata,
+        )
         if item.kind in _TOOL_CALL_LIFECYCLE_KINDS:
             return self._append_canonical_tool_call_lifecycle_item(
                 item.kind,
                 text_delta=item.text_delta,
                 data=item.data,
                 usage=item.usage,
-                correlation=item.correlation,
+                correlation=correlation,
+                visibility=item.visibility,
                 metadata=item.metadata,
+                provider_family=item.provider_family,
+                provider_event_type=item.provider_event_type,
             )
         if item.kind in (
             StreamItemKind.STREAM_STARTED,
@@ -456,6 +500,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             turn_id=self._canonical_turn_id,
             sequence=self._canonical_sequence,
             channel=stream_channel_for_kind(item.kind),
+            correlation=correlation,
         )
         self._canonical_items.append(canonical_item)
         self._canonical_sequence += 1
@@ -463,6 +508,49 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._track_canonical_lifecycle_item(canonical_item)
         self._notify_canonical_item_available()
         return canonical_item
+
+    def _canonical_response_correlation(
+        self,
+        correlation: StreamItemCorrelation,
+    ) -> StreamItemCorrelation:
+        assert isinstance(correlation, StreamItemCorrelation)
+        active_id = self._active_model_continuation_id
+        incoming_id = correlation.model_continuation_id
+        if active_id is None:
+            return correlation
+        if incoming_id is not None and incoming_id != active_id:
+            raise StreamValidationError(
+                "response item model continuation id conflicts with the "
+                "active continuation"
+            )
+        if incoming_id is not None:
+            return correlation
+        return replace(correlation, model_continuation_id=active_id)
+
+    def _validate_canonical_reasoning_segment(
+        self,
+        kind: StreamItemKind,
+        *,
+        visibility: StreamVisibility,
+        reasoning_representation: StreamReasoningRepresentation | None,
+        segment_instance_ordinal: int | None,
+        correlation: StreamItemCorrelation,
+        metadata: dict[str, Any],
+    ) -> None:
+        if kind is not StreamItemKind.REASONING_DELTA:
+            self._canonical_reasoning_segments.complete_segment()
+            return
+        self._canonical_reasoning_segments.observe(
+            StreamProviderEvent(
+                kind=kind,
+                text_delta="reasoning",
+                correlation=correlation,
+                visibility=visibility,
+                reasoning_representation=reasoning_representation,
+                segment_instance_ordinal=segment_instance_ordinal,
+                metadata=metadata,
+            )
+        )
 
     def _canonical_item_from_response_item(
         self,
@@ -629,7 +717,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         data: Any | None = None,
         usage: Any | None = None,
         correlation: StreamItemCorrelation,
+        visibility: StreamVisibility = StreamVisibility.PUBLIC,
         metadata: dict[str, Any] | None = None,
+        provider_family: str | None = None,
+        provider_event_type: str | None = None,
     ) -> CanonicalStreamItem | None:
         assert kind in _TOOL_CALL_LIFECYCLE_KINDS
         tool_call_id = correlation.tool_call_id
@@ -679,7 +770,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             data=data,
             usage=usage,
             correlation=correlation,
+            visibility=visibility,
             metadata=metadata,
+            provider_family=provider_family,
+            provider_event_type=provider_event_type,
         )
         if item is None:
             return None
@@ -1022,6 +1116,16 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             protocol_item_id=(
                 existing.protocol_item_id or incoming.protocol_item_id
             ),
+            provider_output_index=(
+                existing.provider_output_index
+                if existing.provider_output_index is not None
+                else incoming.provider_output_index
+            ),
+            provider_summary_index=(
+                existing.provider_summary_index
+                if existing.provider_summary_index is not None
+                else incoming.provider_summary_index
+            ),
             task_id=existing.task_id or incoming.task_id,
             artifact_id=existing.artifact_id or incoming.artifact_id,
         )
@@ -1029,6 +1133,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     def _begin_tool_call_lifecycle_response(self) -> None:
         self._canonical_tool_call_lifecycles = {}
         self._response_tool_call_id_aliases = {}
+        self._canonical_reasoning_segments = StreamReasoningSegmentState()
 
     def _canonical_lifecycle_tool_call_id(self, source_id: str) -> str:
         assert isinstance(source_id, str)
@@ -2855,7 +2960,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         usage: Any | None = None,
         correlation: StreamItemCorrelation | None = None,
         terminal_outcome: StreamTerminalOutcome | None = None,
+        visibility: StreamVisibility = StreamVisibility.PUBLIC,
+        reasoning_representation: StreamReasoningRepresentation | None = None,
+        segment_instance_ordinal: int | None = None,
         metadata: dict[str, Any] | None = None,
+        provider_family: str | None = None,
+        provider_event_type: str | None = None,
     ) -> CanonicalStreamItem | None:
         if (
             self._canonical_stream_closed
@@ -2875,7 +2985,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             data=cast(Any, data),
             usage=cast(Any, usage),
             terminal_outcome=terminal_outcome,
+            visibility=visibility,
+            reasoning_representation=reasoning_representation,
+            segment_instance_ordinal=segment_instance_ordinal,
             metadata=metadata or {},
+            provider_family=provider_family,
+            provider_event_type=provider_event_type,
         )
         self._canonical_items.append(item)
         self._canonical_sequence += 1
