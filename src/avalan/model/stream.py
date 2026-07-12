@@ -611,6 +611,10 @@ class StreamSessionLifecycle:
 class StreamRetentionPolicy:
     accumulator_item_limit: int = 4096
     replay_history_item_limit: int = 1024
+    openai_replay_reasoning_item_limit: int = 1024
+    openai_replay_reasoning_summary_node_limit: int = 4096
+    openai_replay_reasoning_summary_character_limit: int = 262144
+    openai_replay_reasoning_summary_serialized_byte_limit: int = 1048576
     ui_buffer_item_limit: int = 1024
     metrics_history_item_limit: int = 2048
     event_history_item_limit: int = 2048
@@ -638,6 +642,22 @@ class StreamRetentionPolicy:
         ), "a2a_task_event_byte_limit must be at least 2"
         for field_name, value in (
             ("replay_history_item_limit", self.replay_history_item_limit),
+            (
+                "openai_replay_reasoning_item_limit",
+                self.openai_replay_reasoning_item_limit,
+            ),
+            (
+                "openai_replay_reasoning_summary_node_limit",
+                self.openai_replay_reasoning_summary_node_limit,
+            ),
+            (
+                "openai_replay_reasoning_summary_character_limit",
+                self.openai_replay_reasoning_summary_character_limit,
+            ),
+            (
+                "openai_replay_reasoning_summary_serialized_byte_limit",
+                self.openai_replay_reasoning_summary_serialized_byte_limit,
+            ),
             ("ui_buffer_item_limit", self.ui_buffer_item_limit),
             ("metrics_history_item_limit", self.metrics_history_item_limit),
             ("event_history_item_limit", self.event_history_item_limit),

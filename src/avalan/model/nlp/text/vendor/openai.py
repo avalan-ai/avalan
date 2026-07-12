@@ -5,6 +5,7 @@ from .....entities import (
     MessageRole,
     PromptCacheRetention,
     ReasoningEffort,
+    ReasoningSummaryMode,
     ToolCallDiagnostic,
     ToolCallResult,
 )
@@ -22,6 +23,7 @@ from .....model.stream import (
     StreamProviderEvent,
     StreamReasoningRepresentation,
     StreamReasoningSegmentState,
+    StreamRetentionPolicy,
     StreamValidationError,
     StreamVisibility,
     TextGenerationSingleStream,
@@ -52,8 +54,11 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
+from dataclasses import dataclass, field
 from importlib import import_module
 from inspect import isawaitable
+from json import dumps
+from math import isfinite
 from mimetypes import guess_type
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -64,6 +69,528 @@ class _OmitPlaceholder:  # noqa: D101
 
 
 Omit: type[Any] = _OmitPlaceholder
+
+
+class _ReasoningReplayRetentionError(RuntimeError):
+    """Report a content-free OpenAI replay admission failure."""
+
+    code = "reasoning_replay_retention_exceeded"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "OpenAI reasoning replay state is invalid or exceeds its "
+            "retention limit."
+        )
+
+
+class _ReplayOwnerAssociationError(RuntimeError):
+    """Report an ambiguous continuation without exposing request state."""
+
+    code = "reasoning_replay_owner_ambiguous"
+
+    def __init__(self) -> None:
+        super().__init__("OpenAI replay continuation id is ambiguous")
+
+
+class _OpenAIClientClosedError(RuntimeError):
+    """Report a request attempted after OpenAI client shutdown."""
+
+    code = "openai_client_closed"
+
+    def __init__(self) -> None:
+        super().__init__("OpenAI client is closed")
+
+
+class _OpenAICleanupError(RuntimeError):
+    """Report content-free OpenAI cleanup failure diagnostics."""
+
+    code = "openai_cleanup_failed"
+
+    def __init__(self, cleanup_target: str) -> None:
+        assert cleanup_target in {"client", "response", "stream"}
+        self.cleanup_target = cleanup_target
+        super().__init__(f"OpenAI {cleanup_target} cleanup failed")
+
+
+class _OpenAIProviderRequestError(RuntimeError):
+    """Report a content-free private-replay provider failure."""
+
+    code = "openai_provider_request_failed"
+
+    def __init__(self) -> None:
+        super().__init__("OpenAI provider request failed")
+
+
+@dataclass(frozen=True, slots=True)
+class _ReplayItemAccounting:
+    reasoning_items: int = 0
+    summary_nodes: int = 0
+    summary_characters: int = 0
+    summary_serialized_bytes: int = 0
+
+
+def _assign_replay_json_value(
+    target: dict[str, object] | list[object],
+    key: str | None,
+    value: object,
+) -> None:
+    if isinstance(target, list):
+        assert key is None
+        target.append(value)
+        return
+    assert key is not None
+    target[key] = value
+
+
+def _strict_replay_json_copy(value: object) -> LooseJsonValue:
+    root: list[object] = []
+    work: list[
+        tuple[
+            object,
+            dict[str, object] | list[object],
+            str | None,
+            bool,
+        ]
+    ] = [(value, root, None, False)]
+    ancestor_containers: set[int] = set()
+    while work:
+        source, target, key, exiting = work.pop()
+        if exiting:
+            ancestor_containers.remove(cast(int, source))
+            continue
+        if source is None or type(source) in {bool, int, float, str}:
+            if type(source) is float and not isfinite(source):
+                raise _ReasoningReplayRetentionError()
+            _assign_replay_json_value(target, key, source)
+            continue
+        if type(source) is dict:
+            source_id = id(source)
+            if source_id in ancestor_containers:
+                raise _ReasoningReplayRetentionError()
+            ancestor_containers.add(source_id)
+            source_mapping = cast(dict[object, object], source)
+            normalized_mapping: dict[str, object] = {}
+            _assign_replay_json_value(target, key, normalized_mapping)
+            items = list(source_mapping.items())
+            work.append((source_id, target, key, True))
+            for item_key, item_value in reversed(items):
+                if type(item_key) is not str:
+                    raise _ReasoningReplayRetentionError()
+                work.append(
+                    (
+                        item_value,
+                        normalized_mapping,
+                        item_key,
+                        False,
+                    )
+                )
+            continue
+        if type(source) is list:
+            source_id = id(source)
+            if source_id in ancestor_containers:
+                raise _ReasoningReplayRetentionError()
+            ancestor_containers.add(source_id)
+            normalized_sequence: list[object] = []
+            _assign_replay_json_value(target, key, normalized_sequence)
+            work.append((source_id, target, key, True))
+            for item in reversed(cast(list[object], source)):
+                work.append((item, normalized_sequence, None, False))
+            continue
+        raise _ReasoningReplayRetentionError()
+    assert len(root) == 1
+    return cast(LooseJsonValue, root[0])
+
+
+def _clean_replay_input_payload(
+    payload: dict[str, object],
+) -> dict[str, Any]:
+    root: list[object] = []
+    work: list[
+        tuple[
+            object,
+            dict[str, object] | list[object],
+            str | None,
+            bool,
+        ]
+    ] = [(payload, root, None, True)]
+    while work:
+        source, target, key, clean_fields = work.pop()
+        if isinstance(source, dict):
+            normalized_mapping: dict[str, object] = {}
+            _assign_replay_json_value(target, key, normalized_mapping)
+            item_type = source.get("type") if clean_fields else None
+            entries: list[tuple[str, object, bool]] = []
+            for item_key, item_value in source.items():
+                if clean_fields and (
+                    item_key == "status" or item_value is None
+                ):
+                    continue
+                if (
+                    clean_fields
+                    and item_key == "id"
+                    and item_type == "function_call"
+                ):
+                    continue
+                if (
+                    clean_fields
+                    and item_type == "reasoning"
+                    and item_key == "content"
+                    and item_value == []
+                ):
+                    continue
+                child_clean_fields = not (
+                    clean_fields
+                    and item_type == "reasoning"
+                    and item_key == "summary"
+                )
+                entries.append((item_key, item_value, child_clean_fields))
+            for item_key, item_value, child_clean_fields in reversed(entries):
+                work.append(
+                    (
+                        item_value,
+                        normalized_mapping,
+                        item_key,
+                        child_clean_fields,
+                    )
+                )
+            continue
+        if isinstance(source, list):
+            normalized_sequence: list[object] = []
+            _assign_replay_json_value(target, key, normalized_sequence)
+            for item in reversed(source):
+                work.append((item, normalized_sequence, None, clean_fields))
+            continue
+        _assign_replay_json_value(target, key, source)
+    assert len(root) == 1
+    assert isinstance(root[0], dict)
+    return cast(dict[str, Any], root[0])
+
+
+def _sanitize_provider_json_payload(
+    payload: dict[str, Any],
+) -> LooseJsonValue:
+    root: list[object] = []
+    work: list[
+        tuple[
+            object,
+            dict[str, object] | list[object],
+            str | None,
+            bool,
+        ]
+    ] = [(payload, root, None, False)]
+    ancestor_containers: set[int] = set()
+    while work:
+        source, target, key, exiting = work.pop()
+        if exiting:
+            ancestor_containers.remove(cast(int, source))
+            continue
+        if source is None or type(source) in {bool, int, float, str}:
+            if type(source) is float and not isfinite(source):
+                raise _ReasoningReplayRetentionError()
+            _assign_replay_json_value(target, key, source)
+            continue
+        if type(source) is dict:
+            source_id = id(source)
+            if source_id in ancestor_containers:
+                raise _ReasoningReplayRetentionError()
+            ancestor_containers.add(source_id)
+            source_mapping = cast(dict[object, object], source)
+            item_type = source_mapping.get("type")
+            normalized_mapping: dict[str, object] = {}
+            _assign_replay_json_value(target, key, normalized_mapping)
+            work.append((source_id, target, key, True))
+            for item_key, item_value in reversed(list(source_mapping.items())):
+                if type(item_key) is not str:
+                    raise _ReasoningReplayRetentionError()
+                if item_key == "encrypted_content":
+                    continue
+                if item_type == "reasoning" and item_key in {
+                    "content",
+                    "summary",
+                }:
+                    continue
+                work.append(
+                    (
+                        item_value,
+                        normalized_mapping,
+                        item_key,
+                        False,
+                    )
+                )
+            continue
+        if type(source) is list:
+            source_id = id(source)
+            if source_id in ancestor_containers:
+                raise _ReasoningReplayRetentionError()
+            ancestor_containers.add(source_id)
+            normalized_sequence: list[object] = []
+            _assign_replay_json_value(target, key, normalized_sequence)
+            work.append((source_id, target, key, True))
+            for item in reversed(cast(list[object], source)):
+                work.append((item, normalized_sequence, None, False))
+            continue
+        raise _ReasoningReplayRetentionError()
+    assert len(root) == 1
+    return cast(LooseJsonValue, root[0])
+
+
+def _replay_json_accounting(value: LooseJsonValue) -> tuple[int, int]:
+    nodes = 0
+    characters = 0
+    work: list[object] = [value]
+    while work:
+        current = work.pop()
+        if isinstance(current, dict):
+            nodes += len(current)
+            characters += sum(len(key) for key in current)
+            work.extend(current.values())
+        elif isinstance(current, list):
+            nodes += len(current)
+            work.extend(current)
+        else:
+            nodes += 1
+            if isinstance(current, str):
+                characters += len(current)
+    return nodes, characters
+
+
+def _replay_json_serialized_bytes(value: LooseJsonValue) -> int:
+    byte_count = 0
+    work: list[object] = [value]
+    while work:
+        current = work.pop()
+        if isinstance(current, dict):
+            byte_count += 2
+            if current:
+                byte_count += len(current) - 1
+            for key in sorted(current, reverse=True):
+                byte_count += _replay_json_scalar_serialized_bytes(key)
+                byte_count += 1
+                work.append(current[key])
+        elif isinstance(current, list):
+            byte_count += 2
+            if current:
+                byte_count += len(current) - 1
+            work.extend(reversed(current))
+        elif type(current) is int:
+            byte_count += _replay_json_integer_serialized_bytes(current)
+        else:
+            byte_count += _replay_json_scalar_serialized_bytes(current)
+    return byte_count
+
+
+def _replay_json_integer_serialized_bytes(value: int) -> int:
+    assert type(value) is int
+    magnitude = abs(value)
+    if magnitude == 0:
+        return 1
+    decimal_digits = (((magnitude.bit_length() - 1) * 30103) // 100000) + 1
+    threshold = 10**decimal_digits
+    while magnitude >= threshold:
+        threshold *= 10
+        decimal_digits += 1
+    while magnitude < threshold // 10:
+        threshold //= 10
+        decimal_digits -= 1
+    return decimal_digits + int(value < 0)
+
+
+def _replay_json_scalar_serialized_bytes(value: object) -> int:
+    serialization_failed = False
+    serialized = ""
+    try:
+        serialized = dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        )
+        encoded = serialized.encode("utf-8")
+    except (OverflowError, TypeError, UnicodeError, ValueError):
+        serialization_failed = True
+        encoded = b""
+    if serialization_failed:
+        raise _ReasoningReplayRetentionError() from None
+    return len(encoded)
+
+
+@dataclass(slots=True, repr=False)
+class _OpenAIReplayOwner:
+    policy: StreamRetentionPolicy
+    _items: list[dict[str, Any]] = field(default_factory=list, repr=False)
+    _ledger: list[_ReplayItemAccounting] = field(
+        default_factory=list,
+        repr=False,
+    )
+    _reasoning_item_count: int = 0
+    _summary_node_count: int = 0
+    _summary_character_count: int = 0
+    _summary_serialized_byte_count: int = 0
+    _attempt_checkpoint: int = 0
+    _attempt_active: bool = False
+    _released: bool = False
+    _release_count: int = 0
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.policy, StreamRetentionPolicy)
+
+    def __repr__(self) -> str:
+        return (
+            "_OpenAIReplayOwner("
+            f"item_count={len(self._items)}, "
+            f"reasoning_item_count={self._reasoning_item_count}, "
+            f"released={self._released})"
+        )
+
+    @property
+    def released(self) -> bool:
+        return self._released
+
+    @property
+    def release_count(self) -> int:
+        return self._release_count
+
+    @property
+    def item_count(self) -> int:
+        return len(self._items)
+
+    @property
+    def counters(self) -> tuple[int, int, int, int]:
+        return (
+            self._reasoning_item_count,
+            self._summary_node_count,
+            self._summary_character_count,
+            self._summary_serialized_byte_count,
+        )
+
+    def replay_items(self) -> tuple[dict[str, Any], ...]:
+        if self._released:
+            return ()
+        items: list[dict[str, Any]] = []
+        for item in self._items:
+            copied = _strict_replay_json_copy(item)
+            assert isinstance(copied, dict)
+            items.append(cast(dict[str, Any], copied))
+        return tuple(items)
+
+    def begin_attempt(self) -> None:
+        if self._released:
+            raise RuntimeError("OpenAI replay owner is released")
+        if self._attempt_active:
+            return
+        self._attempt_checkpoint = len(self._items)
+        self._attempt_active = True
+
+    def admit(self, item: dict[str, Any]) -> bool:
+        if self._released or not self._attempt_active:
+            raise RuntimeError("OpenAI replay owner has no active attempt")
+        normalized = OpenAIStream._response_input_item_payload(item)
+        item_type = normalized.get("type")
+        if item_type == "reasoning":
+            if not OpenAIStream._is_replayable_reasoning_item(normalized):
+                return False
+            accounting = self._reasoning_accounting(normalized)
+        elif item_type == "function_call":
+            accounting = _ReplayItemAccounting()
+        else:
+            return False
+        self._assert_fits(accounting)
+        self._items.append(normalized)
+        self._ledger.append(accounting)
+        self._apply(accounting, direction=1)
+        return True
+
+    def commit_attempt(self) -> None:
+        if self._released or not self._attempt_active:
+            return
+        self._attempt_checkpoint = len(self._items)
+        self._attempt_active = False
+
+    def rollback_attempt(self) -> None:
+        if self._released or not self._attempt_active:
+            return
+        while len(self._items) > self._attempt_checkpoint:
+            self._items.pop()
+            accounting = self._ledger.pop()
+            self._apply(accounting, direction=-1)
+        self._attempt_active = False
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._items.clear()
+        self._ledger.clear()
+        self._reasoning_item_count = 0
+        self._summary_node_count = 0
+        self._summary_character_count = 0
+        self._summary_serialized_byte_count = 0
+        self._attempt_checkpoint = 0
+        self._attempt_active = False
+        self._released = True
+        self._release_count += 1
+
+    @staticmethod
+    def _reasoning_accounting(
+        item: dict[str, Any],
+    ) -> _ReplayItemAccounting:
+        summary_fields = {
+            key: value
+            for key, value in item.items()
+            if key not in {"encrypted_content", "id", "type"}
+        }
+        if not summary_fields:
+            return _ReplayItemAccounting(reasoning_items=1)
+        normalized_summary = _strict_replay_json_copy(summary_fields)
+        assert isinstance(normalized_summary, dict)
+        nodes, characters = _replay_json_accounting(normalized_summary)
+        return _ReplayItemAccounting(
+            reasoning_items=1,
+            summary_nodes=nodes,
+            summary_characters=characters,
+            summary_serialized_bytes=_replay_json_serialized_bytes(
+                normalized_summary
+            ),
+        )
+
+    def _assert_fits(self, accounting: _ReplayItemAccounting) -> None:
+        limits_and_values = (
+            (
+                self.policy.openai_replay_reasoning_item_limit,
+                self._reasoning_item_count + accounting.reasoning_items,
+            ),
+            (
+                self.policy.openai_replay_reasoning_summary_node_limit,
+                self._summary_node_count + accounting.summary_nodes,
+            ),
+            (
+                self.policy.openai_replay_reasoning_summary_character_limit,
+                self._summary_character_count + accounting.summary_characters,
+            ),
+            (
+                self.policy.openai_replay_reasoning_summary_serialized_byte_limit,
+                self._summary_serialized_byte_count
+                + accounting.summary_serialized_bytes,
+            ),
+        )
+        if any(value > limit for limit, value in limits_and_values):
+            raise _ReasoningReplayRetentionError()
+
+    def _apply(
+        self,
+        accounting: _ReplayItemAccounting,
+        *,
+        direction: int,
+    ) -> None:
+        assert direction in {-1, 1}
+        self._reasoning_item_count += direction * accounting.reasoning_items
+        self._summary_node_count += direction * accounting.summary_nodes
+        self._summary_character_count += (
+            direction * accounting.summary_characters
+        )
+        self._summary_serialized_byte_count += (
+            direction * accounting.summary_serialized_bytes
+        )
 
 
 class OpenAIStream(TextGenerationVendorStream):
@@ -105,6 +632,13 @@ class OpenAIStream(TextGenerationVendorStream):
     _attempt_output_item_count: int
     _output_item_rollback: Callable[[int], None] | None
     _reasoning_segments: StreamReasoningSegmentState
+    _replay_owner: _OpenAIReplayOwner | None
+    _replay_owner_retainer: (
+        Callable[[_OpenAIReplayOwner, tuple[str, ...]], None] | None
+    )
+    _replay_owner_releaser: Callable[[_OpenAIReplayOwner], None] | None
+    _replay_owner_terminal_handled: bool
+    _request_has_replay_items: bool
 
     def __init__(
         self,
@@ -113,6 +647,14 @@ class OpenAIStream(TextGenerationVendorStream):
         provider_family: ProviderFamily | str = ProviderFamily.OPENAI,
         output_item_sink: Callable[[dict[str, Any]], None] | None = None,
         output_item_rollback: Callable[[int], None] | None = None,
+        replay_owner: _OpenAIReplayOwner | None = None,
+        replay_owner_retainer: (
+            Callable[[_OpenAIReplayOwner, tuple[str, ...]], None] | None
+        ) = None,
+        replay_owner_releaser: (
+            Callable[[_OpenAIReplayOwner], None] | None
+        ) = None,
+        request_has_replay_items: bool = False,
         stream_factory: (
             Callable[[], Awaitable[AsyncIterator[Any]]] | None
         ) = None,
@@ -137,6 +679,13 @@ class OpenAIStream(TextGenerationVendorStream):
         self._last_text_delta_alias_event_type = None
         self._attempt_output_item_count = 0
         self._reasoning_segments = StreamReasoningSegmentState()
+        self._replay_owner = replay_owner
+        self._replay_owner_retainer = replay_owner_retainer
+        self._replay_owner_releaser = replay_owner_releaser
+        self._replay_owner_terminal_handled = False
+        self._request_has_replay_items = request_has_replay_items or bool(
+            replay_owner is not None and replay_owner.item_count
+        )
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -158,6 +707,52 @@ class OpenAIStream(TextGenerationVendorStream):
 
     async def __anext__(self) -> CanonicalStreamItem:
         return await super().__anext__()
+
+    async def cancel(self) -> None:
+        await self._finish_and_cleanup("cancel")
+
+    async def aclose(self) -> None:
+        await self._finish_and_cleanup("aclose")
+
+    async def _finish_and_cleanup(self, method_name: str) -> None:
+        assert method_name in {"aclose", "cancel"}
+        errors: list[BaseException] = []
+        try:
+            self._finish_replay_owner(succeeded=False)
+        except BaseException as error:
+            errors.append(self._cleanup_boundary_error(error))
+        try:
+            if method_name == "cancel":
+                await super().cancel()
+            else:
+                await super().aclose()
+        except BaseException as error:
+            errors.append(self._cleanup_boundary_error(error))
+        if len(errors) == 1:
+            raise errors[0] from None
+        if errors:
+            raise BaseExceptionGroup(
+                "OpenAI stream cleanup failed",
+                errors,
+            ) from None
+
+    def _cleanup_boundary_error(
+        self,
+        error: BaseException,
+    ) -> BaseException:
+        if not self._request_has_replay_items:
+            return error
+        if isinstance(error, _OpenAIClientClosedError):
+            return _OpenAIClientClosedError()
+        if isinstance(error, _ReasoningReplayRetentionError):
+            return _ReasoningReplayRetentionError()
+        if isinstance(error, _ReplayOwnerAssociationError):
+            return _ReplayOwnerAssociationError()
+        if isinstance(error, _OpenAIProviderRequestError):
+            return _OpenAIProviderRequestError()
+        if isinstance(error, _OpenAICleanupError):
+            return _OpenAICleanupError(error.cleanup_target)
+        return _OpenAICleanupError("stream")
 
     def _cleanup_sources(self) -> tuple[object, ...]:
         return self._stream_sources
@@ -193,69 +788,159 @@ class OpenAIStream(TextGenerationVendorStream):
         )
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
+        private_provider_failure = False
+        private_cleanup_failure = False
         try:
-            attempts = 0
-            while True:
-                retry = False
-                output_seen = False
-                async for event in self._stream:
-                    event_type_value = OpenAIClient._response_field(
-                        event, "type"
-                    )
-                    provider_event_type = (
-                        event_type_value
-                        if isinstance(event_type_value, str)
-                        else None
-                    )
-                    try:
-                        provider_events = self._provider_events_from_event(
-                            event
+            try:
+                attempts = 0
+                while True:
+                    retry = False
+                    output_seen = False
+                    async for event in self._stream:
+                        event_type_value = OpenAIClient._response_field(
+                            event, "type"
                         )
-                    except Exception as exc:
-                        raise StreamProviderAdapterError(
-                            exc,
-                            provider_payload=self._provider_payload(event),
-                            provider_event_type=provider_event_type,
-                        ) from exc
-                    if self._should_retry_stream_failure(
-                        event,
-                        provider_events,
-                        output_seen=output_seen,
-                        attempts=attempts,
-                    ):
-                        retry = True
-                        break
-                    for provider_event in provider_events:
-                        if self._is_model_output_event(provider_event):
-                            output_seen = True
-                        yield provider_event
-                        if (
-                            provider_event.kind
-                            is not StreamItemKind.REASONING_DELTA
+                        provider_event_type = (
+                            event_type_value
+                            if isinstance(event_type_value, str)
+                            else None
+                        )
+                        try:
+                            provider_events = self._provider_events_from_event(
+                                event
+                            )
+                        except _ReasoningReplayRetentionError as exc:
+                            provider_events = (
+                                StreamProviderEvent(
+                                    kind=StreamItemKind.STREAM_ERRORED,
+                                    data={
+                                        "error": {
+                                            "type": "server_error",
+                                            "code": exc.code,
+                                            "message": str(exc),
+                                        }
+                                    },
+                                    provider_event_type=provider_event_type,
+                                ),
+                            )
+                        except Exception as exc:
+                            if self._request_has_replay_items:
+                                provider_events = (
+                                    self._private_replay_provider_failure_event(),
+                                )
+                            else:
+                                raise StreamProviderAdapterError(
+                                    exc,
+                                    provider_payload=self._provider_payload(
+                                        event
+                                    ),
+                                    provider_event_type=provider_event_type,
+                                ) from exc
+                        if self._request_has_replay_items:
+                            self._usage = self._private_replay_usage(
+                                self._usage
+                            )
+                            sanitized_events: list[StreamProviderEvent] = []
+                            for provider_event in provider_events:
+                                sanitized_event = (
+                                    self._sanitize_private_replay_event(
+                                        provider_event
+                                    )
+                                )
+                                if (
+                                    sanitized_event.kind
+                                    is StreamItemKind.USAGE_COMPLETED
+                                    and sanitized_event.usage is None
+                                ):
+                                    continue
+                                sanitized_events.append(sanitized_event)
+                            provider_events = tuple(sanitized_events)
+                        if self._should_retry_stream_failure(
+                            event,
+                            provider_events,
+                            output_seen=output_seen,
+                            attempts=attempts,
                         ):
-                            self._reasoning_segments.complete_segment()
-                if not retry:
-                    break
-                await self._close_current_stream()
-                self._rollback_response_attempt_output_items()
-                self._reset_response_attempt_state()
-                await self._raise_if_retry_interrupted()
-                assert self._stream_factory is not None
-                delay = min(
-                    self._stream_retry_delay_seconds * (2**attempts),
-                    max(
-                        self._stream_retry_delay_seconds,
-                        self._STREAM_RETRY_MAX_DELAY_SECONDS,
-                    ),
+                            retry = True
+                            break
+                        for provider_event in provider_events:
+                            if self._is_model_output_event(provider_event):
+                                output_seen = True
+                            try:
+                                if (
+                                    provider_event.kind
+                                    is StreamItemKind.STREAM_COMPLETED
+                                ):
+                                    self._finish_replay_owner(succeeded=True)
+                                elif provider_event.kind in {
+                                    StreamItemKind.STREAM_CANCELLED,
+                                    StreamItemKind.STREAM_ERRORED,
+                                }:
+                                    self._finish_replay_owner(succeeded=False)
+                            except (
+                                _OpenAIClientClosedError,
+                                _ReasoningReplayRetentionError,
+                                _ReplayOwnerAssociationError,
+                            ) as exc:
+                                yield self._replay_error_event(
+                                    exc,
+                                    provider_event_type,
+                                )
+                                return
+                            yield provider_event
+                            if (
+                                provider_event.kind
+                                is not StreamItemKind.REASONING_DELTA
+                            ):
+                                self._reasoning_segments.complete_segment()
+                    if not retry:
+                        try:
+                            self._finish_replay_owner(succeeded=True)
+                        except (
+                            _OpenAIClientClosedError,
+                            _ReasoningReplayRetentionError,
+                            _ReplayOwnerAssociationError,
+                        ) as exc:
+                            yield self._replay_error_event(exc, None)
+                        break
+                    await self._close_current_stream()
+                    self._rollback_response_attempt_output_items()
+                    self._reset_response_attempt_state()
+                    await self._raise_if_retry_interrupted()
+                    assert self._stream_factory is not None
+                    delay = min(
+                        self._stream_retry_delay_seconds * (2**attempts),
+                        max(
+                            self._stream_retry_delay_seconds,
+                            self._STREAM_RETRY_MAX_DELAY_SECONDS,
+                        ),
+                    )
+                    if delay > 0:
+                        await sleep(delay)
+                    await self._raise_if_retry_interrupted()
+                    attempts += 1
+                    stream = await self._stream_factory()
+                    await self._raise_if_retry_interrupted(stream)
+                    self._stream = stream
+                    self._stream_sources = (self._stream,)
+            except Exception as error:
+                if not self._request_has_replay_items:
+                    raise
+                private_provider_failure = True
+                private_cleanup_failure = isinstance(
+                    error,
+                    _OpenAICleanupError,
                 )
-                if delay > 0:
-                    await sleep(delay)
-                await self._raise_if_retry_interrupted()
-                attempts += 1
-                stream = await self._stream_factory()
-                await self._raise_if_retry_interrupted(stream)
-                self._stream = stream
-                self._stream_sources = (self._stream,)
+            if private_provider_failure:
+                cleanup_failed = False
+                try:
+                    await self.aclose()
+                except BaseException:
+                    cleanup_failed = True
+                yield self._private_replay_provider_failure_event(
+                    cleanup_failed=(cleanup_failed or private_cleanup_failure)
+                )
+                return
         finally:
             await self.aclose()
 
@@ -271,6 +956,10 @@ class OpenAIStream(TextGenerationVendorStream):
             self._stream_factory is None
             or attempts >= self._stream_retries
             or output_seen
+            or any(
+                self._is_model_output_event(provider_event)
+                for provider_event in provider_events
+            )
         ):
             return False
         if OpenAIClient._response_field(event, "type") != "response.failed":
@@ -295,10 +984,14 @@ class OpenAIStream(TextGenerationVendorStream):
     ) -> bool:
         if response_error is None and event_error is None:
             return True
-        return any(
-            OpenAIClient._response_field(error, "code") == "response_failed"
+        present_errors = tuple(
+            error
             for error in (response_error, event_error)
             if error is not None
+        )
+        return bool(present_errors) and all(
+            OpenAIClient._response_field(error, "code") == "response_failed"
+            for error in present_errors
         )
 
     @staticmethod
@@ -346,8 +1039,12 @@ class OpenAIStream(TextGenerationVendorStream):
         self._last_text_delta_alias_event_type = None
         self._attempt_output_item_count = 0
         self._reasoning_segments = StreamReasoningSegmentState()
+        if self._replay_owner is not None and not self._replay_owner.released:
+            self._replay_owner.begin_attempt()
 
     def _rollback_response_attempt_output_items(self) -> None:
+        if self._replay_owner is not None and not self._replay_owner.released:
+            self._replay_owner.rollback_attempt()
         if self._attempt_output_item_count <= 0:
             return
         rollback = self._output_item_rollback
@@ -355,8 +1052,265 @@ class OpenAIStream(TextGenerationVendorStream):
             return
         rollback(self._attempt_output_item_count)
 
+    def _finish_replay_owner(self, *, succeeded: bool) -> None:
+        if self._replay_owner_terminal_handled:
+            return
+        owner = self._replay_owner
+        if owner is None:
+            self._replay_owner_terminal_handled = True
+            return
+        if not succeeded:
+            self._replay_owner_terminal_handled = True
+            self._release_replay_owner(owner)
+            return
+        owner.commit_attempt()
+        call_ids = tuple(sorted(self._canonical_done_tool_call_ids))
+        if not call_ids or self._replay_owner_retainer is None:
+            self._replay_owner_terminal_handled = True
+            self._release_replay_owner(owner)
+            return
+        self._replay_owner_retainer(owner, call_ids)
+        self._replay_owner_terminal_handled = True
+
+    @staticmethod
+    def _private_replay_provider_failure_event(
+        *,
+        cleanup_failed: bool = False,
+    ) -> StreamProviderEvent:
+        data: dict[str, object] = {
+            "error": {
+                "type": "server_error",
+                "code": _OpenAIProviderRequestError.code,
+                "status": "failed",
+                "message": "OpenAI provider request failed",
+            }
+        }
+        if cleanup_failed:
+            data["cleanup_error"] = {
+                "type": "server_error",
+                "code": _OpenAICleanupError.code,
+                "message": "OpenAI stream cleanup failed",
+            }
+        return StreamProviderEvent(
+            kind=StreamItemKind.STREAM_ERRORED,
+            data=cast(LooseJsonValue, data),
+        )
+
+    @staticmethod
+    def _sanitize_private_replay_event(
+        event: StreamProviderEvent,
+    ) -> StreamProviderEvent:
+        if event.kind is StreamItemKind.STREAM_CANCELLED:
+            data: LooseJsonValue = {
+                "error": {
+                    "type": "server_error",
+                    "code": _OpenAIProviderRequestError.code,
+                    "status": "cancelled",
+                    "message": "OpenAI provider request cancelled",
+                }
+            }
+        elif event.kind is StreamItemKind.STREAM_ERRORED:
+            data = OpenAIStream._private_replay_provider_failure_event().data
+        else:
+            data = event.data
+        safe_event_type = (
+            event.provider_event_type
+            if event.provider_event_type
+            in {
+                *OpenAIStream._ERROR_EVENTS,
+                *OpenAIStream._CANCELLED_EVENTS,
+                *OpenAIStream._INCOMPLETE_EVENTS,
+                *OpenAIStream._TEXT_DELTA_EVENTS,
+                *OpenAIStream._TEXT_DONE_EVENTS,
+                *OpenAIStream._REASONING_DELTA_EVENTS,
+                *OpenAIStream._REASONING_DONE_EVENTS,
+                *OpenAIStream._TOOL_ARGUMENT_DELTA_EVENTS,
+                *OpenAIStream._TOOL_ARGUMENT_DONE_EVENTS,
+                "response.completed",
+                "response.output_item.added",
+                "response.output_item.done",
+            }
+            else None
+        )
+        return StreamProviderEvent(
+            kind=event.kind,
+            text_delta=event.text_delta,
+            correlation=event.correlation,
+            data=data,
+            usage=OpenAIStream._private_replay_usage(event.usage),
+            visibility=event.visibility,
+            reasoning_representation=event.reasoning_representation,
+            segment_instance_ordinal=event.segment_instance_ordinal,
+            metadata=event.metadata,
+            provider_payload=None,
+            provider_event_type=safe_event_type,
+        )
+
+    @staticmethod
+    def _private_replay_usage(
+        usage: object | None,
+    ) -> LooseJsonValue | None:
+        if usage is None:
+            return None
+        if type(usage) in {
+            bool,
+            bytearray,
+            bytes,
+            float,
+            int,
+            list,
+            str,
+            tuple,
+        }:
+            return None
+
+        def field(value: object, name: str) -> object | None:
+            access_failed = False
+            result: object | None = None
+            try:
+                result = OpenAIClient._response_field(value, name)
+            except BaseException:
+                access_failed = True
+            if access_failed:
+                raise _ReasoningReplayRetentionError() from None
+            return result
+
+        def counter(value: object) -> int | float | None:
+            if type(value) is int:
+                normalized: int | float = value
+            elif type(value) is float:
+                normalized = value
+            else:
+                return None
+            if normalized < 0 or (
+                isinstance(normalized, float) and not isfinite(normalized)
+            ):
+                return None
+            return normalized
+
+        sanitized: dict[str, object] = {}
+        try:
+            for name in (
+                "cacheCreationInputTokens",
+                "cacheReadInputTokens",
+                "cacheWriteInputTokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+                "cache_creation_input_token_count",
+                "cache_write_input_tokens",
+                "cachedContentTokenCount",
+                "cached_input_tokens",
+                "cached_input_token_count",
+                "cached_content_token_count",
+                "candidatesTokenCount",
+                "candidates_token_count",
+                "completion_tokens",
+                "inputTokens",
+                "input_tokens",
+                "input_token_count",
+                "outputTokens",
+                "output_tokens",
+                "output_token_count",
+                "promptTokenCount",
+                "prompt_tokens",
+                "prompt_token_count",
+                "reasoningTokens",
+                "reasoning_tokens",
+                "reasoning_token_count",
+                "thoughtsTokenCount",
+                "thoughts_token_count",
+                "totalTokenCount",
+                "totalTokens",
+                "total_tokens",
+                "total_token_count",
+            ):
+                value = field(usage, name)
+                if value is None:
+                    continue
+                normalized = counter(value)
+                if normalized is None:
+                    return None
+                sanitized[name] = normalized
+            for detail_name, counter_names in (
+                (
+                    "input_tokens_details",
+                    ("audio_tokens", "cached_tokens"),
+                ),
+                (
+                    "prompt_tokens_details",
+                    ("cached_tokens",),
+                ),
+                (
+                    "output_tokens_details",
+                    (
+                        "accepted_prediction_tokens",
+                        "audio_tokens",
+                        "reasoning_tokens",
+                        "rejected_prediction_tokens",
+                        "thinking_tokens",
+                    ),
+                ),
+                (
+                    "completion_tokens_details",
+                    ("reasoning_tokens",),
+                ),
+            ):
+                details = field(usage, detail_name)
+                if details is None:
+                    continue
+                sanitized_details: dict[str, object] = {}
+                for name in counter_names:
+                    value = field(details, name)
+                    if value is None:
+                        continue
+                    normalized = counter(value)
+                    if normalized is None:
+                        return None
+                    sanitized_details[name] = normalized
+                sanitized[detail_name] = sanitized_details
+        except _ReasoningReplayRetentionError:
+            return None
+        return cast(LooseJsonValue, sanitized)
+
+    @staticmethod
+    def _replay_error_event(
+        error: (
+            _OpenAIClientClosedError
+            | _ReasoningReplayRetentionError
+            | _ReplayOwnerAssociationError
+        ),
+        provider_event_type: str | None,
+    ) -> StreamProviderEvent:
+        return StreamProviderEvent(
+            kind=StreamItemKind.STREAM_ERRORED,
+            data={
+                "error": {
+                    "type": "server_error",
+                    "code": error.code,
+                    "message": str(error),
+                }
+            },
+            provider_event_type=provider_event_type,
+        )
+
+    def _release_replay_owner(self, owner: _OpenAIReplayOwner) -> None:
+        if self._replay_owner_releaser is None:
+            owner.release()
+            return
+        self._replay_owner_releaser(owner)
+
     async def _close_current_stream(self) -> None:
-        await self._call_stream_source_cleanup(self._stream, "aclose")
+        cleanup_failed = False
+        try:
+            await self._call_stream_source_cleanup(self._stream, "aclose")
+        except BaseException:
+            if not self._request_has_replay_items:
+                raise
+            cleanup_failed = True
+        finally:
+            self._stream_sources = ()
+        if cleanup_failed:
+            raise _OpenAICleanupError("stream") from None
 
     async def _raise_if_retry_interrupted(
         self,
@@ -582,10 +1536,10 @@ class OpenAIStream(TextGenerationVendorStream):
         )
 
     def _record_done_output_item(self, event: object) -> None:
-        if self._output_item_sink is None:
+        if self._output_item_sink is None and self._replay_owner is None:
             return
         item = OpenAIClient._response_field(event, "item")
-        payload = self._provider_payload(item)
+        payload = self._raw_provider_payload(item)
         if not isinstance(payload, dict):
             return
         payload = self._response_input_item_payload(payload)
@@ -595,8 +1549,12 @@ class OpenAIStream(TextGenerationVendorStream):
                 return
         elif item_type != "function_call":
             return
-        self._output_item_sink(cast(dict[str, Any], payload))
-        self._attempt_output_item_count += 1
+        if self._replay_owner is not None and not self._replay_owner.released:
+            if self._replay_owner.admit(payload):
+                self._request_has_replay_items = True
+        if self._output_item_sink is not None:
+            self._output_item_sink(payload)
+            self._attempt_output_item_count += 1
 
     @staticmethod
     def _is_replayable_reasoning_item(
@@ -605,30 +1563,13 @@ class OpenAIStream(TextGenerationVendorStream):
         encrypted_content = payload.get("encrypted_content")
         return isinstance(encrypted_content, str) and bool(encrypted_content)
 
-    @classmethod
+    @staticmethod
     def _response_input_item_payload(
-        cls,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        cleaned: dict[str, Any] = {}
-        item_type = payload.get("type")
-        for key, value in payload.items():
-            if key == "status" or value is None:
-                continue
-            if key == "id" and item_type == "function_call":
-                continue
-            if item_type == "reasoning" and key == "content" and value == []:
-                continue
-            cleaned[key] = cls._response_input_item_value(value)
-        return cleaned
-
-    @classmethod
-    def _response_input_item_value(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            return cls._response_input_item_payload(value)
-        if isinstance(value, list):
-            return [cls._response_input_item_value(item) for item in value]
-        return value
+        normalized = _strict_replay_json_copy(payload)
+        assert isinstance(normalized, dict)
+        return _clean_replay_input_payload(normalized)
 
     def _incomplete_events(
         self,
@@ -1131,12 +2072,13 @@ class OpenAIStream(TextGenerationVendorStream):
 
     @staticmethod
     def _response_error_data(error: object) -> LooseJsonValue:
-        if isinstance(error, Mapping):
-            return {"error": dict(error)}
+        payload = OpenAIStream._provider_payload(error)
+        if isinstance(payload, dict):
+            return {"error": payload}
         message = OpenAIClient._response_field(error, "message")
         if isinstance(message, str):
             return {"error": {"message": message}}
-        return {"error": {"message": str(error)}}
+        return {"error": {"message": "provider error"}}
 
     @staticmethod
     def _response_failure_data(response: object) -> LooseJsonValue:
@@ -1187,13 +2129,32 @@ class OpenAIStream(TextGenerationVendorStream):
 
     @staticmethod
     def _provider_payload(event: object) -> LooseJsonValue | None:
+        try:
+            payload = OpenAIStream._raw_provider_payload(event)
+            if payload is None:
+                return None
+            return _sanitize_provider_json_payload(payload)
+        except _ReasoningReplayRetentionError:
+            return None
+
+    @staticmethod
+    def _raw_provider_payload(event: object) -> dict[str, Any] | None:
         if isinstance(event, Mapping):
-            return dict(event)
+            try:
+                return dict(event)
+            except Exception:
+                raise _ReasoningReplayRetentionError() from None
         model_dump = getattr(event, "model_dump", None)
         if callable(model_dump):
-            payload = model_dump(mode="json")
+            try:
+                payload = model_dump(mode="json")
+            except Exception:
+                raise _ReasoningReplayRetentionError() from None
             if isinstance(payload, Mapping):
-                return dict(payload)
+                try:
+                    return dict(payload)
+                except Exception:
+                    raise _ReasoningReplayRetentionError() from None
         return None
 
 
@@ -1206,7 +2167,14 @@ class OpenAIClient(TextGenerationVendor):
     _is_azure: bool
     _stream_response_failed_retries: int
     _stream_response_failed_retry_delay_seconds: float
-    _stateless_response_items: list[dict[str, Any]]
+    _stream_retention_policy: StreamRetentionPolicy
+    _replay_owners_by_call_id: dict[str, _OpenAIReplayOwner]
+    _active_replay_owners: dict[int, _OpenAIReplayOwner]
+    _active_replay_streams: dict[int, OpenAIStream]
+    _active_replay_call_ids: dict[str, _OpenAIReplayOwner]
+    _ambiguous_replay_call_ids: dict[str, None]
+    _replay_association_poisoned: bool
+    _closed: bool
     _reasoning_summary_provider = "openai"
 
     def __init__(
@@ -1223,6 +2191,7 @@ class OpenAIClient(TextGenerationVendor):
             _STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS
         ),
         timeout_seconds: int | float | None = None,
+        stream_retention_policy: StreamRetentionPolicy | None = None,
     ):
         global Omit
 
@@ -1240,7 +2209,17 @@ class OpenAIClient(TextGenerationVendor):
         self._extra_query = self._azure_extra_query(
             base_url, azure_api_version
         )
-        self._stateless_response_items = []
+        self._stream_retention_policy = (
+            stream_retention_policy or StreamRetentionPolicy()
+        )
+        assert isinstance(self._stream_retention_policy, StreamRetentionPolicy)
+        self._replay_owners_by_call_id = {}
+        self._active_replay_owners = {}
+        self._active_replay_streams = {}
+        self._active_replay_call_ids = {}
+        self._ambiguous_replay_call_ids = {}
+        self._replay_association_poisoned = False
+        self._closed = False
         if self._is_azure and api_key is None:
             raise AssertionError(
                 "Azure OpenAI Responses requires api-key authentication"
@@ -1279,125 +2258,213 @@ class OpenAIClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
+        self._raise_if_closed()
         self._validate_reasoning_summary_request(settings)
-        template_messages = self._template_messages(messages, tool=tool)
-        if not self._has_function_call_context(template_messages):
-            self._stateless_response_items.clear()
-        use_reasoning_profile = self._uses_reasoning_profile(model_id)
-        kwargs: dict[str, Any] = {
-            "extra_headers": {
-                "X-Title": "Avalan",
-                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
-            },
-            "model": model_id or self._DEFAULT_MODEL_ID,
-            "input": template_messages,
-            "store": False,
-            "stream": use_async_generator,
-        }
-        request_client = self._client
-        request_timeout = timeout
-        request_max_retries: int | None = None
-        include_reasoning_encrypted_content = False
-        if instructions is not None:
-            assert isinstance(
-                instructions, str
-            ), "OpenAI Responses instructions must be a string"
-            kwargs["instructions"] = instructions
-        if self._extra_query is not None:
-            kwargs["extra_query"] = self._extra_query
-        if settings:
-            if settings.max_new_tokens is not None:
-                kwargs["max_output_tokens"] = settings.max_new_tokens
-            if settings.temperature is not None and not use_reasoning_profile:
-                kwargs["temperature"] = settings.temperature
-            if settings.top_p is not None and not use_reasoning_profile:
-                kwargs["top_p"] = settings.top_p
-            text = OpenAIClient._text_config(settings)
-            if text:
-                kwargs["text"] = text
-            reasoning = OpenAIClient._reasoning_config(settings)
-            if reasoning:
-                kwargs["reasoning"] = reasoning
-                include_reasoning_encrypted_content = True
-            prompt_cache_retention = (
-                OpenAIClient._prompt_cache_retention_config(settings)
+        replay_owner = self._replay_owner_for_messages(messages)
+        replay_owner.begin_attempt()
+        request_has_replay_items = replay_owner.item_count > 0
+        try:
+            template_messages = self._template_messages(
+                messages,
+                tool=tool,
+                replay_items=replay_owner.replay_items(),
             )
-            if prompt_cache_retention is not None:
-                kwargs["prompt_cache_retention"] = prompt_cache_retention
-            if settings.openai_max_retries is not None:
-                request_max_retries = OpenAIClient._normalize_max_retries(
-                    settings.openai_max_retries
+            use_reasoning_profile = self._uses_reasoning_profile(model_id)
+            kwargs: dict[str, Any] = {
+                "extra_headers": {
+                    "X-Title": "Avalan",
+                    "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+                },
+                "model": model_id or self._DEFAULT_MODEL_ID,
+                "input": template_messages,
+                "store": False,
+                "stream": use_async_generator,
+            }
+            request_client = self._client
+            request_timeout = timeout
+            request_max_retries: int | None = None
+            include_values: list[str] = []
+            if instructions is not None:
+                assert isinstance(
+                    instructions, str
+                ), "OpenAI Responses instructions must be a string"
+                kwargs["instructions"] = instructions
+            if self._extra_query is not None:
+                kwargs["extra_query"] = self._extra_query
+            if settings:
+                if settings.max_new_tokens is not None:
+                    kwargs["max_output_tokens"] = settings.max_new_tokens
+                if (
+                    settings.temperature is not None
+                    and not use_reasoning_profile
+                ):
+                    kwargs["temperature"] = settings.temperature
+                if settings.top_p is not None and not use_reasoning_profile:
+                    kwargs["top_p"] = settings.top_p
+                text = OpenAIClient._text_config(settings)
+                if text:
+                    kwargs["text"] = text
+                reasoning = OpenAIClient._reasoning_config(settings)
+                if reasoning:
+                    kwargs["reasoning"] = reasoning
+                    include_values.append("reasoning.encrypted_content")
+                prompt_cache_retention = (
+                    OpenAIClient._prompt_cache_retention_config(settings)
                 )
-            if settings.openai_timeout_seconds is not None:
-                request_timeout = OpenAIClient._normalize_timeout_seconds(
-                    settings.openai_timeout_seconds
-                )
-        if request_timeout is not None:
-            kwargs["timeout"] = request_timeout
-        if request_max_retries is not None:
-            request_client = self._client.with_options(
-                max_retries=request_max_retries
-            )
-        stream_response_failed_retries = OpenAIClient._response_failed_retries(
-            settings,
-            default=self._stream_response_failed_retries,
-        )
-        stream_response_failed_retry_delay_seconds = (
-            OpenAIClient._response_failed_retry_delay_seconds(
-                settings,
-                default=(self._stream_response_failed_retry_delay_seconds),
-            )
-        )
-        if tool:
-            schemas = OpenAIClient._tool_schemas(tool)
-            if schemas:
-                kwargs["tools"] = schemas
-                if use_reasoning_profile:
-                    include_reasoning_encrypted_content = True
-                if settings and settings.tool_choice is not None:
-                    kwargs["tool_choice"] = OpenAIClient._tool_choice(
-                        settings.tool_choice,
-                        schemas,
-                        tool=tool,
+                if prompt_cache_retention is not None:
+                    kwargs["prompt_cache_retention"] = prompt_cache_retention
+                if settings.openai_max_retries is not None:
+                    request_max_retries = OpenAIClient._normalize_max_retries(
+                        settings.openai_max_retries
                     )
-        if include_reasoning_encrypted_content:
-            kwargs["include"] = ["reasoning.encrypted_content"]
-
-        async def create_response() -> Any:
-            return await request_client.responses.create(**kwargs)
-
-        async def stream_factory() -> AsyncIterator[Any]:
-            return cast(AsyncIterator[Any], await create_response())
-
-        client_stream = await create_response()
-
-        if use_async_generator:
-            stream_kwargs: dict[str, Any] = {}
-            if isinstance(tool, ToolManager):
-                stream_kwargs["tool"] = tool
-            return OpenAIStream(
-                stream=cast(AsyncIterator[Any], client_stream),
-                provider_family=self._usage_provider_family.value,
-                output_item_sink=self._record_stateless_response_item,
-                output_item_rollback=(self._rollback_stateless_response_items),
-                stream_factory=stream_factory,
-                stream_retry_delay_seconds=(
-                    stream_response_failed_retry_delay_seconds
-                ),
-                stream_retries=stream_response_failed_retries,
-                **stream_kwargs,
+                if settings.openai_timeout_seconds is not None:
+                    request_timeout = OpenAIClient._normalize_timeout_seconds(
+                        settings.openai_timeout_seconds
+                    )
+            if request_timeout is not None:
+                kwargs["timeout"] = request_timeout
+            if request_max_retries is not None:
+                request_client = self._client.with_options(
+                    max_retries=request_max_retries
+                )
+            stream_response_failed_retries = (
+                OpenAIClient._response_failed_retries(
+                    settings,
+                    default=self._stream_response_failed_retries,
+                )
             )
+            stream_response_failed_retry_delay_seconds = (
+                OpenAIClient._response_failed_retry_delay_seconds(
+                    settings,
+                    default=(self._stream_response_failed_retry_delay_seconds),
+                )
+            )
+            if tool:
+                schemas = OpenAIClient._tool_schemas(tool)
+                if schemas:
+                    kwargs["tools"] = schemas
+                    if (
+                        use_reasoning_profile
+                        and "reasoning.encrypted_content" not in include_values
+                    ):
+                        include_values.append("reasoning.encrypted_content")
+                    if settings and settings.tool_choice is not None:
+                        kwargs["tool_choice"] = OpenAIClient._tool_choice(
+                            settings.tool_choice,
+                            schemas,
+                            tool=tool,
+                        )
+            if include_values:
+                kwargs["include"] = include_values
+            normalized_request_kwargs = _strict_replay_json_copy(kwargs)
+            assert isinstance(normalized_request_kwargs, dict)
+            request_kwargs = cast(dict[str, Any], normalized_request_kwargs)
 
-        content = OpenAIClient._non_stream_response_content(
-            client_stream,
-            tool=tool,
-            provider_family=self._usage_provider_family,
-        )
-        return TextGenerationSingleStream(
-            content,
-            provider_family=self._usage_provider_family,
-            usage=OpenAIClient._response_field(client_stream, "usage"),
-        )
+            async def create_response() -> Any:
+                self._raise_if_closed()
+                attempt_kwargs = _strict_replay_json_copy(request_kwargs)
+                assert isinstance(attempt_kwargs, dict)
+                provider_request_failed = False
+                provider_request_cancelled = False
+                created_response: Any = None
+                try:
+                    created_response = await request_client.responses.create(
+                        **cast(dict[str, Any], attempt_kwargs)
+                    )
+                except CancelledError:
+                    if not request_has_replay_items:
+                        raise
+                    provider_request_cancelled = True
+                except BaseException:
+                    if not request_has_replay_items:
+                        raise
+                    provider_request_failed = True
+                if provider_request_failed:
+                    raise _OpenAIProviderRequestError() from None
+                if provider_request_cancelled:
+                    raise CancelledError() from None
+                if getattr(self, "_closed", False):
+                    cleanup_failed = False
+                    try:
+                        await OpenAIStream._call_stream_source_cleanup(
+                            created_response,
+                            "aclose",
+                        )
+                    except BaseException:
+                        cleanup_failed = True
+                    if cleanup_failed:
+                        raise BaseExceptionGroup(
+                            "OpenAI response cleanup failed",
+                            [
+                                _OpenAIClientClosedError(),
+                                _OpenAICleanupError("response"),
+                            ],
+                        ) from None
+                    raise _OpenAIClientClosedError()
+                return created_response
+
+            async def stream_factory() -> AsyncIterator[Any]:
+                return cast(AsyncIterator[Any], await create_response())
+
+            client_stream = await create_response()
+            if use_async_generator:
+                stream_kwargs: dict[str, Any] = {}
+                if isinstance(tool, ToolManager):
+                    stream_kwargs["tool"] = tool
+                if request_has_replay_items:
+                    stream_kwargs["request_has_replay_items"] = True
+                response_stream = OpenAIStream(
+                    stream=cast(AsyncIterator[Any], client_stream),
+                    provider_family=self._usage_provider_family.value,
+                    replay_owner=replay_owner,
+                    replay_owner_retainer=self._retain_replay_owner,
+                    replay_owner_releaser=self._discard_replay_owner,
+                    stream_factory=stream_factory,
+                    stream_retry_delay_seconds=(
+                        stream_response_failed_retry_delay_seconds
+                    ),
+                    stream_retries=stream_response_failed_retries,
+                    **stream_kwargs,
+                )
+                self._register_active_replay_stream(
+                    replay_owner,
+                    response_stream,
+                )
+                return response_stream
+
+            non_stream_adapter_failed = False
+            response: TextGenerationSingleStream | None = None
+            try:
+                content = OpenAIClient._non_stream_response_content(
+                    client_stream,
+                    tool=tool,
+                    provider_family=self._usage_provider_family,
+                )
+                response_usage = OpenAIClient._response_field(
+                    client_stream,
+                    "usage",
+                )
+                if request_has_replay_items:
+                    response_usage = OpenAIStream._private_replay_usage(
+                        response_usage
+                    )
+                response = TextGenerationSingleStream(
+                    content,
+                    provider_family=self._usage_provider_family,
+                    usage=response_usage,
+                )
+            except BaseException:
+                if not request_has_replay_items:
+                    raise
+                non_stream_adapter_failed = True
+            if non_stream_adapter_failed:
+                raise _OpenAIProviderRequestError() from None
+            assert response is not None
+        except BaseException:
+            self._discard_replay_owner(replay_owner)
+            raise
+        self._discard_replay_owner(replay_owner)
+        return response
 
     @property
     def _usage_provider_family(self) -> ProviderFamily:
@@ -1416,6 +2483,60 @@ class OpenAIClient(TextGenerationVendor):
         if self._is_azure:
             return "azure_openai"
         return "openai"
+
+    async def aclose(self) -> None:
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        errors: list[BaseException] = []
+        streams = tuple(self._active_replay_stream_registry().values())
+        for stream in streams:
+            try:
+                await stream.aclose()
+            except BaseException:
+                errors.append(_OpenAICleanupError("stream"))
+        owners = [
+            *self._active_replay_owner_registry().values(),
+            *self._replay_owner_registry().values(),
+        ]
+        released_owner_ids: set[int] = set()
+        for owner in owners:
+            owner_id = id(owner)
+            if owner_id in released_owner_ids:
+                continue
+            released_owner_ids.add(owner_id)
+            owner.release()
+        self._active_replay_owner_registry().clear()
+        self._active_replay_stream_registry().clear()
+        self._active_replay_call_id_registry().clear()
+        self._replay_owner_registry().clear()
+        self._ambiguous_replay_ids().clear()
+        self._replay_association_poisoned = False
+        close = getattr(self._client, "close", None)
+        if close is None:
+            close = getattr(self._client, "aclose", None)
+        if close is not None:
+            assert callable(close)
+            try:
+                result = close()
+                if isawaitable(result):
+                    awaited_result = await cast(Awaitable[object], result)
+                    assert awaited_result is None
+                else:
+                    assert result is None
+            except BaseException:
+                errors.append(_OpenAICleanupError("client"))
+        if len(errors) == 1:
+            raise errors[0] from None
+        if errors:
+            raise BaseExceptionGroup(
+                "OpenAI client cleanup failed",
+                errors,
+            ) from None
+
+    def _raise_if_closed(self) -> None:
+        if getattr(self, "_closed", False):
+            raise _OpenAIClientClosedError()
 
     @staticmethod
     def _response_failed_retries(
@@ -1505,11 +2626,270 @@ class OpenAIClient(TextGenerationVendor):
             provider_options["openai_timeout_seconds"]
         )
 
+    def _replay_owner_for_messages(
+        self,
+        messages: list[Message],
+    ) -> _OpenAIReplayOwner:
+        self._raise_if_closed()
+        registry = self._replay_owner_registry()
+        call_ids = self._tool_result_call_ids(messages)
+        if call_ids and self._replay_association_poisoned:
+            raise _ReplayOwnerAssociationError()
+        ambiguous_call_ids = self._ambiguous_replay_ids()
+        ambiguous_matches = [
+            call_id for call_id in call_ids if call_id in ambiguous_call_ids
+        ]
+        if ambiguous_matches:
+            raise _ReplayOwnerAssociationError()
+        active_registry = self._active_replay_call_id_registry()
+        active_matches: list[_OpenAIReplayOwner] = []
+        for call_id in call_ids:
+            owner = active_registry.get(call_id)
+            if owner is not None and all(
+                existing is not owner for existing in active_matches
+            ):
+                active_matches.append(owner)
+        if active_matches:
+            ambiguity_call_ids = self._ambiguity_call_ids(
+                call_ids,
+                active_matches,
+            )
+            for owner in active_matches:
+                self._dissociate_replay_owner(owner)
+                owner.release()
+            for call_id in ambiguity_call_ids:
+                self._record_ambiguous_replay_call_id(call_id)
+            raise _ReplayOwnerAssociationError()
+        matching_owners: list[_OpenAIReplayOwner] = []
+        for call_id in call_ids:
+            owner = registry.get(call_id)
+            if owner is not None and all(
+                existing is not owner for existing in matching_owners
+            ):
+                matching_owners.append(owner)
+        if len(matching_owners) > 1:
+            ambiguity_call_ids = self._ambiguity_call_ids(
+                call_ids,
+                matching_owners,
+            )
+            for owner in matching_owners:
+                self._discard_replay_owner(owner)
+            for call_id in ambiguity_call_ids:
+                self._record_ambiguous_replay_call_id(call_id)
+            raise _ReplayOwnerAssociationError()
+        if matching_owners:
+            owner = matching_owners[0]
+            owner_call_ids = tuple(
+                call_id
+                for call_id, registered_owner in registry.items()
+                if registered_owner is owner
+            )
+            try:
+                self._activate_replay_owner(owner)
+            except BaseException:
+                self._dissociate_replay_owner(owner)
+                raise
+            for call_id in owner_call_ids:
+                del registry[call_id]
+                active_registry[call_id] = owner
+            return owner
+        owner = _OpenAIReplayOwner(self._stream_retention_policy)
+        self._activate_replay_owner(owner)
+        return owner
+
+    def _replay_owner_registry(self) -> dict[str, _OpenAIReplayOwner]:
+        return self._replay_owners_by_call_id
+
+    def _active_replay_owner_registry(
+        self,
+    ) -> dict[int, _OpenAIReplayOwner]:
+        return self._active_replay_owners
+
+    def _active_replay_stream_registry(self) -> dict[int, OpenAIStream]:
+        return self._active_replay_streams
+
+    def _active_replay_call_id_registry(
+        self,
+    ) -> dict[str, _OpenAIReplayOwner]:
+        return self._active_replay_call_ids
+
+    def _register_active_replay_stream(
+        self,
+        owner: _OpenAIReplayOwner,
+        stream: OpenAIStream,
+    ) -> None:
+        assert self._active_replay_owner_registry().get(id(owner)) is owner
+        self._active_replay_stream_registry()[id(owner)] = stream
+
+    def _activate_replay_owner(self, owner: _OpenAIReplayOwner) -> None:
+        registry = self._active_replay_owner_registry()
+        owner_id = id(owner)
+        assert owner_id not in registry
+        limit = max(1, self._stream_retention_policy.replay_history_item_limit)
+        if len(registry) >= limit:
+            owner.release()
+            raise _ReasoningReplayRetentionError()
+        registry[owner_id] = owner
+
+    def _deactivate_replay_owner(self, owner: _OpenAIReplayOwner) -> None:
+        self._active_replay_owner_registry().pop(id(owner), None)
+        self._active_replay_stream_registry().pop(id(owner), None)
+
+    def _ambiguous_replay_ids(self) -> dict[str, None]:
+        return self._ambiguous_replay_call_ids
+
+    def _record_ambiguous_replay_call_id(self, call_id: str) -> None:
+        call_ids = self._ambiguous_replay_ids()
+        limit = max(
+            1,
+            self._stream_retention_policy.replay_history_item_limit,
+        )
+        if call_id in call_ids:
+            return
+        if len(call_ids) >= limit:
+            self._replay_association_poisoned = True
+            return
+        call_ids[call_id] = None
+
+    @staticmethod
+    def _tool_result_call_ids(messages: list[Message]) -> tuple[str, ...]:
+        call_ids: list[str] = []
+        for message in messages:
+            if message.role != MessageRole.TOOL:
+                continue
+            outcome = (
+                message.tool_call_result
+                or message.tool_call_error
+                or message.tool_call_diagnostic
+            )
+            if isinstance(outcome, ToolCallDiagnostic):
+                call_id_value = outcome.call_id
+            else:
+                call = getattr(outcome, "call", None)
+                call_id_value = getattr(call, "id", None)
+            if call_id_value is None:
+                continue
+            call_id = str(call_id_value)
+            if call_id and call_id not in call_ids:
+                call_ids.append(call_id)
+        return tuple(call_ids)
+
+    def _retain_replay_owner(
+        self,
+        owner: _OpenAIReplayOwner,
+        call_ids: tuple[str, ...],
+    ) -> None:
+        assert isinstance(owner, _OpenAIReplayOwner)
+        assert call_ids
+        assert not owner.released
+        if getattr(self, "_closed", False):
+            self._dissociate_replay_owner(owner)
+            owner.release()
+            raise _OpenAIClientClosedError()
+        if self._replay_association_poisoned:
+            self._dissociate_replay_owner(owner)
+            owner.release()
+            raise _ReplayOwnerAssociationError()
+        registry = self._replay_owner_registry()
+        active_registry = self._active_replay_call_id_registry()
+        ambiguous_call_ids = self._ambiguous_replay_ids()
+        retained_collisions = [
+            registry[call_id]
+            for call_id in call_ids
+            if call_id in registry and registry[call_id] is not owner
+        ]
+        active_collisions = [
+            active_registry[call_id]
+            for call_id in call_ids
+            if call_id in active_registry
+            and active_registry[call_id] is not owner
+        ]
+        if (
+            retained_collisions
+            or active_collisions
+            or any(call_id in ambiguous_call_ids for call_id in call_ids)
+        ):
+            ambiguity_call_ids = self._ambiguity_call_ids(
+                call_ids,
+                [owner, *retained_collisions, *active_collisions],
+            )
+            colliding_owner_ids: set[int] = set()
+            for colliding_owner in retained_collisions:
+                if id(colliding_owner) in colliding_owner_ids:
+                    continue
+                colliding_owner_ids.add(id(colliding_owner))
+                self._discard_replay_owner(colliding_owner)
+            for colliding_owner in active_collisions:
+                if id(colliding_owner) in colliding_owner_ids:
+                    continue
+                colliding_owner_ids.add(id(colliding_owner))
+                self._dissociate_replay_owner(colliding_owner)
+                colliding_owner.release()
+            for call_id in ambiguity_call_ids:
+                self._record_ambiguous_replay_call_id(call_id)
+            self._dissociate_replay_owner(owner)
+            owner.release()
+            raise _ReplayOwnerAssociationError()
+        limit = max(1, self._stream_retention_policy.replay_history_item_limit)
+        owner_active_call_id_count = sum(
+            registered_owner is owner
+            for registered_owner in active_registry.values()
+        )
+        if (
+            len(registry)
+            + len(active_registry)
+            - owner_active_call_id_count
+            + len(call_ids)
+            > limit
+        ):
+            self._dissociate_replay_owner(owner)
+            owner.release()
+            raise _ReasoningReplayRetentionError()
+        self._deactivate_replay_owner(owner)
+        self._dissociate_replay_owner(owner)
+        for call_id in call_ids:
+            assert isinstance(call_id, str) and call_id
+            registry[call_id] = owner
+
+    def _discard_replay_owner(self, owner: _OpenAIReplayOwner) -> None:
+        self._deactivate_replay_owner(owner)
+        self._dissociate_replay_owner(owner)
+        owner.release()
+
+    def _dissociate_replay_owner(self, owner: _OpenAIReplayOwner) -> None:
+        for registry in (
+            self._replay_owner_registry(),
+            self._active_replay_call_id_registry(),
+        ):
+            for call_id in tuple(registry):
+                if registry[call_id] is owner:
+                    del registry[call_id]
+
+    def _ambiguity_call_ids(
+        self,
+        incoming_call_ids: tuple[str, ...],
+        owners: Sequence[_OpenAIReplayOwner],
+    ) -> tuple[str, ...]:
+        call_ids = list(incoming_call_ids)
+        owner_ids = {id(owner) for owner in owners}
+        for registry in (
+            self._replay_owner_registry(),
+            self._active_replay_call_id_registry(),
+        ):
+            for call_id, registered_owner in registry.items():
+                if (
+                    id(registered_owner) in owner_ids
+                    and call_id not in call_ids
+                ):
+                    call_ids.append(call_id)
+        return tuple(call_ids)
+
     def _template_messages(
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
         *,
+        replay_items: tuple[dict[str, Any], ...] = (),
         tool: ToolManager | None = None,
     ) -> list[TemplateMessage] | list[dict[str, Any]]:
         tool_messages = [
@@ -1548,6 +2928,7 @@ class OpenAIClient(TextGenerationVendor):
                 ]
         response_item_messages = self._response_item_tool_messages(
             tool_messages,
+            replay_items=replay_items,
             tool=tool,
         )
         if response_item_messages is not None:
@@ -1564,9 +2945,10 @@ class OpenAIClient(TextGenerationVendor):
         self,
         tool_messages: list[Message],
         *,
+        replay_items: tuple[dict[str, Any], ...] = (),
         tool: ToolManager | None = None,
     ) -> list[dict[str, Any]] | None:
-        if not self._stateless_response_items:
+        if not replay_items:
             return None
 
         synthetic_records: list[tuple[str | None, list[dict[str, Any]]]] = []
@@ -1589,11 +2971,13 @@ class OpenAIClient(TextGenerationVendor):
 
         messages: list[dict[str, Any]] = []
         matched_call_ids: set[str] = set()
-        for response_item in self._stateless_response_items:
+        for response_item in replay_items:
             item_type = response_item.get("type")
             if item_type == "reasoning":
                 if OpenAIStream._is_replayable_reasoning_item(response_item):
-                    messages.append(deepcopy(response_item))
+                    copied = _strict_replay_json_copy(response_item)
+                    assert isinstance(copied, dict)
+                    messages.append(cast(dict[str, Any], copied))
                 continue
             if item_type != "function_call":
                 continue
@@ -1602,7 +2986,9 @@ class OpenAIClient(TextGenerationVendor):
                 continue
             result_message = outputs_by_call_id.get(call_id)
             if result_message is not None:
-                messages.append(deepcopy(response_item))
+                copied = _strict_replay_json_copy(response_item)
+                assert isinstance(copied, dict)
+                messages.append(cast(dict[str, Any], copied))
                 messages.append(deepcopy(result_message))
                 matched_call_ids.add(call_id)
 
@@ -1674,21 +3060,6 @@ class OpenAIClient(TextGenerationVendor):
             },
         ]
 
-    def _record_stateless_response_item(self, item: dict[str, Any]) -> None:
-        payload = OpenAIStream._response_input_item_payload(deepcopy(item))
-        if payload.get(
-            "type"
-        ) == "reasoning" and not OpenAIStream._is_replayable_reasoning_item(
-            payload
-        ):
-            return
-        self._stateless_response_items.append(payload)
-
-    def _rollback_stateless_response_items(self, count: int) -> None:
-        assert isinstance(count, int)
-        assert count > 0
-        del self._stateless_response_items[-count:]
-
     @staticmethod
     def _has_function_call_context(
         messages: list[TemplateMessage] | list[dict[str, Any]],
@@ -1708,14 +3079,22 @@ class OpenAIClient(TextGenerationVendor):
         settings: GenerationSettings,
     ) -> dict[str, str] | None:
         effort = settings.reasoning.effort
-        if effort is None or effort == ReasoningEffort.NONE:
-            return None
-        assert isinstance(
-            effort, ReasoningEffort
-        ), "OpenAI Responses reasoning effort is not supported"
-        if effort == ReasoningEffort.MAX:
-            effort = ReasoningEffort.XHIGH
-        return {"effort": effort.value}
+        summary = settings.reasoning.summary
+        reasoning: dict[str, str] = {}
+        if effort is not None:
+            assert isinstance(
+                effort, ReasoningEffort
+            ), "OpenAI Responses reasoning effort is not supported"
+            if effort == ReasoningEffort.MAX:
+                effort = ReasoningEffort.XHIGH
+            if effort != ReasoningEffort.NONE or summary is not None:
+                reasoning["effort"] = effort.value
+        if summary is not None:
+            assert isinstance(
+                summary, ReasoningSummaryMode
+            ), "OpenAI Responses reasoning summary is not supported"
+            reasoning["summary"] = summary.value
+        return reasoning or None
 
     @staticmethod
     def _text_config(settings: GenerationSettings) -> dict[str, Any]:
@@ -2130,6 +3509,20 @@ class OpenAIModel(TextGenerationVendorModel):
         if OpenAIClient._is_azure_base_url(base_url):
             return "azure_openai"
         return "openai"
+
+    def _load(
+        self,
+        *args: object,
+        load_tokenizer: bool,
+        tokenizer_name_or_path: str | None,
+    ) -> None:
+        super()._load(
+            *args,
+            load_tokenizer=load_tokenizer,
+            tokenizer_name_or_path=tokenizer_name_or_path,
+        )
+        if isinstance(self._model, OpenAIClient):
+            self._exit_stack.push_async_callback(self._model.aclose)
 
     def _load_model(
         self,

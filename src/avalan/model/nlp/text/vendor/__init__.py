@@ -76,8 +76,10 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
             disable_loading_progress_bar=False,
             enable_eval=False,
         )
+        self._exit_stack = (
+            exit_stack if exit_stack is not None else AsyncExitStack()
+        )
         super().__init__(model_id, settings, logger)
-        self._exit_stack = exit_stack or AsyncExitStack()
 
     @abstractmethod
     def _load_model(
