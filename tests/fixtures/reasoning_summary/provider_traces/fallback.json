@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "fallback",
+  "responses": [
+    {
+      "continuation_id": "continuation-1",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_fallback", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.output_item.done", "output_index": 0, "sequence_number": 1, "item": {"id": "rs_fallback", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Recovered from the completed item."}], "encrypted_content": "cipher-fallback"}},
+        {"type": "response.completed", "sequence_number": 2, "response": {"id": "resp-fallback", "created_at": 0.0, "error": null, "incomplete_details": null, "instructions": null, "metadata": null, "model": "gpt-5", "object": "response", "output": [{"id": "rs_fallback", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Recovered from the completed item."}], "encrypted_content": "cipher-fallback"}], "parallel_tool_calls": true, "temperature": null, "tool_choice": "auto", "tools": [], "top_p": null, "status": "completed"}}
+      ]
+    }
+  ]
+}

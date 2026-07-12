@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "name": "multi_continuation",
+  "responses": [
+    {
+      "continuation_id": "continuation-1",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_1", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": "First tool."},
+        {"type": "response.reasoning_summary_text.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "sequence_number": 3, "text": "First tool."},
+        {"type": "response.reasoning_summary_part.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "sequence_number": 4, "part": {"type": "summary_text", "text": "First tool."}},
+        {"type": "response.output_item.done", "output_index": 0, "sequence_number": 5, "item": {"id": "rs_1", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "First tool."}], "encrypted_content": "cipher-1"}},
+        {"type": "response.output_item.added", "output_index": 1, "sequence_number": 6, "item": {"id": "fc_1", "call_id": "call-1", "type": "function_call", "name": "first", "arguments": "", "status": "in_progress"}},
+        {"type": "response.function_call_arguments.delta", "item_id": "fc_1", "output_index": 1, "sequence_number": 7, "delta": "{}"},
+        {"type": "response.function_call_arguments.done", "item_id": "fc_1", "output_index": 1, "sequence_number": 8, "name": "first", "arguments": "{}"},
+        {"type": "response.output_item.done", "output_index": 1, "sequence_number": 9, "item": {"id": "fc_1", "call_id": "call-1", "type": "function_call", "name": "first", "arguments": "{}", "status": "completed"}},
+        {"type": "response.completed", "sequence_number": 10, "response": {"id": "resp-1", "created_at": 0.0, "error": null, "incomplete_details": null, "instructions": null, "metadata": null, "model": "gpt-5", "object": "response", "output": [{"id": "rs_1", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "First tool."}], "encrypted_content": "cipher-1"}, {"id": "fc_1", "call_id": "call-1", "type": "function_call", "name": "first", "arguments": "{}", "status": "completed"}], "parallel_tool_calls": true, "temperature": null, "tool_choice": "auto", "tools": [], "top_p": null, "status": "completed"}}
+      ]
+    },
+    {
+      "continuation_id": "continuation-2",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_1", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": "Second tool."},
+        {"type": "response.reasoning_summary_text.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "sequence_number": 3, "text": "Second tool."},
+        {"type": "response.reasoning_summary_part.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "sequence_number": 4, "part": {"type": "summary_text", "text": "Second tool."}},
+        {"type": "response.output_item.done", "output_index": 0, "sequence_number": 5, "item": {"id": "rs_1", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Second tool."}], "encrypted_content": "cipher-2"}},
+        {"type": "response.output_item.added", "output_index": 1, "sequence_number": 6, "item": {"id": "fc_2", "call_id": "call-2", "type": "function_call", "name": "second", "arguments": "", "status": "in_progress"}},
+        {"type": "response.function_call_arguments.delta", "item_id": "fc_2", "output_index": 1, "sequence_number": 7, "delta": "{}"},
+        {"type": "response.function_call_arguments.done", "item_id": "fc_2", "output_index": 1, "sequence_number": 8, "name": "second", "arguments": "{}"},
+        {"type": "response.output_item.done", "output_index": 1, "sequence_number": 9, "item": {"id": "fc_2", "call_id": "call-2", "type": "function_call", "name": "second", "arguments": "{}", "status": "completed"}},
+        {"type": "response.completed", "sequence_number": 10, "response": {"id": "resp-2", "created_at": 0.0, "error": null, "incomplete_details": null, "instructions": null, "metadata": null, "model": "gpt-5", "object": "response", "output": [{"id": "rs_1", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Second tool."}], "encrypted_content": "cipher-2"}, {"id": "fc_2", "call_id": "call-2", "type": "function_call", "name": "second", "arguments": "{}", "status": "completed"}], "parallel_tool_calls": true, "temperature": null, "tool_choice": "auto", "tools": [], "top_p": null, "status": "completed"}}
+      ]
+    },
+    {
+      "continuation_id": "continuation-3",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_3", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_3", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_3", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": "Return the final answer."},
+        {"type": "response.reasoning_summary_text.done", "item_id": "rs_3", "output_index": 0, "summary_index": 0, "sequence_number": 3, "text": "Return the final answer."},
+        {"type": "response.reasoning_summary_part.done", "item_id": "rs_3", "output_index": 0, "summary_index": 0, "sequence_number": 4, "part": {"type": "summary_text", "text": "Return the final answer."}},
+        {"type": "response.output_item.done", "output_index": 0, "sequence_number": 5, "item": {"id": "rs_3", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Return the final answer."}], "encrypted_content": "cipher-3"}},
+        {"type": "response.output_item.added", "output_index": 1, "sequence_number": 6, "item": {"id": "msg_3", "type": "message", "role": "assistant", "status": "in_progress", "content": []}},
+        {"type": "response.content_part.added", "item_id": "msg_3", "output_index": 1, "content_index": 0, "sequence_number": 7, "part": {"type": "output_text", "text": "", "annotations": [], "logprobs": []}},
+        {"type": "response.output_text.delta", "item_id": "msg_3", "output_index": 1, "content_index": 0, "sequence_number": 8, "delta": "done", "logprobs": []},
+        {"type": "response.output_text.done", "item_id": "msg_3", "output_index": 1, "content_index": 0, "sequence_number": 9, "text": "done", "logprobs": []},
+        {"type": "response.content_part.done", "item_id": "msg_3", "output_index": 1, "content_index": 0, "sequence_number": 10, "part": {"type": "output_text", "text": "done", "annotations": [], "logprobs": []}},
+        {"type": "response.output_item.done", "output_index": 1, "sequence_number": 11, "item": {"id": "msg_3", "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "done", "annotations": [], "logprobs": []}]}},
+        {"type": "response.completed", "sequence_number": 12, "response": {"id": "resp-3", "created_at": 0.0, "error": null, "incomplete_details": null, "instructions": null, "metadata": null, "model": "gpt-5", "object": "response", "output": [{"id": "rs_3", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Return the final answer."}], "encrypted_content": "cipher-3"}, {"id": "msg_3", "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "done", "annotations": [], "logprobs": []}]}], "parallel_tool_calls": true, "temperature": null, "tool_choice": "auto", "tools": [], "top_p": null, "status": "completed"}}
+      ]
+    }
+  ]
+}

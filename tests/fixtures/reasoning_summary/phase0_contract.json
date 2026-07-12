@@ -1,0 +1,331 @@
+{
+  "schema_version": 1,
+  "feature": "reasoning_summary",
+  "retention": {
+    "canonical_item_limit": 4096,
+    "replay_reasoning_item_limit": 1024,
+    "replay_reasoning_summary_node_limit": 4096,
+    "replay_reasoning_summary_character_limit": 262144,
+    "replay_reasoning_summary_serialized_byte_limit": 1048576,
+    "sdk_reasoning_segment_limit": 1024,
+    "sdk_reasoning_character_limit": 262144,
+    "sdk_reasoning_text_byte_limit": 1048576,
+    "cli_hidden_reasoning_character_limit": 0,
+    "cli_visible_reasoning_segment_limit": 1024,
+    "cli_visible_reasoning_character_limit": 262144,
+    "cli_visible_reasoning_text_byte_limit": 1048576,
+    "responses_open_item_segment_limit": 1024,
+    "responses_open_item_character_limit": 262144,
+    "responses_open_item_text_byte_limit": 1048576,
+    "mcp_reasoning_segment_limit": 512,
+    "mcp_reasoning_character_limit": 1048576,
+    "mcp_reasoning_text_byte_limit": 1048576,
+    "a2a_reasoning_segment_limit": 512,
+    "a2a_reasoning_character_limit": 1048576,
+    "a2a_reasoning_text_byte_limit": 1048576,
+    "flow_persisted_reasoning_text_byte_limit": 0,
+    "task_persisted_reasoning_text_byte_limit": 0,
+    "event_persisted_reasoning_text_byte_limit": 0
+  },
+  "retention_semantics": {
+    "live_transit": {
+      "owner": "pull-driven canonical iterator",
+      "lossless": true,
+      "overflow": "backpressure; no retained history and no truncation"
+    },
+    "openai_replay_reasoning": {
+      "owner": "per-request encrypted-replay reasoning owner",
+      "structure_accounting": "count every normalized mapping entry, sequence entry, and scalar; byte limit is compact UTF-8 JSON including structure",
+      "serialized_byte_accounting": "len(json.dumps(value, ensure_ascii=False, separators=(\",\",\":\"), sort_keys=True, allow_nan=False).encode(\"utf-8\"))",
+      "allowed_scalars": ["string", "finite_integer", "finite_float", "boolean", "null"],
+      "invalid_values": ["bytes", "non_finite_float", "non_string_mapping_key", "sdk_object", "other_object"],
+      "overflow": "reject the prospective whole item before mutation and continuation dispatch",
+      "failure_code": "reasoning_replay_retention_exceeded",
+      "field_policy": "never truncate encrypted replay provider fields",
+      "release": "rollback attempt-local additions and release all state at request-context termination",
+      "outward_projection": "none"
+    },
+    "sdk_reasoning": {
+      "owner": "CanonicalStreamAccumulator structured reasoning segments",
+      "flat_view": "derived from the same retained segment text",
+      "overflow": "drop the oldest complete segments, then a UTF-8-safe prefix of the oldest retained segment",
+      "truncation_metadata": [
+        "truncated",
+        "dropped_segments",
+        "dropped_characters",
+        "dropped_utf8_bytes",
+        "leading_segment_partial"
+      ]
+    },
+    "derived_paragraph_separator": {
+      "owners": ["sdk_reasoning", "cli_visible_reasoning", "mcp_reasoning"],
+      "text": "minimum line feeds needed for two across adjacent non-empty segment boundaries",
+      "admission": "count derived line-feed characters and UTF-8 bytes before the following segment",
+      "truncation": "include in dropped_characters and dropped_utf8_bytes but not dropped_segments",
+      "raw_canonical_stream": false
+    },
+    "cli_hidden_reasoning": {
+      "owner": "CliStreamSnapshotBuilder",
+      "overflow": "retain no private reasoning content and perform no reasoning materialization"
+    },
+    "cli_visible_reasoning": {
+      "owner": "CliStreamSnapshotBuilder structured reasoning tail",
+      "overflow": "same oldest-drop UTF-8-safe tail and truncation metadata as SDK reasoning",
+      "recording": "reuse the displayed bounded tail only when display and recording are both enabled"
+    },
+    "responses_open_item": {
+      "owner": "Responses reasoning output-item assembler",
+      "success": "lossless text.done, part.done, and output_item.done content within all three limits",
+      "overflow": "suppress the causing delta; if part.added was emitted, close text and part with the exact already-emitted prefix including empty; emit an incomplete item and exactly one failed terminal; release state; never emit a truncated successful item",
+      "output_item_status": "incomplete",
+      "failure_code": "reasoning_summary_retention_exceeded",
+      "admission_points": [
+        "before part.added",
+        "before each raw delta",
+        "before completed-item fallback parts",
+        "before redaction marker"
+      ],
+      "non_stream_overflow_http_status": 500,
+      "non_stream_overflow_body": {
+        "error": {
+          "type": "server_error",
+          "code": "reasoning_summary_retention_exceeded",
+          "message": "Reasoning summary exceeded the configured retention limit."
+        }
+      }
+    },
+    "mcp_reasoning": {
+      "owner": "MCP protocol stream accumulator and resource store",
+      "overflow": "oldest-drop UTF-8-safe tail with explicit structured truncation metadata",
+      "flat_view": "derive structuredContent.reasoning from the same bounded reasoningSegments tail and charge paragraph separators to MCP character and byte caps; use the empty string when all reasoning was dropped or rejected",
+      "truncation_owner": "one adjacent structuredContent.reasoningTruncation aggregate object; never repeat collection-wide counters on segments and never synthesize a metadata segment",
+      "truncation_presence": "include reasoning, reasoningSegments, and reasoningTruncation together when at least one structured segment is retained or any reasoning content was dropped or rejected; omit all three when neither condition occurred"
+    },
+    "a2a_reasoning": {
+      "owner": "A2A reasoning artifact accumulator",
+      "overflow": "retain newest tail by dropping oldest completed artifacts first; if the open artifact still cannot admit a delta, suppress that delta and all later deltas for the identity and finish once with truncation metadata",
+      "later_identity": "may open after ordinary oldest-completed drop",
+      "live_event_retraction": false
+    },
+    "redaction_pending": {
+      "owner": "same bounded Responses, MCP, or A2A aggregate owner as emitted safe text",
+      "accounting": "charge pending raw characters and UTF-8 bytes once; transfer to emitted safe text without double counting",
+      "precheck": "retained output plus pending input plus the whole prospective raw delta plus marker reserve before redactor mutation",
+      "marker_reservation_text": "<redacted-skill-content>",
+      "marker_reservation_character_expression": "len(SKILL_CONTENT_REDACTION)",
+      "marker_reservation_byte_expression": "len(SKILL_CONTENT_REDACTION.encode(\"utf-8\"))",
+      "marker_reservation_characters": 24,
+      "marker_reservation_utf8_bytes": 24,
+      "marker_reservation_timing": "acquire atomically before the first raw delta enters the redactor, hold exactly once while pending, then transfer to emitted marker or release after safe classification",
+      "responses_overflow": "balanced incomplete item then one response.failed with reasoning_summary_retention_exceeded",
+      "mcp_overflow": "drop oldest completed safe segments, otherwise reject the raw candidate before redactor mutation and record truncation counts; no pending marker is created",
+      "a2a_overflow": "reject the raw candidate before redactor mutation, finish the bounded artifact, and record truncation counts; no pending marker is created",
+      "marker_admission": "an admitted pending candidate always emits the old marker from its held reserve before boundary close",
+      "required_identity_fields": [
+        "representation",
+        "segment_instance_ordinal"
+      ],
+      "optional_correlation_fields": [
+        "provider_item_id",
+        "output_index",
+        "summary_index",
+        "continuation_id"
+      ],
+      "boundaries": ["representation_change", "segment_completion", "correlation_change", "identity_loss"],
+      "confirmed_redaction_latch": "once any segment emits the fixed redaction marker, suppress all text for every later identity and any completion flush through the remainder of that protocol stream while preserving structural close and terminal events",
+      "confirmed_redaction_latch_reset": "only construction of a fresh protocol stream owner resets the latch; segment, item, representation, correlation, continuation, completion, and terminal boundaries do not",
+      "identity_loss_without_marker": "suppress unidentified input and quarantine exactly the next known segment through completion, then resume at the following known identity",
+      "identity_loss_with_marker": "emit the old marker before close and engage the confirmed-redaction latch for the remainder of the protocol stream",
+      "completion_with_pending": "emit the old marker before close and engage the confirmed-redaction latch for the remainder of the protocol stream",
+      "literal_overflow_flush": false,
+      "unbounded_host_path_tail": false
+    },
+    "generic_persistence": {
+      "owner": "flow, task, and generic event privacy projectors",
+      "overflow": "not applicable; reasoning content is prohibited and only allowlisted scalar metadata may persist"
+    }
+  },
+  "stream_retention_policy_extensions": {
+    "reasoning_segment_limit": 1024,
+    "reasoning_character_limit": 262144,
+    "reasoning_text_byte_limit": 1048576,
+    "openai_replay_reasoning_item_limit": 1024,
+    "openai_replay_reasoning_summary_node_limit": 4096,
+    "openai_replay_reasoning_summary_character_limit": 262144,
+    "openai_replay_reasoning_summary_serialized_byte_limit": 1048576,
+    "cli_reasoning_segment_limit": 1024,
+    "cli_reasoning_character_limit": 262144,
+    "cli_reasoning_text_byte_limit": 1048576,
+    "responses_reasoning_item_segment_limit": 1024,
+    "responses_reasoning_item_character_limit": 262144,
+    "responses_reasoning_item_text_byte_limit": 1048576,
+    "mcp_reasoning_segment_limit": 512,
+    "mcp_reasoning_character_limit": 1048576,
+    "mcp_reasoning_text_byte_limit": 1048576,
+    "a2a_reasoning_artifact_segment_limit": 512,
+    "a2a_reasoning_artifact_character_limit": 1048576,
+    "a2a_reasoning_artifact_text_byte_limit": 1048576
+  },
+  "acceptance": {
+    "pytest_plugins": ["anyio.pytest_plugin"],
+    "disable_plugin_autoload": true,
+    "clear_environment": ["PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTHONPATH"],
+    "collect_and_execute_exact_nodes": true
+  },
+  "activation": {
+    "phases_0_through_8_public_adapters": "all production and publicly reachable adapters reject summary requests",
+    "phases_0_through_8_capable_adapters": "explicit private test-only adapters",
+    "phase_9": "official OpenAI and Azure OpenAI activate atomically; compatible production adapters may then opt in through explicit typed capability"
+  },
+  "lifecycle": {
+    "provider_terminal_reasoning_done": "exactly once after non-empty reasoning",
+    "consumer_cancel_reasoning_done": "none",
+    "consumer_cancel_owned_terminal": "exactly one STREAM_CANCELLED",
+    "consumer_aclose_or_generator_exit_yield": "none"
+  },
+  "canonical_reasoning_identity": {
+    "required_fields": ["representation", "segment_instance_ordinal"],
+    "optional_correlation_fields": ["provider_item_id", "output_index", "summary_index", "continuation_id"],
+    "segment_instance_ordinal": "zero-based per normalized provider response and prefixed by continuation in aggregate state",
+    "native_missing_correlations": "valid including summary_index null",
+    "ordinal_allowed_kinds": ["REASONING_DELTA"],
+    "ordinal_invalid_values": ["null", "boolean", "string", "float", "object", "negative_integer"],
+    "boundaries": ["representation_change", "segment_completion", "correlation_change", "identity_loss"]
+  },
+  "abnormal_terminal_shapes": {
+    "open_part_prefix": "if part.added was visible, emit text.done and part.done with exactly the observed prefix including empty",
+    "responses_item_status": "incomplete",
+    "responses_failed_order": ["reasoning_summary_text.done", "reasoning_summary_part.done", "output_item.done", "response.failed"],
+    "responses_cancelled_order": ["reasoning_summary_text.done", "reasoning_summary_part.done", "output_item.done", "response.cancelled"],
+    "provider_response_incomplete": {"canonical_terminal": "STREAM_ERRORED", "error_code": "response_incomplete", "outward_terminal": "response.failed"},
+    "response_cancelled": {"surface": "Avalan outward Responses extension", "provider_openai_sdk_event": false, "canonical_terminal": "STREAM_CANCELLED"},
+    "mcp_segment_metadata": {"completed": false, "status": "incomplete", "terminal_outcome": ["failed", "cancelled"]},
+    "a2a_artifact_metadata": {"status": "incomplete", "terminal_outcome": ["failed", "cancelled"]},
+    "terminal_count": 1,
+    "semantic_output_after_terminal": false,
+    "local_consumer_aclose_output": "none"
+  },
+  "protocol_shapes": {
+    "responses_sse_sequence": "one response-local zero-based contiguous allocator with no gaps or reuse across all events and continuations",
+    "responses_sse_sequence_start": 0,
+    "responses_output_index": "one zero-based contiguous index exactly once per outward reasoning, tool, or message item across continuations",
+    "responses_output_index_start": 0,
+    "responses_reasoning_item_id": "rs_{outer_response_id}_{outward_output_index}",
+    "responses_outward_summary_indices": "zero-based contiguous provider-emission-order positions within each outward reasoning item",
+    "responses_sparse_summary_index_example": {
+      "completed_provider_array_length": 8,
+      "streamed_provider_summary_indices": [2, 7],
+      "fallback_provider_summary_indices": [0, 1, 3, 4, 5, 6],
+      "canonical_provider_emission_order": [2, 7, 0, 1, 3, 4, 5, 6],
+      "outward_summary_indices": [0, 1, 2, 3, 4, 5, 6, 7]
+    },
+    "completed_item_fallback": {
+      "non_empty_streamed_delta_disables_part_fallback": true,
+      "zero_length_delta_is_visible": false,
+      "zero_length_delta_disables_part_fallback": false
+    },
+    "responses_non_stream_required_fields": [
+      "id",
+      "type",
+      "status",
+      "summary"
+    ],
+    "responses_overflow_delta": "suppressed",
+    "responses_overflow_output_item_status": "incomplete",
+    "responses_overflow_failure_code": "reasoning_summary_retention_exceeded",
+    "a2a_reasoning_artifact_id": "reasoning-{run_id}-{continuation_ordinal}-{segment_ordinal}",
+    "mcp_reasoning_segment_required_fields": ["representation", "segment_instance_ordinal", "text", "completed", "status", "terminal_outcome"],
+    "mcp_reasoning_segment_optional_correlations": ["provider_item_id", "output_index", "summary_index", "continuation_id"],
+    "mcp_reasoning_segment_forbidden_fields": ["completion", "truncation", "truncated", "dropped_segments", "dropped_characters", "dropped_utf8_bytes", "leading_segment_partial"],
+    "mcp_reasoning_segment_field_types": {
+      "representation": ["native_text", "summary"],
+      "segment_instance_ordinal": "non_negative_integer_not_boolean",
+      "text": "string",
+      "completed": "boolean",
+      "status": ["in_progress", "completed", "incomplete"],
+      "terminal_outcome": [null, "completed", "failed", "cancelled"]
+    },
+    "mcp_reasoning_truncation_required_fields": ["truncated", "dropped_segments", "dropped_characters", "dropped_utf8_bytes", "leading_segment_partial"],
+    "mcp_reasoning_truncation_field_types": {
+      "truncated": "boolean",
+      "dropped_segments": "non_negative_integer_not_boolean",
+      "dropped_characters": "non_negative_integer_not_boolean",
+      "dropped_utf8_bytes": "non_negative_integer_not_boolean",
+      "leading_segment_partial": "boolean"
+    },
+    "mcp_final_reasoning_container": "structuredContent",
+    "mcp_final_reasoning_fields": ["reasoning", "reasoningSegments", "reasoningTruncation"],
+    "mcp_final_reasoning_presence": "include all three fields when reasoningSegments is non-empty or any reasoning content was dropped or rejected; otherwise omit all three",
+    "mcp_final_reasoning_presence_matrix": {
+      "retained_nonempty_no_drop": true,
+      "retained_nonempty_with_drop": true,
+      "no_retained_with_drop_or_rejection": true,
+      "no_retained_no_drop": false
+    },
+    "mcp_flat_reasoning_value": "the exact flat string derived from the retained reasoningSegments tail, or the empty string when reasoningSegments is empty because all reasoning was dropped or rejected",
+    "mcp_reasoning_segment_state_matrix": {
+      "open": {"completed": false, "status": "in_progress", "terminal_outcome": null},
+      "completed": {"completed": true, "status": "completed", "terminal_outcome": "completed"},
+      "failed": {"completed": false, "status": "incomplete", "terminal_outcome": "failed"},
+      "cancelled": {"completed": false, "status": "incomplete", "terminal_outcome": "cancelled"}
+    },
+    "mcp_reasoning_retention_examples": {
+      "no_overflow": {
+        "source_segments": ["plan"],
+        "payload": {
+          "reasoning": "plan",
+          "reasoningSegments": [{"representation": "summary", "segment_instance_ordinal": 0, "text": "plan", "completed": true, "status": "completed", "terminal_outcome": "completed"}],
+          "reasoningTruncation": {"truncated": false, "dropped_segments": 0, "dropped_characters": 0, "dropped_utf8_bytes": 0, "leading_segment_partial": false}
+        }
+      },
+      "oldest_segment_and_separator_drop": {
+        "source_segments": ["old", "new"],
+        "derived_separator": "\n\n",
+        "payload": {
+          "reasoning": "new",
+          "reasoningSegments": [{"representation": "summary", "segment_instance_ordinal": 1, "text": "new", "completed": true, "status": "completed", "terminal_outcome": "completed"}],
+          "reasoningTruncation": {"truncated": true, "dropped_segments": 1, "dropped_characters": 5, "dropped_utf8_bytes": 5, "leading_segment_partial": false}
+        }
+      },
+      "leading_partial": {
+        "source_segments": ["abcdef"],
+        "payload": {
+          "reasoning": "cdef",
+          "reasoningSegments": [{"representation": "summary", "segment_instance_ordinal": 0, "text": "cdef", "completed": true, "status": "completed", "terminal_outcome": "completed"}],
+          "reasoningTruncation": {"truncated": true, "dropped_segments": 0, "dropped_characters": 2, "dropped_utf8_bytes": 2, "leading_segment_partial": true}
+        }
+      },
+      "no_retained_oversize_first_candidate": {
+        "source_segments": ["oversized"],
+        "prospectively_rejected": true,
+        "payload": {
+          "reasoning": "",
+          "reasoningSegments": [],
+          "reasoningTruncation": {"truncated": true, "dropped_segments": 1, "dropped_characters": 9, "dropped_utf8_bytes": 9, "leading_segment_partial": false}
+        }
+      }
+    },
+    "redaction_identity_change_with_pending": "emit the old marker and engage the confirmed-redaction latch for the remainder of the protocol stream",
+    "redaction_identity_loss_without_marker": "quarantine exactly the next known segment through completion, then resume at the following known identity"
+  },
+  "benchmark": {
+    "runner": "scripts/benchmark_reasoning_summary.py",
+    "network_allowed": false,
+    "warmups": 3,
+    "samples": 20,
+    "delta_counts": [4096, 8192],
+    "delta_text": "x",
+    "percentile_method": "nearest_rank",
+    "gc_before_each_sample": true,
+    "reset_state_before_each_sample": true,
+    "gc_before_memory_probe": true,
+    "elapsed_clock": "perf_counter",
+    "peak_memory_probe": "tracemalloc",
+    "memory_probe_scopes": [
+      "processing_excluding_source_fixture",
+      "retained_total_including_source_fixture"
+    ],
+    "memory_subprocess_timeout_seconds": 60,
+    "network_guard": "deny_socket_creation_and_resolution"
+  }
+}

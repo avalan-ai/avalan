@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "incomplete_after_summary",
+  "responses": [
+    {
+      "continuation_id": "continuation-incomplete",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": {"id": "rs_incomplete", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_incomplete", "output_index": 0, "summary_index": 0, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_incomplete", "output_index": 0, "summary_index": 0, "sequence_number": 2, "delta": "Visible before incomplete."},
+        {"type": "response.incomplete", "sequence_number": 3, "response": {"id": "resp-incomplete", "created_at": 0.0, "error": null, "incomplete_details": {"reason": "max_output_tokens"}, "instructions": null, "metadata": null, "model": "gpt-5", "object": "response", "output": [{"id": "rs_incomplete", "type": "reasoning", "status": "incomplete", "summary": []}], "parallel_tool_calls": true, "temperature": null, "tool_choice": "auto", "tools": [], "top_p": null, "status": "incomplete"}}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "sparse_indices",
+  "responses": [
+    {
+      "continuation_id": "continuation-sparse",
+      "events": [
+        {"type": "response.output_item.added", "output_index": 4, "sequence_number": 0, "item": {"id": "rs_sparse", "type": "reasoning", "status": "in_progress", "summary": []}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_sparse", "output_index": 4, "summary_index": 2, "sequence_number": 1, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_sparse", "output_index": 4, "summary_index": 2, "sequence_number": 2, "delta": "Earlier sparse part."},
+        {"type": "response.reasoning_summary_text.done", "item_id": "rs_sparse", "output_index": 4, "summary_index": 2, "sequence_number": 3, "text": "Earlier sparse part."},
+        {"type": "response.reasoning_summary_part.done", "item_id": "rs_sparse", "output_index": 4, "summary_index": 2, "sequence_number": 4, "part": {"type": "summary_text", "text": "Earlier sparse part."}},
+        {"type": "response.reasoning_summary_part.added", "item_id": "rs_sparse", "output_index": 4, "summary_index": 7, "sequence_number": 5, "part": {"type": "summary_text", "text": ""}},
+        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_sparse", "output_index": 4, "summary_index": 7, "sequence_number": 6, "delta": "Later sparse part."},
+        {"type": "response.reasoning_summary_text.done", "item_id": "rs_sparse", "output_index": 4, "summary_index": 7, "sequence_number": 7, "text": "Later sparse part."},
+        {"type": "response.reasoning_summary_part.done", "item_id": "rs_sparse", "output_index": 4, "summary_index": 7, "sequence_number": 8, "part": {"type": "summary_text", "text": "Later sparse part."}},
+        {"type": "response.output_item.done", "output_index": 4, "sequence_number": 9, "item": {"id": "rs_sparse", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Fallback zero."}, {"type": "summary_text", "text": "Fallback one."}, {"type": "summary_text", "text": "Earlier sparse part."}, {"type": "summary_text", "text": "Fallback three."}, {"type": "summary_text", "text": "Fallback four."}, {"type": "summary_text", "text": "Fallback five."}, {"type": "summary_text", "text": "Fallback six."}, {"type": "summary_text", "text": "Later sparse part."}], "encrypted_content": "cipher-sparse"}},
+        {"type": "response.completed", "sequence_number": 10, "response": {"id": "resp-sparse", "created_at": 0.0, "error": null, "incomplete_details": null, "instructions": null, "metadata": null, "model": "gpt-5", "object": "response", "output": [{"id": "rs_sparse", "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": "Fallback zero."}, {"type": "summary_text", "text": "Fallback one."}, {"type": "summary_text", "text": "Earlier sparse part."}, {"type": "summary_text", "text": "Fallback three."}, {"type": "summary_text", "text": "Fallback four."}, {"type": "summary_text", "text": "Fallback five."}, {"type": "summary_text", "text": "Fallback six."}, {"type": "summary_text", "text": "Later sparse part."}], "encrypted_content": "cipher-sparse"}], "parallel_tool_calls": true, "temperature": null, "tool_choice": "auto", "tools": [], "top_p": null, "status": "completed"}}
+      ]
+    }
+  ]
+}
