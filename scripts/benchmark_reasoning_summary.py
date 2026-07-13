@@ -71,6 +71,7 @@ from avalan.model.stream import (
     StreamReasoningRepresentation,
     StreamTerminalOutcome,
     StreamVisibility,
+    stream_consumer_iterator,
 )
 from avalan.server.entities import (
     ChatMessage,
@@ -896,10 +897,10 @@ async def _phase9_heartbeat_metrics(
     heartbeat_task = create_task(heartbeat())
     await started.wait()
     for _ in range(protocol.warmups):
-        _project_phase9_fixture(fixture)
+        await _project_phase9_fixture_incrementally(fixture)
         await sleep(interval_seconds)
     for _ in range(protocol.samples):
-        _project_phase9_fixture(fixture)
+        await _project_phase9_fixture_incrementally(fixture)
         await sleep(interval_seconds)
     stopped.set()
     await heartbeat_task
@@ -1532,6 +1533,31 @@ def _project_phase9_fixture(
 ) -> DeterministicCounts:
     deterministic, _ = _project_phase9_fixture_retained(fixture)
     return deterministic
+
+
+async def _project_phase9_fixture_incrementally(
+    fixture: BenchmarkFixture,
+) -> None:
+    """Project a fixture through the incremental runtime consumer path."""
+
+    async def source() -> AsyncIterator[CanonicalStreamItem]:
+        for item in fixture.items:
+            # Model the await between incrementally delivered stream items.
+            await sleep(0)
+            yield item
+
+    first = fixture.items[0]
+    projected_items = 0
+    async for projection in stream_consumer_iterator(
+        source(),
+        stream_session_id=first.stream_session_id,
+        run_id=first.run_id,
+        turn_id=first.turn_id,
+        unsupported_message="unsupported Phase 9 heartbeat item",
+    ):
+        assert isinstance(projection, StreamConsumerProjection)
+        projected_items += 1
+    assert projected_items == len(fixture.items)
 
 
 def _project_phase9_fixture_retained(
