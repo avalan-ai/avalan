@@ -667,12 +667,12 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/server/create_response_sse_test.py"
             "::CreateResponseSSEEventsTestCase"
-            "::test_streaming_rejects_canonical_content_after_terminal"
+            "::test_streaming_owns_canonical_terminal_before_source_error"
         ),
         (
             "tests/server/create_response_sse_test.py"
             "::CreateResponseSSEEventsTestCase"
-            "::test_streaming_rejects_projected_content_after_terminal"
+            "::test_streaming_owns_projected_terminal_before_source_error"
         ),
         (
             "tests/server/create_response_sse_test.py"
@@ -1133,7 +1133,7 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
         (
             "tests/server/create_response_sse_test.py"
             "::CreateResponseSSEEventsTestCase"
-            "::test_streaming_rejects_canonical_content_after_terminal"
+            "::test_streaming_owns_canonical_terminal_before_source_error"
         ),
         (
             "tests/server/create_response_sse_test.py"

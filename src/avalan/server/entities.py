@@ -499,6 +499,77 @@ class ModelVisibleServerProtocolTextRedactor:
     def has_pending(self) -> bool:
         return bool(self._pending)
 
+    @property
+    def pending_character_count(self) -> int:
+        """Return buffered source characters awaiting a safe decision."""
+        return len(self._pending)
+
+    @property
+    def pending_utf8_byte_count(self) -> int:
+        """Return buffered source bytes awaiting a safe decision."""
+        return len(self._pending.encode("utf-8"))
+
+    @property
+    def redacted(self) -> bool:
+        """Return whether this redactor emitted the fixed marker."""
+        return self._redacted
+
+    @property
+    def pending_requires_skill_marker(self) -> bool:
+        """Return whether the pending prefix must resolve as skill content."""
+        if not self._pending or not self._should_buffer_skill_text_start():
+            return False
+        return (
+            _could_be_echoed_skill_body_start_prefix(self._pending)
+            or _should_buffer_echoed_skill_body_candidate(self._pending)
+            or _should_hold_potential_skill_text_candidate(self._pending)
+        )
+
+    def preview_push(
+        self,
+        value: str,
+    ) -> tuple[tuple[str, ...], int, int, bool]:
+        """Preview a push without mutating this redactor.
+
+        Args:
+            value: Source text proposed for the streaming redactor.
+
+        Returns:
+            Safe chunks, pending characters, pending bytes, and marker state
+            that the push would produce.
+        """
+        assert isinstance(value, str)
+        preview = ModelVisibleServerProtocolTextRedactor(
+            self._settings,
+            protocol=self._protocol,
+            channel=self._channel,
+        )
+        preview._pending = self._pending
+        preview._redacted = self._redacted
+        chunks = preview.push(value)
+        return (
+            chunks,
+            preview.pending_character_count,
+            preview.pending_utf8_byte_count,
+            preview.redacted,
+        )
+
+    def preview_flush(self) -> tuple[tuple[str, ...], bool]:
+        """Preview a flush without mutating this redactor.
+
+        Returns:
+            Safe chunks and marker state that the flush would produce.
+        """
+        preview = ModelVisibleServerProtocolTextRedactor(
+            self._settings,
+            protocol=self._protocol,
+            channel=self._channel,
+        )
+        preview._pending = self._pending
+        preview._redacted = self._redacted
+        chunks = preview.flush()
+        return chunks, preview.redacted
+
     def push(self, value: str) -> tuple[str, ...]:
         """Return safe text chunks for a streaming delta."""
         assert isinstance(value, str)
