@@ -9,6 +9,7 @@ from math import ceil, isfinite
 from pathlib import Path
 from statistics import median
 from subprocess import CompletedProcess, TimeoutExpired
+from time import sleep as blocking_sleep
 from typing import Any, cast
 
 import pytest
@@ -3288,6 +3289,47 @@ def test_phase9_subprocess_runner_is_sanitized_and_fail_closed(
         match="returned invalid JSON",
     ):
         run_phase9_benchmark_subprocess()
+
+
+def test_phase9_heartbeat_detects_blocking_inline_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _BENCHMARK_SCRIPT._phase9_fixture_items(1, "x")
+    monkeypatch.setattr(
+        _BENCHMARK_SCRIPT,
+        "_phase9_fixture_items",
+        lambda *_: fixture,
+    )
+    original_project = _BENCHMARK_SCRIPT.StreamProjectionState.project
+    blocked = False
+
+    def blocking_project(
+        state: object,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        nonlocal blocked
+        if not blocked:
+            blocked = True
+            blocking_sleep(0.15)
+        return original_project(state, *args, **kwargs)
+
+    monkeypatch.setattr(
+        _BENCHMARK_SCRIPT.StreamProjectionState,
+        "project",
+        blocking_project,
+    )
+    protocol = _BENCHMARK_SCRIPT.benchmark_protocol()
+
+    heartbeat = _BENCHMARK_SCRIPT.asyncio_run(
+        _BENCHMARK_SCRIPT._phase9_heartbeat_metrics(protocol)
+    )
+
+    assert blocked
+    assert (
+        heartbeat["maximum_drift_milliseconds"]
+        > _BENCHMARK_SCRIPT._PHASE9_HEARTBEAT_MAXIMUM_DRIFT_MILLISECONDS
+    )
 
 
 def test_phase9_summary_benchmark_is_mutation_enforced_hard_gate(
