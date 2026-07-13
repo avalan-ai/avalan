@@ -90,6 +90,10 @@ from avalan.model.stream import (
     StreamChannel,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
+    StreamTerminalOutcome,
+    StreamVisibility,
+    accumulate_canonical_stream_items,
 )
 from avalan.server.routers import flow as flow_router_module
 from avalan.skill import (
@@ -141,6 +145,7 @@ from avalan.task import (
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
+    UsageSource,
     pdf_image_converter_capability,
 )
 from avalan.task.artifacts import LocalArtifactStore
@@ -183,6 +188,91 @@ class FlowAgentResponse:
 
     async def to_str(self) -> str:
         return self.text
+
+
+class ReasoningSummaryFlowAgentResponse:
+    provider_family = "openai"
+
+    def __init__(self) -> None:
+        items = (
+            CanonicalStreamItem(
+                stream_session_id="flow-summary-stream",
+                run_id="flow-summary-run",
+                turn_id="flow-summary-turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="flow-summary-stream",
+                run_id="flow-summary-run",
+                turn_id="flow-summary-turn",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="FLOW_PRIVATE_SUMMARY",
+                visibility=StreamVisibility.PRIVATE,
+                reasoning_representation=(
+                    StreamReasoningRepresentation.SUMMARY
+                ),
+                segment_instance_ordinal=0,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="flow-summary-stream",
+                run_id="flow-summary-run",
+                turn_id="flow-summary-turn",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+                visibility=StreamVisibility.PRIVATE,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="flow-summary-stream",
+                run_id="flow-summary-run",
+                turn_id="flow-summary-turn",
+                sequence=3,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="flow public answer",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="flow-summary-stream",
+                run_id="flow-summary-run",
+                turn_id="flow-summary-turn",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="flow-summary-stream",
+                run_id="flow-summary-run",
+                turn_id="flow-summary-turn",
+                sequence=5,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={
+                    "input_tokens": 3,
+                    "output_tokens": 4,
+                    "reasoning_tokens": 2,
+                    "total_tokens": 7,
+                },
+            ),
+            CanonicalStreamItem(
+                stream_session_id="flow-summary-stream",
+                run_id="flow-summary-run",
+                turn_id="flow-summary-turn",
+                sequence=6,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self._answer: str = accumulator.answer_text
+        self.usage: object | None = accumulator.final_usage
+
+    async def to_str(self) -> str:
+        return self._answer
 
 
 class FlowAgentEventManager:
@@ -231,11 +321,13 @@ class FlowAgentOrchestrator:
         self._loader.exited += 1
         return None
 
-    async def __call__(self, input: object) -> FlowAgentResponse:
+    async def __call__(self, input: object) -> object:
         self._loader.inputs.append(input)
         await self.event_manager.emit()
         if self._loader.error is not None:
             raise self._loader.error
+        if self._loader.response is not None:
+            return self._loader.response
         return FlowAgentResponse(self._loader.text)
 
 
@@ -244,9 +336,11 @@ class FlowAgentLoader:
         self,
         *,
         text: str = "flow agent summary",
+        response: object | None = None,
         error: BaseException | None = None,
     ) -> None:
         self.text = text
+        self.response = response
         self.error = error
         self.event_manager = FlowAgentEventManager()
         self.paths: list[str] = []
@@ -6446,6 +6540,79 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(result.output, ["safe", "done"])
         self.assertIsInstance(result.output, list)
+
+    async def test_direct_runner_keeps_summary_out_of_flow_answer_and_state(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "review.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Flow reviewer"
+task = "Answer"
+user = "Answer."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FlowAgentLoader(
+                response=ReasoningSummaryFlowAgentResponse()
+            )
+            agent_runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            def resolve(context: TaskTargetContext) -> Flow:
+                registry = task_flow_node_registry(
+                    context,
+                    agent_runner=agent_runner,
+                    execution_roots=(root,),
+                )
+                flow = Flow()
+                flow.add_node(
+                    registry.build(
+                        FlowNodeDefinition(
+                            name="review",
+                            type="agent",
+                            ref="agents/review.toml",
+                        )
+                    )
+                )
+                return flow
+
+            runner = DirectTaskRunner(
+                self.store,
+                target=FlowTaskTargetRunner(flow_resolver=resolve),
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda _: "flow-summary-answer-isolation",
+            )
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.string(),
+                    output_contract=TaskOutputContract.text(),
+                    execution=TaskExecutionTarget.flow("flow.toml"),
+                    observability=TaskObservabilityPolicy(),
+                ),
+                input_value="question",
+            )
+            usage = await self.store.list_usage(result.run.run_id)
+            events = await self.store.list_events(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "flow public answer")
+        self.assertNotIn("FLOW_PRIVATE_SUMMARY", repr(result.output))
+        self.assertNotIn("FLOW_PRIVATE_SUMMARY", repr(result.run.result))
+        self.assertNotIn("FLOW_PRIVATE_SUMMARY", repr(events))
+        self.assertEqual(len(usage), 1)
+        self.assertEqual(usage[0].source, UsageSource.EXACT)
+        self.assertEqual(usage[0].totals.input_tokens, 3)
+        self.assertEqual(usage[0].totals.output_tokens, 4)
+        self.assertEqual(usage[0].totals.reasoning_tokens, 2)
+        self.assertEqual(usage[0].totals.total_tokens, 7)
 
     async def test_direct_runner_sends_file_input_to_flow_agent_node_output(
         self,

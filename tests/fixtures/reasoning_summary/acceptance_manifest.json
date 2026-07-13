@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "reasoning_summary",
-  "active_phase": 7,
+  "active_phase": 8,
   "dimensions": {
     "phase 0 infrastructure": [
       "tests/reasoning_summary_phase0_test.py::test_provider_trace_inventory_is_complete_and_valid",
@@ -385,6 +385,13 @@
       "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_non_stream_outcome_acceptance",
       "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_stream_non_stream_parity_acceptance",
       "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_cross_protocol_golden_acceptance"
+    ],
+    "phase 8 MCP A2A and observability integration": [
+      "tests/server/reasoning_summary_protocol_test.py::test_protocols_never_promote_summary_to_answer",
+      "tests/model/reasoning_summary_observability_test.py::test_summary_observability_is_content_free",
+      "tests/model/reasoning_summary_observability_test.py::test_summary_text_never_enters_generic_telemetry",
+      "tests/server/reasoning_summary_protocol_test.py::test_mcp_and_a2a_preserve_representation",
+      "tests/model/reasoning_summary_observability_test.py::test_observability_remains_content_free"
     ]
   }
 }

@@ -795,7 +795,10 @@ async def _assert_mcp_projection(
     assert flow_messages[0]["metadata"] == expected_flow_metadata
     assert "data" not in flow_messages[0]
     assert "private_output" not in dumps(flow_messages[0], sort_keys=True)
-    assert {"type": "reasoning", "delta": "plan"} in messages
+    assert any(
+        message.get("type") == "reasoning" and message.get("delta") == "plan"
+        for message in messages
+    )
     assert any(
         message.get("type") == "tool.input_delta"
         and message.get("toolCallId") == "call-1"

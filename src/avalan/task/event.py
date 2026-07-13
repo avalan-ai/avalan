@@ -68,6 +68,30 @@ _REASONING_OBSERVABILITY_SUMMARY_FIELDS = frozenset(
         "text_delta_length",
     }
 )
+_REASONING_OBSERVABILITY_CORRELATION_STRING_FIELDS = frozenset(
+    {
+        "model_continuation_id",
+        "protocol_item_id",
+    }
+)
+_REASONING_OBSERVABILITY_CORRELATION_INDEX_FIELDS = frozenset(
+    {
+        "provider_output_index",
+        "provider_summary_index",
+    }
+)
+_STREAM_TERMINAL_OUTCOMES = frozenset(
+    {
+        "cancelled",
+        "completed",
+        "errored",
+    }
+)
+_TELEMETRY_NAME_CHARACTERS = frozenset("._:-")
+_TELEMETRY_NAME_LIMIT = 256
+_CORRELATION_SURROGATE_PREFIX = "sha256:"
+_CORRELATION_SURROGATE_HEX_LENGTH = 64
+_LOWERCASE_HEX_CHARACTERS = frozenset("0123456789abcdef")
 
 
 class TaskEventCategory(StrEnum):
@@ -203,7 +227,7 @@ def sanitize_raw_task_event(
         _raw_event_payload(event),
     )
     assert isinstance(payload, dict)
-    _restore_reasoning_observability_summary(event, payload)
+    _restore_reasoning_observability(event, payload)
     return SanitizedTaskEventDraft(
         event_type=event_type,
         category=task_event_category(event_type),
@@ -211,7 +235,7 @@ def sanitize_raw_task_event(
     )
 
 
-def _restore_reasoning_observability_summary(
+def _restore_reasoning_observability(
     event: object,
     payload: dict[str, PrivacySafeValue],
 ) -> None:
@@ -227,16 +251,79 @@ def _restore_reasoning_observability_summary(
     source = observability_payload.data
     if source.get("kind") != "reasoning.delta":
         return
+    provider_family = source.get("provider_family")
+    if _is_safe_provider_family(provider_family):
+        canonical_stream["provider_family"] = cast(str, provider_family)
+    provider_event_type = source.get("provider_event_type")
+    if _is_safe_provider_event_type(provider_event_type):
+        canonical_stream["provider_event_type"] = cast(
+            str,
+            provider_event_type,
+        )
+    terminal_outcome = source.get("terminal_outcome")
+    if (
+        isinstance(terminal_outcome, str)
+        and terminal_outcome in _STREAM_TERMINAL_OUTCOMES
+    ):
+        canonical_stream["terminal_outcome"] = terminal_outcome
+    correlation = _reasoning_observability_correlation(
+        source.get("correlation")
+    )
+    if correlation:
+        canonical_stream["correlation"] = correlation
     source_summary = source.get("summary")
-    if not isinstance(source_summary, Mapping):
-        return
-    summary: dict[str, PrivacySafeValue] = {}
-    for field_name in _REASONING_OBSERVABILITY_SUMMARY_FIELDS:
-        value = source_summary.get(field_name)
-        if _is_safe_reasoning_observability_summary_field(field_name, value):
-            summary[field_name] = cast(PrivacySafeValue, value)
+    summary = _reasoning_observability_summary(source_summary)
     if summary:
         canonical_stream["summary"] = summary
+    usage = _reasoning_observability_usage(source.get("usage"))
+    if usage:
+        canonical_stream["usage"] = usage
+
+
+def _reasoning_observability_summary(
+    value: object,
+) -> dict[str, PrivacySafeValue]:
+    if not isinstance(value, Mapping):
+        return {}
+    summary: dict[str, PrivacySafeValue] = {}
+    for field_name in _REASONING_OBSERVABILITY_SUMMARY_FIELDS:
+        field_value = value.get(field_name)
+        if _is_safe_reasoning_observability_summary_field(
+            field_name,
+            field_value,
+        ):
+            summary[field_name] = cast(PrivacySafeValue, field_value)
+    return summary
+
+
+def _reasoning_observability_correlation(
+    value: object,
+) -> dict[str, PrivacySafeValue]:
+    if not isinstance(value, Mapping):
+        return {}
+    correlation: dict[str, PrivacySafeValue] = {}
+    for field_name in _REASONING_OBSERVABILITY_CORRELATION_STRING_FIELDS:
+        field_value = value.get(field_name)
+        if _is_safe_correlation_value(field_value):
+            correlation[field_name] = cast(str, field_value)
+    for field_name in _REASONING_OBSERVABILITY_CORRELATION_INDEX_FIELDS:
+        field_value = value.get(field_name)
+        if _is_non_negative_int(field_value):
+            correlation[field_name] = cast(int, field_value)
+    return correlation
+
+
+def _reasoning_observability_usage(
+    value: object,
+) -> dict[str, PrivacySafeValue]:
+    if not isinstance(value, Mapping):
+        return {}
+    usage: dict[str, PrivacySafeValue] = {}
+    for field_name in USAGE_COUNTER_NAMES:
+        field_value = value.get(field_name)
+        if _is_non_negative_int(field_value):
+            usage[field_name] = cast(int, field_value)
+    return usage
 
 
 def _is_safe_reasoning_observability_summary_field(
@@ -245,6 +332,51 @@ def _is_safe_reasoning_observability_summary_field(
 ) -> bool:
     if field_name == "reasoning_representation":
         return isinstance(value, str) and value in {"native_text", "summary"}
+    return _is_non_negative_int(value)
+
+
+def _is_safe_provider_family(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= _TELEMETRY_NAME_LIMIT
+        and value == value.strip()
+        and value.isascii()
+        and any(character.islower() for character in value)
+        and all(
+            character.islower()
+            or character.isdigit()
+            or character in _TELEMETRY_NAME_CHARACTERS
+            for character in value
+        )
+    )
+
+
+def _is_safe_provider_event_type(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= _TELEMETRY_NAME_LIMIT
+        and value == value.strip()
+        and value.isascii()
+        and any(character.islower() for character in value)
+        and all(
+            character.isalnum() or character in _TELEMETRY_NAME_CHARACTERS
+            for character in value
+        )
+    )
+
+
+def _is_safe_correlation_value(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    if not value.startswith(_CORRELATION_SURROGATE_PREFIX):
+        return False
+    digest = value.removeprefix(_CORRELATION_SURROGATE_PREFIX)
+    return len(digest) == _CORRELATION_SURROGATE_HEX_LENGTH and all(
+        character in _LOWERCASE_HEX_CHARACTERS for character in digest
+    )
+
+
+def _is_non_negative_int(value: object) -> bool:
     return (
         isinstance(value, int) and not isinstance(value, bool) and value >= 0
     )

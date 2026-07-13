@@ -9,6 +9,7 @@ from collections.abc import AsyncIterable, Awaitable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from hashlib import sha256
 from inspect import isawaitable
 from json import JSONDecodeError, loads
 from typing import Any, AsyncIterator, cast
@@ -723,6 +724,12 @@ class StreamRetentionPolicy:
     responses_reasoning_item_segment_limit: int = 1024
     responses_reasoning_item_character_limit: int = 262144
     responses_reasoning_item_text_byte_limit: int = 1048576
+    mcp_reasoning_segment_limit: int = 512
+    mcp_reasoning_character_limit: int = 1048576
+    mcp_reasoning_text_byte_limit: int = 1048576
+    a2a_reasoning_segment_limit: int = 512
+    a2a_reasoning_character_limit: int = 1048576
+    a2a_reasoning_text_byte_limit: int = 1048576
     replay_history_item_limit: int = 1024
     openai_replay_reasoning_item_limit: int = 1024
     openai_replay_reasoning_summary_node_limit: int = 4096
@@ -780,6 +787,30 @@ class StreamRetentionPolicy:
             (
                 "responses_reasoning_item_text_byte_limit",
                 self.responses_reasoning_item_text_byte_limit,
+            ),
+            (
+                "mcp_reasoning_segment_limit",
+                self.mcp_reasoning_segment_limit,
+            ),
+            (
+                "mcp_reasoning_character_limit",
+                self.mcp_reasoning_character_limit,
+            ),
+            (
+                "mcp_reasoning_text_byte_limit",
+                self.mcp_reasoning_text_byte_limit,
+            ),
+            (
+                "a2a_reasoning_segment_limit",
+                self.a2a_reasoning_segment_limit,
+            ),
+            (
+                "a2a_reasoning_character_limit",
+                self.a2a_reasoning_character_limit,
+            ),
+            (
+                "a2a_reasoning_text_byte_limit",
+                self.a2a_reasoning_text_byte_limit,
             ),
             ("replay_history_item_limit", self.replay_history_item_limit),
             (
@@ -1514,7 +1545,7 @@ def stream_observability_payload(
         "channel": item.channel.value,
         "visibility": item.visibility.value,
     }
-    correlation = item.correlation.to_trace_dict()
+    correlation = _stream_observability_correlation(item)
     if correlation:
         payload["correlation"] = correlation
     if item.terminal_outcome is not None:
@@ -1529,6 +1560,28 @@ def stream_observability_payload(
     if item.provider_event_type is not None:
         payload["provider_event_type"] = item.provider_event_type
     return payload
+
+
+def _stream_observability_correlation(
+    item: CanonicalStreamItem,
+) -> dict[str, object]:
+    if item.kind is not StreamItemKind.REASONING_DELTA:
+        return item.correlation.to_trace_dict()
+    correlation: dict[str, object] = {}
+    for field_name, string_value in (
+        ("protocol_item_id", item.correlation.protocol_item_id),
+        ("model_continuation_id", item.correlation.model_continuation_id),
+    ):
+        if string_value is not None:
+            digest = sha256(string_value.encode("utf-8")).hexdigest()
+            correlation[field_name] = f"sha256:{digest}"
+    for field_name, index_value in (
+        ("provider_output_index", item.correlation.provider_output_index),
+        ("provider_summary_index", item.correlation.provider_summary_index),
+    ):
+        if index_value is not None:
+            correlation[field_name] = index_value
+    return correlation
 
 
 def _stream_observability_summary(
@@ -1562,7 +1615,10 @@ def _stream_observability_summary(
             if metadata_keys_truncated:
                 summary["metadata_key_count"] = len(item.metadata)
                 summary["metadata_keys_truncated"] = True
-    if item.provider_payload is not None:
+    if (
+        item.provider_payload is not None
+        and item.kind is not StreamItemKind.REASONING_DELTA
+    ):
         summary["has_provider_payload"] = True
     return summary
 

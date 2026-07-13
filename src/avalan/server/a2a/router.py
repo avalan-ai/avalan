@@ -5,6 +5,7 @@ from ...model.stream import (
     StreamChannel,
     StreamConsumerProjection,
     StreamItemKind,
+    StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamValidationError,
     canonical_item_from_consumer_projection,
@@ -34,7 +35,11 @@ from ..entities import (
 )
 from ..routers import orchestrate, resolve_model_id
 from ..routers.streaming import (
+    ProtocolReasoningIdentity,
+    ProtocolReasoningRedactedText,
+    ProtocolReasoningRedactionState,
     cleanup_stream_sources,
+    protocol_stream_retention_settings,
     stream_consumer_iterator,
     stream_terminal_succeeded,
 )
@@ -42,8 +47,10 @@ from ..routers.streaming import (
 from asyncio import CancelledError
 from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
+from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from importlib import import_module
 from json import dumps, loads
 from logging import Logger
@@ -102,6 +109,18 @@ _A2A_TOOL_RESOURCE_CATEGORIES = frozenset(
         "stdout",
     }
 )
+
+
+@dataclass(kw_only=True, slots=True)
+class _A2AReasoningArtifactState:
+    identity: ProtocolReasoningIdentity
+    artifact_id: str
+    characters: int = 0
+    utf8_bytes: int = 0
+    dropped_characters: int = 0
+    dropped_utf8_bytes: int = 0
+    opened: bool = False
+    suppressed: bool = False
 
 
 def install_a2a_routes(
@@ -1063,6 +1082,7 @@ class AvalanA2AAgentExecutor:
 
         response: AsyncIterable[object] | None = None
         iterator: AsyncIterator[object] | None = None
+        translator: A2AResponseTranslator | None = None
         try:
             orchestrator = await self._orchestrator()
             request = await self._chat_request(context, orchestrator)
@@ -1092,18 +1112,24 @@ class AvalanA2AAgentExecutor:
             if translator.succeeded:
                 await orchestrator.sync_messages()
         except CancelledError:
+            if translator is None:
+                await updater.cancel()
+            else:
+                await translator.abort(StreamTerminalOutcome.CANCELLED)
             if response is not None:
                 await cleanup_stream_sources(
                     response, iterator, cancelled=True
                 )
-            await updater.cancel()
             raise
         except Exception:
+            if translator is None:
+                await updater.failed()
+            else:
+                await translator.abort(StreamTerminalOutcome.ERRORED)
             if response is not None:
                 await cleanup_stream_sources(
                     response, iterator, cancelled=False
                 )
-            await updater.failed()
             raise
         else:
             if response is not None:
@@ -1156,10 +1182,13 @@ class A2AResponseTranslator:
         updater: Any,
         *,
         output_redaction_settings: ServerOutputRedactionSettings | None = None,
+        retention_policy: StreamRetentionPolicy | None = None,
     ) -> None:
         self._updater = updater
         self._a2a_pb2 = import_module("a2a.types.a2a_pb2")
         self._terminal_outcome: StreamTerminalOutcome | None = None
+        self._finished = False
+        self._locally_closed = False
         self._open_artifacts: set[str] = set()
         output_redaction_settings = coerce_server_output_redaction_settings(
             output_redaction_settings
@@ -1170,16 +1199,40 @@ class A2AResponseTranslator:
             protocol="a2a",
             channel="answer",
         )
-        self._reasoning_redactor = ModelVisibleServerProtocolTextRedactor(
+        self._reasoning_redaction = ProtocolReasoningRedactionState(
             output_redaction_settings,
             protocol="a2a",
-            channel="reasoning",
         )
         self._pending_model_text_sequences: dict[str, int] = {}
+        retention = protocol_stream_retention_settings(retention_policy)
+        self._reasoning_segment_limit = retention.a2a_reasoning_segment_limit
+        self._reasoning_character_limit = (
+            retention.a2a_reasoning_character_limit
+        )
+        self._reasoning_utf8_byte_limit = (
+            retention.a2a_reasoning_text_byte_limit
+        )
+        self._reasoning_current: _A2AReasoningArtifactState | None = None
+        self._reasoning_last_identity: ProtocolReasoningIdentity | None = None
+        self._reasoning_suppressed_identity: (
+            ProtocolReasoningIdentity | None
+        ) = None
+        self._reasoning_completed: deque[_A2AReasoningArtifactState] = deque()
+        self._reasoning_retained_characters = 0
+        self._reasoning_retained_utf8_bytes = 0
+        self._reasoning_dropped_artifacts = 0
+        self._reasoning_dropped_characters = 0
+        self._reasoning_dropped_utf8_bytes = 0
+        self._reasoning_continuation_ordinals: dict[str | None, int] = {}
+        self._reasoning_next_continuation_ordinal = 0
+        self._reasoning_next_segment_ordinals: dict[int, int] = {}
+        self._reasoning_continuation_ordinal_hint: int | None = None
 
     @property
     def succeeded(self) -> bool:
-        return stream_terminal_succeeded(self._terminal_outcome)
+        return not self._locally_closed and stream_terminal_succeeded(
+            self._terminal_outcome
+        )
 
     async def process(self, item: object) -> None:
         if isinstance(item, CanonicalStreamItem):
@@ -1191,7 +1244,12 @@ class A2AResponseTranslator:
         await self._process_canonical_item(canonical_item)
 
     async def finish(self) -> None:
-        await self._flush_model_text()
+        if self._finished:
+            return
+        self._finished = True
+        if self._locally_closed and self._terminal_outcome is None:
+            return
+        await self._flush_model_text(self._terminal_outcome)
         for artifact_id in tuple(self._open_artifacts):
             await self._finish_artifact(artifact_id)
         if self._terminal_outcome is StreamTerminalOutcome.CANCELLED:
@@ -1201,9 +1259,34 @@ class A2AResponseTranslator:
         else:
             await self._updater.complete()
 
+    async def abort(self, outcome: StreamTerminalOutcome) -> None:
+        """Finish the current translation with one abnormal task terminal."""
+        assert outcome in (
+            StreamTerminalOutcome.CANCELLED,
+            StreamTerminalOutcome.ERRORED,
+        )
+        if self._finished:
+            return
+        self._terminal_outcome = outcome
+        await self.finish()
+
     async def _process_canonical_item(self, item: CanonicalStreamItem) -> None:
+        if self._terminal_outcome is not None:
+            return
+        if item.kind is StreamItemKind.STREAM_CLOSED:
+            self._locally_closed = True
+            return
         if item.is_stream_terminal:
             self._terminal_outcome = item.terminal_outcome
+            return
+        if item.kind is not StreamItemKind.REASONING_DELTA:
+            await self._close_reasoning_boundary(None)
+        if item.kind is StreamItemKind.MODEL_CONTINUATION_STARTED:
+            continuation_id = item.correlation.model_continuation_id
+            assert continuation_id is not None
+            self._reasoning_continuation_ordinal_hint = (
+                self._reasoning_continuation_ordinal(continuation_id)
+            )
             return
         if item.kind is StreamItemKind.ANSWER_DELTA:
             for text in self._answer_redactor.push(item.text_delta or ""):
@@ -1220,24 +1303,351 @@ class A2AResponseTranslator:
             )
             return
         if item.kind is StreamItemKind.REASONING_DELTA:
-            for text in self._reasoning_redactor.push(item.text_delta or ""):
-                await self._add_text_artifact(
-                    artifact_id="reasoning",
-                    text=text,
-                    metadata={"kind": "reasoning", "channel": "reasoning"},
-                    name="Reasoning",
-                )
-            self._record_model_text_pending(
-                "reasoning",
-                item.sequence,
-                self._reasoning_redactor,
-            )
+            await self._process_reasoning_item(item)
             return
         if item.channel in (
             StreamChannel.TOOL_CALL,
             StreamChannel.TOOL_EXECUTION,
         ):
             await self._process_tool_item(item)
+
+    async def _process_reasoning_item(
+        self,
+        item: CanonicalStreamItem,
+    ) -> None:
+        identity = ProtocolReasoningIdentity.from_item(item)
+        text = item.text_delta
+        assert isinstance(text, str) and text
+        previous = self._reasoning_last_identity
+
+        if (
+            self._reasoning_suppressed_identity is not None
+            and identity == self._reasoning_suppressed_identity
+        ):
+            self._record_reasoning_drop(text)
+            return
+
+        if previous is not None and identity != previous:
+            admission = self._reasoning_redaction.preview_push(identity, text)
+            if admission.marker_reserved:
+                if not self._ensure_reasoning_capacity(
+                    admission.required_character_count,
+                    admission.required_utf8_byte_count,
+                    additional_artifacts=0,
+                ):
+                    await self._reject_reasoning_marker_boundary(
+                        item, identity
+                    )
+                    return
+                outputs = self._reasoning_redaction.push(identity, text)
+                await self._emit_reasoning_outputs(outputs)
+                await self._finish_reasoning_artifact(None)
+                self._reasoning_last_identity = None
+                self._reasoning_suppressed_identity = None
+                self._pending_model_text_sequences.pop("reasoning", None)
+                return
+            if admission.suppressed:
+                outputs = self._reasoning_redaction.push(identity, text)
+                await self._emit_reasoning_outputs(outputs)
+                await self._finish_reasoning_artifact(None)
+                self._reasoning_last_identity = identity
+                self._reasoning_suppressed_identity = None
+                self._record_reasoning_pending(item.sequence)
+                return
+            await self._complete_reasoning_redactor(previous)
+            await self._finish_reasoning_artifact(None)
+            self._reasoning_last_identity = None
+            self._reasoning_suppressed_identity = None
+
+        admission = self._reasoning_redaction.preview_push(identity, text)
+        if admission.suppressed:
+            outputs = self._reasoning_redaction.push(identity, text)
+            await self._emit_reasoning_outputs(outputs)
+            self._reasoning_last_identity = (
+                identity
+                if self._reasoning_redaction.identity is not None
+                else None
+            )
+            self._record_reasoning_pending(item.sequence)
+            return
+
+        additional_artifacts = int(self._reasoning_current is None)
+        if not self._ensure_reasoning_capacity(
+            admission.required_character_count,
+            admission.required_utf8_byte_count,
+            additional_artifacts=additional_artifacts,
+        ):
+            self._ensure_reasoning_artifact(item.run_id, identity)
+            assert self._reasoning_current is not None
+            self._reasoning_current.suppressed = True
+            self._reasoning_suppressed_identity = identity
+            self._reasoning_last_identity = identity
+            self._record_reasoning_drop(text)
+            self._record_reasoning_pending(item.sequence)
+            return
+
+        self._ensure_reasoning_artifact(item.run_id, identity)
+        outputs = self._reasoning_redaction.push(identity, text)
+        self._reasoning_last_identity = identity
+        await self._emit_reasoning_outputs(outputs)
+        self._record_reasoning_pending(item.sequence)
+
+    async def _reject_reasoning_marker_boundary(
+        self,
+        item: CanonicalStreamItem,
+        identity: ProtocolReasoningIdentity,
+    ) -> None:
+        current = self._reasoning_current
+        if current is not None:
+            current.suppressed = True
+            current.dropped_characters += (
+                self._reasoning_redaction.pending_character_count
+            )
+            current.dropped_utf8_bytes += (
+                self._reasoning_redaction.pending_utf8_byte_count
+            )
+            await self._finish_reasoning_artifact(None)
+        self._reasoning_redaction = ProtocolReasoningRedactionState(
+            self._output_redaction_settings,
+            protocol="a2a",
+        )
+        self._reasoning_last_identity = identity
+        self._reasoning_suppressed_identity = identity
+        self._pending_model_text_sequences.pop("reasoning", None)
+        self._ensure_reasoning_artifact(item.run_id, identity)
+        assert item.text_delta is not None
+        assert self._reasoning_current is not None
+        self._reasoning_current.suppressed = True
+        self._record_reasoning_drop(item.text_delta)
+
+    async def _complete_reasoning_redactor(
+        self,
+        identity: ProtocolReasoningIdentity,
+    ) -> None:
+        if self._reasoning_redaction.identity is None:
+            return
+        outputs = self._reasoning_redaction.complete(identity)
+        await self._emit_reasoning_outputs(outputs)
+
+    async def _close_reasoning_boundary(
+        self,
+        outcome: StreamTerminalOutcome | None,
+    ) -> None:
+        identity = self._reasoning_last_identity
+        if identity is not None:
+            await self._complete_reasoning_redactor(identity)
+        await self._finish_reasoning_artifact(outcome)
+        self._reasoning_last_identity = None
+        self._reasoning_suppressed_identity = None
+        self._pending_model_text_sequences.pop("reasoning", None)
+
+    def _ensure_reasoning_capacity(
+        self,
+        required_characters: int,
+        required_utf8_bytes: int,
+        *,
+        additional_artifacts: int,
+    ) -> bool:
+        while self._reasoning_completed and (
+            len(self._reasoning_completed)
+            + int(self._reasoning_current is not None)
+            + additional_artifacts
+            > self._reasoning_segment_limit
+            or self._reasoning_retained_characters + required_characters
+            > self._reasoning_character_limit
+            or self._reasoning_retained_utf8_bytes + required_utf8_bytes
+            > self._reasoning_utf8_byte_limit
+        ):
+            dropped = self._reasoning_completed.popleft()
+            self._reasoning_retained_characters -= dropped.characters
+            self._reasoning_retained_utf8_bytes -= dropped.utf8_bytes
+            self._reasoning_dropped_artifacts += 1
+            self._reasoning_dropped_characters += dropped.characters
+            self._reasoning_dropped_utf8_bytes += dropped.utf8_bytes
+        return (
+            len(self._reasoning_completed)
+            + int(self._reasoning_current is not None)
+            + additional_artifacts
+            <= self._reasoning_segment_limit
+            and self._reasoning_retained_characters + required_characters
+            <= self._reasoning_character_limit
+            and self._reasoning_retained_utf8_bytes + required_utf8_bytes
+            <= self._reasoning_utf8_byte_limit
+        )
+
+    def _ensure_reasoning_artifact(
+        self,
+        run_id: str,
+        identity: ProtocolReasoningIdentity,
+    ) -> None:
+        current = self._reasoning_current
+        if current is not None:
+            assert current.identity == identity
+            return
+        if identity.continuation_id is not None:
+            continuation_ordinal = self._reasoning_continuation_ordinal(
+                identity.continuation_id
+            )
+            self._reasoning_continuation_ordinal_hint = continuation_ordinal
+        elif self._reasoning_continuation_ordinal_hint is not None:
+            continuation_ordinal = self._reasoning_continuation_ordinal_hint
+        else:
+            continuation_ordinal = self._reasoning_continuation_ordinal(None)
+        segment_ordinal = self._reasoning_next_segment_ordinals.get(
+            continuation_ordinal,
+            0,
+        )
+        self._reasoning_next_segment_ordinals[continuation_ordinal] = (
+            segment_ordinal + 1
+        )
+        self._reasoning_current = _A2AReasoningArtifactState(
+            identity=identity,
+            artifact_id=(
+                f"reasoning-{run_id}-{continuation_ordinal}-{segment_ordinal}"
+            ),
+        )
+
+    def _reasoning_continuation_ordinal(
+        self,
+        continuation_id: str | None,
+    ) -> int:
+        ordinal = self._reasoning_continuation_ordinals.get(continuation_id)
+        if ordinal is not None:
+            return ordinal
+        ordinal = self._reasoning_next_continuation_ordinal
+        self._reasoning_next_continuation_ordinal += 1
+        self._reasoning_continuation_ordinals[continuation_id] = ordinal
+        return ordinal
+
+    async def _emit_reasoning_outputs(
+        self,
+        outputs: tuple[ProtocolReasoningRedactedText, ...],
+    ) -> None:
+        for output in outputs:
+            current = self._reasoning_current
+            assert current is not None
+            assert current.identity == output.identity
+            await self._add_text_artifact(
+                artifact_id=current.artifact_id,
+                text=output.text,
+                metadata=self._reasoning_metadata(
+                    current,
+                    status="in_progress",
+                    terminal_outcome=None,
+                ),
+                name="Reasoning",
+            )
+            characters = len(output.text)
+            utf8_bytes = len(output.text.encode("utf-8"))
+            current.characters += characters
+            current.utf8_bytes += utf8_bytes
+            current.opened = True
+            self._reasoning_retained_characters += characters
+            self._reasoning_retained_utf8_bytes += utf8_bytes
+
+    def _record_reasoning_drop(self, text: str) -> None:
+        current = self._reasoning_current
+        assert current is not None
+        current.dropped_characters += len(text)
+        current.dropped_utf8_bytes += len(text.encode("utf-8"))
+
+    def _record_reasoning_pending(self, sequence: int) -> None:
+        if self._reasoning_redaction.marker_reserved:
+            self._pending_model_text_sequences.setdefault(
+                "reasoning",
+                sequence,
+            )
+        else:
+            self._pending_model_text_sequences.pop("reasoning", None)
+
+    async def _finish_reasoning_artifact(
+        self,
+        outcome: StreamTerminalOutcome | None,
+    ) -> None:
+        current = self._reasoning_current
+        if current is None:
+            return
+        if (
+            outcome
+            in (
+                StreamTerminalOutcome.CANCELLED,
+                StreamTerminalOutcome.ERRORED,
+            )
+            or current.suppressed
+        ):
+            status = "incomplete"
+        else:
+            status = "completed"
+        metadata = self._reasoning_metadata(
+            current,
+            status=status,
+            terminal_outcome=_a2a_reasoning_terminal_outcome(outcome),
+        )
+        if current.opened:
+            await self._finish_artifact(
+                current.artifact_id,
+                metadata=metadata,
+            )
+        else:
+            await self._updater.add_artifact(
+                [],
+                artifact_id=current.artifact_id,
+                name="Reasoning",
+                metadata=metadata,
+                append=False,
+                last_chunk=True,
+            )
+        self._reasoning_completed.append(current)
+        self._reasoning_current = None
+        self._ensure_reasoning_capacity(
+            0,
+            0,
+            additional_artifacts=0,
+        )
+
+    def _reasoning_metadata(
+        self,
+        artifact: _A2AReasoningArtifactState,
+        *,
+        status: str,
+        terminal_outcome: str | None,
+    ) -> dict[str, Any]:
+        identity = artifact.identity
+        metadata: dict[str, Any] = {
+            "kind": "reasoning",
+            "channel": "reasoning",
+            "representation": identity.representation.value,
+            "segment_instance_ordinal": identity.segment_instance_ordinal,
+            "status": status,
+            "terminal_outcome": terminal_outcome,
+            "truncation": {
+                "truncated": bool(
+                    self._reasoning_dropped_artifacts
+                    or self._reasoning_dropped_characters
+                    or self._reasoning_dropped_utf8_bytes
+                    or artifact.dropped_characters
+                    or artifact.dropped_utf8_bytes
+                ),
+                "dropped_artifacts": self._reasoning_dropped_artifacts,
+                "dropped_characters": (
+                    self._reasoning_dropped_characters
+                    + artifact.dropped_characters
+                ),
+                "dropped_utf8_bytes": (
+                    self._reasoning_dropped_utf8_bytes
+                    + artifact.dropped_utf8_bytes
+                ),
+            },
+        }
+        for key, value in (
+            ("provider_item_id", identity.provider_item_id),
+            ("output_index", identity.output_index),
+            ("summary_index", identity.summary_index),
+            ("continuation_id", identity.continuation_id),
+        ):
+            if value is not None:
+                metadata[key] = value
+        return metadata
 
     async def _process_tool_item(self, item: CanonicalStreamItem) -> None:
         tool_call_id = item.correlation.tool_call_id or "tool"
@@ -1288,7 +1698,10 @@ class A2AResponseTranslator:
         ):
             await self._finish_artifact(tool_call_id)
 
-    async def _flush_model_text(self) -> None:
+    async def _flush_model_text(
+        self,
+        outcome: StreamTerminalOutcome | None,
+    ) -> None:
         for channel, _sequence in sorted(
             self._pending_model_text_sequences.items(),
             key=lambda item: item[1],
@@ -1302,17 +1715,9 @@ class A2AResponseTranslator:
                         name="Answer",
                     )
             elif channel == "reasoning":
-                for text in self._reasoning_redactor.flush():
-                    await self._add_text_artifact(
-                        artifact_id="reasoning",
-                        text=text,
-                        metadata={
-                            "kind": "reasoning",
-                            "channel": "reasoning",
-                        },
-                        name="Reasoning",
-                    )
+                await self._close_reasoning_boundary(outcome)
         self._pending_model_text_sequences.clear()
+        await self._close_reasoning_boundary(outcome)
 
     def _record_model_text_pending(
         self,
@@ -1343,14 +1748,31 @@ class A2AResponseTranslator:
             append=append,
         )
 
-    async def _finish_artifact(self, artifact_id: str) -> None:
+    async def _finish_artifact(
+        self,
+        artifact_id: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         await self._updater.add_artifact(
             [],
             artifact_id=artifact_id,
             append=True,
             last_chunk=True,
+            **({"metadata": metadata} if metadata is not None else {}),
         )
         self._open_artifacts.discard(artifact_id)
+
+
+def _a2a_reasoning_terminal_outcome(
+    outcome: StreamTerminalOutcome | None,
+) -> str | None:
+    if outcome is None or outcome is StreamTerminalOutcome.COMPLETED:
+        return "completed"
+    if outcome is StreamTerminalOutcome.ERRORED:
+        return "failed"
+    assert outcome is StreamTerminalOutcome.CANCELLED
+    return "cancelled"
 
 
 def _a2a_tool_item_category(data: Mapping[str, object]) -> str | None:
