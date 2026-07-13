@@ -720,6 +720,9 @@ class StreamRetentionPolicy:
     cli_reasoning_segment_limit: int = 1024
     cli_reasoning_character_limit: int = 262144
     cli_reasoning_text_byte_limit: int = 1048576
+    responses_reasoning_item_segment_limit: int = 1024
+    responses_reasoning_item_character_limit: int = 262144
+    responses_reasoning_item_text_byte_limit: int = 1048576
     replay_history_item_limit: int = 1024
     openai_replay_reasoning_item_limit: int = 1024
     openai_replay_reasoning_summary_node_limit: int = 4096
@@ -765,6 +768,18 @@ class StreamRetentionPolicy:
             (
                 "cli_reasoning_text_byte_limit",
                 self.cli_reasoning_text_byte_limit,
+            ),
+            (
+                "responses_reasoning_item_segment_limit",
+                self.responses_reasoning_item_segment_limit,
+            ),
+            (
+                "responses_reasoning_item_character_limit",
+                self.responses_reasoning_item_character_limit,
+            ),
+            (
+                "responses_reasoning_item_text_byte_limit",
+                self.responses_reasoning_item_text_byte_limit,
             ),
             ("replay_history_item_limit", self.replay_history_item_limit),
             (

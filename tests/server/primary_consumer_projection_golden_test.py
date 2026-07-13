@@ -17,6 +17,7 @@ from avalan.model.stream import (
     accumulate_canonical_stream_items,
     iter_stream_consumer_projections,
 )
+from avalan.server.entities import ServerOutputRedactionSettings
 from avalan.server.routers import chat, responses
 
 _STREAM_SESSION_ID = "consumer-stream"
@@ -35,6 +36,8 @@ def _item(
     terminal_outcome: StreamTerminalOutcome | None = None,
     correlation: StreamItemCorrelation | None = None,
     visibility: StreamVisibility = StreamVisibility.PUBLIC,
+    reasoning_representation: StreamReasoningRepresentation | None = None,
+    segment_instance_ordinal: int | None = None,
 ) -> CanonicalStreamItem:
     if kind is StreamItemKind.REASONING_DELTA:
         visibility = StreamVisibility.PRIVATE
@@ -72,12 +75,17 @@ def _item(
         terminal_outcome=terminal_outcome,
         visibility=visibility,
         reasoning_representation=(
-            StreamReasoningRepresentation.NATIVE_TEXT
-            if kind is StreamItemKind.REASONING_DELTA
-            else None
+            reasoning_representation
+            or (
+                StreamReasoningRepresentation.NATIVE_TEXT
+                if kind is StreamItemKind.REASONING_DELTA
+                else None
+            )
         ),
         segment_instance_ordinal=(
-            0 if kind is StreamItemKind.REASONING_DELTA else None
+            segment_instance_ordinal
+            if segment_instance_ordinal is not None
+            else (0 if kind is StreamItemKind.REASONING_DELTA else None)
         ),
     )
 
@@ -92,6 +100,13 @@ def _golden_items() -> tuple[CanonicalStreamItem, ...]:
             StreamItemKind.REASONING_DELTA,
             text_delta="plan",
             visibility=StreamVisibility.PRIVATE,
+            correlation=StreamItemCorrelation(
+                protocol_item_id="provider-reasoning",
+                provider_output_index=4,
+                provider_summary_index=7,
+                model_continuation_id="continuation-0",
+            ),
+            reasoning_representation=StreamReasoningRepresentation.SUMMARY,
         ),
         _item(
             3,
@@ -172,30 +187,19 @@ async def _async_items(
 def _responses_event_names(
     projections: tuple[StreamConsumerProjection, ...],
 ) -> list[str]:
-    adapter = responses._ResponsesSSEProjectionAdapter()
-    names: list[str] = []
-    for sequence, projection in enumerate(projections):
-        names.extend(
-            event.split("\n", maxsplit=1)[0].split(": ", maxsplit=1)[1]
-            for event in adapter.switch(projection)
-        )
-        names.extend(
-            event.event
-            for event in responses._token_to_sse_events(
-                projection,
-                sequence,
-                adapter.active_tool_call_id,
-            )
-        )
-    names.extend(
-        event.split("\n", maxsplit=1)[0].split(": ", maxsplit=1)[1]
-        for event in adapter.close()
+    projector = responses._ResponsesSSEProjector(
+        "golden-response",
+        ServerOutputRedactionSettings(),
     )
+    names: list[str] = []
+    terminal: StreamConsumerProjection | None = None
+    for projection in projections:
+        if projection.is_stream_terminal:
+            terminal = projection
+        names.extend(event.event for event in projector.events_for(projection))
+    assert terminal is not None
     names.extend(
-        event.event
-        for event in responses._terminal_response_events(
-            StreamTerminalOutcome.COMPLETED
-        )
+        event.event for event in responses._terminal_response_events(terminal)
     )
     return names
 
@@ -272,10 +276,10 @@ class PrimaryConsumerProjectionGoldenTestCase(IsolatedAsyncioTestCase):
                 "response.content_part.done",
                 "response.output_item.done",
                 "response.output_item.added",
-                "response.content_part.added",
-                "response.reasoning_text.delta",
-                "response.reasoning_text.done",
-                "response.content_part.done",
+                "response.reasoning_summary_part.added",
+                "response.reasoning_summary_text.delta",
+                "response.reasoning_summary_text.done",
+                "response.reasoning_summary_part.done",
                 "response.output_item.done",
                 "response.output_item.added",
                 "response.function_call_arguments.delta",

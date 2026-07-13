@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -123,6 +124,51 @@ def _reasoning_accumulator(
 
 
 class StreamRetentionIsolationTestCase(TestCase):
+    def test_responses_reasoning_item_retention_defaults(self) -> None:
+        policy = StreamRetentionPolicy()
+
+        self.assertEqual(policy.responses_reasoning_item_segment_limit, 1024)
+        self.assertEqual(
+            policy.responses_reasoning_item_character_limit,
+            262144,
+        )
+        self.assertEqual(
+            policy.responses_reasoning_item_text_byte_limit,
+            1048576,
+        )
+
+    def test_responses_reasoning_item_retention_accepts_custom_limits(
+        self,
+    ) -> None:
+        policy = StreamRetentionPolicy(
+            responses_reasoning_item_segment_limit=1,
+            responses_reasoning_item_character_limit=2,
+            responses_reasoning_item_text_byte_limit=3,
+        )
+
+        self.assertEqual(policy.responses_reasoning_item_segment_limit, 1)
+        self.assertEqual(policy.responses_reasoning_item_character_limit, 2)
+        self.assertEqual(policy.responses_reasoning_item_text_byte_limit, 3)
+
+    def test_responses_reasoning_item_retention_rejects_invalid_limits(
+        self,
+    ) -> None:
+        field_names = (
+            "responses_reasoning_item_segment_limit",
+            "responses_reasoning_item_character_limit",
+            "responses_reasoning_item_text_byte_limit",
+        )
+        for field_name in field_names:
+            for invalid_value in (-1, True):
+                with self.subTest(
+                    field_name=field_name,
+                    invalid_value=invalid_value,
+                ):
+                    with self.assertRaises(AssertionError):
+                        StreamRetentionPolicy(
+                            **{field_name: invalid_value}  # type: ignore[arg-type]
+                        )
+
     def test_cli_reasoning_retention_limits_are_independent_and_validated(
         self,
     ) -> None:
@@ -142,7 +188,7 @@ class StreamRetentionIsolationTestCase(TestCase):
         self.assertEqual(policy.cli_reasoning_character_limit, 5)
         self.assertEqual(policy.cli_reasoning_text_byte_limit, 6)
 
-        invalid_factories = (
+        invalid_factories: tuple[Callable[[], StreamRetentionPolicy], ...] = (
             lambda: StreamRetentionPolicy(cli_reasoning_segment_limit=-1),
             lambda: StreamRetentionPolicy(cli_reasoning_character_limit=-1),
             lambda: StreamRetentionPolicy(cli_reasoning_text_byte_limit=-1),

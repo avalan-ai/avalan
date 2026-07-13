@@ -4,10 +4,13 @@ from ...model.stream import (
     StreamChannel,
     StreamConsumerProjection,
     StreamItemKind,
+    StreamReasoningRepresentation,
+    StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamValidationError,
 )
 from ...server.entities import (
+    SKILL_CONTENT_REDACTION,
     ModelVisibleServerProtocolTextRedactor,
     ResponsesRequest,
     ServerOutputRedactionChannel,
@@ -38,11 +41,12 @@ from types import MappingProxyType
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 _MAX_COALESCED_DELTA_CHARS = 4096
 
 _RESPONSE_SSE_ITEM_TYPES = {
+    "reasoning",
     "reasoning_text",
     "function_call",
     "custom_tool_call_input",
@@ -85,6 +89,11 @@ class _ResponsesSSEEvent:
     data: dict[str, Any]
     correlation_key: str | None = None
     canonical_channel: StreamChannel | None = None
+    representation: StreamReasoningRepresentation | None = None
+    item_id: str | None = None
+    segment_instance_ordinal: int | None = None
+    summary_index: int | None = None
+    continuation_id: str | None = None
 
     def message(self) -> str:
         return sse_message(to_json(self.data), event=self.event)
@@ -93,7 +102,9 @@ class _ResponsesSSEEvent:
         assert isinstance(other, _ResponsesSSEEvent)
         self_sequence = self.data.get("sequence_number")
         other_sequence = other.data.get("sequence_number")
-        if (
+        if (self_sequence is None) != (other_sequence is None):
+            return False
+        if self_sequence is not None and (
             not isinstance(self_sequence, int)
             or isinstance(self_sequence, bool)
             or not isinstance(other_sequence, int)
@@ -110,8 +121,16 @@ class _ResponsesSSEEvent:
         if (
             _response_sse_index_value(self.data, "output_index") is None
             or _response_sse_index_value(other.data, "output_index") is None
-            or _response_sse_index_value(self.data, "content_index") is None
-            or _response_sse_index_value(other.data, "content_index") is None
+        ):
+            return False
+        index_key = (
+            "summary_index"
+            if self.event == "response.reasoning_summary_text.delta"
+            else "content_index"
+        )
+        if (
+            _response_sse_index_value(self.data, index_key) is None
+            or _response_sse_index_value(other.data, index_key) is None
         ):
             return False
         if self.event == "response.tool_execution.output" and (
@@ -122,6 +141,11 @@ class _ResponsesSSEEvent:
         return (
             self.event == other.event
             and self.correlation_key == other.correlation_key
+            and self.representation is other.representation
+            and self.item_id == other.item_id
+            and self.segment_instance_ordinal == other.segment_instance_ordinal
+            and self.summary_index == other.summary_index
+            and self.continuation_id == other.continuation_id
             and self.data.get("type") == other.data.get("type")
             and self.data.get("output_index") == other.data.get("output_index")
             and self.data.get("content_index")
@@ -132,6 +156,7 @@ class _ResponsesSSEEvent:
             in {
                 "response.output_text.delta",
                 "response.reasoning_text.delta",
+                "response.reasoning_summary_text.delta",
                 "response.custom_tool_call_input.delta",
                 "response.tool_execution.output",
             }
@@ -149,11 +174,34 @@ class _ResponsesSSEEvent:
             data=data,
             correlation_key=self.correlation_key,
             canonical_channel=self.canonical_channel,
+            representation=self.representation,
+            item_id=self.item_id,
+            segment_instance_ordinal=self.segment_instance_ordinal,
+            summary_index=self.summary_index,
+            continuation_id=self.continuation_id,
         )
 
     def coalesced_delta_length(self, other: "_ResponsesSSEEvent") -> int:
         assert self.can_coalesce(other)
         return len(self.data["delta"]) + len(other.data["delta"])
+
+    def with_sequence(self, sequence_number: int) -> "_ResponsesSSEEvent":
+        assert isinstance(sequence_number, int)
+        assert not isinstance(sequence_number, bool)
+        assert sequence_number >= 0
+        data = dict(self.data)
+        data["sequence_number"] = sequence_number
+        return _ResponsesSSEEvent(
+            event=self.event,
+            data=data,
+            correlation_key=self.correlation_key,
+            canonical_channel=self.canonical_channel,
+            representation=self.representation,
+            item_id=self.item_id,
+            segment_instance_ordinal=self.segment_instance_ordinal,
+            summary_index=self.summary_index,
+            continuation_id=self.continuation_id,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,51 +396,1158 @@ class _ResponsesSSEProjectionAdapter:
         return events
 
 
-def _adapter_model_text_redactor(
-    adapter: object,
-    token: StreamConsumerProjection,
-) -> ModelVisibleServerProtocolTextRedactor | None:
-    redactor_for_token = getattr(adapter, "model_text_redactor", None)
-    if not callable(redactor_for_token):
-        return None
-    redactor = redactor_for_token(token)
-    return (
-        redactor
-        if isinstance(redactor, ModelVisibleServerProtocolTextRedactor)
-        else None
-    )
+@dataclass(frozen=True, slots=True)
+class _ResponsesReasoningIdentity:
+    representation: StreamReasoningRepresentation
+    segment_instance_ordinal: int
+    provider_item_id: str | None
+    provider_output_index: int | None
+    provider_summary_index: int | None
+    continuation_id: str | None
+
+    @classmethod
+    def from_projection(
+        cls,
+        projection: StreamConsumerProjection,
+    ) -> "_ResponsesReasoningIdentity":
+        assert projection.kind is StreamItemKind.REASONING_DELTA
+        assert projection.reasoning_representation is not None
+        assert projection.segment_instance_ordinal is not None
+        correlation = projection.correlation
+        return cls(
+            representation=projection.reasoning_representation,
+            segment_instance_ordinal=projection.segment_instance_ordinal,
+            provider_item_id=correlation.protocol_item_id,
+            provider_output_index=correlation.provider_output_index,
+            provider_summary_index=correlation.provider_summary_index,
+            continuation_id=correlation.model_continuation_id,
+        )
+
+    @property
+    def item_key(self) -> tuple[object, ...]:
+        if self.representation is StreamReasoningRepresentation.SUMMARY:
+            provider_key = (
+                self.provider_item_id,
+                self.provider_output_index,
+            )
+            if provider_key != (None, None):
+                return (
+                    self.representation,
+                    self.continuation_id,
+                    *provider_key,
+                )
+        return (
+            self.representation,
+            self.continuation_id,
+            self.provider_item_id,
+            self.provider_output_index,
+            self.segment_instance_ordinal,
+        )
+
+    @property
+    def part_key(self) -> tuple[object, ...]:
+        return (
+            self.representation,
+            self.segment_instance_ordinal,
+            self.provider_item_id,
+            self.provider_output_index,
+            self.provider_summary_index,
+            self.continuation_id,
+        )
+
+    @property
+    def has_optional_identity(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.provider_item_id,
+                self.provider_output_index,
+                self.provider_summary_index,
+                self.continuation_id,
+            )
+        )
 
 
-def _adapter_model_text_pre_switch_events(
-    adapter: object,
-    token: StreamConsumerProjection,
-) -> list[_ResponsesSSEEvent]:
-    flush_events = getattr(adapter, "flush_model_text_before_switch", None)
-    if not callable(flush_events):
+class _ResponsesReasoningRetentionError(RuntimeError):
+    """Report prospective Responses reasoning retention overflow."""
+
+
+class _ResponsesSourceAfterTerminalError(RuntimeError):
+    """Report a source failure after the protocol terminal was owned."""
+
+
+class _ResponsesCleanupError(RuntimeError):
+    """Report a content-free Responses cleanup failure."""
+
+
+_RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE = (
+    "Responses source failed after terminal outcome."
+)
+_RESPONSES_CLEANUP_ERROR_MESSAGE = "Responses stream cleanup failed."
+
+
+@dataclass(slots=True)
+class _ResponsesReasoningAdmission:
+    segment_limit: int
+    character_limit: int
+    utf8_byte_limit: int
+    segment_count: int = 0
+    emitted_character_count: int = 0
+    emitted_utf8_byte_count: int = 0
+    pending_character_count: int = 0
+    pending_utf8_byte_count: int = 0
+    pending_identity: tuple[object, ...] | None = None
+    marker_reserved: bool = False
+
+    @classmethod
+    def from_policy(
+        cls,
+        policy: StreamRetentionPolicy,
+    ) -> "_ResponsesReasoningAdmission":
+        assert isinstance(policy, StreamRetentionPolicy)
+        return cls(
+            segment_limit=policy.responses_reasoning_item_segment_limit,
+            character_limit=(policy.responses_reasoning_item_character_limit),
+            utf8_byte_limit=(policy.responses_reasoning_item_text_byte_limit),
+        )
+
+    def admit_part(self) -> None:
+        prospective = self.segment_count + 1
+        if prospective > self.segment_limit:
+            raise _ResponsesReasoningRetentionError(
+                "Responses reasoning segment limit exceeded"
+            )
+        self.segment_count = prospective
+
+    def admit_push(
+        self,
+        identity: tuple[object, ...],
+        value: str,
+        redactor: ModelVisibleServerProtocolTextRedactor,
+    ) -> None:
+        assert isinstance(identity, tuple)
+        assert isinstance(value, str)
+        assert isinstance(redactor, ModelVisibleServerProtocolTextRedactor)
+        if self.pending_identity is not None:
+            assert self.pending_identity == identity
+        (
+            _chunks,
+            preview_pending_characters,
+            preview_pending_bytes,
+            preview_redacted,
+        ) = redactor.preview_push(value)
+        reserve = self.marker_reserved or bool(preview_pending_characters)
+        reserve = reserve or preview_redacted
+        marker_characters = len(SKILL_CONTENT_REDACTION) if reserve else 0
+        marker_bytes = (
+            len(SKILL_CONTENT_REDACTION.encode("utf-8")) if reserve else 0
+        )
+        prospective_characters = (
+            self.emitted_character_count
+            + self.pending_character_count
+            + len(value)
+            + marker_characters
+        )
+        prospective_bytes = (
+            self.emitted_utf8_byte_count
+            + self.pending_utf8_byte_count
+            + len(value.encode("utf-8"))
+            + marker_bytes
+        )
+        if prospective_characters > self.character_limit:
+            raise _ResponsesReasoningRetentionError(
+                "Responses reasoning character limit exceeded"
+            )
+        if prospective_bytes > self.utf8_byte_limit:
+            raise _ResponsesReasoningRetentionError(
+                "Responses reasoning byte limit exceeded"
+            )
+        if preview_pending_characters:
+            assert preview_pending_bytes >= preview_pending_characters
+
+    def commit_push(
+        self,
+        identity: tuple[object, ...],
+        chunks: tuple[str, ...],
+        redactor: ModelVisibleServerProtocolTextRedactor,
+    ) -> None:
+        assert isinstance(identity, tuple)
+        assert isinstance(chunks, tuple)
+        assert isinstance(redactor, ModelVisibleServerProtocolTextRedactor)
+        self.emitted_character_count += sum(len(chunk) for chunk in chunks)
+        self.emitted_utf8_byte_count += sum(
+            len(chunk.encode("utf-8")) for chunk in chunks
+        )
+        self.pending_character_count = redactor.pending_character_count
+        self.pending_utf8_byte_count = redactor.pending_utf8_byte_count
+        self.pending_identity = (
+            identity if self.pending_character_count else None
+        )
+        self.marker_reserved = bool(self.pending_character_count)
+        self._assert_committed_within_limits()
+
+    def admit_flush(
+        self,
+        identity: tuple[object, ...],
+        redactor: ModelVisibleServerProtocolTextRedactor,
+    ) -> None:
+        assert isinstance(identity, tuple)
+        assert isinstance(redactor, ModelVisibleServerProtocolTextRedactor)
+        if self.pending_identity is not None:
+            assert self.pending_identity == identity
+        chunks, _redacted = redactor.preview_flush()
+        prospective_characters = self.emitted_character_count + sum(
+            len(chunk) for chunk in chunks
+        )
+        prospective_bytes = self.emitted_utf8_byte_count + sum(
+            len(chunk.encode("utf-8")) for chunk in chunks
+        )
+        if prospective_characters > self.character_limit:
+            raise _ResponsesReasoningRetentionError(
+                "Responses reasoning character limit exceeded"
+            )
+        if prospective_bytes > self.utf8_byte_limit:
+            raise _ResponsesReasoningRetentionError(
+                "Responses reasoning byte limit exceeded"
+            )
+
+    def commit_flush(self, chunks: tuple[str, ...]) -> None:
+        assert isinstance(chunks, tuple)
+        self.emitted_character_count += sum(len(chunk) for chunk in chunks)
+        self.emitted_utf8_byte_count += sum(
+            len(chunk.encode("utf-8")) for chunk in chunks
+        )
+        self.pending_character_count = 0
+        self.pending_utf8_byte_count = 0
+        self.pending_identity = None
+        self.marker_reserved = False
+        self._assert_committed_within_limits()
+
+    def _assert_committed_within_limits(self) -> None:
+        assert (
+            self.emitted_character_count + self.pending_character_count
+            <= self.character_limit
+        )
+        assert (
+            self.emitted_utf8_byte_count + self.pending_utf8_byte_count
+            <= self.utf8_byte_limit
+        )
+
+
+@dataclass(slots=True)
+class _ResponsesProjectedItem:
+    kind: str
+    output_index: int
+    item_id: str
+    continuation_id: str | None = None
+    representation: StreamReasoningRepresentation | None = None
+    reasoning_item_key: tuple[object, ...] | None = None
+    reasoning_part_key: tuple[object, ...] | None = None
+    segment_instance_ordinal: int | None = None
+    summary_index: int | None = None
+    provider_summary_index: int | None = None
+    tool_name: str | None = None
+    text: list[str] = field(default_factory=list)
+    summary: list[dict[str, str]] = field(default_factory=list)
+    redactor: ModelVisibleServerProtocolTextRedactor | None = None
+    admission: _ResponsesReasoningAdmission | None = None
+    quarantined: bool = False
+    content_closed: bool = False
+
+
+class _ResponsesSSEProjector:
+    """Project canonical items into one aggregate Responses lifecycle."""
+
+    def __init__(
+        self,
+        response_id: str,
+        output_redaction_settings: ServerOutputRedactionSettings,
+        retention_policy: StreamRetentionPolicy | None = None,
+    ) -> None:
+        assert isinstance(response_id, str) and response_id.strip()
+        self.response_id = response_id
+        self.output_redaction_settings = output_redaction_settings
+        self.retention_policy = retention_policy or StreamRetentionPolicy()
+        self.state: _ResponsesProjectedItem | None = None
+        self._tool_states: dict[str, _ResponsesProjectedItem] = {}
+        self._next_output_index = 0
+        self.failure: dict[str, object] | None = None
+        self.redaction_latched = False
+        self._quarantine_next_reasoning = False
+        self._last_reasoning_identity: _ResponsesReasoningIdentity | None = (
+            None
+        )
+
+    def events_for(
+        self,
+        projection: StreamConsumerProjection,
+    ) -> list[_ResponsesSSEEvent]:
+        assert isinstance(projection, StreamConsumerProjection)
+        if self.failure is not None:
+            return []
+        if projection.kind is StreamItemKind.REASONING_DELTA:
+            return self._reasoning_events(projection)
+        if projection.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            return self._tool_call_events(projection)
+        if projection.kind is StreamItemKind.ANSWER_DELTA:
+            return self._answer_events(projection)
+        if projection.kind in {
+            StreamItemKind.TOOL_CALL_READY,
+            StreamItemKind.TOOL_CALL_DONE,
+        }:
+            tool_call_id = projection.tool_call_id
+            assert tool_call_id is not None
+            return self._close_tool(tool_call_id, status="completed")
+        if projection.is_stream_terminal:
+            status = (
+                "completed"
+                if projection.terminal_outcome
+                is StreamTerminalOutcome.COMPLETED
+                else "incomplete"
+            )
+            events = self.close(
+                status=status,
+                identity_lost=True,
+                include_tools=True,
+            )
+            if (
+                projection.kind is StreamItemKind.STREAM_COMPLETED
+                and projection.usage is not None
+            ):
+                events.append(
+                    _ResponsesSSEEvent(
+                        event="response.usage.completed",
+                        data={
+                            "type": "response.usage.completed",
+                            "usage": projection.usage,
+                        },
+                        canonical_channel=projection.channel,
+                    )
+                )
+            return events
+        if projection.kind in {
+            StreamItemKind.STREAM_STARTED,
+            StreamItemKind.STREAM_CLOSED,
+        }:
+            return []
+        if projection.kind is StreamItemKind.REASONING_DONE:
+            return self._complete_reasoning()
+        if projection.kind is StreamItemKind.ANSWER_DONE:
+            return self._complete_answer()
+        events = self.close(
+            status="completed",
+            identity_lost=True,
+            include_tools=False,
+        )
+        events.extend(
+            self._unsequenced_events(
+                _canonical_item_to_sse_events(
+                    projection,
+                    0,
+                    output_redaction_settings=self.output_redaction_settings,
+                )
+            )
+        )
+        return events
+
+    def close(
+        self,
+        *,
+        status: str = "completed",
+        identity_lost: bool = False,
+        include_tools: bool = True,
+    ) -> list[_ResponsesSSEEvent]:
+        assert status in {"completed", "incomplete"}
+        assert isinstance(identity_lost, bool)
+        assert isinstance(include_tools, bool)
+        state = self.state
+        events: list[_ResponsesSSEEvent] = []
+        if state is not None and state.kind == "reasoning_summary":
+            events.extend(
+                self._close_summary_part(
+                    state,
+                    identity_lost=identity_lost,
+                )
+            )
+        elif state is not None and state.kind == "reasoning_text":
+            if not state.content_closed:
+                events.extend(
+                    self._close_native_reasoning(
+                        state,
+                        identity_lost=identity_lost,
+                    )
+                )
+        elif state is not None and state.kind == "output_text":
+            if not state.content_closed:
+                events.extend(
+                    self._flush_text(state, "response.output_text.delta")
+                )
+                events.append(
+                    self._item_event(
+                        state,
+                        "response.output_text.done",
+                        {
+                            "item_id": state.item_id,
+                            "content_index": 0,
+                            "text": "".join(state.text),
+                        },
+                    )
+                )
+                events.append(self._content_part_done_event(state))
+                state.content_closed = True
+        if state is not None:
+            events.append(self._output_item_done_event(state, status))
+            self.state = None
+        if include_tools:
+            for tool_state in sorted(
+                self._tool_states.values(),
+                key=lambda candidate: candidate.output_index,
+            ):
+                events.extend(self._close_tool_state(tool_state, status))
+            self._tool_states.clear()
+        return events
+
+    def _close_tool(
+        self,
+        tool_call_id: str,
+        *,
+        status: str,
+    ) -> list[_ResponsesSSEEvent]:
+        assert isinstance(tool_call_id, str) and tool_call_id.strip()
+        assert status in {"completed", "incomplete"}
+        state = self._tool_states.pop(tool_call_id, None)
+        if state is None:
+            return []
+        return self._close_tool_state(state, status)
+
+    def _close_tool_state(
+        self,
+        state: _ResponsesProjectedItem,
+        status: str,
+    ) -> list[_ResponsesSSEEvent]:
+        assert state.kind in {"function_call", "custom_tool_call_input"}
+        events: list[_ResponsesSSEEvent] = []
+        if state.kind == "function_call":
+            events.append(
+                self._item_event(
+                    state,
+                    "response.function_call_arguments.done",
+                    {"id": state.item_id},
+                )
+            )
+        else:
+            events.append(
+                self._item_event(
+                    state,
+                    "response.custom_tool_call_input.done",
+                    {"id": state.item_id, "content_index": 0},
+                )
+            )
+            events.append(self._content_part_done_event(state))
+        events.append(self._output_item_done_event(state, status))
+        return events
+
+    def _complete_reasoning(self) -> list[_ResponsesSSEEvent]:
+        state = self.state
+        if state is None:
+            return []
+        if state.kind == "reasoning_summary":
+            return self._close_summary_part(state, identity_lost=False)
+        if state.kind == "reasoning_text" and not state.content_closed:
+            events = self._close_native_reasoning(
+                state,
+                identity_lost=False,
+            )
+            state.content_closed = True
+            return events
         return []
-    events = flush_events(token)
-    return events if isinstance(events, list) else []
 
+    def _complete_answer(self) -> list[_ResponsesSSEEvent]:
+        state = self.state
+        if state is None or state.kind != "output_text":
+            return []
+        if state.content_closed:
+            return []
+        events = self._flush_text(state, "response.output_text.delta")
+        events.append(
+            self._item_event(
+                state,
+                "response.output_text.done",
+                {
+                    "item_id": state.item_id,
+                    "content_index": 0,
+                    "text": "".join(state.text),
+                },
+            )
+        )
+        events.append(self._content_part_done_event(state))
+        state.content_closed = True
+        return events
 
-def _adapter_record_model_text_pending(
-    adapter: object,
-    token: StreamConsumerProjection,
-    redactor: ModelVisibleServerProtocolTextRedactor | None,
-) -> None:
-    record_pending = getattr(adapter, "record_model_text_pending", None)
-    if callable(record_pending):
-        record_pending(token, redactor)
+    def _reasoning_events(
+        self,
+        projection: StreamConsumerProjection,
+    ) -> list[_ResponsesSSEEvent]:
+        identity = _ResponsesReasoningIdentity.from_projection(projection)
+        previous_identity = self._last_reasoning_identity
+        identity_lost = bool(
+            previous_identity is not None
+            and previous_identity.has_optional_identity
+            and not identity.has_optional_identity
+        )
+        self._last_reasoning_identity = identity
+        events: list[_ResponsesSSEEvent] = []
+        state = self.state
+        expected_kind = (
+            "reasoning_summary"
+            if identity.representation is StreamReasoningRepresentation.SUMMARY
+            else "reasoning_text"
+        )
+        if (
+            state is None
+            or state.kind != expected_kind
+            or state.reasoning_item_key != identity.item_key
+        ):
+            events.extend(self.close(status="completed", include_tools=False))
+            state = self._open_reasoning_item(identity)
+            self.state = state
+            if state.kind == "reasoning_text":
+                assert state.admission is not None
+                try:
+                    state.admission.admit_part()
+                except _ResponsesReasoningRetentionError:
+                    return self._retention_failure_events(events)
+            events.append(self._output_item_added_event(state))
+            if state.kind == "reasoning_text":
+                events.append(self._content_part_added_event(state))
+        assert state is not None
+        if state.kind == "reasoning_summary":
+            if state.reasoning_part_key != identity.part_key:
+                events.extend(
+                    self._close_summary_part(state, identity_lost=False)
+                )
+                assert state.admission is not None
+                try:
+                    state.admission.admit_part()
+                except _ResponsesReasoningRetentionError:
+                    return self._retention_failure_events(events)
+                state.reasoning_part_key = identity.part_key
+                state.segment_instance_ordinal = (
+                    identity.segment_instance_ordinal
+                )
+                state.provider_summary_index = identity.provider_summary_index
+                state.summary_index = len(state.summary)
+                state.text = []
+                state.redactor = self._reasoning_redactor()
+                state.quarantined = self._consume_reasoning_quarantine(
+                    identity
+                )
+                events.append(self._summary_part_added_event(state))
+            if identity_lost:
+                state.quarantined = True
+                self._quarantine_next_reasoning = True
+            try:
+                events.extend(
+                    self._append_model_text(
+                        state,
+                        projection.text_delta or "",
+                        "response.reasoning_summary_text.delta",
+                    )
+                )
+            except _ResponsesReasoningRetentionError:
+                return self._retention_failure_events(events)
+            return events
+        if identity_lost:
+            state.quarantined = True
+            self._quarantine_next_reasoning = True
+        try:
+            events.extend(
+                self._append_model_text(
+                    state,
+                    projection.text_delta or "",
+                    "response.reasoning_text.delta",
+                )
+            )
+        except _ResponsesReasoningRetentionError:
+            return self._retention_failure_events(events)
+        return events
 
+    def _tool_call_events(
+        self,
+        projection: StreamConsumerProjection,
+    ) -> list[_ResponsesSSEEvent]:
+        item_id = projection.tool_call_id
+        assert item_id is not None
+        function_call = _projection_function_call_delta(projection)
+        kind = (
+            "function_call"
+            if function_call is not None
+            else "custom_tool_call_input"
+        )
+        events: list[_ResponsesSSEEvent] = []
+        state = self._tool_states.get(item_id)
+        if state is not None and state.kind != kind:
+            raise StreamValidationError(
+                "Responses tool call changed protocol item type"
+            )
+        if state is None:
+            events.extend(
+                self.close(
+                    status="completed",
+                    identity_lost=True,
+                    include_tools=False,
+                )
+            )
+            state = self._open_item(
+                kind,
+                item_id=item_id,
+                continuation_id=(projection.correlation.model_continuation_id),
+            )
+            state.tool_name = _response_tool_name(projection)
+            self._tool_states[item_id] = state
+            events.append(self._output_item_added_event(state))
+            if kind == "custom_tool_call_input":
+                events.append(self._content_part_added_event(state))
+        assert state is not None
+        projected = _canonical_item_to_sse_events(
+            projection,
+            0,
+            item_id,
+            output_redaction_settings=self.output_redaction_settings,
+        )
+        if kind == "function_call":
+            state.text.append(
+                sanitize_server_protocol_text(
+                    projection.text_delta or "",
+                    output_redaction_settings=self.output_redaction_settings,
+                    protocol="openai",
+                )
+            )
+        else:
+            state.text.append(
+                _sanitize_response_tool_text_delta(
+                    projection.text_delta or "",
+                    tool_name=state.tool_name,
+                    output_redaction_settings=self.output_redaction_settings,
+                )
+            )
+        for event in self._unsequenced_events(projected):
+            data = dict(event.data)
+            data["output_index"] = state.output_index
+            if "content_index" in data:
+                data["content_index"] = 0
+            events.append(
+                _ResponsesSSEEvent(
+                    event=event.event,
+                    data=data,
+                    correlation_key=item_id,
+                    canonical_channel=event.canonical_channel,
+                    item_id=item_id,
+                    continuation_id=state.continuation_id,
+                )
+            )
+        return events
 
-def _adapter_model_text_flush_events(
-    adapter: object,
-    seq: int,
-) -> list[_ResponsesSSEEvent]:
-    flush_events = getattr(adapter, "flush_model_text_events", None)
-    if not callable(flush_events):
-        return []
-    events = flush_events(seq)
-    return events if isinstance(events, list) else []
+    def _answer_events(
+        self,
+        projection: StreamConsumerProjection,
+    ) -> list[_ResponsesSSEEvent]:
+        events: list[_ResponsesSSEEvent] = []
+        state = self.state
+        if state is None or state.kind != "output_text":
+            events.extend(
+                self.close(
+                    status="completed",
+                    identity_lost=True,
+                    include_tools=False,
+                )
+            )
+            state = self._open_item(
+                "output_text",
+                item_id=f"msg_{self.response_id}_{self._next_output_index}",
+                continuation_id=(projection.correlation.model_continuation_id),
+            )
+            state.redactor = ModelVisibleServerProtocolTextRedactor(
+                self.output_redaction_settings,
+                protocol="openai",
+                channel="answer",
+            )
+            self.state = state
+            events.append(self._output_item_added_event(state))
+            events.append(self._content_part_added_event(state))
+        assert state is not None
+        events.extend(
+            self._append_model_text(
+                state,
+                projection.text_delta or "",
+                "response.output_text.delta",
+            )
+        )
+        return events
+
+    def _open_reasoning_item(
+        self,
+        identity: _ResponsesReasoningIdentity,
+    ) -> _ResponsesProjectedItem:
+        output_index = self._allocate_output_index()
+        state = _ResponsesProjectedItem(
+            kind=(
+                "reasoning_summary"
+                if identity.representation
+                is StreamReasoningRepresentation.SUMMARY
+                else "reasoning_text"
+            ),
+            output_index=output_index,
+            item_id=f"rs_{self.response_id}_{output_index}",
+            continuation_id=identity.continuation_id,
+            representation=identity.representation,
+            reasoning_item_key=identity.item_key,
+            reasoning_part_key=(
+                None
+                if identity.representation
+                is StreamReasoningRepresentation.SUMMARY
+                else identity.part_key
+            ),
+            segment_instance_ordinal=identity.segment_instance_ordinal,
+            provider_summary_index=identity.provider_summary_index,
+            redactor=self._reasoning_redactor(),
+            admission=_ResponsesReasoningAdmission.from_policy(
+                self.retention_policy
+            ),
+        )
+        if state.kind == "reasoning_text":
+            state.quarantined = self._consume_reasoning_quarantine(identity)
+        return state
+
+    def _open_item(
+        self,
+        kind: str,
+        *,
+        item_id: str,
+        continuation_id: str | None,
+    ) -> _ResponsesProjectedItem:
+        return _ResponsesProjectedItem(
+            kind=kind,
+            output_index=self._allocate_output_index(),
+            item_id=item_id,
+            continuation_id=continuation_id,
+        )
+
+    def _allocate_output_index(self) -> int:
+        output_index = self._next_output_index
+        self._next_output_index += 1
+        return output_index
+
+    def _consume_reasoning_quarantine(
+        self,
+        identity: _ResponsesReasoningIdentity,
+    ) -> bool:
+        assert isinstance(identity, _ResponsesReasoningIdentity)
+        if not identity.has_optional_identity:
+            return False
+        quarantined = self._quarantine_next_reasoning
+        self._quarantine_next_reasoning = False
+        return quarantined
+
+    def _retention_failure_events(
+        self,
+        prefix: list[_ResponsesSSEEvent],
+    ) -> list[_ResponsesSSEEvent]:
+        self.failure = {
+            "error": {
+                "type": "server_error",
+                "code": "reasoning_summary_retention_exceeded",
+                "message": (
+                    "Reasoning summary exceeded the configured retention "
+                    "limit."
+                ),
+            }
+        }
+        prefix.extend(self.close(status="incomplete"))
+        return prefix
+
+    def _reasoning_redactor(self) -> ModelVisibleServerProtocolTextRedactor:
+        return ModelVisibleServerProtocolTextRedactor(
+            self.output_redaction_settings,
+            protocol="openai",
+            channel="reasoning",
+        )
+
+    def _append_model_text(
+        self,
+        state: _ResponsesProjectedItem,
+        value: str,
+        event: str,
+    ) -> list[_ResponsesSSEEvent]:
+        if self.redaction_latched or state.quarantined:
+            return []
+        redactor = state.redactor
+        identity = state.reasoning_part_key or state.reasoning_item_key
+        admission = state.admission
+        if redactor is not None and admission is not None:
+            assert identity is not None
+            admission.admit_push(identity, value, redactor)
+        chunks = (
+            redactor.push(value)
+            if redactor is not None
+            else _model_visible_stream_deltas(
+                value,
+                None,
+                output_redaction_settings=self.output_redaction_settings,
+                channel=(
+                    "answer" if state.kind == "output_text" else "reasoning"
+                ),
+            )
+        )
+        if redactor is not None and admission is not None:
+            assert identity is not None
+            admission.commit_push(identity, chunks, redactor)
+        if SKILL_CONTENT_REDACTION in chunks:
+            self.redaction_latched = True
+        events: list[_ResponsesSSEEvent] = []
+        for chunk in chunks:
+            state.text.append(chunk)
+            events.append(self._text_delta_event(state, event, chunk))
+        return events
+
+    def _flush_text(
+        self,
+        state: _ResponsesProjectedItem,
+        event: str,
+    ) -> list[_ResponsesSSEEvent]:
+        redactor = state.redactor
+        assert redactor is not None
+        if self.redaction_latched or state.quarantined:
+            redactor.flush()
+            return []
+        identity = state.reasoning_part_key or state.reasoning_item_key
+        admission = state.admission
+        force_marker = redactor.pending_requires_skill_marker
+        if admission is not None and not force_marker:
+            assert identity is not None
+            admission.admit_flush(identity, redactor)
+        chunks: tuple[str, ...]
+        if force_marker:
+            redactor.flush()
+            chunks = (SKILL_CONTENT_REDACTION,)
+        else:
+            chunks = redactor.flush()
+        if admission is not None:
+            admission.commit_flush(chunks)
+        if SKILL_CONTENT_REDACTION in chunks:
+            self.redaction_latched = True
+        events: list[_ResponsesSSEEvent] = []
+        for chunk in chunks:
+            state.text.append(chunk)
+            events.append(self._text_delta_event(state, event, chunk))
+        return events
+
+    def _close_summary_part(
+        self,
+        state: _ResponsesProjectedItem,
+        *,
+        identity_lost: bool,
+    ) -> list[_ResponsesSSEEvent]:
+        assert isinstance(identity_lost, bool)
+        if state.reasoning_part_key is None or state.summary_index is None:
+            return []
+        redactor = state.redactor
+        had_pending = bool(redactor is not None and redactor.has_pending)
+        was_latched = self.redaction_latched
+        events = self._flush_text(
+            state,
+            "response.reasoning_summary_text.delta",
+        )
+        text = "".join(state.text)
+        common = {
+            "item_id": state.item_id,
+            "summary_index": state.summary_index,
+        }
+        events.append(
+            self._item_event(
+                state,
+                "response.reasoning_summary_text.done",
+                {**common, "text": text},
+            )
+        )
+        part = {"type": "summary_text", "text": text}
+        events.append(
+            self._item_event(
+                state,
+                "response.reasoning_summary_part.done",
+                {**common, "part": part},
+            )
+        )
+        state.summary.append(part)
+        state.reasoning_part_key = None
+        state.summary_index = None
+        state.text = []
+        state.redactor = None
+        state.quarantined = False
+        if (
+            identity_lost
+            and had_pending
+            and not was_latched
+            and not self.redaction_latched
+        ):
+            self._quarantine_next_reasoning = True
+        return events
+
+    def _close_native_reasoning(
+        self,
+        state: _ResponsesProjectedItem,
+        *,
+        identity_lost: bool,
+    ) -> list[_ResponsesSSEEvent]:
+        assert isinstance(identity_lost, bool)
+        redactor = state.redactor
+        had_pending = bool(redactor is not None and redactor.has_pending)
+        was_latched = self.redaction_latched
+        events = self._flush_text(state, "response.reasoning_text.delta")
+        events.append(
+            self._item_event(
+                state,
+                "response.reasoning_text.done",
+                {
+                    "item_id": state.item_id,
+                    "content_index": 0,
+                    "text": "".join(state.text),
+                },
+            )
+        )
+        events.append(self._content_part_done_event(state))
+        state.quarantined = False
+        if (
+            identity_lost
+            and had_pending
+            and not was_latched
+            and not self.redaction_latched
+        ):
+            self._quarantine_next_reasoning = True
+        return events
+
+    def _text_delta_event(
+        self,
+        state: _ResponsesProjectedItem,
+        event: str,
+        delta: str,
+    ) -> _ResponsesSSEEvent:
+        data: dict[str, Any] = {
+            "type": event,
+            "item_id": state.item_id,
+            "output_index": state.output_index,
+            "delta": delta,
+        }
+        if state.kind == "reasoning_summary":
+            data["summary_index"] = state.summary_index
+        else:
+            data["content_index"] = 0
+        return _ResponsesSSEEvent(
+            event=event,
+            data=data,
+            correlation_key=state.item_id,
+            canonical_channel=(
+                StreamChannel.ANSWER
+                if state.kind == "output_text"
+                else StreamChannel.REASONING
+            ),
+            representation=state.representation,
+            item_id=state.item_id,
+            segment_instance_ordinal=state.segment_instance_ordinal,
+            summary_index=state.summary_index,
+            continuation_id=state.continuation_id,
+        )
+
+    def _output_item_added_event(
+        self,
+        state: _ResponsesProjectedItem,
+    ) -> _ResponsesSSEEvent:
+        item: dict[str, Any] = {"id": state.item_id}
+        if state.kind == "reasoning_summary":
+            item.update(
+                {
+                    "type": "reasoning",
+                    "status": "in_progress",
+                    "summary": [],
+                }
+            )
+        elif state.kind == "reasoning_text":
+            item.update({"type": "reasoning_text", "status": "in_progress"})
+        elif state.kind == "output_text":
+            item.update(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                    "content": [],
+                }
+            )
+        else:
+            item["type"] = state.kind
+            if state.tool_name is not None:
+                item["name"] = state.tool_name
+        return self._item_event(
+            state,
+            "response.output_item.added",
+            {"item": item},
+        )
+
+    def _output_item_done_event(
+        self,
+        state: _ResponsesProjectedItem,
+        status: str,
+    ) -> _ResponsesSSEEvent:
+        item: dict[str, Any] = {
+            "id": state.item_id,
+            "status": status,
+        }
+        if state.kind == "reasoning_summary":
+            item.update({"type": "reasoning", "summary": list(state.summary)})
+        elif state.kind == "reasoning_text":
+            item.update(
+                {
+                    "type": "reasoning_text",
+                    "content": [
+                        {
+                            "type": "reasoning_text",
+                            "text": "".join(state.text),
+                        }
+                    ],
+                }
+            )
+        elif state.kind == "output_text":
+            item.update(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "".join(state.text),
+                        }
+                    ],
+                }
+            )
+        else:
+            item["type"] = state.kind
+            if state.kind == "function_call":
+                item["call_id"] = state.item_id
+                item["name"] = state.tool_name or ""
+                item["arguments"] = "".join(state.text)
+            else:
+                item["input"] = "".join(state.text)
+        return self._item_event(
+            state,
+            "response.output_item.done",
+            {"item": item},
+        )
+
+    def _summary_part_added_event(
+        self,
+        state: _ResponsesProjectedItem,
+    ) -> _ResponsesSSEEvent:
+        assert state.summary_index is not None
+        return self._item_event(
+            state,
+            "response.reasoning_summary_part.added",
+            {
+                "item_id": state.item_id,
+                "summary_index": state.summary_index,
+                "part": {"type": "summary_text", "text": ""},
+            },
+        )
+
+    def _content_part_added_event(
+        self,
+        state: _ResponsesProjectedItem,
+    ) -> _ResponsesSSEEvent:
+        part_type = {
+            "reasoning_text": "reasoning_text",
+            "custom_tool_call_input": "input_text",
+            "output_text": "output_text",
+        }[state.kind]
+        part: dict[str, Any] = {"type": part_type}
+        if state.kind == "custom_tool_call_input":
+            part["id"] = state.item_id
+        return self._item_event(
+            state,
+            "response.content_part.added",
+            {
+                "item_id": state.item_id,
+                "content_index": 0,
+                "part": part,
+            },
+        )
+
+    def _content_part_done_event(
+        self,
+        state: _ResponsesProjectedItem,
+    ) -> _ResponsesSSEEvent:
+        part_type = {
+            "reasoning_text": "reasoning_text",
+            "custom_tool_call_input": "input_text",
+            "output_text": "output_text",
+        }[state.kind]
+        part: dict[str, Any] = {
+            "type": part_type,
+            "text": "".join(state.text),
+        }
+        if state.kind == "custom_tool_call_input":
+            part["id"] = state.item_id
+        return self._item_event(
+            state,
+            "response.content_part.done",
+            {
+                "item_id": state.item_id,
+                "content_index": 0,
+                "part": part,
+            },
+        )
+
+    def _item_event(
+        self,
+        state: _ResponsesProjectedItem,
+        event: str,
+        extra: dict[str, Any],
+    ) -> _ResponsesSSEEvent:
+        data = {
+            "type": event,
+            "output_index": state.output_index,
+            **extra,
+        }
+        return _ResponsesSSEEvent(
+            event=event,
+            data=data,
+            correlation_key=state.item_id,
+            representation=state.representation,
+            item_id=state.item_id,
+            segment_instance_ordinal=state.segment_instance_ordinal,
+            summary_index=state.summary_index,
+            continuation_id=state.continuation_id,
+        )
+
+    @staticmethod
+    def _unsequenced_events(
+        events: list[_ResponsesSSEEvent],
+    ) -> list[_ResponsesSSEEvent]:
+        result: list[_ResponsesSSEEvent] = []
+        for event in events:
+            data = dict(event.data)
+            data.pop("sequence_number", None)
+            result.append(
+                _ResponsesSSEEvent(
+                    event=event.event,
+                    data=data,
+                    correlation_key=event.correlation_key,
+                    canonical_channel=event.canonical_channel,
+                    representation=event.representation,
+                    item_id=event.item_id,
+                    segment_instance_ordinal=(event.segment_instance_ordinal),
+                    summary_index=event.summary_index,
+                    continuation_id=event.continuation_id,
+                )
+            )
+        return result
 
 
 router = APIRouter(tags=["responses"])
@@ -416,7 +1571,7 @@ async def create_response(
     output_redaction_settings: ServerOutputRedactionSettings = Depends(
         _server_output_redaction_settings
     ),
-) -> dict[str, Any] | StreamingResponse:
+) -> dict[str, Any] | JSONResponse | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
@@ -443,23 +1598,10 @@ async def create_response(
     if request.stream:
 
         async def generate() -> AsyncIterator[str]:
-            adapter = _ResponsesSSEProjectionAdapter()
-            if hasattr(adapter, "answer_redactor"):
-                adapter.answer_redactor = (
-                    ModelVisibleServerProtocolTextRedactor(
-                        output_redaction_settings,
-                        protocol="openai",
-                        channel="answer",
-                    )
-                )
-            if hasattr(adapter, "reasoning_redactor"):
-                adapter.reasoning_redactor = (
-                    ModelVisibleServerProtocolTextRedactor(
-                        output_redaction_settings,
-                        protocol="openai",
-                        channel="reasoning",
-                    )
-                )
+            projector = _ResponsesSSEProjector(
+                str(response_id),
+                output_redaction_settings,
+            )
             stream_envelope = _ResponsesSSEStreamEnvelope(
                 response_id=str(response_id),
                 timestamp=timestamp,
@@ -467,7 +1609,7 @@ async def create_response(
             )
             pending_event: _ResponsesSSEEvent | None = None
             terminal_projection: StreamConsumerProjection | None = None
-            event_sequence = 0
+            next_event_sequence = 0
             iterator = stream_consumer_iterator(
                 response,
                 stream_session_id="responses-sse-stream",
@@ -479,6 +1621,14 @@ async def create_response(
                 close_source_on_generator_exit=False,
             )
             cancelled = False
+            terminal_owned = False
+            source_error: Exception | None = None
+
+            def event_message(event: _ResponsesSSEEvent) -> str:
+                nonlocal next_event_sequence
+                numbered = event.with_sequence(next_event_sequence)
+                next_event_sequence += 1
+                return numbered.message()
 
             def enqueue_event(event: _ResponsesSSEEvent) -> list[str]:
                 nonlocal pending_event
@@ -492,7 +1642,7 @@ async def create_response(
                 ):
                     pending_event = pending_event.coalesce(event)
                     return []
-                messages = [pending_event.message()]
+                messages = [event_message(pending_event)]
                 pending_event = event
                 return messages
 
@@ -500,94 +1650,117 @@ async def create_response(
                 nonlocal pending_event
                 if pending_event is None:
                     return []
-                messages = [pending_event.message()]
+                messages = [event_message(pending_event)]
                 pending_event = None
                 return messages
 
             try:
-                yield stream_envelope.created_event().message()
+                yield event_message(stream_envelope.created_event())
 
                 while True:
                     try:
                         token = await anext(iterator)
                     except StopAsyncIteration:
                         break
+                    except Exception as error:
+                        source_error = error
+                        break
 
                     if token.is_stream_terminal:
                         terminal_projection = token
-                    event_sequence = token.sequence
 
-                    for ev in _adapter_model_text_pre_switch_events(
-                        adapter,
-                        token,
-                    ):
+                    for ev in projector.events_for(token):
                         for message in enqueue_event(ev):
                             yield message
-                    events = adapter.switch(token)
-                    if events:
-                        for event in flush_event():
-                            yield event
-                    for event in events:
-                        yield event
+                    if projector.failure is not None:
+                        break
 
-                    model_text_redactor = _adapter_model_text_redactor(
-                        adapter,
-                        token,
-                    )
-                    for ev in _token_to_sse_events(
-                        token,
-                        event_sequence,
-                        adapter.active_tool_call_id,
-                        model_text_redactor,
-                        output_redaction_settings=output_redaction_settings,
+                if projector.failure is not None:
+                    cancelled = True
+                    for message in enqueue_event(
+                        _ResponsesSSEEvent(
+                            event="response.failed",
+                            data={
+                                "type": "response.failed",
+                                **projector.failure,
+                            },
+                        )
                     ):
-                        for message in enqueue_event(ev):
-                            yield message
-                    _adapter_record_model_text_pending(
-                        adapter,
-                        token,
-                        model_text_redactor,
-                    )
-
-                    if adapter.state is None:
-                        for event in flush_event():
-                            yield event
-
-                for ev in _adapter_model_text_flush_events(
-                    adapter,
-                    event_sequence,
-                ):
-                    for message in enqueue_event(ev):
                         yield message
-                for event in flush_event():
-                    yield event
+                    terminal_owned = True
+                    for event in flush_event():
+                        yield event
+                    return
 
                 if terminal_projection is None:
+                    for ev in projector.close(
+                        status="incomplete",
+                        identity_lost=True,
+                    ):
+                        for message in enqueue_event(ev):
+                            yield message
+                    for event in flush_event():
+                        yield event
+                    if source_error is not None:
+                        raise source_error
                     raise StreamValidationError(
                         "stream missing terminal outcome"
                     )
-
-                events = adapter.close()
-                for event in events:
-                    yield event
 
                 for ev in _terminal_response_events(
                     terminal_projection,
                     output_redaction_settings=output_redaction_settings,
                 ):
-                    yield ev.message()
+                    data = dict(ev.data)
+                    data.pop("sequence_number", None)
+                    for message in enqueue_event(
+                        _ResponsesSSEEvent(
+                            event=ev.event,
+                            data=data,
+                            correlation_key=ev.correlation_key,
+                            canonical_channel=ev.canonical_channel,
+                        )
+                    ):
+                        yield message
+                terminal_owned = True
+                for event in flush_event():
+                    yield event
 
-                if stream_terminal_succeeded(terminal_projection):
+                if source_error is not None:
+                    logger.error(
+                        _RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE,
+                    )
+                    raise _ResponsesSourceAfterTerminalError(
+                        _RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE
+                    ) from None
+
+                if source_error is None and stream_terminal_succeeded(
+                    terminal_projection
+                ):
                     await orchestrator.sync_messages()
             except CancelledError:
                 cancelled = True
                 raise
             finally:
-                await cleanup_stream_sources(
-                    response,
-                    iterator,
-                    cancelled=cancelled,
-                )
+                cleanup_failed = False
+                try:
+                    await cleanup_stream_sources(
+                        response,
+                        iterator,
+                        cancelled=cancelled,
+                    )
+                except Exception:
+                    cleanup_failed = True
+                if cleanup_failed:
+                    logger.error(_RESPONSES_CLEANUP_ERROR_MESSAGE)
+                    if (
+                        terminal_owned
+                        and source_error is None
+                        and projector.failure is None
+                    ):
+                        raise _ResponsesCleanupError(
+                            _RESPONSES_CLEANUP_ERROR_MESSAGE
+                        ) from None
 
         return StreamingResponse(
             generate(),
@@ -595,18 +1768,101 @@ async def create_response(
             headers=sse_headers(),
         )
 
-    text = sanitize_model_visible_server_protocol_text(
-        await response.to_str(),
-        output_redaction_settings=output_redaction_settings,
-        protocol="openai",
-        channel="answer",
+    projector = _ResponsesSSEProjector(
+        str(response_id),
+        output_redaction_settings,
     )
+    indexed_output: dict[int, dict[str, Any]] = {}
+    terminal_projection: StreamConsumerProjection | None = None
+    source_error: Exception | None = None
+    iterator = stream_consumer_iterator(
+        response,
+        stream_session_id="responses-non-stream",
+        run_id=str(response_id),
+        turn_id="responses-non-stream-turn",
+        unsupported_message=(
+            "unsupported stream item for Responses non-stream projection"
+        ),
+        close_source_on_generator_exit=False,
+    )
+    cleanup_failed = False
+    try:
+        while True:
+            try:
+                projection = await anext(iterator)
+            except StopAsyncIteration:
+                break
+            except Exception as error:
+                source_error = error
+                break
+            if projection.is_stream_terminal:
+                terminal_projection = projection
+            for event in projector.events_for(projection):
+                if event.event != "response.output_item.done":
+                    continue
+                item = event.data.get("item")
+                output_index = _response_sse_index_value(
+                    event.data,
+                    "output_index",
+                )
+                if isinstance(item, dict) and output_index is not None:
+                    if output_index in indexed_output:
+                        raise StreamValidationError(
+                            "duplicate Responses outward output index"
+                        )
+                    indexed_output[output_index] = dict(item)
+            if projector.failure is not None:
+                break
+    finally:
+        try:
+            await cleanup_stream_sources(
+                response,
+                iterator,
+                cancelled=projector.failure is not None,
+            )
+        except Exception:
+            cleanup_failed = True
+
+    if projector.failure is not None:
+        if cleanup_failed:
+            logger.error(_RESPONSES_CLEANUP_ERROR_MESSAGE)
+        return JSONResponse(
+            status_code=500,
+            content=projector.failure,
+        )
+    if cleanup_failed:
+        logger.error(_RESPONSES_CLEANUP_ERROR_MESSAGE)
+        if source_error is None:
+            raise _ResponsesCleanupError(
+                _RESPONSES_CLEANUP_ERROR_MESSAGE
+            ) from None
+    if terminal_projection is None:
+        assert source_error is not None
+        raise source_error
+    if source_error is not None:
+        logger.error(_RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE)
+        raise _ResponsesSourceAfterTerminalError(
+            _RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE
+        ) from None
+    terminal_snapshot = protocol_stream_terminal_snapshot(terminal_projection)
+    output_indices = sorted(indexed_output)
+    if output_indices != list(range(len(output_indices))):
+        raise StreamValidationError(
+            "non-contiguous Responses outward output indices"
+        )
+    output = [indexed_output[index] for index in output_indices]
+    status = {
+        StreamTerminalOutcome.COMPLETED: "completed",
+        StreamTerminalOutcome.ERRORED: "failed",
+        StreamTerminalOutcome.CANCELLED: "cancelled",
+    }[terminal_snapshot.outcome or StreamTerminalOutcome.COMPLETED]
     body = {
         "id": str(response_id),
         "created": timestamp,
         "model": model_id,
         "type": "response",
-        "output": [{"content": [{"type": "output_text", "text": text}]}],
+        "status": status,
+        "output": output,
         "usage": {
             "input_text_tokens": response.input_token_count,
             "output_text_tokens": response.output_token_count,
@@ -615,7 +1871,17 @@ async def create_response(
             ),
         },
     }
-    await orchestrator.sync_messages()
+    if status != "completed":
+        terminal_events = _terminal_response_events(
+            terminal_projection,
+            output_redaction_settings=output_redaction_settings,
+        )
+        if terminal_events:
+            terminal_error = terminal_events[0].data.get("error")
+            if terminal_error is not None:
+                body["error"] = terminal_error
+    if status == "completed" and source_error is None:
+        await orchestrator.sync_messages()
     return body
 
 
@@ -653,11 +1919,17 @@ def _terminal_response_events(
     if terminal_snapshot.sequence is not None:
         data["sequence_number"] = terminal_snapshot.sequence
         if terminal_snapshot.data is not None:
-            data["error"] = sanitize_server_protocol_value(
+            sanitized_error = sanitize_server_protocol_value(
                 terminal_snapshot.data,
                 output_redaction_settings=output_redaction_settings,
                 protocol="openai",
             )
+            if isinstance(sanitized_error, dict) and isinstance(
+                sanitized_error.get("error"), dict
+            ):
+                data["error"] = sanitized_error["error"]
+            else:
+                data["error"] = sanitized_error
     return [
         _ResponsesSSEEvent(
             event="response.failed",

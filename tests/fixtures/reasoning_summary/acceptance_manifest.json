@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "reasoning_summary",
-  "active_phase": 6,
+  "active_phase": 7,
   "dimensions": {
     "phase 0 infrastructure": [
       "tests/reasoning_summary_phase0_test.py::test_provider_trace_inventory_is_complete_and_valid",
@@ -371,6 +371,20 @@
       "tests/reasoning_summary_phase6_manifest_test.py::test_phase6_pairwise_matrix_oracle_acceptance",
       "tests/reasoning_summary_phase6_manifest_test.py::test_phase6_reducer_presenter_matrix_acceptance",
       "tests/reasoning_summary_phase6_manifest_test.py::test_phase6_public_boundary_matrix_acceptance"
+    ],
+    "phase 7 OpenAI-compatible Responses ingress and egress": [
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_acceptance_manifest_pins_exact_catalog",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_ingress_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_stream_representation_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_allocator_and_coalescing_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_abnormal_terminal_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_source_lifecycle_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_retention_admission_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_redaction_identity_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_non_stream_structure_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_non_stream_outcome_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_stream_non_stream_parity_acceptance",
+      "tests/reasoning_summary_phase7_manifest_test.py::test_phase7_cross_protocol_golden_acceptance"
     ]
   }
 }

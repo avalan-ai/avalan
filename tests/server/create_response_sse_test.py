@@ -34,6 +34,7 @@ from avalan.model.stream import (
     project_canonical_stream_item,
 )
 from avalan.server.entities import (
+    SKILL_CONTENT_REDACTION,
     ChatMessage,
     ResponsesRequest,
     ServerOutputRedactionSettings,
@@ -442,7 +443,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(response.close_count, 1)
         orchestrator.sync_messages.assert_awaited_once()
 
-    async def test_streaming_yields_adapter_close_events(self) -> None:
+    async def test_streaming_yields_projector_close_events(self) -> None:
         logger = getLogger()
         orchestrator = Orchestrator.__new__(Orchestrator)
         orchestrator.sync_messages = AsyncMock()
@@ -475,6 +476,23 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                             run_id="r",
                             turn_id="t",
                             sequence=1,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="answer",
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=3,
                             kind=StreamItemKind.STREAM_COMPLETED,
                             channel=StreamChannel.CONTROL,
                             usage={},
@@ -495,54 +513,30 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             async def aclose(self) -> None:
                 self.close_count += 1
 
-        responses_module = self.responses
-
-        class ClosingAdapter:
-            state = None
-
-            @property
-            def active_tool_call_id(self) -> str | None:
-                return None
-
-            def switch(self, token: object) -> list[str]:
-                return []
-
-            def close(self) -> list[str]:
-                return [
-                    responses_module._ResponsesSSEEvent(
-                        event="response.output_text.done",
-                        data={"type": "response.output_text.done"},
-                    ).message()
-                ]
-
         response = TerminalResponse()
 
         async def orchestrate_stub(request, logger, orch):
             return response, uuid4(), 0
 
-        original_adapter = self.responses._ResponsesSSEProjectionAdapter
         self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
-        self.responses._ResponsesSSEProjectionAdapter = ClosingAdapter
-        try:
-            streaming_resp = await self.responses.create_response(
-                request, logger, orchestrator
-            )
-            chunks = [
-                chunk.decode() if isinstance(chunk, bytes) else chunk
-                async for chunk in streaming_resp.body_iterator
-            ]
-        finally:
-            self.responses._ResponsesSSEProjectionAdapter = original_adapter
+        streaming_resp = await self.responses.create_response(
+            request, logger, orchestrator
+        )
+        chunks = [
+            chunk.decode() if isinstance(chunk, bytes) else chunk
+            async for chunk in streaming_resp.body_iterator
+        ]
 
         text = "".join(chunks)
         blocks = [block for block in text.strip().split("\n\n") if block]
         events = [block.split("\n")[0].split(": ")[1] for block in blocks]
 
         self.assertIn("response.output_text.done", events)
-        self.assertEqual(
-            events[-2:],
-            ["response.output_text.done", "response.completed"],
+        self.assertLess(
+            events.index("response.output_text.done"),
+            events.index("response.output_item.done"),
         )
+        self.assertEqual(events[-1], "response.completed")
         self.assertEqual(response.close_count, 1)
         orchestrator.sync_messages.assert_awaited_once()
 
@@ -647,11 +641,11 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertLess(delta_index, done_index)
         self.assertEqual(
             data_by_event["response.output_text.delta"]["delta"],
-            "# Imagegen\n",
+            SKILL_CONTENT_REDACTION,
         )
         self.assertEqual(
             data_by_event["response.output_text.delta"]["sequence_number"],
-            1,
+            delta_index,
         )
 
     async def test_streaming_flushes_pending_heading_after_loop(
@@ -2064,12 +2058,13 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                     "output_index": 0,
                     "content_index": 0,
                     "id": "call-1",
+                    "sequence_number": 4,
                 }
             ],
         )
         orchestrator.sync_messages.assert_awaited_once()
 
-    async def test_streaming_rejects_canonical_content_after_terminal(
+    async def test_streaming_owns_canonical_terminal_before_source_error(
         self,
     ) -> None:
         logger = getLogger()
@@ -2134,12 +2129,21 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         iterator = streaming_resp.body_iterator
         first = await anext(iterator)
         self.assertIn("response.created", first)
-        with self.assertRaises(StreamValidationError):
-            async for _chunk in iterator:
-                pass
+        chunks = [first]
+        with self.assertRaisesRegex(
+            self.responses._ResponsesSourceAfterTerminalError,
+            r"^Responses source failed after terminal outcome\.$",
+        ):
+            async for chunk in iterator:
+                chunks.append(
+                    chunk.decode() if isinstance(chunk, bytes) else chunk
+                )
+        text = "".join(chunks)
+        self.assertEqual(text.count("event: response.completed"), 1)
+        self.assertNotIn("event: response.output_text.delta", text)
         orchestrator.sync_messages.assert_not_awaited()
 
-    async def test_streaming_rejects_projected_content_after_terminal(
+    async def test_streaming_owns_projected_terminal_before_source_error(
         self,
     ) -> None:
         logger = getLogger()
@@ -2204,9 +2208,18 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         iterator = streaming_resp.body_iterator
         first = await anext(iterator)
         self.assertIn("response.created", first)
-        with self.assertRaises(StreamValidationError):
-            async for _chunk in iterator:
-                pass
+        chunks = [first]
+        with self.assertRaisesRegex(
+            self.responses._ResponsesSourceAfterTerminalError,
+            r"^Responses source failed after terminal outcome\.$",
+        ):
+            async for chunk in iterator:
+                chunks.append(
+                    chunk.decode() if isinstance(chunk, bytes) else chunk
+                )
+        text = "".join(chunks)
+        self.assertEqual(text.count("event: response.completed"), 1)
+        self.assertNotIn("event: response.output_text.delta", text)
         orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_emits_usage_before_completion(self) -> None:
@@ -2305,7 +2318,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(usage_data["usage"], {"total_tokens": 2})
         orchestrator.sync_messages.assert_awaited_once()
 
-    async def test_streaming_preserves_canonical_sequence_numbers(
+    async def test_streaming_allocates_response_local_sequence_numbers(
         self,
     ) -> None:
         logger = getLogger()
@@ -2403,9 +2416,18 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             data_lines[events.index("response.completed")][6:]
         )
 
-        self.assertEqual(output_data["sequence_number"], 20)
-        self.assertEqual(usage_data["sequence_number"], 40)
-        self.assertEqual(completed_data["sequence_number"], 50)
+        payloads = [loads(data_line[6:]) for data_line in data_lines]
+        self.assertEqual(
+            [payload["sequence_number"] for payload in payloads],
+            list(range(len(payloads))),
+        )
+        self.assertEqual(output_data["sequence_number"], 3)
+        self.assertLess(
+            output_data["sequence_number"], usage_data["sequence_number"]
+        )
+        self.assertLess(
+            usage_data["sequence_number"], completed_data["sequence_number"]
+        )
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_streaming_preserves_cancelled_terminal(self) -> None:
@@ -2560,7 +2582,10 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn("response.output_text.done", events)
         self.assertNotIn("response.completed", events)
         self.assertEqual(events[-1], "response.failed")
-        self.assertEqual(failed_data["sequence_number"], 3)
+        self.assertEqual(
+            failed_data["sequence_number"],
+            len(blocks) - 1,
+        )
         self.assertEqual(
             failed_data["error"],
             {"error_type": "RuntimeError", "message": "provider failed"},
@@ -2656,7 +2681,10 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn("response.output_text.done", events)
         self.assertNotIn("response.completed", events)
         self.assertEqual(events[-1], "response.failed")
-        self.assertEqual(failed_data["sequence_number"], 3)
+        self.assertEqual(
+            failed_data["sequence_number"],
+            len(blocks) - 1,
+        )
         self.assertEqual(
             failed_data["error"],
             {"error_type": "RuntimeError", "message": "provider failed"},
