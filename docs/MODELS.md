@@ -193,8 +193,143 @@ async for item in await model(
 
 ## Reasoning Controls
 
-Reasoning-capable models may expose thinking text, reasoning channels, or
-provider reasoning-effort settings. Common CLI controls include:
+Reasoning-capable models may expose native reasoning text, provider-generated
+reasoning summaries, or reasoning-effort settings. These are separate from the
+assistant answer:
+
+- **Native reasoning text** is reasoning text a model or provider explicitly
+  emits. Avalan marks it `native_text` on the private reasoning channel.
+- A **provider reasoning summary** is a provider-generated summary of its
+  internal reasoning. Avalan marks it `summary`; it is not raw chain-of-thought
+  or raw OpenAI reasoning tokens.
+- **Encrypted reasoning** is opaque replay data used for `store=false` tool
+  continuations. Avalan neither decodes nor displays it.
+- **Assistant commentary** is not a reasoning-summary feature and is not
+  synthesized by Avalan. Tool calls, results, and any tool narration remain
+  separate tool lifecycle data.
+
+Requesting reasoning and displaying reasoning are independent controls.
+`summary` asks a capable provider to generate a summary. `--display-reasoning`
+only opts into rendering private reasoning already present in the stream; it
+does not change the request. Reasoning stays hidden by default in both Basic
+and Fancy themes, and `--stats` alone never reveals it. `--quiet` has higher
+output precedence: it suppresses diagnostics and recording, including an
+explicit `--display-reasoning`, and leaves answer-only stdout. It does not
+cancel a requested provider summary.
+
+### SDK
+
+The supported summary modes are `auto`, `concise`, and `detailed`:
+
+```python
+from avalan.entities import (
+    GenerationSettings,
+    ReasoningEffort,
+    ReasoningSettings,
+    ReasoningSummaryMode,
+)
+
+generation_settings = GenerationSettings(
+    use_async_generator=True,
+    reasoning=ReasoningSettings(
+        effort=ReasoningEffort.LOW,
+        summary=ReasoningSummaryMode.CONCISE,
+    ),
+)
+```
+
+Only adapters that explicitly advertise a requested mode can accept it.
+OpenAI and Azure OpenAI use the Responses API path. Other providers remain
+unchanged and reject an explicit unsupported summary before dispatch rather
+than silently dropping it or substituting native reasoning.
+
+Streaming SDK consumers receive summary text as private
+`REASONING_DELTA` items whose `reasoning_representation` is `SUMMARY`.
+`ANSWER_DELTA` remains answer-only. Multipart summaries preserve their typed
+segment identity and order; a provider part finishing does not close the whole
+canonical reasoning channel. Non-streaming calls preserve the same structured
+reasoning semantics while `to_str()` remains the final answer compatibility
+view.
+
+### Agent TOML
+
+Put request controls under `[run.reasoning]`:
+
+```toml
+[run.reasoning]
+effort = "low"
+summary = "concise"
+```
+
+Omitting `summary` preserves the prior request shape. A summary cannot be
+requested when reasoning is disabled.
+
+### CLI
+
+For a direct model run:
+
+```sh
+printf '%s\n' 'Explain why the sky appears blue.' \
+  | avalan model run "ai://env:OPENAI_API_KEY@openai/gpt-5-mini" \
+      --reasoning-effort low \
+      --reasoning-summary concise \
+      --display-reasoning
+```
+
+For an agent run, `--reasoning-summary` and `--run-reasoning-summary` are
+aliases:
+
+```sh
+printf '%s\n' 'Draft a short answer.' \
+  | avalan agent run docs/examples/agent_support_reply.toml \
+      --run-reasoning-summary concise \
+      --display-reasoning
+```
+
+The model and agent flags accept exactly `auto`, `concise`, or `detailed`.
+Without `--display-reasoning`, the request still asks for the summary but the
+summary is not rendered. In non-interactive runs, displayed reasoning goes to
+stderr so stdout remains answer-only and suitable for strict JSON or shell
+pipelines. `--stats` and `--record` never enable reasoning display on their
+own. `--quiet` goes further: it overrides even explicit display flags,
+suppresses diagnostics and recording, and emits only the answer on stdout.
+
+### OpenAI-compatible Responses request
+
+An Avalan `/v1/responses` request uses the same typed shape:
+
+```json
+{
+  "model": "gpt-5-mini",
+  "input": "Explain why the sky appears blue.",
+  "reasoning": {
+    "effort": "low",
+    "summary": "concise"
+  },
+  "stream": true
+}
+```
+
+Streaming output uses `response.reasoning_summary_*` events for summaries and
+`response.output_text.*` for the answer. Non-streaming output keeps reasoning
+items distinct from the answer message. Invalid modes are request-validation
+errors; unsupported providers return an actionable
+`reasoning_summary_unsupported` error with no provider call or partial output.
+
+### Privacy and usage
+
+Reasoning summaries are private reasoning. They do not enter final assistant
+messages, answer text, tool arguments, agent memory, generic telemetry, or
+task output. Protocol projections retain only their documented bounded and
+redacted reasoning views. When reasoning display and recording are explicitly
+enabled outside quiet mode, terminal recordings capture the rendered private
+diagnostic just as it appears on screen. Quiet mode suppresses that diagnostic
+and recording entirely, leaving answer-only stdout.
+
+Provider `reasoning_tokens` usage is a token-accounting counter. It is not a
+count of visible summary chunks, parts, characters, or canonical deltas.
+
+Native/local reasoning controls remain available independently:
 
 ```sh
 echo "What is (4 + 6) * 5 / 2?" \
@@ -208,6 +343,8 @@ echo "What is (4 + 6) * 5 / 2?" \
 - `--reasoning-tag think|channel` to select the parser style.
 - `--reasoning-effort none|minimal|low|medium|high|xhigh|max` where the
   provider supports it.
+- `--reasoning-summary auto|concise|detailed` to request a provider summary
+  where explicitly supported.
 - `--reasoning-max-new-tokens` and `--reasoning-stop-on-max-new-tokens` to
   bound long reasoning output.
 - `--no-reasoning` to disable reasoning parsing.

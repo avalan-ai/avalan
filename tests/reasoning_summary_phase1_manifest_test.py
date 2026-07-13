@@ -52,15 +52,15 @@ _PHASE1_NODE_IDS = (
     ),
     (
         "tests/reasoning_summary_phase1_test.py::"
-        "test_request_capability_is_typed_dormant_and_omission_safe"
+        "test_request_capability_is_typed_scoped_and_omission_safe"
     ),
     (
         "tests/reasoning_summary_phase1_test.py::"
-        "test_direct_model_entries_reject_before_provider_call"
+        "test_unsupported_direct_model_entries_reject_before_provider_call"
     ),
     (
         "tests/reasoning_summary_phase1_test.py::"
-        "test_direct_vendor_clients_reject_before_request_side_effects"
+        "test_unsupported_vendor_clients_reject_before_request_side_effects"
     ),
     (
         "tests/reasoning_summary_phase1_test.py::"
@@ -68,7 +68,7 @@ _PHASE1_NODE_IDS = (
     ),
     (
         "tests/reasoning_summary_phase1_test.py::"
-        "test_openai_provider_identity_is_client_derived_and_zero_call"
+        "test_openai_provider_identity_and_capability_are_client_derived"
     ),
     (
         "tests/reasoning_summary_phase1_test.py::"
@@ -92,7 +92,7 @@ _PHASE1_NODE_IDS = (
     ),
     (
         "tests/reasoning_summary_phase1_test.py::"
-        "test_private_capable_openai_adapter_forwards_without_fallback_retry"
+        "test_openai_model_forwards_without_fallback_retry"
     ),
     (
         "tests/reasoning_summary_phase1_test.py::"

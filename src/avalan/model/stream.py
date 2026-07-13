@@ -731,6 +731,8 @@ class StreamRetentionPolicy:
     a2a_reasoning_character_limit: int = 1048576
     a2a_reasoning_text_byte_limit: int = 1048576
     replay_history_item_limit: int = 1024
+    openai_replay_item_limit: int = 4096
+    openai_replay_serialized_byte_limit: int = 4194304
     openai_replay_reasoning_item_limit: int = 1024
     openai_replay_reasoning_summary_node_limit: int = 4096
     openai_replay_reasoning_summary_character_limit: int = 262144
@@ -813,6 +815,11 @@ class StreamRetentionPolicy:
                 self.a2a_reasoning_text_byte_limit,
             ),
             ("replay_history_item_limit", self.replay_history_item_limit),
+            ("openai_replay_item_limit", self.openai_replay_item_limit),
+            (
+                "openai_replay_serialized_byte_limit",
+                self.openai_replay_serialized_byte_limit,
+            ),
             (
                 "openai_replay_reasoning_item_limit",
                 self.openai_replay_reasoning_item_limit,

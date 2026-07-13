@@ -306,6 +306,15 @@ def test_protocols_never_promote_summary_to_answer() -> None:
         assert _SUMMARY_TEXT not in mcp_answer
         assert _NATIVE_TEXT not in mcp_answer
         assert _TOOL_TEXT not in mcp_answer
+        structured = cast(dict[str, object], mcp_result["structuredContent"])
+        assert structured["usage"] == {
+            "input_text_tokens": 3,
+            "output_text_tokens": 5,
+            "total_tokens": 8,
+        }
+        assert _TOOL_TEXT in repr(structured["toolCalls"])
+        assert _SUMMARY_TEXT not in repr(structured["toolCalls"])
+        assert _NATIVE_TEXT not in repr(structured["toolCalls"])
 
         answer_events = [
             event
@@ -317,6 +326,16 @@ def test_protocols_never_promote_summary_to_answer() -> None:
         assert _SUMMARY_TEXT not in a2a_answer
         assert _NATIVE_TEXT not in a2a_answer
         assert _TOOL_TEXT not in a2a_answer
+        tool_events = [
+            event
+            for event in a2a.artifacts
+            if event["artifact_id"] != "answer"
+            and not str(event["artifact_id"]).startswith("reasoning-")
+        ]
+        assert _TOOL_TEXT in repr(tool_events)
+        assert _SUMMARY_TEXT not in repr(tool_events)
+        assert _NATIVE_TEXT not in repr(tool_events)
+        assert a2a.completed == 1
 
     run(exercise())
 

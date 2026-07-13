@@ -7,7 +7,8 @@ from dataclasses import asdict
 from importlib import import_module
 from json import dumps
 from logging import getLogger
-from sys import modules
+from subprocess import run as run_process
+from sys import executable, modules
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -199,14 +200,15 @@ def test_engine_normalizes_summary_once_and_preserves_typed_values() -> None:
         )
 
 
-def test_direct_model_entries_reject_before_provider_call() -> None:
+def test_unsupported_direct_model_entries_reject_before_provider_call() -> (
+    None
+):
     with _anthropic_model_type() as anthropic_model:
         providers = (
             (anthropic_model, "anthropic"),
             (BedrockModel, "bedrock"),
             (LiteLLMModel, "litellm"),
             (GoogleModel, "google"),
-            (OpenAIModel, "openai"),
             (AnyScaleModel, "anyscale"),
             (DeepInfraModel, "deepinfra"),
             (DeepSeekModel, "deepseek"),
@@ -241,7 +243,9 @@ class _ThirdPartyVendorModel(TextGenerationVendorModel):
         return MagicMock()
 
 
-def test_direct_vendor_clients_reject_before_request_side_effects() -> None:
+def test_unsupported_vendor_clients_reject_before_request_side_effects() -> (
+    None
+):
     with (
         _anthropic_module() as anthropic_module,
         patch(
@@ -256,8 +260,6 @@ def test_direct_vendor_clients_reject_before_request_side_effects() -> None:
             (LiteLLMClient, "litellm", False),
             (HuggingfaceClient, "huggingface", False),
             (OllamaClient, "ollama", False),
-            (OpenAIClient, "openai", False),
-            (OpenAIClient, "azure_openai", True),
             (AnyScaleClient, "anyscale", False),
             (AnyScaleClient, "anyscale", True),
             (DeepInfraClient, "deepinfra", False),
@@ -334,19 +336,16 @@ def test_third_party_vendor_model_identity_is_generic() -> None:
     assert model.reasoning_summary_provider == "vendor"
 
 
-def test_openai_provider_identity_is_client_derived_and_zero_call() -> None:
+def test_openai_provider_identity_and_capability_are_client_derived() -> None:
     for is_azure, provider in ((False, "openai"), (True, "azure_openai")):
         model = object.__new__(OpenAIModel)
-        provider_call = AsyncMock()
-        provider_call._is_azure = is_azure
-        cast(Any, model)._model = provider_call
+        provider_client = SimpleNamespace(_is_azure=is_azure)
+        cast(Any, model)._model = provider_client
 
-        with pytest.raises(ReasoningSummaryCapabilityError) as error:
-            run(model("hello", settings=_summary_settings()))
-
-        assert error.value.provider == provider
-        assert error.value.requested_mode is ReasoningSummaryMode.CONCISE
-        provider_call.assert_not_called()
+        assert model.reasoning_summary_provider == provider
+        assert model.reasoning_summary_request_capability.supported_modes == (
+            frozenset(ReasoningSummaryMode)
+        )
 
 
 def test_azure_provider_identity_falls_back_to_configured_base_url() -> None:
@@ -436,7 +435,7 @@ def test_shared_modality_choke_rejects_before_adapter_invocation() -> None:
     assert model.calls == 0
 
 
-def test_request_capability_is_typed_dormant_and_omission_safe() -> None:
+def test_request_capability_is_typed_scoped_and_omission_safe() -> None:
     all_modes = ReasoningSummaryRequestCapability(
         supported_modes=frozenset(ReasoningSummaryMode)
     )
@@ -458,7 +457,6 @@ def test_request_capability_is_typed_dormant_and_omission_safe() -> None:
             BedrockModel,
             LiteLLMModel,
             GoogleModel,
-            OpenAIModel,
             AnyScaleModel,
             DeepInfraModel,
             DeepSeekModel,
@@ -480,9 +478,113 @@ def test_request_capability_is_typed_dormant_and_omission_safe() -> None:
             capability = model.reasoning_summary_request_capability
             assert capability.supported_modes == frozenset()
 
+    openai = object.__new__(OpenAIModel)
+    cast(Any, openai)._model = None
+    cast(Any, openai)._settings = SimpleNamespace(base_url=None)
+    openai_capability = openai.reasoning_summary_request_capability
+    assert openai_capability.supported_modes == frozenset(ReasoningSummaryMode)
+    openai._model_id = "summary-capable-looking-name"
+    assert openai.reasoning_summary_request_capability is openai_capability
+
+    azure = object.__new__(OpenAIModel)
+    cast(Any, azure)._model = None
+    cast(Any, azure)._settings = SimpleNamespace(
+        base_url="https://tenant.openai.azure.com/openai/v1/"
+    )
+    assert azure.reasoning_summary_provider == "azure_openai"
+    assert azure.reasoning_summary_request_capability is openai_capability
+
     validate_reasoning_summary_request(object(), GenerationSettings())
     with pytest.raises(AssertionError, match="must declare"):
         validate_reasoning_summary_request(object(), _summary_settings())
+
+
+def test_openai_capability_scope_survives_module_reload_order() -> None:
+    probe = run_process(
+        [
+            executable,
+            "-c",
+            """
+from importlib import import_module, reload
+from types import SimpleNamespace
+
+from avalan.entities import ReasoningSummaryMode
+from avalan.model.nlp.text.vendor.anyscale import AnyScaleClient, AnyScaleModel
+from avalan.model.nlp.text.vendor.openai import OpenAIClient, OpenAIModel
+
+
+def native_instances(client_type, model_type):
+    instances = []
+    for is_azure, provider in ((False, "openai"), (True, "azure_openai")):
+        client = object.__new__(client_type)
+        client._is_azure = is_azure
+        model = object.__new__(model_type)
+        model._model = None
+        model._settings = SimpleNamespace(
+            base_url=(
+                "https://tenant.openai.azure.com/openai/v1/"
+                if is_azure
+                else None
+            )
+        )
+        instances.append((client, model, provider))
+    return instances
+
+
+old_native_instances = native_instances(OpenAIClient, OpenAIModel)
+old_compatible_instances = (
+    object.__new__(AnyScaleClient),
+    object.__new__(AnyScaleModel),
+)
+old_compatible_instances[0]._is_azure = True
+old_compatible_instances[1]._model = None
+old_compatible_instances[1]._model_id = "gpt-5-summary"
+old_compatible_instances[1]._settings = SimpleNamespace(
+    base_url="https://tenant.openai.azure.com/openai/v1/"
+)
+
+openai_module = reload(import_module("avalan.model.nlp.text.vendor.openai"))
+anyscale_module = reload(
+    import_module("avalan.model.nlp.text.vendor.anyscale")
+)
+all_native_instances = old_native_instances + native_instances(
+    openai_module.OpenAIClient,
+    openai_module.OpenAIModel,
+)
+for client, model, provider in all_native_instances:
+    assert client.reasoning_summary_provider == provider
+    assert client.reasoning_summary_request_capability.supported_modes == (
+        frozenset(ReasoningSummaryMode)
+    )
+    assert model.reasoning_summary_provider == provider
+    assert model.reasoning_summary_request_capability.supported_modes == (
+        frozenset(ReasoningSummaryMode)
+    )
+
+new_compatible_instances = (
+    object.__new__(anyscale_module.AnyScaleClient),
+    object.__new__(anyscale_module.AnyScaleModel),
+)
+new_compatible_instances[0]._is_azure = True
+new_compatible_instances[1]._model = None
+new_compatible_instances[1]._model_id = "gpt-5-summary"
+new_compatible_instances[1]._settings = SimpleNamespace(
+    base_url="https://tenant.openai.azure.com/openai/v1/"
+)
+for compatible in old_compatible_instances + new_compatible_instances:
+    assert compatible.reasoning_summary_provider == "anyscale"
+    assert compatible.reasoning_summary_request_capability.supported_modes == (
+        frozenset()
+    )
+""",
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout == ""
 
 
 def test_hosted_provider_omission_keeps_exact_dispatch_shape() -> None:
@@ -1015,22 +1117,10 @@ def test_shared_local_omission_invokes_adapter_once() -> None:
     assert model.calls == 1
 
 
-class _PrivateCapableOpenAIAdapter(OpenAIModel):
-    @property
-    def reasoning_summary_request_capability(
-        self,
-    ) -> ReasoningSummaryRequestCapability:
-        return ReasoningSummaryRequestCapability(
-            supported_modes=frozenset(ReasoningSummaryMode)
-        )
-
-
-def test_private_capable_openai_adapter_forwards_without_fallback_retry() -> (
-    None
-):
-    model = object.__new__(_PrivateCapableOpenAIAdapter)
-    model._model_id = "private-test-model"
-    model._logger = getLogger("private-capable-openai")
+def test_openai_model_forwards_without_fallback_retry() -> None:
+    model = object.__new__(OpenAIModel)
+    model._model_id = "openai-model"
+    model._logger = getLogger("openai-summary")
     model._messages = MagicMock(return_value=[])
     provider_rejection = RuntimeError("provider rejected detailed summary")
     model._model = AsyncMock(side_effect=provider_rejection)
@@ -1041,7 +1131,7 @@ def test_private_capable_openai_adapter_forwards_without_fallback_retry() -> (
 
     assert error.value is provider_rejection
     model._model.assert_awaited_once_with(
-        "private-test-model",
+        "openai-model",
         [],
         settings,
         instructions=None,

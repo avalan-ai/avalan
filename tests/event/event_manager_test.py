@@ -824,6 +824,8 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(lossless.queue_limit, 1)
         self.assertIs(ui.policy, EventDeliveryPolicy.COALESCE)
         self.assertEqual(ui.queue_limit, 64)
+        self.assertIs(critical.policy, EventDeliveryPolicy.BLOCK)
+        self.assertEqual(critical.queue_limit, 1)
         self.assertTrue(critical.critical)
         self.assertEqual(critical.timeout, 1.0)
         self.assertIs(observability.policy, EventDeliveryPolicy.DROP)

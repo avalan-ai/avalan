@@ -101,7 +101,7 @@ _PHASE2_NODE_IDS = (
     ),
     (
         "tests/model/reasoning_summary_native_provider_regression_test.py::"
-        "test_public_stream_capabilities_keep_summary_support_disabled"
+        "test_public_stream_capabilities_activate_only_openai_summary_support"
     ),
     (
         "tests/model/nlp/vendor_anthropic_test.py::"

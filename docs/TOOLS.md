@@ -932,7 +932,8 @@ Keep docstrings accurate. Agents use them when selecting tools.
 
 Reasoning models can emit hidden or visible thinking content. Avalan can parse
 reasoning tags, display reasoning, start generation inside a thinking block,
-or limit reasoning token output.
+limit reasoning token output, or request a provider-generated reasoning
+summary from an adapter that explicitly supports it.
 
 ```sh
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
@@ -948,9 +949,37 @@ Useful controls:
 - `--reasoning-tag think` or `--reasoning-tag channel` for parser mode.
 - `--reasoning-effort none|minimal|low|medium|high|xhigh|max` for providers
   that support it.
+- `--reasoning-summary auto|concise|detailed` for an explicitly supported
+  provider-generated summary. Agent runs also accept the alias
+  `--run-reasoning-summary`.
 - `--reasoning-max-new-tokens` and `--reasoning-stop-on-max-new-tokens` to
   bound long reasoning traces.
 - `--no-reasoning` when reasoning parsing should be disabled.
+
+The summary request and `--display-reasoning` are independent. Requesting a
+summary does not display it, and displaying reasoning does not request a
+summary. Basic and Fancy hide reasoning by default; statistics alone do not
+reveal it. In a non-interactive run, explicitly displayed reasoning is written
+to stderr while the final answer stays on stdout. `--quiet` overrides even an
+explicit `--display-reasoning`, suppresses diagnostics and recording, and
+leaves answer-only stdout; it does not cancel the summary request.
+
+Avalan keeps several concepts deliberately separate:
+
+- native reasoning text is typed `native_text`;
+- provider-generated summaries are typed `summary` and may have multiple
+  ordered parts;
+- encrypted OpenAI reasoning is opaque `store=false` replay state;
+- assistant commentary is not synthesized by this feature; and
+- tool calls, results, and narration remain tool lifecycle data.
+
+Raw OpenAI reasoning tokens are not exposed. Summary text remains private and
+is excluded from answer text, tool arguments, memory, and generic telemetry.
+An explicit unsupported summary fails before provider dispatch instead of
+falling back to native reasoning. Provider `reasoning_tokens` usage is token
+accounting, not a summary part, chunk, or character count. See
+[MODELS.md](MODELS.md#reasoning-controls) for SDK, TOML, CLI, and Responses
+request examples.
 
 ## ReACT and Tool Formats
 

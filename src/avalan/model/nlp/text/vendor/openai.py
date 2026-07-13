@@ -10,7 +10,10 @@ from .....entities import (
     ToolCallResult,
 )
 from .....model.provider import ProviderFamily, provider_string_option
-from .....model.reasoning import validate_reasoning_summary_request
+from .....model.reasoning import (
+    ReasoningSummaryRequestCapability,
+    validate_reasoning_summary_request,
+)
 from .....model.response.text import TextGenerationResponse
 from .....model.stream import (
     REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
@@ -81,6 +84,26 @@ class _OmitPlaceholder:  # noqa: D101
 
 
 Omit: type[Any] = _OmitPlaceholder
+
+_OPENAI_REASONING_SUMMARY_CAPABILITY = ReasoningSummaryRequestCapability(
+    supported_modes=frozenset(ReasoningSummaryMode)
+)
+_OPENAI_REASONING_SUMMARY_PROVIDERS = frozenset(
+    {
+        ProviderFamily.OPENAI.value,
+        ProviderFamily.AZURE_OPENAI.value,
+    }
+)
+_OPENAI_VENDOR_MODULE = "avalan.model.nlp.text.vendor.openai"
+
+
+def _is_exact_native_openai_type(value: object, expected_name: str) -> bool:
+    value_type = type(value)
+    return (
+        value_type.__module__ == _OPENAI_VENDOR_MODULE
+        and value_type.__name__ == expected_name
+        and value_type.__qualname__ == expected_name
+    )
 
 
 class _ReasoningReplayRetentionError(RuntimeError):
@@ -2097,6 +2120,8 @@ class _OpenAIReasoningSummaryState:
 
 @dataclass(frozen=True, slots=True)
 class _ReplayItemAccounting:
+    items: int = 0
+    serialized_bytes: int = 0
     reasoning_items: int = 0
     summary_nodes: int = 0
     summary_characters: int = 0
@@ -2451,6 +2476,8 @@ class _OpenAIReplayOwner:
         default_factory=list,
         repr=False,
     )
+    _replay_item_count: int = 0
+    _replay_serialized_byte_count: int = 0
     _reasoning_item_count: int = 0
     _summary_node_count: int = 0
     _summary_character_count: int = 0
@@ -2492,6 +2519,13 @@ class _OpenAIReplayOwner:
             self._summary_serialized_byte_count,
         )
 
+    @property
+    def generic_counters(self) -> tuple[int, int]:
+        return (
+            self._replay_item_count,
+            self._replay_serialized_byte_count,
+        )
+
     def replay_items(self) -> tuple[dict[str, Any], ...]:
         if self._released:
             return ()
@@ -2521,7 +2555,7 @@ class _OpenAIReplayOwner:
                 return False
             accounting = self._reasoning_accounting(normalized)
         elif item_type == "function_call":
-            accounting = _ReplayItemAccounting()
+            accounting = self._generic_accounting(normalized)
         else:
             return False
         self._assert_fits(accounting)
@@ -2550,6 +2584,8 @@ class _OpenAIReplayOwner:
             return
         self._items.clear()
         self._ledger.clear()
+        self._replay_item_count = 0
+        self._replay_serialized_byte_count = 0
         self._reasoning_item_count = 0
         self._summary_node_count = 0
         self._summary_character_count = 0
@@ -2563,17 +2599,24 @@ class _OpenAIReplayOwner:
     def _reasoning_accounting(
         item: dict[str, Any],
     ) -> _ReplayItemAccounting:
+        generic = _OpenAIReplayOwner._generic_accounting(item)
         summary_fields = {
             key: value
             for key, value in item.items()
             if key not in {"encrypted_content", "id", "type"}
         }
         if not summary_fields:
-            return _ReplayItemAccounting(reasoning_items=1)
+            return _ReplayItemAccounting(
+                items=generic.items,
+                serialized_bytes=generic.serialized_bytes,
+                reasoning_items=1,
+            )
         normalized_summary = _strict_replay_json_copy(summary_fields)
         assert isinstance(normalized_summary, dict)
         nodes, characters = _replay_json_accounting(normalized_summary)
         return _ReplayItemAccounting(
+            items=generic.items,
+            serialized_bytes=generic.serialized_bytes,
             reasoning_items=1,
             summary_nodes=nodes,
             summary_characters=characters,
@@ -2582,8 +2625,26 @@ class _OpenAIReplayOwner:
             ),
         )
 
+    @staticmethod
+    def _generic_accounting(
+        item: dict[str, Any],
+    ) -> _ReplayItemAccounting:
+        return _ReplayItemAccounting(
+            items=1,
+            serialized_bytes=_replay_json_serialized_bytes(item),
+        )
+
     def _assert_fits(self, accounting: _ReplayItemAccounting) -> None:
         limits_and_values = (
+            (
+                self.policy.openai_replay_item_limit,
+                self._replay_item_count + accounting.items,
+            ),
+            (
+                self.policy.openai_replay_serialized_byte_limit,
+                self._replay_serialized_byte_count
+                + accounting.serialized_bytes,
+            ),
             (
                 self.policy.openai_replay_reasoning_item_limit,
                 self._reasoning_item_count + accounting.reasoning_items,
@@ -2612,6 +2673,10 @@ class _OpenAIReplayOwner:
         direction: int,
     ) -> None:
         assert direction in {-1, 1}
+        self._replay_item_count += direction * accounting.items
+        self._replay_serialized_byte_count += (
+            direction * accounting.serialized_bytes
+        )
         self._reasoning_item_count += direction * accounting.reasoning_items
         self._summary_node_count += direction * accounting.summary_nodes
         self._summary_character_count += (
@@ -2708,6 +2773,7 @@ class OpenAIStream(TextGenerationVendorStream):
         stream: AsyncIterator[Any],
         *,
         provider_family: ProviderFamily | str = ProviderFamily.OPENAI,
+        supports_reasoning_summary: bool | None = None,
         output_item_sink: Callable[[dict[str, Any]], None] | None = None,
         output_item_rollback: Callable[[int], None] | None = None,
         replay_owner: _OpenAIReplayOwner | None = None,
@@ -2725,7 +2791,19 @@ class OpenAIStream(TextGenerationVendorStream):
         stream_retries: int = 0,
         tool: ToolManager | None = None,
     ) -> None:
+        normalized_provider_family = (
+            provider_family.value
+            if isinstance(provider_family, ProviderFamily)
+            else provider_family
+        )
+        if supports_reasoning_summary is None:
+            supports_reasoning_summary = (
+                normalized_provider_family
+                in _OPENAI_REASONING_SUMMARY_PROVIDERS
+            )
+        assert isinstance(supports_reasoning_summary, bool)
         self._stream = stream
+        self._supports_reasoning_summary = supports_reasoning_summary
         self._canonical_tool_calls = {}
         self._tool_call_ids_by_item_id = {}
         self._canonical_ready_tool_call_ids = set()
@@ -2981,6 +3059,7 @@ class OpenAIStream(TextGenerationVendorStream):
                 backend=StreamProducerBackend.HOSTED,
                 provider_family=self._provider_family,
                 supports_reasoning=True,
+                supports_reasoning_summary=(self._supports_reasoning_summary),
                 supports_tool_calls=True,
                 supports_usage=True,
                 supports_terminal_events=True,
@@ -5556,6 +5635,15 @@ class OpenAIClient(TextGenerationVendor):
     _closed: bool
     _reasoning_summary_provider = "openai"
 
+    @property
+    def reasoning_summary_request_capability(
+        self,
+    ) -> ReasoningSummaryRequestCapability:
+        """Return native OpenAI and Azure summary request support."""
+        if _is_exact_native_openai_type(self, "OpenAIClient"):
+            return _OPENAI_REASONING_SUMMARY_CAPABILITY
+        return super().reasoning_summary_request_capability
+
     def __init__(
         self,
         api_key: str | None,
@@ -5795,6 +5883,9 @@ class OpenAIClient(TextGenerationVendor):
                 response_stream = OpenAIStream(
                     stream=cast(AsyncIterator[Any], client_stream),
                     provider_family=self._usage_provider_family.value,
+                    supports_reasoning_summary=bool(
+                        self.reasoning_summary_request_capability.supported_modes
+                    ),
                     replay_owner=replay_owner,
                     replay_owner_retainer=self._retain_replay_owner,
                     replay_owner_releaser=self._discard_replay_owner,
@@ -6769,6 +6860,9 @@ class OpenAIClient(TextGenerationVendor):
         stream = OpenAIStream(
             stream=source,
             provider_family=self._usage_provider_family.value,
+            supports_reasoning_summary=bool(
+                self.reasoning_summary_request_capability.supported_modes
+            ),
             replay_owner=replay_owner,
             replay_owner_retainer=self._retain_replay_owner,
             replay_owner_releaser=self._discard_replay_owner,
@@ -7407,6 +7501,15 @@ class OpenAINonStreamingResponse(TextGenerationResponse):
 
 
 class OpenAIModel(TextGenerationVendorModel):
+    @property
+    def reasoning_summary_request_capability(
+        self,
+    ) -> ReasoningSummaryRequestCapability:
+        """Return pre-load native OpenAI and Azure summary support."""
+        if _is_exact_native_openai_type(self, "OpenAIModel"):
+            return _OPENAI_REASONING_SUMMARY_CAPABILITY
+        return super().reasoning_summary_request_capability
+
     @property
     def reasoning_summary_provider(self) -> str:
         """Return the configured OpenAI provider family."""

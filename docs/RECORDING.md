@@ -66,6 +66,24 @@ captured frame matches the displayed live frame. Rapid updates may coalesce
 to the latest live frame instead of preserving every intermediate visual
 state, while lossless canonical/public response surfaces remain intact.
 
+Reasoning request and display controls remain independent during recording.
+`--reasoning-summary auto|concise|detailed` asks an explicitly capable
+provider for a private reasoning summary; it does not render that summary.
+Outside quiet mode, only `--display-reasoning` opts into the reasoning panel;
+`--stats` and `--record` never enable it implicitly. In non-interactive output,
+explicitly displayed reasoning is routed to stderr and the final answer stays
+on stdout. `--quiet` overrides even an explicit `--display-reasoning`: it
+suppresses diagnostics and recording and leaves answer-only stdout, without
+cancelling the provider summary request.
+
+If `--display-reasoning` and `--record` are enabled outside quiet mode, the
+rendered reasoning diagnostic is part of the terminal and therefore part of
+the recording. Provider summaries are not raw OpenAI reasoning tokens, but
+they can still contain sensitive model context. Leave reasoning display
+disabled for answer-only recordings. Avalan does not render opaque encrypted
+reasoning replay data, and summary text is kept out of answer text, tool
+arguments, memory, and generic telemetry.
+
 Use `ttyplay` to inspect the capture:
 
 ```bash
@@ -132,6 +150,14 @@ re-encoded at a different frame rate.
 - Unset `NO_COLOR` and force `TERM=xterm-256color` for Rich color.
 - Pick `--stats`, `--display-events`, and `--display-tools` independently
   for the diagnostics you want in the live recording.
+- Pick `--display-reasoning` independently from `--reasoning-summary`; the
+  request flag alone does not put reasoning into a recording.
+- Do not combine `--quiet` with diagnostic or recording flags expecting them
+  to remain active. Quiet suppresses them, even explicit reasoning display,
+  and leaves answer-only stdout.
+- Treat an explicitly displayed provider summary as private recorded content,
+  even though raw provider reasoning tokens and encrypted replay data are not
+  exposed.
 - Remember that one live owner renders all roles and `--record` saves after
   that owner render.
 - Expect rapid live updates to coalesce to the latest frame; rely on the

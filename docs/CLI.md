@@ -89,6 +89,12 @@ simpler text-first theme:
 avalan model run MODEL --theme basic
 ```
 
+`--quiet` is the highest-precedence output policy for model and agent runs.
+It overrides explicit diagnostic flags such as `--display-reasoning`,
+suppresses diagnostics and recording, and leaves answer-only stdout. Quiet
+does not cancel a provider reasoning-summary request; it only prevents that
+private diagnostic from being rendered or recorded.
+
 ![Running the CLI in spanish](https://avalan.ai/images/spanish_translation.png)
 
 You'll need your Huggingface access token exported as `HF_TOKEN`.
@@ -810,6 +816,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
                         [--reasoning-effort {none,minimal,low,medium,high,xhigh,max}]
                         [--tool TOOL] [--tools TOOLS]
+                        [--reasoning-summary {auto,concise,detailed}]
                         [--tool-browser-engine TOOL_BROWSER_ENGINE]
                         [--tool-browser-search]
                         [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
@@ -949,6 +956,8 @@ options:
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
+  --reasoning-summary {auto,concise,detailed}, --run-reasoning-summary {auto,concise,detailed}
+                        Reasoning summary mode
   --display-events      Show non-tool stream events when an orchestrator or
                         agent is involved.
   --stats               Show token generation statistics for streaming output
@@ -1642,8 +1651,9 @@ plicate}]
                          [--maximum-tool-cycles RUN_MAXIMUM_TOOL_CYCLES] [--block-repeated-tool-calls] [--run-skip-special-tokens]
                          [--run-disable-cache]
                          [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
-                         [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P] [--tool TOOL]
-                         [--tools TOOLS]
+                         [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
+                         [--reasoning-effort {none,minimal,low,medium,high,xhigh,max}] [--tool TOOL] [--tools TOOLS]
+                         [--reasoning-summary {auto,concise,detailed}]
 
 Create an agent definition
 
@@ -1688,6 +1698,8 @@ plicate}
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
+  --reasoning-summary {auto,concise,detailed}, --run-reasoning-summary {auto,concise,detailed}
+                        Reasoning summary mode
 
 inline agent settings:
   --engine-uri ENGINE_URI
@@ -1740,6 +1752,8 @@ inline agent settings:
   --run-top-p RUN_TOP_P
                         If set to < 1, only the smallest set of most probable tokens with probabilities that add up to top_p
                         or higher are kept for generation.
+  --reasoning-effort {none,minimal,low,medium,high,xhigh,max}, --run-reasoning-effort {none,minimal,low,medium,high,xhigh,max}
+                        Reasoning effort level
   --tool TOOL           Enable tool
   --tools TOOLS         Enable tools matching namespace
 ```
@@ -3519,6 +3533,7 @@ e_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}]
                         [--text-from-lang TEXT_FROM_LANG] [--text-to-lang TEXT_TO_LANG] [--start-thinking]
                         [--chat-disable-thinking] [--no-reasoning] [--reasoning-tag {think,channel}]
                         [--reasoning-effort {none,minimal,low,medium,high,xhigh,max}]
+                        [--reasoning-summary {auto,concise,detailed}]
                         [--reasoning-max-new-tokens REASONING_MAX_NEW_TOKENS] [--reasoning-stop-on-max-new-tokens]
                         [--stop_on_keyword STOP_ON_KEYWORD] [--temperature TEMPERATURE] [--top-k TOP_K] [--top-p TOP_P]
                         [--trust-remote-code]
@@ -3712,6 +3727,8 @@ e_text_to_text,vision_encoder_decoder,vision_semantic_segmentation}
                         Reasoning tag style
   --reasoning-effort {none,minimal,low,medium,high,xhigh,max}
                         Reasoning effort level
+  --reasoning-summary {auto,concise,detailed}
+                        Reasoning summary mode
   --reasoning-max-new-tokens REASONING_MAX_NEW_TOKENS
                         Maximum number of reasoning tokens
   --reasoning-stop-on-max-new-tokens

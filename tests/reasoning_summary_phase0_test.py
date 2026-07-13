@@ -74,7 +74,7 @@ _REQUIREMENTS_CATALOG_SHA256 = (
 )
 _ACCEPTANCE_INTEGER_CATALOG = (
     2,
-    "5ea6121f7883fb06b3d260ae8d473bdecadffe6cad041e38ff93ee82a8cae4f0",
+    "64b822fe7078872a23bac5dcbed09ad9a03720694ef7f6b8bcced951f3665caa",
 )
 _CONTRACT_INTEGER_CATALOG = (
     95,
@@ -3182,6 +3182,354 @@ def test_benchmark_execution_report_matches_locked_protocol() -> None:
     assert report["platform"]
     assert report["machine"]
     assert report["protocol"]["network_allowed"] is False
+
+
+def test_phase9_summary_benchmark_is_mutation_enforced_hard_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = _BENCHMARK_SCRIPT.run_phase9_benchmark()
+    protocol = _BENCHMARK_SCRIPT.benchmark_protocol()
+    budget = StreamPerformanceBudget()
+    workloads = cast(list[dict[str, object]], report["workloads"])
+
+    assert report["suite"] == "reasoning-summary-phase9-performance"
+    assert report["protocol"] == asdict(protocol)
+    hard_gate = _BENCHMARK_SCRIPT.evaluate_phase9_hard_gate(report)
+    assert hard_gate.passed
+    assert hard_gate.failure_reasons == ()
+    assert report["hard_gate"] == asdict(hard_gate)
+    assert len(workloads) == 2
+    assert [workload["delta_count"] for workload in workloads] == [4096, 8192]
+    for workload in workloads:
+        delta_count = cast(int, workload["delta_count"])
+        deterministic = cast(dict[str, int], workload["deterministic"])
+        assert workload["name"] == "summary_projection_hidden"
+        assert workload["representation"] == "summary"
+        assert workload["summary_part_count"] == delta_count // 64
+        assert len(cast(list[float], workload["sample_microseconds"])) == 20
+        assert cast(float, workload["median_per_item_microseconds"]) <= (
+            budget.per_item_overhead_us
+        )
+        assert cast(float, workload["p95_per_item_microseconds"]) <= 500
+        assert cast(float, workload["median_microseconds"]) <= (
+            1.25 * delta_count * budget.per_item_overhead_us
+        )
+        assert cast(float, workload["p95_microseconds"]) <= (
+            1.25 * delta_count * budget.per_item_overhead_us
+        )
+        assert cast(
+            int, workload["peak_processing_bytes_excluding_source_fixture"]
+        ) <= (budget.max_memory_bytes)
+        assert cast(
+            int, workload["current_retained_bytes_including_source_fixture"]
+        ) <= (budget.max_memory_bytes)
+        assert cast(
+            int, workload["peak_total_bytes_including_source_fixture"]
+        ) <= (budget.max_memory_bytes)
+        assert deterministic["max_read_ahead"] == 0
+        assert deterministic["production_reasoning_text_property_reads"] == 0
+        assert deterministic == asdict(
+            _BENCHMARK_SCRIPT.expected_phase9_deterministic_counts(delta_count)
+        )
+
+    smaller, larger = workloads
+    assert (
+        cast(float, larger["median_microseconds"])
+        / cast(float, smaller["median_microseconds"])
+        <= 2.5
+    )
+
+    phase9_metrics = cast(dict[str, object], report["phase9_metrics"])
+    heartbeat = cast(dict[str, object], phase9_metrics["heartbeat"])
+    assert heartbeat["delta_count"] == 8192
+    assert heartbeat["warmups"] == 3
+    assert heartbeat["samples"] == 20
+    assert heartbeat["interval_milliseconds"] == 10
+    assert cast(int, heartbeat["tick_count"]) >= 23
+    assert cast(float, heartbeat["maximum_drift_milliseconds"]) <= 100
+
+    coalescing = cast(
+        dict[str, object], phase9_metrics["responses_coalescing"]
+    )
+    assert coalescing["source_delta_count"] == 4097
+    assert cast(int, coalescing["summary_delta_event_count"]) >= 2
+    assert coalescing["maximum_delta_characters"] == 4096
+    assert cast(float, coalescing["first_summary_milliseconds"]) <= 5000
+    assert coalescing["source_close_count"] == 1
+
+    queue_pressure = cast(dict[str, object], phase9_metrics["queue_pressure"])
+    expected_queues = {
+        "event_lossless_block": ("block", 1),
+        "event_critical_block": ("block", 1),
+        "event_ui_coalesce": ("coalesce", 64),
+        "event_observability_drop": ("drop", 32),
+        "event_fail_closed": ("fail_closed", 1),
+        "sdk_listen_drop": ("drop", 512),
+        "cli_listen_coalesce": ("coalesce", 256),
+        "test_listen_drop": ("drop", 1024),
+        "local_handoff_block": ("block", 64),
+        "orchestrator_staging_fail_closed": ("fail_closed", 4096),
+    }
+    for name, (policy, queue_limit) in expected_queues.items():
+        evidence = cast(dict[str, object], queue_pressure[name])
+        assert evidence["policy"] == policy
+        assert evidence["queue_limit"] == queue_limit
+        assert evidence["passed"] is True
+    assert queue_pressure["server_listen_disabled"] == {
+        "enabled": False,
+        "passed": True,
+    }
+
+    def mutated(
+        path: tuple[str | int, ...],
+        value: object,
+    ) -> dict[str, object]:
+        mutation = deepcopy(report)
+        target: object = mutation
+        for component in path[:-1]:
+            target = cast(Any, target)[component]
+        cast(Any, target)[path[-1]] = value
+        return mutation
+
+    metric_mutations = (
+        (("protocol", "warmups"), 2, "protocol warmups must equal 3"),
+        (("protocol", "samples"), 19, "protocol samples must equal 20"),
+        (
+            ("protocol", "delta_counts"),
+            [4096],
+            "protocol delta counts must equal 4096 and 8192",
+        ),
+        (
+            ("workloads", 0, "name"),
+            "other",
+            "workload 4096 name must identify the Phase 9 path",
+        ),
+        (
+            ("workloads", 0, "representation"),
+            "native_text",
+            "workload 4096 representation must be summary",
+        ),
+        (
+            ("workloads", 0, "summary_part_count"),
+            63,
+            "workload 4096 summary part count changed",
+        ),
+        (
+            ("workloads", 0, "sample_microseconds"),
+            [1.0] * 19,
+            "workload 4096 must contain 20 measured samples",
+        ),
+        (
+            ("workloads", 0, "median_per_item_microseconds"),
+            251.0,
+            "workload 4096 median per-item time exceeded 250 microseconds",
+        ),
+        (
+            ("workloads", 0, "p95_per_item_microseconds"),
+            501.0,
+            "workload 4096 p95 per-item time exceeded 500 microseconds",
+        ),
+        (
+            ("workloads", 0, "p95_microseconds"),
+            1.25 * 4096 * 250 + 1,
+            "workload 4096 p95 batch time exceeded budget",
+        ),
+        *(
+            (
+                ("workloads", 0, metric_name),
+                budget.max_memory_bytes + 1,
+                (
+                    f"workload 4096 {metric_name} exceeded "
+                    f"{budget.max_memory_bytes} bytes"
+                ),
+            )
+            for metric_name in (
+                "peak_processing_bytes_excluding_source_fixture",
+                "current_retained_bytes_including_source_fixture",
+                "peak_total_bytes_including_source_fixture",
+            )
+        ),
+        (
+            ("workloads", 0, "deterministic", "max_read_ahead"),
+            1,
+            "workload 4096 read-ahead must equal zero",
+        ),
+        (
+            (
+                "workloads",
+                0,
+                "deterministic",
+                "production_reasoning_text_property_reads",
+            ),
+            1,
+            "workload 4096 hidden reasoning materialization must equal zero",
+        ),
+        (
+            ("workloads", 1, "median_microseconds"),
+            cast(float, workloads[0]["median_microseconds"]) * 2.51,
+            "median 8192-to-4096 work ratio exceeded 2.5",
+        ),
+        (
+            ("workloads", 1, "p95_microseconds"),
+            cast(float, workloads[0]["p95_microseconds"]) * 2.51,
+            "p95 8192-to-4096 work ratio exceeded 2.5",
+        ),
+        (
+            ("phase9_metrics", "heartbeat", "delta_count"),
+            4096,
+            "heartbeat delta_count must equal 8192",
+        ),
+        (
+            ("phase9_metrics", "heartbeat", "warmups"),
+            2,
+            "heartbeat warmups must equal 3",
+        ),
+        (
+            ("phase9_metrics", "heartbeat", "samples"),
+            19,
+            "heartbeat samples must equal 20",
+        ),
+        (
+            ("phase9_metrics", "heartbeat", "interval_milliseconds"),
+            11,
+            "heartbeat interval_milliseconds must equal 10",
+        ),
+        (
+            ("phase9_metrics", "heartbeat", "tick_count"),
+            22,
+            "heartbeat must observe at least 23 ticks",
+        ),
+        (
+            (
+                "phase9_metrics",
+                "heartbeat",
+                "maximum_drift_milliseconds",
+            ),
+            101.0,
+            "heartbeat maximum drift exceeded 100 milliseconds",
+        ),
+        (
+            (
+                "phase9_metrics",
+                "responses_coalescing",
+                "source_delta_count",
+            ),
+            4096,
+            "Responses coalescing source must contain 4097 deltas",
+        ),
+        (
+            (
+                "phase9_metrics",
+                "responses_coalescing",
+                "summary_delta_event_count",
+            ),
+            1,
+            "Responses coalescing must emit at least two deltas",
+        ),
+        (
+            (
+                "phase9_metrics",
+                "responses_coalescing",
+                "maximum_delta_characters",
+            ),
+            4097,
+            "Responses coalesced delta exceeded 4096 characters",
+        ),
+        (
+            (
+                "phase9_metrics",
+                "responses_coalescing",
+                "first_summary_milliseconds",
+            ),
+            5001.0,
+            "Responses first summary exceeded 5000 milliseconds",
+        ),
+        (
+            (
+                "phase9_metrics",
+                "responses_coalescing",
+                "source_close_count",
+            ),
+            0,
+            "Responses coalescing source must close exactly once",
+        ),
+    )
+    for path, value, expected_reason in metric_mutations:
+        mutation_gate = _BENCHMARK_SCRIPT.evaluate_phase9_hard_gate(
+            mutated(path, value)
+        )
+        assert not mutation_gate.passed
+        assert expected_reason in mutation_gate.failure_reasons
+
+    for name, (policy, queue_limit) in expected_queues.items():
+        for field_name, value, expected_reason in (
+            ("policy", "other", f"queue policy {name} changed"),
+            ("queue_limit", queue_limit + 1, f"queue limit {name} changed"),
+            ("passed", False, f"queue pressure {name} failed"),
+        ):
+            mutation_gate = _BENCHMARK_SCRIPT.evaluate_phase9_hard_gate(
+                mutated(
+                    ("phase9_metrics", "queue_pressure", name, field_name),
+                    value,
+                )
+            )
+            assert not mutation_gate.passed
+            assert expected_reason in mutation_gate.failure_reasons
+
+    for field_name, value, expected_reason in (
+        ("enabled", True, "server listen queue must remain disabled"),
+        (
+            "passed",
+            False,
+            "queue pressure server_listen_disabled failed",
+        ),
+    ):
+        mutation_gate = _BENCHMARK_SCRIPT.evaluate_phase9_hard_gate(
+            mutated(
+                (
+                    "phase9_metrics",
+                    "queue_pressure",
+                    "server_listen_disabled",
+                    field_name,
+                ),
+                value,
+            )
+        )
+        assert not mutation_gate.passed
+        assert expected_reason in mutation_gate.failure_reasons
+
+    failed_report = mutated(
+        ("phase9_metrics", "heartbeat", "maximum_drift_milliseconds"),
+        101.0,
+    )
+    output = tmp_path / "phase9-failed.json"
+    monkeypatch.setattr(
+        _BENCHMARK_SCRIPT,
+        "run_phase9_benchmark",
+        lambda: failed_report,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "benchmark_reasoning_summary.py",
+            "--phase9",
+            "--json-out",
+            str(output),
+        ],
+    )
+    assert _BENCHMARK_SCRIPT.main() == 1
+    failed_payload = strict_json_loads(output.read_text(encoding="utf-8"))
+    failed_gate = cast(dict[str, object], failed_payload["hard_gate"])
+    assert failed_gate["passed"] is False
+    assert failed_gate["failure_reasons"] == [
+        "heartbeat maximum drift exceeded 100 milliseconds"
+    ]
+    assert (
+        cast(float, larger["p95_microseconds"])
+        / cast(float, smaller["p95_microseconds"])
+        <= 2.5
+    )
 
 
 def test_benchmark_observer_counts_each_materialization_call(

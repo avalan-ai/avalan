@@ -1,7 +1,14 @@
 from asyncio import run
-from avalan.entities import GenerationSettings, TransformerEngineSettings
-from avalan.model.nlp.text.vendor.openai import OpenAIModel
 from os import environ
+
+from avalan.entities import (
+    GenerationSettings,
+    ReasoningEffort,
+    ReasoningSettings,
+    ReasoningSummaryMode,
+    TransformerEngineSettings,
+)
+from avalan.model.nlp.text.vendor.openai import OpenAIModel
 
 
 async def example() -> None:
@@ -11,7 +18,7 @@ async def example() -> None:
     assert api_key, "Need an $OPENAI_API_KEY environment variable set"
     settings = TransformerEngineSettings(access_token=api_key)
 
-    with OpenAIModel("gpt-4o", settings) as lm:
+    with OpenAIModel("gpt-5-mini", settings) as lm:
         print("DONE.", flush=True)
 
         system_prompt = """
@@ -23,12 +30,17 @@ async def example() -> None:
             "Who are you?",
             system_prompt=system_prompt,
             settings=GenerationSettings(
-                temperature=0.9,
                 max_new_tokens=256,
+                reasoning=ReasoningSettings(
+                    effort=ReasoningEffort.LOW,
+                    summary=ReasoningSummaryMode.CONCISE,
+                ),
                 use_async_generator=False,
             ),
         )
-        print(answer)
+        # The compatibility text view contains only the final answer. Consume
+        # canonical_stream() instead when structured summary items are needed.
+        print(await answer.to_str())
 
 
 if __name__ == "__main__":
