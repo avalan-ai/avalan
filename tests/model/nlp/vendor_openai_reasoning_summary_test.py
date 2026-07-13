@@ -2992,6 +2992,31 @@ def test_private_replay_create_errors_and_cancellation_are_sanitized() -> None:
 
     assert run(cancelled_baseline_create()) is baseline_cancellation
 
+    class ProviderControlFlow(BaseException):
+        pass
+
+    control_flow_call_id = "control-flow-create-private"
+    provider_control_flow = ProviderControlFlow("provider control flow")
+    control_flow_client = _retained_private_client(
+        AsyncMock(side_effect=provider_control_flow),
+        control_flow_call_id,
+    )
+    control_flow_owner = cast(
+        Any, control_flow_client
+    )._replay_owners_by_call_id[control_flow_call_id]
+
+    async def control_flow_private_create() -> BaseException:
+        with pytest.raises(ProviderControlFlow) as context:
+            await control_flow_client(
+                "plain-model",
+                [_tool_result(control_flow_call_id, "value")],
+            )
+        return context.value
+
+    assert run(control_flow_private_create()) is provider_control_flow
+    assert control_flow_owner.release_count == 1
+    assert cast(Any, control_flow_client)._replay_owners_by_call_id == {}
+
 
 def test_private_replay_retry_factory_errors_are_sanitized() -> None:
     encrypted = _PRIVATE_ENCRYPTED_SENTINEL
@@ -3108,6 +3133,62 @@ def test_private_replay_non_stream_errors_and_usage_are_sanitized() -> None:
     assert non_stream_usage.usage is None
     assert encrypted not in repr(non_stream_usage)
     assert summary not in repr(non_stream_usage)
+
+
+def test_private_replay_non_stream_cancellation_preserves_semantics() -> None:
+    encrypted = _PRIVATE_ENCRYPTED_SENTINEL
+    summary = _PRIVATE_SUMMARY_SENTINEL
+    call_id = "non-stream-cancelled-private"
+    private_cancellation = CancelledError(f"{encrypted} {summary}")
+    private_client = _retained_private_client(
+        AsyncMock(return_value=_non_stream_response()),
+        call_id,
+    )
+    private_owner = cast(Any, private_client)._replay_owners_by_call_id[
+        call_id
+    ]
+    cast(Any, private_client)._non_stream_result = AsyncMock(
+        side_effect=private_cancellation
+    )
+
+    async def cancelled_private_adapter() -> BaseException:
+        with pytest.raises(CancelledError) as context:
+            await private_client(
+                "plain-model",
+                [_tool_result(call_id, "value")],
+                use_async_generator=False,
+            )
+        return context.value
+
+    safe_cancellation = run(cancelled_private_adapter())
+    assert safe_cancellation is not private_cancellation
+    assert safe_cancellation.args == ()
+    _, cancellation_diagnostics = _safe_exception_diagnostics(
+        safe_cancellation
+    )
+    assert encrypted not in cancellation_diagnostics
+    assert summary not in cancellation_diagnostics
+    assert private_owner.release_count == 1
+    assert cast(Any, private_client)._replay_owners_by_call_id == {}
+    assert cast(Any, private_client)._active_replay_owners == {}
+    assert cast(Any, private_client)._active_replay_streams == {}
+
+    baseline_cancellation = CancelledError("baseline adapter cancellation")
+    baseline_client = _client(AsyncMock(return_value=_non_stream_response()))
+    cast(Any, baseline_client)._non_stream_result = AsyncMock(
+        side_effect=baseline_cancellation
+    )
+
+    async def cancelled_baseline_adapter() -> BaseException:
+        with pytest.raises(CancelledError) as context:
+            await baseline_client(
+                "plain-model",
+                [],
+                use_async_generator=False,
+            )
+        return context.value
+
+    assert run(cancelled_baseline_adapter()) is baseline_cancellation
 
 
 def test_close_during_create_sanitizes_response_cleanup_failure() -> None:

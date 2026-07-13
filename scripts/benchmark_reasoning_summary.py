@@ -892,14 +892,13 @@ async def _phase9_heartbeat_metrics(
             previous = current
             tick_count += 1
 
+    collect()
     heartbeat_task = create_task(heartbeat())
     await started.wait()
     for _ in range(protocol.warmups):
-        collect()
         _project_phase9_fixture(fixture)
         await sleep(interval_seconds)
     for _ in range(protocol.samples):
-        collect()
         _project_phase9_fixture(fixture)
         await sleep(interval_seconds)
     stopped.set()

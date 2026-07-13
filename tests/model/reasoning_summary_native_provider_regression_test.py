@@ -18,7 +18,6 @@ from avalan.model.nlp.text.ds4 import (
 )
 from avalan.model.nlp.text.generation import TextGenerationModel
 from avalan.model.nlp.text.mlxlm import MlxLmStream
-from avalan.model.nlp.text.vendor.litellm import LiteLLMStream
 from avalan.model.nlp.text.vendor.openai import OpenAIStream
 from avalan.model.nlp.text.vllm import VllmStream
 from avalan.model.stream import (
@@ -37,6 +36,30 @@ from avalan.model.stream import (
     validate_canonical_stream_items,
 )
 
+
+def _load_litellm_vendor_module() -> ModuleType:
+    module_name = "avalan.model.nlp.text.vendor.litellm"
+    try:
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as error:
+        if error.name != "litellm":
+            raise
+
+    stub = ModuleType("litellm")
+    setattr(stub, "acompletion", MagicMock())
+    previous_sdk = sys.modules.get("litellm")
+    sys.modules["litellm"] = stub
+    try:
+        return importlib.import_module(module_name)
+    finally:
+        if previous_sdk is None:
+            sys.modules.pop("litellm", None)
+        else:
+            sys.modules["litellm"] = previous_sdk
+
+
+_LITELLM_VENDOR_MODULE = _load_litellm_vendor_module()
+LiteLLMStream = cast(Any, getattr(_LITELLM_VENDOR_MODULE, "LiteLLMStream"))
 _LOCAL_SPLIT_TAG_CHUNKS = (
     "lead",
     "<thi",
@@ -1577,9 +1600,10 @@ async def _mlx_untagged_cancel_and_close_cases() -> None:
     assert pulls == 0
 
     closed = MlxLmStream(late_factory, use_executor=False)
+    pulls_before_close = pulls
     await closed.aclose()
     assert closed._closed
-    assert pulls == 0
+    assert pulls == pulls_before_close
 
 
 def test_mlx_reasoning_parser_preserves_untagged_cancel_and_close() -> None:

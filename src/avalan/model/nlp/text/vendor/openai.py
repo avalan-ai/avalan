@@ -5842,7 +5842,7 @@ class OpenAIClient(TextGenerationVendor):
                     if not request_has_replay_items:
                         raise
                     provider_request_cancelled = True
-                except BaseException:
+                except Exception:
                     if not request_has_replay_items:
                         raise
                     provider_request_failed = True
@@ -5903,6 +5903,7 @@ class OpenAIClient(TextGenerationVendor):
                 return response_stream
 
             non_stream_adapter_failed = False
+            non_stream_adapter_cancelled = False
             response: TextGenerationNonStreamResult | None = None
             try:
                 response = await self._non_stream_result(
@@ -5911,12 +5912,18 @@ class OpenAIClient(TextGenerationVendor):
                     replay_owner=replay_owner,
                     request_has_replay_items=request_has_replay_items,
                 )
-            except BaseException:
+            except CancelledError:
+                if not request_has_replay_items:
+                    raise
+                non_stream_adapter_cancelled = True
+            except Exception:
                 if not request_has_replay_items:
                     raise
                 non_stream_adapter_failed = True
             if non_stream_adapter_failed:
                 raise _OpenAIProviderRequestError() from None
+            if non_stream_adapter_cancelled:
+                raise CancelledError() from None
             assert response is not None
         except BaseException:
             self._discard_replay_owner(replay_owner)
