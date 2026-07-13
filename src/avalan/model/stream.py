@@ -431,6 +431,7 @@ class StreamReasoningSegment:
     output_index: int | None = None
     summary_index: int | None = None
     continuation_id: str | None = None
+    first_sequence: int | None = None
 
     def __post_init__(self) -> None:
         assert isinstance(self.representation, StreamReasoningRepresentation)
@@ -452,6 +453,7 @@ class StreamReasoningSegment:
         for field_name, index_value in (
             ("output_index", self.output_index),
             ("summary_index", self.summary_index),
+            ("first_sequence", self.first_sequence),
         ):
             if index_value is not None:
                 _assert_non_negative_int(index_value, field_name)
@@ -2518,6 +2520,7 @@ class _RetainedReasoningSegment:
     output_index: int | None
     summary_index: int | None
     continuation_id: str | None
+    first_sequence: int
     chunks: deque[str] = field(default_factory=deque)
     characters: int = 0
     utf8_bytes: int = 0
@@ -2647,6 +2650,7 @@ class StreamReasoningSegmentAccumulator:
                 output_index=segment.output_index,
                 summary_index=segment.summary_index,
                 continuation_id=segment.continuation_id,
+                first_sequence=segment.first_sequence,
             )
             for segment in self._segments
             if segment.characters
@@ -2739,6 +2743,7 @@ class StreamReasoningSegmentAccumulator:
                 output_index=item.correlation.provider_output_index,
                 summary_index=item.correlation.provider_summary_index,
                 continuation_id=item.correlation.model_continuation_id,
+                first_sequence=item.sequence,
             )
             self._append_separator_before(item.text_delta)
             self._segments.append(active)

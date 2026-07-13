@@ -777,6 +777,7 @@ class CliStreamSnapshotBuilder:
         text: str,
         *,
         tokens: int = 1,
+        sequence: int = 0,
         representation: StreamReasoningRepresentation = (
             StreamReasoningRepresentation.NATIVE_TEXT
         ),
@@ -788,6 +789,8 @@ class CliStreamSnapshotBuilder:
         assert isinstance(text, str)
         if not text:
             return
+        assert isinstance(sequence, int)
+        assert sequence >= 0
         assert isinstance(representation, StreamReasoningRepresentation)
         assert isinstance(segment_instance_ordinal, int)
         assert segment_instance_ordinal >= 0
@@ -800,7 +803,7 @@ class CliStreamSnapshotBuilder:
                 stream_session_id="cli-snapshot-builder",
                 run_id="cli-snapshot-builder",
                 turn_id="cli-snapshot-builder",
-                sequence=0,
+                sequence=sequence,
                 kind=StreamItemKind.REASONING_DELTA,
                 channel=StreamChannel.REASONING,
                 correlation=correlation or StreamItemCorrelation(),

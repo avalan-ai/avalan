@@ -10,7 +10,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.markdown import Markdown
 from rich.spinner import Spinner
 
 from avalan.cli.commands import cache as cache_cmds
@@ -63,6 +64,7 @@ from avalan.entities import (
 )
 from avalan.event import Event, EventType
 from avalan.model.stream import (
+    StreamItemCorrelation,
     StreamReasoningRepresentation,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
@@ -190,19 +192,25 @@ def _visible_text(items: list[object]) -> str:
 
 
 class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
-    async def test_reasoning_live_frame_is_opt_in_bounded_and_labeled(
+    async def test_reasoning_live_frame_is_opt_in_bounded_and_subtle(
         self,
     ) -> None:
         config = _stream_config(display_reasoning=True)
         builder = CliStreamSnapshotBuilder(config)
         builder.append_reasoning_text(
-            "native plan",
+            "**native plan**\n\ncontinued",
             segment_instance_ordinal=0,
         )
         builder.append_reasoning_text(
-            "summary plan",
+            "**summary plan**",
             representation=StreamReasoningRepresentation.SUMMARY,
             segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+        builder.append_reasoning_text(
+            "summary follow-up",
+            representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=2,
             follows_completion=True,
         )
         presenter = BasicStreamPresenter(getLogger(__name__))
@@ -215,11 +223,157 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         frames = _frames(items)
         self.assertEqual([frame.role for frame in frames], ["reasoning"])
         output = _render_text(frames[0].renderable)
-        self.assertIn("Reasoning", output)
+        self.assertEqual(output.count("💭"), 2)
         self.assertIn("native plan", output)
-        self.assertIn("Reasoning summary", output)
+        self.assertIn("continued", output)
         self.assertIn("summary plan", output)
-        self.assertLessEqual(len(output.splitlines()), 6)
+        self.assertIn("summary follow-up", output)
+        self.assertNotIn("Reasoning summary", output)
+        self.assertNotIn("**", output)
+        self.assertIsInstance(frames[0].renderable, Group)
+        reasoning_group = cast(Group, frames[0].renderable)
+        for renderable in reasoning_group.renderables:
+            self.assertIsInstance(renderable, Markdown)
+            markdown = cast(Markdown, renderable)
+            self.assertEqual(markdown.style, "dim")
+            self.assertTrue(markdown.markup.startswith("💭 "))
+        terminal_output = StringIO()
+        Console(
+            file=terminal_output,
+            force_terminal=True,
+            color_system="standard",
+        ).print(frames[0].renderable)
+        ansi = terminal_output.getvalue()
+        self.assertIn("\x1b[2m", ansi)
+        for background_escape in ("\x1b[4", "\x1b[48;", "\x1b[10"):
+            self.assertNotIn(background_escape, ansi)
+
+    async def test_live_reasoning_interleaves_with_tools_by_sequence(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_reasoning=True,
+            display_tools=True,
+            display_tools_events=8,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-1",
+            sequence=1,
+            started_at=1.0,
+        )
+        builder.append_reasoning_text(
+            "Inspect the PDF metadata.\n\n"
+            "Check the page count.\n\n"
+            "Read the embedded text.\n\n"
+            "Choose an OCR fallback.",
+            sequence=2,
+            representation=StreamReasoningRepresentation.SUMMARY,
+            correlation=StreamItemCorrelation(
+                model_continuation_id="continuation-1"
+            ),
+        )
+
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            first = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+            first_output = _render_text(_frames(first)[0].renderable)
+
+        self.assertEqual([frame.role for frame in _frames(first)], ["tools"])
+        self.assertLess(
+            first_output.index("Thinking for 1s..."),
+            first_output.index("💭 Inspect the PDF metadata."),
+        )
+
+        builder.finish_model_continuation(
+            model_continuation_id="continuation-1",
+            updated_at=2.0,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="pdfinfo-call",
+            name="pdfinfo",
+            status="result",
+            result="metadata",
+            arguments_count=1,
+            sequence=3,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="pdftotext-call",
+            name="pdftotext",
+            status="result",
+            result="text",
+            arguments_count=1,
+            sequence=4,
+        )
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-2",
+            sequence=5,
+            started_at=3.0,
+        )
+        builder.append_reasoning_text(
+            "OCR the rendered page next.\n\n"
+            "Compare it with the text layer.\n\n"
+            "Prepare the disposition.",
+            sequence=6,
+            representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=1,
+            correlation=StreamItemCorrelation(
+                model_continuation_id="continuation-2"
+            ),
+            follows_completion=True,
+        )
+
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=4.0):
+            second = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+            second_output = _render_text(_frames(second)[0].renderable)
+
+        ordered_fragments = (
+            "💭 Inspect the PDF metadata.",
+            "Executed tool pdfinfo",
+            "Executed tool pdftotext",
+            "Thinking for 1s...",
+            "💭 OCR the rendered page next.",
+        )
+        positions = [second_output.index(text) for text in ordered_fragments]
+        self.assertEqual(positions, sorted(positions))
+
+        builder.finish_model_continuation(
+            model_continuation_id="continuation-2",
+            updated_at=4.0,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="tesseract-call",
+            name="tesseract",
+            status="result",
+            result="ocr text",
+            arguments_count=1,
+            sequence=7,
+        )
+        final = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        final_output = _render_text(_frames(final)[0].renderable)
+        final_fragments = (
+            "💭 Inspect the PDF metadata.",
+            "Executed tool pdfinfo",
+            "Executed tool pdftotext",
+            "💭 OCR the rendered page next.",
+            "Executed tool tesseract",
+        )
+        final_positions = [
+            final_output.index(text) for text in final_fragments
+        ]
+        self.assertEqual(final_positions, sorted(final_positions))
+        self.assertEqual(final_output.count("💭"), 2)
+        self.assertGreater(len(final_output.splitlines()), 6)
 
     async def test_stats_alone_does_not_render_reasoning(self) -> None:
         config = _stream_config(stats=True, display_reasoning=False)
@@ -459,9 +613,16 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(_frames(items)[0].renderable, "\nB")
 
-    def test_reasoning_renderable_handles_empty_and_display_budget(
+    def test_reasoning_renderable_handles_empty_and_full_history(
         self,
     ) -> None:
+        hidden_config = _stream_config(display_reasoning=False)
+        hidden_request = _stream_request(
+            hidden_config,
+            CliStreamSnapshotBuilder(hidden_config).snapshot(),
+        )
+        self.assertIsNone(_basic_reasoning_renderable(hidden_request))
+
         empty_config = _stream_config(display_reasoning=True)
         empty_request = _stream_request(
             empty_config,
@@ -471,6 +632,10 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
 
         builder = CliStreamSnapshotBuilder(empty_config)
         representations = (
+            StreamReasoningRepresentation.NATIVE_TEXT,
+            StreamReasoningRepresentation.SUMMARY,
+            StreamReasoningRepresentation.NATIVE_TEXT,
+            StreamReasoningRepresentation.SUMMARY,
             StreamReasoningRepresentation.NATIVE_TEXT,
             StreamReasoningRepresentation.SUMMARY,
             StreamReasoningRepresentation.NATIVE_TEXT,
@@ -489,10 +654,11 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         assert renderable is not None
         output = _render_text(renderable)
 
-        self.assertNotIn("block-0", output)
-        for ordinal in range(1, 4):
+        for ordinal in range(8):
             with self.subTest(ordinal=ordinal):
                 self.assertIn(f"block-{ordinal}", output)
+        self.assertEqual(output.count("💭"), 8)
+        self.assertGreater(len(output.splitlines()), 6)
 
     async def test_unchanged_live_reasoning_is_not_reemitted_for_answers(
         self,
@@ -525,6 +691,52 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_frames(second_answer), [])
         self.assertEqual(_answer_chunks(first_answer), ["Answer"])
         self.assertEqual(_answer_chunks(second_answer), [" complete"])
+
+    async def test_first_answer_keeps_reasoning_with_active_progress(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_reasoning=True,
+            display_tools=True,
+            display_tools_events=8,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_model_continuation(
+            model_continuation_id="continuation-1",
+            sequence=1,
+            started_at=1.0,
+        )
+        reasoning_lines = tuple(f"plan-{index}" for index in range(8))
+        builder.append_reasoning_text(
+            "\n\n".join(reasoning_lines),
+            sequence=2,
+        )
+        builder.add_active_tool(
+            tool_call_id="calc-call",
+            name="calc",
+            sequence=3,
+            started_at=1.5,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.append_answer_text("Answer")
+        with patch("avalan.cli.theme.basic.perf_counter", return_value=2.0):
+            answer = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+            activity = _render_text(_frames(answer)[0].renderable)
+
+        self.assertEqual(_answer_chunks(answer), ["Answer"])
+        self.assertEqual([frame.role for frame in _frames(answer)], ["tools"])
+        for reasoning_line in reasoning_lines:
+            self.assertIn(reasoning_line, activity)
+        self.assertGreater(len(activity.splitlines()), 6)
+        self.assertIn("Starting tool calc", activity)
 
     async def test_live_reasoning_role_clears_when_no_longer_visible(
         self,
@@ -2439,18 +2651,25 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_live_tool_history_is_not_repeated_during_answer(
         self,
     ) -> None:
-        config = _stream_config(display_tools=True, display_tools_events=8)
+        config = _stream_config(
+            display_reasoning=True,
+            display_tools=True,
+            display_tools_events=8,
+        )
         builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("read the PDF", sequence=1)
         builder.add_tool_result_summary(
             tool_call_id="pdfinfo-call",
             name="pdfinfo",
             status="result",
             result="PDF metadata",
             arguments_count=1,
+            sequence=2,
             elapsed_seconds=0.065,
         )
         builder.add_active_model_continuation(
             model_continuation_id="continuation-1",
+            sequence=3,
             started_at=1.0,
         )
         presenter = BasicStreamPresenter(getLogger(__name__))
@@ -2476,12 +2695,14 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         first_answer_text = _visible_text(first_answer)
         second_answer_text = _visible_text(second_answer)
         self.assertIn("Executed tool pdfinfo", diagnostics_text)
+        self.assertIn("💭 read the PDF", diagnostics_text)
         self.assertEqual(_answer_chunks(first_answer), ["I"])
         self.assertEqual(
             _answer_chunks(second_answer),
             [" matched and read the skill."],
         )
         self.assertIn("Executed tool pdfinfo", first_answer_text)
+        self.assertIn("💭 read the PDF", first_answer_text)
         self.assertNotIn("Executed tool pdfinfo", second_answer_text)
         self.assertEqual(_frames(second_answer), [])
 

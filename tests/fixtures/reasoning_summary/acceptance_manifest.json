@@ -361,7 +361,7 @@
       "tests/reasoning_summary_phase6_manifest_test.py::test_phase6_separator_limit_matrix_acceptance",
       "tests/cli/display_reducer_test.py::DisplayReducerTestCase::test_hidden_reasoning_updates_metrics_without_retaining_or_refreshing",
       "tests/cli/stream_presenter_test.py::StreamPresenterContractTestCase::test_reasoning_blocks_group_contiguous_representations",
-      "tests/cli/theme_basic_test.py::BasicStreamPresenterTestCase::test_reasoning_live_frame_is_opt_in_bounded_and_labeled",
+      "tests/cli/theme_basic_test.py::BasicStreamPresenterTestCase::test_reasoning_live_frame_is_opt_in_bounded_and_subtle",
       "tests/cli/theme_basic_test.py::BasicStreamPresenterTestCase::test_stderr_reasoning_emits_only_unseen_suffixes_before_tool",
       "tests/cli/theme_fancy_test.py::FancyStreamPresenterTestCase::test_reasoning_gate_prevents_hidden_panel_construction",
       "tests/cli/theme_fancy_test.py::FancyStreamPresenterTestCase::test_reasoning_panels_label_mixed_representations",

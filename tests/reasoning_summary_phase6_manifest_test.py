@@ -47,7 +47,7 @@ _PHASE6_NODE_IDS = (
     ),
     (
         "tests/cli/theme_basic_test.py::BasicStreamPresenterTestCase::"
-        "test_reasoning_live_frame_is_opt_in_bounded_and_labeled"
+        "test_reasoning_live_frame_is_opt_in_bounded_and_subtle"
     ),
     (
         "tests/cli/theme_basic_test.py::BasicStreamPresenterTestCase::"

@@ -1,11 +1,13 @@
 from ...entities import Model, User
 from ...event import EventStats
-from ...model.stream import StreamReasoningRepresentation
+from ...model.stream import (
+    StreamReasoningRepresentation,
+    StreamReasoningSegment,
+)
 from ...tool.display import ToolDisplayProjection
 from ..display_safety import safe_text as _safe_text
 from ..stream_presenter import (
     pretty_json_answer_text,
-    reasoning_display_blocks,
     reasoning_display_label,
     structured_answer_started,
 )
@@ -31,12 +33,12 @@ from dataclasses import dataclass
 from json import JSONDecodeError, loads
 from logging import Logger
 from re import IGNORECASE, MULTILINE, Pattern, compile
-from textwrap import wrap
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from rich import box
 from rich.console import Group, RenderableType
+from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
 from rich.spinner import Spinner
@@ -47,8 +49,8 @@ _BASIC_DATABASE_SQL_PREVIEW_LIMIT = 72
 _BASIC_TOOL_RUNNING_THRESHOLD_SECONDS = 1.0
 _BASIC_TOOL_DYNAMIC_MAX_SECONDS = 3600.0
 _BASIC_TOOL_RUNNING_STYLE = "cyan"
-_BASIC_REASONING_CONTENT_LINES = 6
-_BASIC_REASONING_STYLE = "light_pink1"
+_BASIC_REASONING_ICON = "💭"
+_BASIC_REASONING_STYLE = "dim"
 
 if TYPE_CHECKING:
     from ...agent.orchestrator import Orchestrator
@@ -209,7 +211,21 @@ _BASIC_CANONICAL_DUPLICATE_TOOL_EVENT_TYPES = frozenset(
 class _BasicToolLineEntry:
     key: str
     line: str
+    sequence: int | None = None
     executed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _BasicReasoningActivityBlock:
+    first_sequence: int | None
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _BasicActivityEntry:
+    sequence: int | None
+    fallback_order: int
+    renderable: RenderableType
 
 
 class BasicTheme(Theme):
@@ -372,7 +388,7 @@ class BasicStreamPresenter:
         self._live_reasoning_revision: tuple[int, ...] | None = None
         self._live_tool_history_line_keys: set[str] = set()
         self._active_model_continuations: dict[
-            str, tuple[float | None, float | None]
+            str, tuple[int | None, float | None, float | None]
         ] = {}
         self._completed_model_continuation_keys: set[str] = set()
 
@@ -477,6 +493,9 @@ class BasicStreamPresenter:
         if request.display_config.diagnostic_channel == "stderr":
             return self._stderr_reasoning_frame(request)
         snapshot = request.snapshot
+        if snapshot.display.show_tools:
+            self._live_reasoning_revision = None
+            return self._role_frame("reasoning", None)
         if (
             not snapshot.display.show_reasoning
             or not snapshot.reasoning_segments
@@ -587,9 +606,17 @@ class BasicStreamPresenter:
         request: CliStreamPresenterRequest,
     ) -> RenderableType | None:
         completed_model_entries = self._completed_model_entries(request)
-        renderable = _basic_tool_frame(
-            request,
-            completed_model_entries=completed_model_entries,
+        renderable = (
+            _basic_live_activity_frame(
+                request,
+                completed_model_entries=completed_model_entries,
+            )
+            if request.snapshot.display.show_reasoning
+            and request.snapshot.display.show_tools
+            else _basic_tool_frame(
+                request,
+                completed_model_entries=completed_model_entries,
+            )
         )
         if (
             renderable is not None
@@ -695,8 +722,15 @@ class BasicStreamPresenter:
         )
         if entries:
             renderable = self._live_tool_history_frame(entries)
+            if request.snapshot.display.show_reasoning:
+                renderable = _basic_live_activity_frame(request)
             return self._role_frame("tools", renderable)
         if has_progress and first_visible_answer:
+            if request.snapshot.display.show_reasoning:
+                return self._role_frame(
+                    "tools",
+                    _basic_live_activity_frame(request),
+                )
             return self._role_frame("tools", None)
         return None
 
@@ -743,9 +777,13 @@ class BasicStreamPresenter:
         self,
         request: CliStreamPresenterRequest,
     ) -> tuple[_BasicToolLineEntry, ...]:
-        active: dict[str, tuple[float | None, float | None]] = {}
+        active: dict[
+            str,
+            tuple[int | None, float | None, float | None],
+        ] = {}
         for continuation in request.snapshot.active_model_continuations:
             active[continuation.model_continuation_id] = (
+                continuation.sequence,
                 continuation.started_at,
                 continuation.updated_at,
             )
@@ -762,17 +800,18 @@ class BasicStreamPresenter:
                 continue
             self._completed_model_continuation_keys.add(key)
             finished_at = (
-                timestamps[1]
-                if timestamps[1] is not None
-                else perf_counter() if timestamps[0] is not None else None
+                timestamps[2]
+                if timestamps[2] is not None
+                else perf_counter() if timestamps[1] is not None else None
             )
             completed.append(
                 _BasicToolLineEntry(
                     key=key,
                     line=_basic_completed_model_line(
-                        started_at=timestamps[0],
+                        started_at=timestamps[1],
                         updated_at=finished_at,
                     ),
+                    sequence=timestamps[0],
                 )
             )
         self._active_model_continuations = active
@@ -782,32 +821,144 @@ class BasicStreamPresenter:
 def _basic_reasoning_renderable(
     request: CliStreamPresenterRequest,
 ) -> RenderableType | None:
-    blocks = reasoning_display_blocks(request.snapshot)
-    if not blocks:
-        return None
-    width = max(1, request.context.console_width)
-    remaining_lines = _BASIC_REASONING_CONTENT_LINES
-    retained: list[tuple[str, list[str]]] = []
-    for block in reversed(blocks):
-        if remaining_lines <= 1:
-            break
-        lines = _basic_wrapped_reasoning_lines(block.text, width)
-        content_limit = remaining_lines - 1
-        retained.append(
-            (
-                reasoning_display_label(block.representation),
-                lines[-content_limit:],
+    entries = _basic_reasoning_activity_entries(request)
+    return _basic_activity_renderable(entries)
+
+
+def _basic_live_activity_frame(
+    request: CliStreamPresenterRequest,
+    *,
+    completed_model_entries: tuple[_BasicToolLineEntry, ...] = (),
+) -> RenderableType | None:
+    candidates: list[_BasicActivityEntry] = []
+
+    def append(sequence: int | None, renderable: RenderableType) -> None:
+        candidates.append(
+            _BasicActivityEntry(
+                sequence=sequence,
+                fallback_order=len(candidates),
+                renderable=renderable,
             )
         )
-        remaining_lines -= 1 + min(len(lines), content_limit)
-    output = Text()
-    for block_index, (label, lines) in enumerate(reversed(retained)):
-        if block_index:
-            output.append("\n")
-        output.append(label, style=f"bold {_BASIC_REASONING_STYLE}")
-        output.append("\n")
-        output.append("\n".join(lines), style=_BASIC_REASONING_STYLE)
-    return output if output.plain else None
+
+    if request.snapshot.display.show_tools:
+        for continuation in request.snapshot.active_model_continuations:
+            append(
+                continuation.sequence,
+                _basic_active_model_renderable(
+                    started_at=continuation.started_at,
+                    updated_at=continuation.updated_at,
+                    spinner=True,
+                ),
+            )
+
+    for reasoning_entry in _basic_reasoning_activity_entries(request):
+        append(reasoning_entry.sequence, reasoning_entry.renderable)
+
+    for tool_entry in _basic_tool_entries(
+        request,
+        include_active=False,
+        completed_model_entries=completed_model_entries,
+    ):
+        append(tool_entry.sequence, tool_entry.line)
+
+    if request.snapshot.display.show_tools:
+        for tool in request.snapshot.active_tools:
+            append(
+                tool.sequence,
+                _basic_active_tool_renderable(
+                    tool,
+                    started_at=tool.started_at,
+                    updated_at=tool.updated_at,
+                    spinner=True,
+                ),
+            )
+
+    return _basic_activity_renderable(
+        tuple(sorted(candidates, key=_basic_activity_sort_key))
+    )
+
+
+def _basic_reasoning_activity_entries(
+    request: CliStreamPresenterRequest,
+) -> tuple[_BasicActivityEntry, ...]:
+    if not request.snapshot.display.show_reasoning:
+        return ()
+    blocks = _basic_reasoning_activity_blocks(
+        request.snapshot.reasoning_segments
+    )
+    entries: list[_BasicActivityEntry] = []
+    for block_index, block in enumerate(blocks):
+        entries.append(
+            _BasicActivityEntry(
+                sequence=block.first_sequence,
+                fallback_order=block_index,
+                renderable=_basic_reasoning_markdown(block.text),
+            )
+        )
+    return tuple(entries)
+
+
+def _basic_reasoning_activity_blocks(
+    segments: Sequence[StreamReasoningSegment],
+) -> tuple[_BasicReasoningActivityBlock, ...]:
+    groups: list[list[StreamReasoningSegment]] = []
+    for segment in segments:
+        if (
+            groups
+            and groups[-1][-1].representation is segment.representation
+            and groups[-1][-1].continuation_id == segment.continuation_id
+        ):
+            groups[-1].append(segment)
+        else:
+            groups.append([segment])
+
+    blocks: list[_BasicReasoningActivityBlock] = []
+    for group in groups:
+        parts: list[str] = []
+        for index, segment in enumerate(group):
+            if index:
+                parts.append(
+                    _basic_reasoning_separator_after(group, index - 1)
+                )
+            parts.append(segment.text)
+        blocks.append(
+            _BasicReasoningActivityBlock(
+                first_sequence=group[0].first_sequence,
+                text="".join(parts),
+            )
+        )
+    return tuple(blocks)
+
+
+def _basic_reasoning_markdown(text: str) -> Markdown:
+    assert isinstance(text, str)
+    assert text
+    return Markdown(
+        f"{_BASIC_REASONING_ICON} {text}",
+        style=_BASIC_REASONING_STYLE,
+    )
+
+
+def _basic_activity_sort_key(
+    entry: _BasicActivityEntry,
+) -> tuple[int, int, int]:
+    return (
+        int(entry.sequence is None),
+        entry.sequence if entry.sequence is not None else 0,
+        entry.fallback_order,
+    )
+
+
+def _basic_activity_renderable(
+    entries: Sequence[_BasicActivityEntry],
+) -> RenderableType | None:
+    if not entries:
+        return None
+    renderables = tuple(entry.renderable for entry in entries)
+    if len(renderables) == 1:
+        return renderables[0]
+    return Group(*renderables)
 
 
 def _basic_reasoning_revision(
@@ -827,23 +978,6 @@ def _basic_reasoning_revision(
         truncation.dropped_utf8_bytes,
         int(truncation.leading_segment_partial),
     )
-
-
-def _basic_wrapped_reasoning_lines(text: str, width: int) -> list[str]:
-    assert isinstance(text, str)
-    assert isinstance(width, int) and width > 0
-    lines: list[str] = []
-    for line in text.splitlines() or [""]:
-        lines.extend(
-            wrap(
-                line,
-                width=width,
-                replace_whitespace=False,
-                drop_whitespace=False,
-            )
-            or [""]
-        )
-    return lines
 
 
 def _basic_reasoning_separator_after(
@@ -1009,6 +1143,7 @@ def _basic_tool_entries(
                     tool.elapsed_seconds,
                     display_projection=tool.display_projection,
                 ),
+                sequence=tool.sequence,
                 executed=True,
             )
             for tool in snapshot.completed_tools
@@ -1024,6 +1159,7 @@ def _basic_tool_entries(
                     result.elapsed_seconds,
                     display_projection=result.display_projection,
                 ),
+                sequence=result.sequence,
                 executed=True,
             )
             for result in snapshot.tool_results
@@ -1036,6 +1172,7 @@ def _basic_tool_entries(
                     diagnostic.code,
                     diagnostic.message,
                 ),
+                sequence=diagnostic.sequence,
             )
             for diagnostic in snapshot.tool_diagnostics
         ),
@@ -1047,6 +1184,7 @@ def _basic_tool_entries(
                     event.name or event.tool_call_id,
                     event.payload_summary,
                 ),
+                sequence=event.sequence,
             )
             for event in snapshot.tool_events
             if _basic_should_show_tool_event(event, canonical_tool_call_ids)
@@ -1068,6 +1206,7 @@ def _basic_tool_entries(
                     started_at=continuation.started_at,
                     updated_at=continuation.updated_at,
                 ),
+                sequence=continuation.sequence,
             )
             for continuation in snapshot.active_model_continuations
         ),
@@ -1080,6 +1219,7 @@ def _basic_tool_entries(
                     updated_at=tool.updated_at,
                     display_projection=tool.display_projection,
                 ),
+                sequence=tool.sequence,
             )
             for tool in snapshot.active_tools
         ),
@@ -1185,6 +1325,7 @@ def _basic_terminal_error_entry(
             "\n[red]✖ Model stream error: "
             f"{_basic_markup_summary(summary)}[/red]"
         ),
+        sequence=request.snapshot.terminal.sequence,
     )
 
 

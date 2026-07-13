@@ -1066,7 +1066,11 @@ class ReasoningDisplayIntegrationMatrixTestCase(IsolatedAsyncioTestCase):
                 if representation is StreamReasoningRepresentation.NATIVE_TEXT
                 else "Reasoning summary"
             )
-            self.assertIn(label, reasoning_output)
+            if case.theme == "basic" and case.interactive:
+                self.assertIn("💭", reasoning_output)
+                self.assertNotIn(label, reasoning_output)
+            else:
+                self.assertIn(label, reasoning_output)
 
         if case.representation == "native":
             self.assertNotIn(_SUMMARY_REASONING_SENTINEL, reasoning_output)
@@ -1078,10 +1082,11 @@ class ReasoningDisplayIntegrationMatrixTestCase(IsolatedAsyncioTestCase):
                 reasoning_output.index(_NATIVE_REASONING_SENTINEL),
                 reasoning_output.index(_SUMMARY_REASONING_SENTINEL),
             )
-            self.assertLess(
-                reasoning_output.index("Reasoning"),
-                reasoning_output.index("Reasoning summary"),
-            )
+            if case.theme != "basic" or not case.interactive:
+                self.assertLess(
+                    reasoning_output.index("Reasoning"),
+                    reasoning_output.index("Reasoning summary"),
+                )
 
         if case.theme == "basic" and not case.interactive:
             for _, sentinel in expected_parts:
@@ -1197,16 +1202,21 @@ class ThemeMatrixE2ETestCase(IsolatedAsyncioTestCase):
                     is StreamReasoningRepresentation.NATIVE_TEXT
                     else "Reasoning summary"
                 )
-                self.assertIn(label, reasoning_surface)
+                if case.theme == "basic" and case.interactive:
+                    self.assertIn("💭", reasoning_surface)
+                    self.assertNotIn(label, reasoning_surface)
+                else:
+                    self.assertIn(label, reasoning_surface)
             if case.representation == "mixed":
                 self.assertLess(
                     reasoning_surface.index(_NATIVE_REASONING_SENTINEL),
                     reasoning_surface.index(_SUMMARY_REASONING_SENTINEL),
                 )
-                self.assertLess(
-                    reasoning_surface.index("Reasoning"),
-                    reasoning_surface.index("Reasoning summary"),
-                )
+                if case.theme != "basic" or not case.interactive:
+                    self.assertLess(
+                        reasoning_surface.index("Reasoning"),
+                        reasoning_surface.index("Reasoning summary"),
+                    )
             if case.theme == "basic" and not case.interactive:
                 for _, sentinel in expected_parts:
                     self.assertEqual(reasoning_surface.count(sentinel), 1)
