@@ -4,7 +4,10 @@ import sys
 from hashlib import sha256
 from importlib.machinery import ModuleSpec
 from importlib.util import module_from_spec, spec_from_file_location
+from os import environ
 from pathlib import Path
+from subprocess import TimeoutExpired
+from subprocess import run as run_process
 from threading import RLock
 from types import ModuleType
 from typing import Any, cast
@@ -16,6 +19,10 @@ _HELPER_PATH = (
     _LOADER_PATH.parents[1] / "scripts" / "reasoning_summary_json.py"
 ).resolve()
 _HELPER_CONTENT_SHA256 = sha256(_HELPER_PATH.read_bytes()).hexdigest()
+_BENCHMARK_PATH = (
+    _LOADER_PATH.parents[1] / "scripts" / "benchmark_reasoning_summary.py"
+).resolve()
+_PHASE9_SUBPROCESS_TIMEOUT_SECONDS = 60
 _PATH_IDENTITY = f"{_LOADER_PATH}\0{_HELPER_PATH}"
 _PROCESS_STATE_KEY = (
     "_avalan_reasoning_summary_loader_state_"
@@ -159,6 +166,10 @@ NonFiniteJsonNumberError = cast(
 )
 
 
+class Phase9BenchmarkSubprocessError(RuntimeError):
+    """Indicate that the isolated Phase 9 benchmark did not complete."""
+
+
 def strict_json_loads(source: str) -> object:
     """Parse JSON through the shared duplicate-rejecting helper."""
     return cast(Any, _REASONING_SUMMARY_JSON).strict_json_loads(source)
@@ -190,6 +201,79 @@ def json_mapping_entries(
         tuple[tuple[str, tuple[str | int, ...], tuple[str, ...]], ...],
         cast(Any, _REASONING_SUMMARY_JSON).json_mapping_entries(value, path),
     )
+
+
+def _phase9_subprocess_environment() -> dict[str, str]:
+    """Return an environment without pytest or coverage instrumentation."""
+    sanitized = {
+        key: value
+        for key, value in environ.items()
+        if key.upper() != "PYTHONPATH"
+        and not key.upper().startswith(("COVERAGE_", "COV_CORE_", "PYTEST_"))
+    }
+    sanitized["PYTHONNOUSERSITE"] = "1"
+    return sanitized
+
+
+def run_phase9_benchmark_subprocess() -> dict[str, object]:
+    """Run the Phase 9 CLI outside pytest and coverage instrumentation."""
+    command = [sys.executable, str(_BENCHMARK_PATH), "--phase9"]
+    try:
+        completed = run_process(
+            command,
+            capture_output=True,
+            check=False,
+            cwd=_LOADER_PATH.parents[1],
+            env=_phase9_subprocess_environment(),
+            text=True,
+            timeout=_PHASE9_SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except TimeoutExpired:
+        raise Phase9BenchmarkSubprocessError(
+            "Phase 9 benchmark subprocess timed out after "
+            f"{_PHASE9_SUBPROCESS_TIMEOUT_SECONDS} seconds"
+        ) from None
+
+    if completed.returncode != 0:
+        detail = "\n".join(
+            value
+            for value in (completed.stdout.strip(), completed.stderr.strip())
+            if value
+        )
+        message = (
+            "Phase 9 benchmark subprocess exited with code "
+            f"{completed.returncode}"
+        )
+        if detail:
+            message = f"{message}: {detail[-2000:]}"
+        raise Phase9BenchmarkSubprocessError(message)
+
+    try:
+        payload = strict_json_loads(completed.stdout)
+    except ValueError as error:
+        raise Phase9BenchmarkSubprocessError(
+            "Phase 9 benchmark subprocess returned invalid JSON"
+        ) from error
+    if not isinstance(payload, dict):
+        raise Phase9BenchmarkSubprocessError(
+            "Phase 9 benchmark subprocess returned an invalid report"
+        )
+    hard_gate = payload.get("hard_gate")
+    if (
+        type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != 1
+        or payload.get("suite") != "reasoning-summary-phase9-performance"
+        or not isinstance(payload.get("protocol"), dict)
+        or not isinstance(payload.get("workloads"), list)
+        or not isinstance(payload.get("phase9_metrics"), dict)
+        or not isinstance(hard_gate, dict)
+        or hard_gate.get("passed") is not True
+        or hard_gate.get("failure_reasons") != []
+    ):
+        raise Phase9BenchmarkSubprocessError(
+            "Phase 9 benchmark subprocess returned an invalid report"
+        )
+    return cast(dict[str, object], payload)
 
 
 def load_reasoning_summary_script(name: str) -> ModuleType:
