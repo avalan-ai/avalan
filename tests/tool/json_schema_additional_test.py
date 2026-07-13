@@ -374,3 +374,22 @@ class JsonSchemaUtilitiesAdditionalTestCase(TestCase):
         self.assertEqual(properties["enabled"]["default"], True)
         self.assertNotIn("default", properties["payload"])
         self.assertEqual(schema["function"]["return"]["type"], "null")
+
+    def test_get_json_schema_normalizes_serializable_defaults(self) -> None:
+        def search(
+            paths: Sequence[str] = (),
+            score: float = float("nan"),
+        ) -> None:
+            """Search paths.
+
+            Args:
+                paths: Paths to search.
+                score: Optional score.
+            """
+
+        schema = get_json_schema(search)
+        properties = schema["function"]["parameters"]["properties"]
+
+        self.assertEqual(properties["paths"]["default"], [])
+        self.assertIs(type(properties["paths"]["default"]), list)
+        self.assertNotIn("default", properties["score"])

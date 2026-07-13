@@ -365,6 +365,9 @@ class _OpenAIOutputItemFingerprint:
     canonical_name: str | None = None
     content_index: int | None = None
     completed_payload_fingerprint: tuple[tuple[object, ...], ...] | None = None
+    completed_terminal_fingerprint: tuple[tuple[object, ...], ...] | None = (
+        None
+    )
     argument_fragments: list[str] = field(default_factory=list)
     final_arguments: str | None = None
     arguments_closed: bool = False
@@ -439,6 +442,7 @@ class _OpenAIReasoningSummaryState:
             fingerprint.canonical_name = None
             fingerprint.call_id = None
             fingerprint.completed_payload_fingerprint = None
+            fingerprint.completed_terminal_fingerprint = None
             for native_part in fingerprint.native_parts.values():
                 native_part.delta_fragments.clear()
                 native_part.completed_text = None
@@ -954,6 +958,14 @@ class _OpenAIReasoningSummaryState:
                 output_index=fingerprint.output_index,
             )
             fingerprint.completed_payload_fingerprint = completed_fingerprint
+            fingerprint.completed_terminal_fingerprint = (
+                self._replay_significant_fingerprint(
+                    item,
+                    event_type=event_type,
+                    output_index=fingerprint.output_index,
+                    include_encrypted_content=False,
+                )
+            )
             fingerprint.completed = True
             fingerprint.channel_closed = True
 
@@ -1222,11 +1234,12 @@ class _OpenAIReasoningSummaryState:
                             item,
                             event_type=event_type,
                             output_index=output_index,
+                            include_encrypted_content=False,
                         )
                     )
                     if (
                         terminal_fingerprint
-                        != fingerprint.completed_payload_fingerprint
+                        != fingerprint.completed_terminal_fingerprint
                     ):
                         self._error(
                             event_type,
@@ -1725,6 +1738,14 @@ class _OpenAIReasoningSummaryState:
         output_item_fingerprint.completed_payload_fingerprint = (
             completed_fingerprint
         )
+        output_item_fingerprint.completed_terminal_fingerprint = (
+            self._replay_significant_fingerprint(
+                item_value,
+                event_type=event_type,
+                output_index=output_index,
+                include_encrypted_content=False,
+            )
+        )
         state.completed = True
         return tuple(emissions), True, False
 
@@ -1735,7 +1756,9 @@ class _OpenAIReasoningSummaryState:
         *,
         event_type: str,
         output_index: int | None,
+        include_encrypted_content: bool = True,
     ) -> tuple[tuple[object, ...], ...]:
+        assert isinstance(include_encrypted_content, bool)
         try:
             dumped_payload = OpenAIStream._raw_provider_payload(item)
         except _ReasoningReplayRetentionError:
@@ -1764,6 +1787,8 @@ class _OpenAIReasoningSummaryState:
             normalized = _strict_provider_fingerprint_copy(raw_payload)
             assert type(normalized) is dict
             cleaned = _clean_replay_input_payload(normalized)
+            if not include_encrypted_content:
+                cleaned.pop("encrypted_content", None)
             return _stable_replay_json_fingerprint(cleaned)
         except _ReasoningReplayRetentionError:
             raise _OpenAIReasoningSummaryEventError(

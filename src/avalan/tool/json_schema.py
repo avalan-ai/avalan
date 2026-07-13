@@ -2,7 +2,7 @@ from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import MISSING, fields, is_dataclass
 from enum import Enum
 from inspect import Parameter, signature
-from json import dumps
+from json import dumps, loads
 from types import NoneType, UnionType
 from typing import Any, Literal, get_args, get_origin, is_typeddict
 
@@ -207,10 +207,11 @@ def _json_default(value: object) -> object:
     if isinstance(value, Enum):
         value = value.value
     try:
-        dumps(value)
-    except TypeError:
+        serialized = dumps(value, allow_nan=False)
+        normalized = loads(serialized)
+    except (TypeError, ValueError):
         return _JSON_DEFAULT_MISSING
-    return value
+    return normalized
 
 
 def _unique_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
