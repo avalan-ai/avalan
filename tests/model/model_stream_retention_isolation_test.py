@@ -124,6 +124,37 @@ def _reasoning_accumulator(
 
 
 class StreamRetentionIsolationTestCase(TestCase):
+    def test_protocol_reasoning_retention_defaults_and_validation(
+        self,
+    ) -> None:
+        policy = StreamRetentionPolicy()
+
+        self.assertEqual(policy.mcp_reasoning_segment_limit, 512)
+        self.assertEqual(policy.mcp_reasoning_character_limit, 1048576)
+        self.assertEqual(policy.mcp_reasoning_text_byte_limit, 1048576)
+        self.assertEqual(policy.a2a_reasoning_segment_limit, 512)
+        self.assertEqual(policy.a2a_reasoning_character_limit, 1048576)
+        self.assertEqual(policy.a2a_reasoning_text_byte_limit, 1048576)
+
+        field_names = (
+            "mcp_reasoning_segment_limit",
+            "mcp_reasoning_character_limit",
+            "mcp_reasoning_text_byte_limit",
+            "a2a_reasoning_segment_limit",
+            "a2a_reasoning_character_limit",
+            "a2a_reasoning_text_byte_limit",
+        )
+        for field_name in field_names:
+            for invalid_value in (-1, True):
+                with self.subTest(
+                    field_name=field_name,
+                    invalid_value=invalid_value,
+                ):
+                    with self.assertRaises(AssertionError):
+                        StreamRetentionPolicy(
+                            **{field_name: invalid_value}  # type: ignore[arg-type]
+                        )
+
     def test_responses_reasoning_item_retention_defaults(self) -> None:
         policy = StreamRetentionPolicy()
 

@@ -41,6 +41,7 @@ from asyncio import (
 )
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
 from typing import Any, cast
@@ -3120,10 +3121,12 @@ class StreamContractTestCase(TestCase):
         payload_sentinel = "OPAQUE_PROVIDER_PAYLOAD_SENTINEL"
         data_key_sentinel = "PRIVATE_REASONING_DATA_KEY_SENTINEL"
         metadata_key_sentinel = "PRIVATE_REASONING_METADATA_KEY_SENTINEL"
+        protocol_item_sentinel = "/private/reasoning-item"
+        continuation_sentinel = "encrypted::continuation-secret"
         correlation = StreamItemCorrelation(
             provider_request_id="request-safe",
-            model_continuation_id="continuation-safe",
-            protocol_item_id="item-safe",
+            model_continuation_id=continuation_sentinel,
+            protocol_item_id=protocol_item_sentinel,
             provider_output_index=2,
             provider_summary_index=1,
         )
@@ -3148,20 +3151,94 @@ class StreamContractTestCase(TestCase):
 
         payload = stream_observability_payload(item)
         serialized = repr(payload)
-        self.assertEqual(payload["correlation"], correlation.to_trace_dict())
+        expected_correlation = {
+            "model_continuation_id": (
+                "sha256:"
+                + sha256(continuation_sentinel.encode("utf-8")).hexdigest()
+            ),
+            "protocol_item_id": (
+                "sha256:"
+                + sha256(protocol_item_sentinel.encode("utf-8")).hexdigest()
+            ),
+            "provider_output_index": 2,
+            "provider_summary_index": 1,
+        }
+        self.assertEqual(payload["correlation"], expected_correlation)
+        self.assertEqual(
+            stream_observability_payload(item)["correlation"],
+            expected_correlation,
+        )
+        self.assertNotEqual(
+            expected_correlation["protocol_item_id"],
+            expected_correlation["model_continuation_id"],
+        )
         self.assertEqual(
             payload["summary"],
             {
                 "text_delta_length": len(text_sentinel),
                 "reasoning_representation": "summary",
                 "segment_instance_ordinal": 9,
-                "has_provider_payload": True,
             },
         )
+        self.assertNotIn("has_provider_payload", serialized)
         self.assertNotIn(text_sentinel, serialized)
         self.assertNotIn(payload_sentinel, serialized)
         self.assertNotIn(data_key_sentinel, serialized)
         self.assertNotIn(metadata_key_sentinel, serialized)
+        self.assertNotIn(protocol_item_sentinel, serialized)
+        self.assertNotIn(continuation_sentinel, serialized)
+        self.assertNotIn("request-safe", serialized)
+
+        provider_neutral = CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=5,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            correlation=StreamItemCorrelation(
+                provider_output_index=2,
+                provider_summary_index=1,
+            ),
+            text_delta="native",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=10,
+        )
+        provider_neutral_correlation = cast(
+            dict[str, object],
+            stream_observability_payload(provider_neutral)["correlation"],
+        )
+        self.assertNotIn("protocol_item_id", provider_neutral_correlation)
+        self.assertNotIn("model_continuation_id", provider_neutral_correlation)
+        self.assertEqual(
+            provider_neutral_correlation["provider_output_index"], 2
+        )
+        self.assertEqual(
+            provider_neutral_correlation["provider_summary_index"], 1
+        )
+
+    def test_non_reasoning_observability_preserves_correlation_values(
+        self,
+    ) -> None:
+        correlation = StreamItemCorrelation(
+            model_continuation_id="continuation-raw",
+            protocol_item_id="item-raw",
+            provider_output_index=2,
+            provider_summary_index=1,
+        )
+        item = _item(
+            StreamItemKind.ANSWER_DELTA,
+            4,
+            correlation=correlation,
+            text_delta="answer",
+        )
+
+        payload = stream_observability_payload(item)
+
+        self.assertEqual(payload["correlation"], correlation.to_trace_dict())
 
     def test_taxonomy_maps_every_kind_to_channel_and_terminal_outcome(
         self,

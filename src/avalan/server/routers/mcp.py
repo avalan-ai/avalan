@@ -49,6 +49,10 @@ from . import (
     resolve_model_id,
 )
 from .streaming import (
+    ProtocolReasoningAdmission,
+    ProtocolReasoningIdentity,
+    ProtocolReasoningRedactedText,
+    ProtocolReasoningRedactionState,
     ProtocolStreamAccumulator,
     ProtocolStreamSnapshot,
     cancellable_stream_iterator,
@@ -61,6 +65,7 @@ from .streaming import (
 
 from asyncio import CancelledError, Lock, create_task
 from asyncio import Event as AsyncEvent
+from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from json import JSONDecodeError, dumps, loads
@@ -334,6 +339,481 @@ class MCPResourceStore:
 
 
 @dataclass(slots=True)
+class _MCPReasoningSegment:
+    identity: ProtocolReasoningIdentity
+    chunks: deque[str] = field(default_factory=deque)
+    characters: int = 0
+    utf8_bytes: int = 0
+    separator_after: str = ""
+    leading_partial: bool = False
+    completed: bool = False
+    status: str = "in_progress"
+    terminal_outcome: str | None = None
+
+    def append(self, text: str) -> None:
+        assert isinstance(text, str) and text
+        self.chunks.append(text)
+        self.characters += len(text)
+        self.utf8_bytes += len(text.encode("utf-8"))
+
+    def text(self) -> str:
+        return "".join(self.chunks)
+
+    def trailing_line_feeds(self) -> int:
+        count = 0
+        for chunk in reversed(self.chunks):
+            exhausted = True
+            for character in reversed(chunk):
+                if not character.isspace():
+                    exhausted = False
+                    break
+                if character == "\n":
+                    count += 1
+            if not exhausted:
+                break
+        return count
+
+    def trim_prefix(
+        self,
+        minimum_characters: int,
+        minimum_utf8_bytes: int,
+    ) -> tuple[int, int]:
+        assert minimum_characters >= 0
+        assert minimum_utf8_bytes >= 0
+        removed_characters = 0
+        removed_utf8_bytes = 0
+        while self.chunks and (
+            removed_characters < minimum_characters
+            or removed_utf8_bytes < minimum_utf8_bytes
+        ):
+            chunk = self.chunks.popleft()
+            position = 0
+            while position < len(chunk) and (
+                removed_characters < minimum_characters
+                or removed_utf8_bytes < minimum_utf8_bytes
+            ):
+                character = chunk[position]
+                removed_characters += 1
+                removed_utf8_bytes += len(character.encode("utf-8"))
+                position += 1
+            if position < len(chunk):
+                self.chunks.appendleft(chunk[position:])
+        if removed_characters:
+            self.characters -= removed_characters
+            self.utf8_bytes -= removed_utf8_bytes
+            self.leading_partial = True
+        return removed_characters, removed_utf8_bytes
+
+    def close(self, outcome: StreamTerminalOutcome) -> None:
+        assert isinstance(outcome, StreamTerminalOutcome)
+        assert self.status == "in_progress"
+        if outcome is StreamTerminalOutcome.COMPLETED:
+            self.completed = True
+            self.status = "completed"
+            self.terminal_outcome = "completed"
+        else:
+            self.completed = False
+            self.status = "incomplete"
+            self.terminal_outcome = (
+                "failed"
+                if outcome is StreamTerminalOutcome.ERRORED
+                else "cancelled"
+            )
+
+
+class _MCPReasoningOwner:
+    def __init__(
+        self,
+        output_redaction_settings: ServerOutputRedactionSettings,
+        *,
+        retention_policy: StreamRetentionPolicy | None = None,
+    ) -> None:
+        assert isinstance(
+            output_redaction_settings, ServerOutputRedactionSettings
+        )
+        assert retention_policy is None or isinstance(
+            retention_policy, StreamRetentionPolicy
+        )
+        policy = retention_policy or StreamRetentionPolicy()
+        self._segment_limit = policy.mcp_reasoning_segment_limit
+        self._character_limit = policy.mcp_reasoning_character_limit
+        self._utf8_byte_limit = policy.mcp_reasoning_text_byte_limit
+        self._redaction = ProtocolReasoningRedactionState(
+            output_redaction_settings,
+            protocol="mcp",
+        )
+        self._segments: deque[_MCPReasoningSegment] = deque()
+        self._active: _MCPReasoningSegment | None = None
+        self._input_identity: ProtocolReasoningIdentity | None = None
+        self._rejected_identity: ProtocolReasoningIdentity | None = None
+        self._characters = 0
+        self._utf8_bytes = 0
+        self._dropped_segments = 0
+        self._dropped_characters = 0
+        self._dropped_utf8_bytes = 0
+        self._terminal_outcome: StreamTerminalOutcome | None = None
+
+    @property
+    def redaction(self) -> ProtocolReasoningRedactionState:
+        return self._redaction
+
+    @property
+    def segments(self) -> tuple[_MCPReasoningSegment, ...]:
+        return tuple(
+            segment for segment in self._segments if segment.characters
+        )
+
+    @property
+    def truncated(self) -> bool:
+        return bool(
+            self._dropped_segments
+            or self._dropped_characters
+            or self._dropped_utf8_bytes
+        )
+
+    def push(
+        self,
+        item: CanonicalStreamItem,
+    ) -> tuple[ProtocolReasoningRedactedText, ...]:
+        assert isinstance(item, CanonicalStreamItem)
+        assert item.kind is StreamItemKind.REASONING_DELTA
+        assert item.text_delta is not None
+        assert self._terminal_outcome is None
+        identity = ProtocolReasoningIdentity.from_item(item)
+        value = item.text_delta
+
+        if self._rejected_identity == identity:
+            self._record_rejected_text(value)
+            return ()
+        if self._rejected_identity is not None:
+            self._rejected_identity = None
+
+        new_identity = identity != self._input_identity
+        admission = self._redaction.preview_push(identity, value)
+        if admission.suppressed:
+            if admission.marker_reserved:
+                assert self._make_capacity(
+                    admission,
+                    separator_characters=0,
+                    new_segment=False,
+                )
+            outputs = self._redaction.push(identity, value)
+            self._append_outputs(outputs)
+            if new_identity:
+                self._close_active(StreamTerminalOutcome.COMPLETED)
+            self._input_identity = identity
+            return outputs
+
+        if new_identity:
+            self._close_active(StreamTerminalOutcome.COMPLETED)
+        new_segment = self._active is None or self._active.identity != identity
+        separator_characters = (
+            self._separator_characters_before(value) if new_segment else 0
+        )
+        if not self._make_capacity(
+            admission,
+            separator_characters=separator_characters,
+            new_segment=new_segment,
+        ):
+            outputs = self._resolve_before_rejection(identity)
+            self._record_rejected_text(
+                value,
+                dropped_segment=not self._has_segment(identity),
+            )
+            if not self._redaction.redaction_latched:
+                self._rejected_identity = identity
+            self._input_identity = identity
+            return outputs
+
+        outputs = self._redaction.push(identity, value)
+        self._append_outputs(outputs)
+        self._input_identity = identity
+        return outputs
+
+    def complete(
+        self,
+        outcome: StreamTerminalOutcome = StreamTerminalOutcome.COMPLETED,
+    ) -> tuple[
+        tuple[ProtocolReasoningRedactedText, ...],
+        _MCPReasoningSegment | None,
+    ]:
+        assert isinstance(outcome, StreamTerminalOutcome)
+        if self._terminal_outcome is not None:
+            return (), None
+        identity = self._input_identity or self._redaction.identity
+        outputs = self._redaction.complete(identity)
+        self._append_outputs(outputs)
+        closed = self._close_active(outcome)
+        self._input_identity = None
+        self._rejected_identity = None
+        return outputs, closed
+
+    def finish(
+        self,
+        outcome: StreamTerminalOutcome,
+    ) -> tuple[
+        tuple[ProtocolReasoningRedactedText, ...],
+        _MCPReasoningSegment | None,
+    ]:
+        assert isinstance(outcome, StreamTerminalOutcome)
+        if self._terminal_outcome is not None:
+            return (), None
+        outputs, closed = self.complete(outcome)
+        self._terminal_outcome = outcome
+        return outputs, closed
+
+    def final_payload(self) -> dict[str, JSONValue]:
+        assert self._terminal_outcome is StreamTerminalOutcome.COMPLETED
+        segments = [
+            self._segment_payload(segment) for segment in self.segments
+        ]
+        if not segments and not self.truncated:
+            return {}
+        return {
+            "reasoning": self._flat_text(),
+            "reasoningSegments": cast(JSONValue, segments),
+            "reasoningTruncation": {
+                "truncated": self.truncated,
+                "dropped_segments": self._dropped_segments,
+                "dropped_characters": self._dropped_characters,
+                "dropped_utf8_bytes": self._dropped_utf8_bytes,
+                "leading_segment_partial": (
+                    self.segments[0].leading_partial
+                    if self.segments
+                    else False
+                ),
+            },
+        }
+
+    def _make_capacity(
+        self,
+        admission: ProtocolReasoningAdmission,
+        *,
+        separator_characters: int,
+        new_segment: bool,
+    ) -> bool:
+        assert isinstance(admission, ProtocolReasoningAdmission)
+        assert isinstance(separator_characters, int)
+        assert not isinstance(separator_characters, bool)
+        assert separator_characters >= 0
+        required_characters = (
+            admission.required_character_count + separator_characters
+        )
+        required_bytes = (
+            admission.required_utf8_byte_count + separator_characters
+        )
+        if (
+            required_characters > self._character_limit
+            or required_bytes > self._utf8_byte_limit
+            or new_segment
+            and self._segment_limit == 0
+        ):
+            return False
+
+        if new_segment and separator_characters:
+            self._reserve_separator(separator_characters)
+            required_characters = admission.required_character_count
+            required_bytes = admission.required_utf8_byte_count
+
+        if new_segment:
+            while len(self._segments) >= self._segment_limit:
+                assert self._drop_oldest_completed()
+
+        while self._over_limit(required_characters, required_bytes):
+            if self._drop_oldest_completed():
+                continue
+            assert self._trim_oldest(required_characters, required_bytes)
+        return True
+
+    def _append_outputs(
+        self,
+        outputs: tuple[ProtocolReasoningRedactedText, ...],
+    ) -> None:
+        for output in outputs:
+            segment = self._segment_for(output.identity)
+            segment.append(output.text)
+            self._characters += len(output.text)
+            self._utf8_bytes += len(output.text.encode("utf-8"))
+            assert not self._over_limit(0, 0)
+
+    def _segment_for(
+        self,
+        identity: ProtocolReasoningIdentity,
+    ) -> _MCPReasoningSegment:
+        active = self._active
+        assert active is None or active.identity == identity
+        if active is not None:
+            return active
+        assert len(self._segments) < self._segment_limit
+        segment = _MCPReasoningSegment(identity=identity)
+        self._segments.append(segment)
+        self._active = segment
+        return segment
+
+    def _reserve_separator(self, characters: int) -> None:
+        assert isinstance(characters, int) and not isinstance(characters, bool)
+        assert characters > 0
+        previous = next(
+            (
+                segment
+                for segment in reversed(self._segments)
+                if segment.characters
+            ),
+            None,
+        )
+        assert previous is not None
+        assert not previous.separator_after
+        previous.separator_after = "\n" * characters
+        self._characters += characters
+        self._utf8_bytes += characters
+
+    def _separator_characters_before(self, text: str) -> int:
+        previous = next(
+            (
+                segment
+                for segment in reversed(self._segments)
+                if segment.characters
+            ),
+            None,
+        )
+        return (
+            self._missing_separator_characters(previous, text)
+            if previous is not None
+            else 0
+        )
+
+    @staticmethod
+    def _missing_separator_characters(
+        previous: _MCPReasoningSegment,
+        text: str,
+    ) -> int:
+        leading = 0
+        for character in text:
+            if not character.isspace():
+                break
+            if character == "\n":
+                leading += 1
+        return max(0, 2 - previous.trailing_line_feeds() - leading)
+
+    def _over_limit(
+        self,
+        reserved_characters: int,
+        reserved_bytes: int,
+    ) -> bool:
+        return (
+            self._characters + reserved_characters > self._character_limit
+            or self._utf8_bytes + reserved_bytes > self._utf8_byte_limit
+        )
+
+    def _drop_oldest_completed(self) -> bool:
+        if not self._segments or self._segments[0].status == "in_progress":
+            return False
+        segment = self._segments.popleft()
+        assert self._active is not segment
+        separator_characters = len(segment.separator_after)
+        separator_bytes = len(segment.separator_after.encode("utf-8"))
+        self._characters -= segment.characters + separator_characters
+        self._utf8_bytes -= segment.utf8_bytes + separator_bytes
+        self._dropped_segments += 1
+        self._dropped_characters += segment.characters + separator_characters
+        self._dropped_utf8_bytes += segment.utf8_bytes + separator_bytes
+        return True
+
+    def _trim_oldest(
+        self,
+        reserved_characters: int,
+        reserved_bytes: int,
+    ) -> bool:
+        assert self._segments
+        oldest = self._segments[0]
+        required_characters = max(
+            0,
+            self._characters + reserved_characters - self._character_limit,
+        )
+        required_bytes = max(
+            0,
+            self._utf8_bytes + reserved_bytes - self._utf8_byte_limit,
+        )
+        removed_characters, removed_bytes = oldest.trim_prefix(
+            required_characters,
+            required_bytes,
+        )
+        assert removed_characters
+        self._characters -= removed_characters
+        self._utf8_bytes -= removed_bytes
+        self._dropped_characters += removed_characters
+        self._dropped_utf8_bytes += removed_bytes
+        return True
+
+    def _close_active(
+        self,
+        outcome: StreamTerminalOutcome,
+    ) -> _MCPReasoningSegment | None:
+        active = self._active
+        if active is None:
+            return None
+        active.close(outcome)
+        self._active = None
+        return active
+
+    def _resolve_before_rejection(
+        self,
+        identity: ProtocolReasoningIdentity,
+    ) -> tuple[ProtocolReasoningRedactedText, ...]:
+        outputs = self._redaction.complete(identity)
+        self._append_outputs(outputs)
+        self._close_active(StreamTerminalOutcome.COMPLETED)
+        return outputs
+
+    def _record_rejected_text(
+        self,
+        text: str,
+        *,
+        dropped_segment: bool = False,
+    ) -> None:
+        assert isinstance(text, str) and text
+        assert isinstance(dropped_segment, bool)
+        if dropped_segment:
+            self._dropped_segments += 1
+        self._dropped_characters += len(text)
+        self._dropped_utf8_bytes += len(text.encode("utf-8"))
+
+    def _has_segment(self, identity: ProtocolReasoningIdentity) -> bool:
+        return any(segment.identity == identity for segment in self._segments)
+
+    def _flat_text(self) -> str:
+        parts: list[str] = []
+        for segment in self.segments:
+            parts.append(segment.text())
+            if segment.separator_after:
+                parts.append(segment.separator_after)
+        return "".join(parts)
+
+    @staticmethod
+    def _segment_payload(
+        segment: _MCPReasoningSegment,
+    ) -> dict[str, JSONValue]:
+        identity = segment.identity
+        payload: dict[str, JSONValue] = {
+            "representation": identity.representation.value,
+            "segment_instance_ordinal": identity.segment_instance_ordinal,
+            "text": segment.text(),
+            "completed": segment.completed,
+            "status": segment.status,
+            "terminal_outcome": segment.terminal_outcome,
+        }
+        for field_name, value in (
+            ("provider_item_id", identity.provider_item_id),
+            ("output_index", identity.output_index),
+            ("summary_index", identity.summary_index),
+            ("continuation_id", identity.continuation_id),
+        ):
+            if value is not None:
+                payload[field_name] = value
+        return payload
+
+
+@dataclass(slots=True)
 class _MCPStreamProjectionState:
     accumulator: ProtocolStreamAccumulator
     tool_summaries: dict[str, dict[str, JSONValue]]
@@ -346,9 +826,16 @@ class _MCPStreamProjectionState:
     answer_redactor: ModelVisibleServerProtocolTextRedactor = field(
         default_factory=ModelVisibleServerProtocolTextRedactor
     )
-    reasoning_redactor: ModelVisibleServerProtocolTextRedactor = field(
-        default_factory=ModelVisibleServerProtocolTextRedactor
-    )
+    reasoning: _MCPReasoningOwner | None = None
+
+    def __post_init__(self) -> None:
+        if self.reasoning is None:
+            self.reasoning = _MCPReasoningOwner(self.output_redaction_settings)
+
+    @property
+    def reasoning_owner(self) -> _MCPReasoningOwner:
+        assert isinstance(self.reasoning, _MCPReasoningOwner)
+        return self.reasoning
 
 
 def create_router() -> APIRouter:
@@ -1163,11 +1650,7 @@ async def _stream_mcp_response(
             protocol="mcp",
             channel="answer",
         ),
-        reasoning_redactor=ModelVisibleServerProtocolTextRedactor(
-            output_redaction_settings,
-            protocol="mcp",
-            channel="reasoning",
-        ),
+        reasoning=_MCPReasoningOwner(output_redaction_settings),
     )
     finished_normally = False
     response_iterator: AsyncIterator[StreamConsumerProjection] | None = None
@@ -1201,6 +1684,7 @@ async def _stream_mcp_response(
         finished_normally = not cancel_event.is_set()
     except GeneratorExit:
         cancel_event.set()
+        state.reasoning_owner.finish(StreamTerminalOutcome.CANCELLED)
         await _cleanup_mcp_stream_sources(
             logger, response, response_iterator, cancelled=True
         )
@@ -1236,9 +1720,18 @@ async def _stream_mcp_response(
             "error": {"code": -32000, "message": "Request cancelled"},
         }
         error_message = stream_error_message or cancel_error_message
+        reasoning_messages = _mcp_finish_reasoning_notifications(
+            state,
+            (
+                StreamTerminalOutcome.ERRORED
+                if stream_error_message is not None
+                else StreamTerminalOutcome.CANCELLED
+            ),
+        )
         terminal_messages = await _collect_terminal_mcp_messages(
             resource_store, state.resources, error_message
         )
+        terminal_messages = (*reasoning_messages, *terminal_messages)
         try:
             for message in terminal_messages:
                 for payload in emit(message):
@@ -1263,11 +1756,16 @@ async def _stream_mcp_response(
                     "message": "An internal server error occurred.",
                 },
             }
+            reasoning_messages = _mcp_finish_reasoning_notifications(
+                state,
+                StreamTerminalOutcome.ERRORED,
+            )
             terminal_messages = await _collect_terminal_mcp_messages(
                 resource_store,
                 state.resources,
                 validation_error_message,
             )
+            terminal_messages = (*reasoning_messages, *terminal_messages)
             try:
                 for message in terminal_messages:
                     for payload in emit(message):
@@ -1332,12 +1830,6 @@ async def _stream_mcp_response(
             protocol="mcp",
             channel="answer",
         )
-        reasoning_text = sanitize_model_visible_server_protocol_text(
-            snapshot.reasoning_text,
-            output_redaction_settings=output_redaction_settings,
-            protocol="mcp",
-            channel="reasoning",
-        )
         usage = snapshot.usage
 
         summary: dict[str, JSONValue] = {
@@ -1364,8 +1856,7 @@ async def _stream_mcp_response(
                 ),
             },
         }
-        if reasoning_text:
-            summary["reasoning"] = reasoning_text
+        summary.update(state.reasoning_owner.final_payload())
         _merge_canonical_tool_call_arguments(
             state.tool_summaries,
             snapshot.tool_call_arguments,
@@ -1427,8 +1918,20 @@ async def _mcp_canonical_stream_item_notifications(
 ) -> list[JSONObject]:
     notifications: list[JSONObject] = []
 
-    state.accumulator.add(item)
+    if item.kind not in (
+        StreamItemKind.REASONING_DELTA,
+        StreamItemKind.REASONING_DONE,
+    ):
+        state.accumulator.add(item)
     if item.is_stream_terminal:
+        assert item.terminal_outcome is not None
+        reasoning_outputs, closed_segment = state.reasoning_owner.finish(
+            item.terminal_outcome
+        )
+        assert closed_segment is None
+        notifications.extend(
+            _mcp_reasoning_output_notifications(reasoning_outputs)
+        )
         notifications.extend(
             _mcp_model_text_flush_notifications(
                 state,
@@ -1447,27 +1950,17 @@ async def _mcp_canonical_stream_item_notifications(
         )
         return notifications
     if item.kind is StreamItemKind.REASONING_DELTA:
-        reasoning_deltas = _canonical_reasoning_deltas(
-            item,
-            state.reasoning_redactor,
+        notifications.extend(
+            _mcp_reasoning_output_notifications(
+                state.reasoning_owner.push(item)
+            )
         )
-        if reasoning_deltas is None:
-            return notifications
-        for reasoning_delta in reasoning_deltas:
-            if reasoning_delta:
-                notifications.append(
-                    {
-                        "jsonrpc": "2.0",
-                        "method": "notifications/message",
-                        "params": {
-                            "level": "debug",
-                            "data": {
-                                "type": "reasoning",
-                                "delta": reasoning_delta,
-                            },
-                        },
-                    }
-                )
+        return notifications
+    if item.kind is StreamItemKind.REASONING_DONE:
+        reasoning_outputs, _closed_segment = state.reasoning_owner.complete()
+        notifications.extend(
+            _mcp_reasoning_output_notifications(reasoning_outputs)
+        )
         return notifications
 
     token_notification = _canonical_tool_notification(
@@ -1507,6 +2000,81 @@ async def _mcp_canonical_stream_item_notifications(
     if item.kind is not StreamItemKind.ANSWER_DELTA:
         return notifications
 
+    return notifications
+
+
+def _mcp_reasoning_output_notifications(
+    outputs: tuple[ProtocolReasoningRedactedText, ...],
+) -> list[JSONObject]:
+    notifications: list[JSONObject] = []
+    for output in outputs:
+        identity = output.identity
+        data: dict[str, JSONValue] = {
+            "type": "reasoning",
+            "delta": output.text,
+            "representation": identity.representation.value,
+            "segment_instance_ordinal": identity.segment_instance_ordinal,
+            "completed": False,
+            "status": "in_progress",
+            "terminal_outcome": None,
+        }
+        for field_name, value in (
+            ("provider_item_id", identity.provider_item_id),
+            ("output_index", identity.output_index),
+            ("summary_index", identity.summary_index),
+            ("continuation_id", identity.continuation_id),
+        ):
+            if value is not None:
+                data[field_name] = value
+        notifications.append(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/message",
+                "params": {"level": "debug", "data": data},
+            }
+        )
+    return notifications
+
+
+def _mcp_reasoning_close_notification(
+    segment: _MCPReasoningSegment,
+) -> JSONObject:
+    identity = segment.identity
+    data: dict[str, JSONValue] = {
+        "type": "reasoning",
+        "delta": "",
+        "representation": identity.representation.value,
+        "segment_instance_ordinal": identity.segment_instance_ordinal,
+        "completed": segment.completed,
+        "status": segment.status,
+        "terminal_outcome": segment.terminal_outcome,
+    }
+    for field_name, value in (
+        ("provider_item_id", identity.provider_item_id),
+        ("output_index", identity.output_index),
+        ("summary_index", identity.summary_index),
+        ("continuation_id", identity.continuation_id),
+    ):
+        if value is not None:
+            data[field_name] = value
+    return {
+        "jsonrpc": "2.0",
+        "method": "notifications/message",
+        "params": {"level": "debug", "data": data},
+    }
+
+
+def _mcp_finish_reasoning_notifications(
+    state: _MCPStreamProjectionState,
+    outcome: StreamTerminalOutcome,
+) -> list[JSONObject]:
+    outputs, closed_segment = state.reasoning_owner.finish(outcome)
+    notifications = _mcp_reasoning_output_notifications(outputs)
+    if (
+        closed_segment is not None
+        and outcome is not StreamTerminalOutcome.COMPLETED
+    ):
+        notifications.append(_mcp_reasoning_close_notification(closed_segment))
     return notifications
 
 
@@ -1588,21 +2156,6 @@ def _mcp_model_text_flush_notifications(
     assert isinstance(state, _MCPStreamProjectionState)
     assert isinstance(progress, int) and not isinstance(progress, bool)
     notifications: list[JSONObject] = []
-    for reasoning_delta in state.reasoning_redactor.flush():
-        if reasoning_delta:
-            notifications.append(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/message",
-                    "params": {
-                        "level": "debug",
-                        "data": {
-                            "type": "reasoning",
-                            "delta": reasoning_delta,
-                        },
-                    },
-                }
-            )
     for answer_delta in state.answer_redactor.flush():
         if answer_delta:
             message: dict[str, JSONValue] = {

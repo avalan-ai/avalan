@@ -1295,8 +1295,15 @@ async def test_translator_projects_reasoning_tool_and_terminal_states(
     await translator.finish()
 
     assert translator.succeeded is True
-    assert updater.artifacts[0]["artifact_id"] == "reasoning"
-    assert updater.artifacts[1]["artifact_id"] == "call-1"
+    assert updater.artifacts[0]["artifact_id"] == "reasoning-r-0-0"
+    assert (
+        next(
+            artifact
+            for artifact in updater.artifacts
+            if artifact["artifact_id"] == "call-1"
+        )["artifact_id"]
+        == "call-1"
+    )
     assert updater.artifacts[-1]["last_chunk"] is True
     assert updater.statuses[0]["metadata"]["tool_name"] == "shell.run"
     assert updater.completed == 1
@@ -2013,10 +2020,10 @@ async def test_translator_flushes_buffered_model_text_in_source_order(
     ]
 
     assert [artifact["artifact_id"] for artifact in text_artifacts] == [
-        "reasoning",
+        "reasoning-r-0-0",
         "answer",
     ]
-    assert text_artifacts[0]["parts"][0].text == "# Imagegen\n"
+    assert text_artifacts[0]["parts"][0].text == "<redacted-skill-content>"
     assert text_artifacts[1]["parts"][0].text == "# Browser\n"
 
 
@@ -2079,7 +2086,19 @@ async def test_executor_cancel_and_exception_paths(
         await executor.execute(context, event_queue)
     await executor.cancel(context, event_queue)
 
+    async def cancel_orchestrate(*args: object, **kwargs: object):
+        raise CancelledError
+
+    cancellation_queue = _FakeEventQueue()
+    monkeypatch.setattr(a2a_router, "orchestrate", cancel_orchestrate)
+    with pytest.raises(CancelledError):
+        await executor.execute(context, cancellation_queue)
+
     assert event_queue.events
+    assert [event["kind"] for event in cancellation_queue.events] == [
+        "status",
+        "cancel",
+    ]
 
 
 @pytest.mark.anyio

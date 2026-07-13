@@ -1924,6 +1924,12 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
     ) -> None:
         settings = protocol_stream_retention_settings(
             StreamRetentionPolicy(
+                mcp_reasoning_segment_limit=8,
+                mcp_reasoning_character_limit=9,
+                mcp_reasoning_text_byte_limit=10,
+                a2a_reasoning_segment_limit=11,
+                a2a_reasoning_character_limit=12,
+                a2a_reasoning_text_byte_limit=13,
                 mcp_resource_item_limit=3,
                 mcp_resource_text_byte_limit=6,
                 a2a_task_record_item_limit=4,
@@ -1932,6 +1938,12 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
             )
         )
 
+        self.assertEqual(settings.mcp_reasoning_segment_limit, 8)
+        self.assertEqual(settings.mcp_reasoning_character_limit, 9)
+        self.assertEqual(settings.mcp_reasoning_text_byte_limit, 10)
+        self.assertEqual(settings.a2a_reasoning_segment_limit, 11)
+        self.assertEqual(settings.a2a_reasoning_character_limit, 12)
+        self.assertEqual(settings.a2a_reasoning_text_byte_limit, 13)
         self.assertEqual(settings.resource_item_limit, 3)
         self.assertEqual(settings.resource_text_byte_limit, 6)
         self.assertEqual(settings.task_record_item_limit, 4)
@@ -2017,6 +2029,32 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
             StreamRetentionPolicy(a2a_task_event_byte_limit=1)
         with self.assertRaises(AssertionError):
             StreamRetentionPolicy(a2a_task_event_byte_limit=True)
+        for field_name in (
+            "mcp_reasoning_segment_limit",
+            "mcp_reasoning_character_limit",
+            "mcp_reasoning_text_byte_limit",
+            "a2a_reasoning_segment_limit",
+            "a2a_reasoning_character_limit",
+            "a2a_reasoning_text_byte_limit",
+        ):
+            for invalid_value in (-1, True):
+                with self.subTest(
+                    field_name=field_name,
+                    invalid_value=invalid_value,
+                ):
+                    values = {
+                        "resource_item_limit": 0,
+                        "resource_text_byte_limit": 1,
+                        "task_record_item_limit": 0,
+                        "task_event_byte_limit": 2,
+                        "flow_history_item_limit": 0,
+                        "active_session_lossless": True,
+                        field_name: invalid_value,
+                    }
+                    with self.assertRaises(AssertionError):
+                        ProtocolStreamRetentionSettings(
+                            **values  # type: ignore[arg-type]
+                        )
 
     async def test_default_server_stream_retention_surfaces_are_bounded(
         self,
@@ -2029,6 +2067,30 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             settings.resource_item_limit,
             policy.mcp_resource_item_limit,
+        )
+        self.assertEqual(
+            settings.mcp_reasoning_segment_limit,
+            policy.mcp_reasoning_segment_limit,
+        )
+        self.assertEqual(
+            settings.mcp_reasoning_character_limit,
+            policy.mcp_reasoning_character_limit,
+        )
+        self.assertEqual(
+            settings.mcp_reasoning_text_byte_limit,
+            policy.mcp_reasoning_text_byte_limit,
+        )
+        self.assertEqual(
+            settings.a2a_reasoning_segment_limit,
+            policy.a2a_reasoning_segment_limit,
+        )
+        self.assertEqual(
+            settings.a2a_reasoning_character_limit,
+            policy.a2a_reasoning_character_limit,
+        )
+        self.assertEqual(
+            settings.a2a_reasoning_text_byte_limit,
+            policy.a2a_reasoning_text_byte_limit,
         )
         self.assertEqual(
             settings.resource_text_byte_limit,

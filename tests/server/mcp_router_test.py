@@ -171,10 +171,8 @@ def redacting_fixture_mcp_projection_state() -> (
             protocol="mcp",
             channel="answer",
         ),
-        reasoning_redactor=ModelVisibleServerProtocolTextRedactor(
+        reasoning=mcp_router._MCPReasoningOwner(
             _MODEL_VISIBLE_REDACTION_SETTINGS,
-            protocol="mcp",
-            channel="reasoning",
         ),
         output_redaction_settings=_MODEL_VISIBLE_REDACTION_SETTINGS,
     )
@@ -1206,7 +1204,7 @@ class MCPUtilityTestCase(TestCase):
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=2,
+            sequence=3,
             kind=StreamItemKind.ANSWER_DELTA,
             channel=StreamChannel.ANSWER,
             text_delta="answer",
@@ -1974,11 +1972,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             ),
             segment_instance_ordinal=0,
         )
-        with patch.object(
-            mcp_router,
-            "_canonical_reasoning_deltas",
-            return_value=None,
-        ):
+        with patch.object(state.reasoning_owner, "push", return_value=()):
             notifications = (
                 await mcp_router._mcp_canonical_stream_item_notifications(
                     item,
@@ -2237,7 +2231,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=1,
+            sequence=3,
             kind=StreamItemKind.STREAM_COMPLETED,
             channel=StreamChannel.CONTROL,
             usage={},
@@ -2249,16 +2243,57 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             state,
             "progress",
         )
-        self.assertEqual(state.reasoning_redactor.push("# Imagegen\n"), ())
+        pending_reasoning = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta="# Imagegen\n",
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=(
+                StreamReasoningRepresentation.NATIVE_TEXT
+            ),
+            segment_instance_ordinal=0,
+        )
+        self.assertEqual(
+            await mcp_router._mcp_canonical_stream_item_notifications(
+                pending_reasoning,
+                state,
+                "progress",
+            ),
+            [],
+        )
         self.assertEqual(state.answer_redactor.push("# Browser\n"), ())
 
-        notifications = (
+        reasoning_done = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.REASONING_DONE,
+            channel=StreamChannel.REASONING,
+        )
+        reasoning_done_notifications = (
+            await mcp_router._mcp_canonical_stream_item_notifications(
+                reasoning_done,
+                state,
+                "progress",
+            )
+        )
+
+        terminal_notifications = (
             await mcp_router._mcp_canonical_stream_item_notifications(
                 terminal,
                 state,
                 "progress",
             )
         )
+        notifications = [
+            *reasoning_done_notifications,
+            *terminal_notifications,
+        ]
         reasoning_notifications = [
             item
             for item in notifications
@@ -2272,7 +2307,15 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             reasoning_notifications[0]["params"]["data"],
-            {"type": "reasoning", "delta": "# Imagegen\n"},
+            {
+                "type": "reasoning",
+                "delta": "<redacted-skill-content>",
+                "representation": "native_text",
+                "segment_instance_ordinal": 0,
+                "completed": False,
+                "status": "in_progress",
+                "terminal_outcome": None,
+            },
         )
         self.assertIn(
             {"type": "answer.delta", "delta": "# Browser\n"},
