@@ -9,7 +9,7 @@ This directory showcases configuration files and small programs that demonstrate
 - [agent_shell_pipeline.toml](agent_shell_pipeline.toml) – Agent with explicit `shell.pipeline` opt-in and structured pipeline arguments. Adjust `tool.shell.max_pipeline_*` caps or allowed commands to fit the workspace.
 - [agent_shell_git.toml](agent_shell_git.toml) – Agent with read-only `shell.git_status`, `shell.git_diff`, and `shell.git_log` tools. Adjust `[tool.shell.git]` workspace, command allowlist, and output caps for repository inspection.
 - [agent_gettext_translator.toml](agent_gettext_translator.toml) – Template-driven gettext translator. Adjust `source_language`, `destination_language`, or switch `engine.uri` to a different model.
-- [agent_support_reply.toml](agent_support_reply.toml) – Direct-prompt customer support reply drafter. Adapt the `system`, `developer`, or `user` prompts to fit your support policy.
+- [agent_support_reply.toml](agent_support_reply.toml) – Direct-prompt customer support reply drafter with a concise provider reasoning-summary request. Adapt the prompts or `[run.reasoning]`; use `--display-reasoning` separately when the private summary should be rendered.
 - [agent_messi.toml](agent_messi.toml) – Persona of Leo Messi with recent and PostgreSQL-backed memory. Change `engine.uri`, memory connection strings, or `run.max_new_tokens` for longer answers.
 - [agent_nagini.toml](agent_nagini.toml) – Python-focused assistant emitting code between `<llm-code>` tags. Tweak `engine.uri`, `weight_type`, or `stop_strings` to fit your needs.
 - [agent_sequel.toml](agent_sequel.toml) – SQL specialist returning code inside `<llm-code>` tags. Update `engine.uri`, `weight_type`, or alter `stop_strings` for different output markers.
@@ -31,7 +31,8 @@ This directory showcases configuration files and small programs that demonstrate
 
 ## Text generation
 - [text_generation.py](text_generation.py) – Streams canonical answer deltas from a Llama 3 model. Adjust `model` id, `temperature`, or `max_new_tokens`.
-- [text_generation_openai.py](text_generation_openai.py) – Uses OpenAI models. Set `OPENAI_API_KEY`, then tweak `model`, `temperature`, or `max_new_tokens`.
+- [text_generation_openai.py](text_generation_openai.py) – Streams typed OpenAI reasoning summaries to stderr and answer deltas to stdout. Set `OPENAI_API_KEY`, then adjust the supported summary mode or model.
+- [text_generation_openai_non_stream.py](text_generation_openai_non_stream.py) – Requests the same concise summary without streaming while printing only the final answer compatibility view.
 - [text_generation_anthropic.py](text_generation_anthropic.py) – Anthropic API example requiring `ANTHROPIC_API_KEY`. Change `model` or generation settings.
 - [text_generation_google.py](text_generation_google.py) – Gemini via `GOOGLE_API_KEY`. Modify `model`, `temperature`, or token limits.
 - [text_generation_groq.py](text_generation_groq.py) – Groq endpoint needing `GROQ_API_KEY`. Adjust `model` or `GenerationSettings`.

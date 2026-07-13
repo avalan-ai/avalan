@@ -10,6 +10,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import (
+    GenerationSettings,
     MessageContentFile,
     MessageContentText,
     ReasoningSummaryMode,
@@ -17,12 +18,17 @@ from avalan.entities import (
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager, EventManagerMode
 from avalan.model import TextGenerationResponse
-from avalan.model.reasoning import ReasoningSummaryCapabilityError
+from avalan.model.reasoning import (
+    ReasoningSummaryRequestCapability,
+    validate_reasoning_summary_request,
+)
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
+    StreamVisibility,
 )
 from avalan.server.container_policy import RemoteContainerRequestPolicy
 
@@ -95,6 +101,144 @@ class StreamingOrchestrator(Orchestrator):
         )
 
 
+class _FakeReasoningAdapter:
+    def __init__(
+        self,
+        *,
+        provider: str,
+        supported_modes: frozenset[ReasoningSummaryMode],
+    ) -> None:
+        self.reasoning_summary_provider = provider
+        self.reasoning_summary_request_capability = (
+            ReasoningSummaryRequestCapability(
+                supported_modes=supported_modes,
+            )
+        )
+        self.attempts = 0
+        self.dispatches = 0
+        self.retries = 0
+        self.settings: list[GenerationSettings] = []
+
+    async def __call__(
+        self,
+        settings: GenerationSettings,
+    ) -> TextGenerationResponse:
+        self.attempts += 1
+        self.settings.append(settings)
+        validate_reasoning_summary_request(self, settings)
+        return await self._dispatch(settings)
+
+    async def _dispatch(
+        self,
+        settings: GenerationSettings,
+    ) -> TextGenerationResponse:
+        self.dispatches += 1
+        assert settings.reasoning.summary is ReasoningSummaryMode.AUTO
+        return TextGenerationResponse(
+            _canonical_mixed_reasoning_gen,
+            logger=getLogger(),
+            use_async_generator=True,
+            provider_family="openai",
+        )
+
+
+async def _canonical_mixed_reasoning_gen() -> (
+    AsyncIterator[CanonicalStreamItem]
+):
+    common = {
+        "stream_session_id": "responses-mixed-stream",
+        "run_id": "responses-mixed-run",
+        "turn_id": "responses-mixed-turn",
+    }
+    yield CanonicalStreamItem(
+        **common,
+        sequence=0,
+        kind=StreamItemKind.STREAM_STARTED,
+        channel=StreamChannel.CONTROL,
+    )
+    for sequence, text, representation, ordinal in (
+        (1, "private summary", StreamReasoningRepresentation.SUMMARY, 0),
+        (
+            2,
+            "private native",
+            StreamReasoningRepresentation.NATIVE_TEXT,
+            1,
+        ),
+    ):
+        yield CanonicalStreamItem(
+            **common,
+            sequence=sequence,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta=text,
+            visibility=StreamVisibility.PRIVATE,
+            reasoning_representation=representation,
+            segment_instance_ordinal=ordinal,
+        )
+    yield CanonicalStreamItem(
+        **common,
+        sequence=3,
+        kind=StreamItemKind.REASONING_DONE,
+        channel=StreamChannel.REASONING,
+        visibility=StreamVisibility.PRIVATE,
+    )
+    yield CanonicalStreamItem(
+        **common,
+        sequence=4,
+        kind=StreamItemKind.ANSWER_DELTA,
+        channel=StreamChannel.ANSWER,
+        text_delta='{"answer":true}',
+    )
+    yield CanonicalStreamItem(
+        **common,
+        sequence=5,
+        kind=StreamItemKind.ANSWER_DONE,
+        channel=StreamChannel.ANSWER,
+    )
+    yield CanonicalStreamItem(
+        **common,
+        sequence=6,
+        kind=StreamItemKind.USAGE_COMPLETED,
+        channel=StreamChannel.USAGE,
+        usage={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+    )
+    yield CanonicalStreamItem(
+        **common,
+        sequence=7,
+        kind=StreamItemKind.STREAM_COMPLETED,
+        channel=StreamChannel.CONTROL,
+        terminal_outcome=StreamTerminalOutcome.COMPLETED,
+    )
+    yield CanonicalStreamItem(
+        **common,
+        sequence=8,
+        kind=StreamItemKind.STREAM_CLOSED,
+        channel=StreamChannel.CONTROL,
+    )
+
+
+class MixedReasoningOrchestrator(Orchestrator):
+    def __init__(self) -> None:  # type: ignore[no-untyped-def]
+        self._model_ids = {"server-model"}
+        self.synced = 0
+        self.call_kwargs: list[dict[str, object]] = []
+        self.adapter = _FakeReasoningAdapter(
+            provider="openai",
+            supported_modes=frozenset({ReasoningSummaryMode.AUTO}),
+        )
+
+    async def __call__(  # type: ignore[no-untyped-def]
+        self, messages, settings=None, **kwargs
+    ):
+        _ = messages
+        assert isinstance(settings, GenerationSettings)
+        self.call_kwargs.append(kwargs)
+        return await self.adapter(settings)
+
+    async def sync_messages(self):  # type: ignore[override]
+        self.synced += 1
+
+
 class SimpleOrchestrator(Orchestrator):
     def __init__(self) -> None:  # type: ignore[no-untyped-def]
         self.synced = False
@@ -160,13 +304,17 @@ class UnsupportedSummaryOrchestrator(Orchestrator):
     def __init__(self) -> None:  # type: ignore[no-untyped-def]
         self._model_ids = {"server-model"}
         self.calls = 0
-
-    async def __call__(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
-        self.calls += 1
-        raise ReasoningSummaryCapabilityError(
+        self.adapter = _FakeReasoningAdapter(
             provider="bedrock",
-            requested_mode=ReasoningSummaryMode.AUTO,
+            supported_modes=frozenset(),
         )
+
+    async def __call__(  # type: ignore[no-untyped-def]
+        self, _messages, settings=None, **_kwargs
+    ):
+        self.calls += 1
+        assert isinstance(settings, GenerationSettings)
+        return await self.adapter(settings)
 
 
 class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
@@ -256,6 +404,110 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_http_stream_and_non_stream_preserve_mixed_reasoning(
+        self,
+    ) -> None:
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                app = self.FastAPI()
+                orchestrator = MixedReasoningOrchestrator()
+                app.state.orchestrator = orchestrator
+                app.include_router(self.responses.router)
+                client = self.TestClient(app)
+                payload = {
+                    "input": "hi",
+                    "stream": stream,
+                    "reasoning": {"summary": "auto"},
+                }
+                if stream:
+                    with client.stream(
+                        "POST", "/responses", json=payload
+                    ) as response:
+                        self.assertEqual(response.status_code, 200)
+                        lines = list(response.iter_lines())
+                    events = {
+                        line.removeprefix("event: "): loads(
+                            lines[index + 1].removeprefix("data: ")
+                        )
+                        for index, line in enumerate(lines)
+                        if line.startswith("event: ")
+                    }
+                    self.assertEqual(
+                        events["response.reasoning_summary_text.delta"][
+                            "delta"
+                        ],
+                        "private summary",
+                    )
+                    self.assertEqual(
+                        events["response.reasoning_text.delta"]["delta"],
+                        "private native",
+                    )
+                    self.assertEqual(
+                        events["response.output_text.delta"]["delta"],
+                        '{"answer":true}',
+                    )
+                    self.assertNotIn(
+                        "private summary",
+                        events["response.output_text.delta"]["delta"],
+                    )
+                    self.assertNotIn(
+                        "private native",
+                        events["response.output_text.delta"]["delta"],
+                    )
+                else:
+                    response = client.post("/responses", json=payload)
+                    self.assertEqual(response.status_code, 200)
+                    body = response.json()
+                    self.assertEqual(
+                        [item["type"] for item in body["output"]],
+                        ["reasoning", "reasoning_text", "message"],
+                    )
+                    self.assertEqual(
+                        body["output"][2]["content"],
+                        [{"type": "output_text", "text": '{"answer":true}'}],
+                    )
+                    self.assertEqual(
+                        body["output"][0]["summary"],
+                        [
+                            {
+                                "type": "summary_text",
+                                "text": "private summary",
+                            }
+                        ],
+                    )
+                    self.assertEqual(
+                        body["output"][1]["content"],
+                        [
+                            {
+                                "type": "reasoning_text",
+                                "text": "private native",
+                            }
+                        ],
+                    )
+                self.assertEqual(orchestrator.synced, 1)
+                self.assertEqual(orchestrator.adapter.attempts, 1)
+                self.assertEqual(orchestrator.adapter.dispatches, 1)
+                self.assertEqual(orchestrator.adapter.retries, 0)
+                self.assertEqual(len(orchestrator.adapter.settings), 1)
+                routed_settings = orchestrator.adapter.settings[0]
+                self.assertIs(
+                    routed_settings.reasoning.summary,
+                    ReasoningSummaryMode.AUTO,
+                )
+                self.assertIs(routed_settings.use_async_generator, stream)
+                self.assertEqual(
+                    orchestrator.call_kwargs,
+                    [
+                        {
+                            "generation_options_override": {
+                                "reasoning": {
+                                    "summary": ReasoningSummaryMode.AUTO
+                                }
+                            }
+                        }
+                    ],
+                )
+
     async def test_response_endpoint_rejects_invalid_summary_with_422(
         self,
     ) -> None:
@@ -343,6 +595,15 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
                     },
                 )
                 self.assertEqual(orchestrator.calls, 1)
+                self.assertEqual(orchestrator.adapter.attempts, 1)
+                self.assertEqual(orchestrator.adapter.dispatches, 0)
+                self.assertEqual(orchestrator.adapter.retries, 0)
+                self.assertEqual(len(orchestrator.adapter.settings), 1)
+                self.assertIs(
+                    orchestrator.adapter.settings[0].reasoning.summary,
+                    ReasoningSummaryMode.AUTO,
+                )
+                self.assertEqual(response.content.count(b"response."), 0)
 
     async def test_response_endpoint_accepts_schema_mode_property(self):
         app = self.FastAPI()

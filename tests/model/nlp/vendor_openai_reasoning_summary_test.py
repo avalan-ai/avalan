@@ -9,6 +9,7 @@ from json import dumps, loads
 from math import inf, nan
 from pathlib import Path
 from textwrap import dedent
+from time import perf_counter
 from traceback import format_exception
 from types import SimpleNamespace
 from typing import Any, cast
@@ -56,6 +57,7 @@ from avalan.model.stream import (
     REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
     CanonicalStreamItem,
     StreamItemKind,
+    StreamPerformanceBudget,
     StreamProviderAdapterError,
     StreamProviderEvent,
     StreamReasoningRepresentation,
@@ -122,10 +124,8 @@ class _FailingAsyncEvents(_AsyncEvents):
             raise self._error from None
 
 
-class _CapableOpenAIClient(OpenAIClient):
-    reasoning_summary_request_capability = ReasoningSummaryRequestCapability(
-        supported_modes=frozenset(ReasoningSummaryMode)
-    )
+class _UnsupportedOpenAIClient(OpenAIClient):
+    reasoning_summary_request_capability = ReasoningSummaryRequestCapability()
 
 
 class _InjectedSummaryStream(OpenAIStream):
@@ -187,7 +187,7 @@ def _client(
     is_azure: bool = False,
     policy: StreamRetentionPolicy | None = None,
 ) -> OpenAIClient:
-    client_type = _CapableOpenAIClient if capable else OpenAIClient
+    client_type = OpenAIClient if capable else _UnsupportedOpenAIClient
     client = object.__new__(client_type)
     cast(Any, client)._client = SimpleNamespace(
         responses=SimpleNamespace(create=create)
@@ -1245,6 +1245,8 @@ def test_replay_requires_encrypted_content_and_preserves_provider_fields() -> (
 
 def test_replay_retention_policy_has_dedicated_exact_limits() -> None:
     policy = StreamRetentionPolicy()
+    assert policy.openai_replay_item_limit == 4096
+    assert policy.openai_replay_serialized_byte_limit == 4194304
     assert policy.openai_replay_reasoning_item_limit == 1024
     assert policy.openai_replay_reasoning_summary_node_limit == 4096
     assert policy.openai_replay_reasoning_summary_character_limit == 262144
@@ -1252,6 +1254,8 @@ def test_replay_retention_policy_has_dedicated_exact_limits() -> None:
         policy.openai_replay_reasoning_summary_serialized_byte_limit == 1048576
     )
     field_names = (
+        "openai_replay_item_limit",
+        "openai_replay_serialized_byte_limit",
         "openai_replay_reasoning_item_limit",
         "openai_replay_reasoning_summary_node_limit",
         "openai_replay_reasoning_summary_character_limit",
@@ -1271,21 +1275,30 @@ def test_replay_retention_policy_has_dedicated_exact_limits() -> None:
 
 
 def test_replay_item_limit_is_prospective_at_limit_boundaries() -> None:
-    policy = StreamRetentionPolicy(openai_replay_reasoning_item_limit=3)
+    policy = StreamRetentionPolicy(
+        openai_replay_item_limit=3,
+        openai_replay_reasoning_item_limit=2,
+    )
     owner = _owner(policy)
     assert owner.admit(_reasoning_item("rs_1"))
+    assert owner.admit(_function_item("call_1"))
     assert owner.admit(_reasoning_item("rs_2"))
     assert owner.counters[0] == 2
-    assert owner.admit(_reasoning_item("rs_3"))
-    before = (owner.replay_items(), owner.counters)
+    assert owner.generic_counters[0] == 3
+    before = (owner.replay_items(), owner.counters, owner.generic_counters)
     with pytest.raises(openai_module._ReasoningReplayRetentionError) as error:
-        owner.admit(_reasoning_item("rs_4"))
+        owner.admit(_function_item("call_2"))
     assert error.value.code == "reasoning_replay_retention_exceeded"
-    assert (owner.replay_items(), owner.counters) == before
+    assert (
+        owner.replay_items(),
+        owner.counters,
+        owner.generic_counters,
+    ) == before
 
     function_owner = _owner(
         StreamRetentionPolicy(
             replay_history_item_limit=0,
+            openai_replay_item_limit=3,
             openai_replay_reasoning_item_limit=0,
             openai_replay_reasoning_summary_node_limit=0,
             openai_replay_reasoning_summary_character_limit=0,
@@ -1297,6 +1310,47 @@ def test_replay_item_limit_is_prospective_at_limit_boundaries() -> None:
     assert function_owner.admit(_function_item("call_3"))
     assert function_owner.item_count == 3
     assert function_owner.counters == (0, 0, 0, 0)
+    assert function_owner.generic_counters[0] == 3
+
+
+@pytest.mark.parametrize(
+    "item",
+    (
+        _reasoning_item("generic-byte-reasoning", "á🙂", []),
+        {
+            **_function_item("generic-byte-function"),
+            "arguments": '{"value":"á🙂"}',
+        },
+    ),
+)
+def test_replay_serialized_byte_limit_counts_complete_normalized_items(
+    item: dict[str, object],
+) -> None:
+    normalized = OpenAIStream._response_input_item_payload(
+        cast(dict[str, Any], item)
+    )
+    expected = openai_module._replay_json_serialized_bytes(normalized)
+    exact = _owner(
+        StreamRetentionPolicy(openai_replay_serialized_byte_limit=expected)
+    )
+    assert exact.admit(item)
+    assert exact.generic_counters == (1, expected)
+
+    below = _owner(
+        StreamRetentionPolicy(openai_replay_serialized_byte_limit=expected - 1)
+    )
+    before = (below.replay_items(), below.counters, below.generic_counters)
+    with pytest.raises(
+        openai_module._ReasoningReplayRetentionError
+    ) as context:
+        below.admit(item)
+    assert (
+        below.replay_items(),
+        below.counters,
+        below.generic_counters,
+    ) == before
+    _, diagnostics = _safe_exception_diagnostics(context.value)
+    assert "á🙂" not in diagnostics
 
 
 def test_replay_summary_node_limit_counts_nested_empty_and_scalar_entries(
@@ -1535,26 +1589,32 @@ def test_replay_rejects_non_json_values_without_coercion() -> None:
         assert sentinel not in diagnostics
         assert repr(sentinel) not in diagnostics
 
-    opaque_surrogate = "OPAQUE_ENCRYPTED_\ud800"
-    opaque_owner = _owner()
-    assert opaque_owner.admit(
-        _reasoning_item(
-            "opaque-surrogate",
-            opaque_surrogate,
-            [],
+    hostile_items = (
+        _reasoning_item("opaque-surrogate", "OPAQUE_ENCRYPTED_\ud800", []),
+        {
+            **_function_item("function-surrogate"),
+            "arguments": "FUNCTION_ARGUMENT_\udfff",
+        },
+    )
+    for hostile_item in hostile_items:
+        hostile_owner = _owner()
+        before = (
+            hostile_owner.replay_items(),
+            hostile_owner.counters,
+            hostile_owner.generic_counters,
         )
-    )
-    assert (
-        opaque_owner.replay_items()[0]["encrypted_content"] == opaque_surrogate
-    )
-    function_surrogate = _function_item("function-surrogate")
-    function_surrogate["arguments"] = "FUNCTION_ARGUMENT_\udfff"
-    function_owner = _owner()
-    assert function_owner.admit(function_surrogate)
-    assert (
-        function_owner.replay_items()[0]["arguments"]
-        == "FUNCTION_ARGUMENT_\udfff"
-    )
+        with pytest.raises(
+            openai_module._ReasoningReplayRetentionError
+        ) as context:
+            hostile_owner.admit(hostile_item)
+        assert (
+            hostile_owner.replay_items(),
+            hostile_owner.counters,
+            hostile_owner.generic_counters,
+        ) == before
+        _, diagnostics = _safe_exception_diagnostics(context.value)
+        assert "OPAQUE_ENCRYPTED" not in diagnostics
+        assert "FUNCTION_ARGUMENT" not in diagnostics
     ordinary_request = {"prompt": "ORDINARY_REQUEST_\ud800"}
     assert openai_module._strict_replay_json_copy(ordinary_request) == (
         ordinary_request
@@ -1600,6 +1660,87 @@ def test_replay_overflow_is_safe_atomic_non_retryable_and_zero_dispatch() -> (
     assert cast(Any, client)._replay_owners_by_call_id == {}
 
 
+def test_function_replay_overflow_is_one_terminal_without_retry() -> None:
+    policy = StreamRetentionPolicy(openai_replay_item_limit=0)
+    create = AsyncMock(
+        return_value=_AsyncEvents(
+            [_output_done(_function_item("function-overflow"))]
+        )
+    )
+    client = _client(create, policy=policy)
+
+    stream = run(client("plain-model", [], _settings()))
+    items = run(_consume(stream))
+
+    terminal = [
+        item
+        for item in items
+        if item.kind
+        in {
+            StreamItemKind.STREAM_COMPLETED,
+            StreamItemKind.STREAM_ERRORED,
+        }
+    ]
+    assert len(terminal) == 1
+    assert terminal[0].kind is StreamItemKind.STREAM_ERRORED
+    assert (
+        cast(dict[str, Any], terminal[0].data)["error"]["code"]
+        == "reasoning_replay_retention_exceeded"
+    )
+    assert terminal[0].provider_payload is None
+    assert create.await_count == 1
+    assert cast(Any, client)._replay_owners_by_call_id == {}
+    assert cast(Any, client)._active_replay_owners == {}
+    assert cast(Any, client)._active_replay_streams == {}
+
+
+def test_non_stream_function_replay_overflow_matches_streaming() -> None:
+    response = SimpleNamespace(
+        id="response-function-overflow",
+        status="completed",
+        output=[
+            SimpleNamespace(
+                id="fc-function-overflow",
+                type="function_call",
+                status="completed",
+                call_id="function-overflow",
+                name="lookup",
+                arguments='{"private":"value"}',
+            )
+        ],
+        usage=None,
+    )
+    create = AsyncMock(return_value=response)
+    client = _client(
+        create,
+        policy=StreamRetentionPolicy(openai_replay_item_limit=0),
+    )
+
+    result = run(client("plain-model", [], use_async_generator=False))
+
+    assert isinstance(result, TextGenerationNonStreamResult)
+    terminal = [
+        event
+        for event in result.events
+        if event.kind
+        in {
+            StreamItemKind.STREAM_COMPLETED,
+            StreamItemKind.STREAM_ERRORED,
+        }
+    ]
+    assert len(terminal) == 1
+    assert terminal[0].kind is StreamItemKind.STREAM_ERRORED
+    assert (
+        cast(dict[str, Any], terminal[0].data)["error"]["code"]
+        == "reasoning_replay_retention_exceeded"
+    )
+    assert terminal[0].provider_payload is None
+    assert create.await_count == 1
+    assert cast(Any, client)._replay_owners_by_call_id == {}
+    assert cast(Any, client)._active_replay_owners == {}
+    assert cast(Any, client)._active_replay_streams == {}
+
+
 def test_replay_rollback_release_and_request_isolation() -> None:
     owner_a = _owner()
     owner_b = _owner()
@@ -1609,12 +1750,20 @@ def test_replay_rollback_release_and_request_isolation() -> None:
     owner_a.admit(_reasoning_item("a-failed", "cipher-failed", []))
     owner_a.admit(_function_item("call-failed"))
     owner_b.admit(_reasoning_item("b", "cipher-b", []))
-    owner_b_before = (owner_b.replay_items(), owner_b.counters)
+    owner_b_before = (
+        owner_b.replay_items(),
+        owner_b.counters,
+        owner_b.generic_counters,
+    )
 
     owner_a.rollback_attempt()
     owner_a.rollback_attempt()
     assert [item["id"] for item in owner_a.replay_items()] == ["a-base"]
-    assert (owner_b.replay_items(), owner_b.counters) == owner_b_before
+    assert (
+        owner_b.replay_items(),
+        owner_b.counters,
+        owner_b.generic_counters,
+    ) == owner_b_before
 
     client = _client(AsyncMock())
     cast(Any, client)._retain_replay_owner(owner_a, ("call-a",))
@@ -1627,6 +1776,7 @@ def test_replay_rollback_release_and_request_isolation() -> None:
     cast(Any, client)._discard_replay_owner(owner_a)
     cast(Any, client)._discard_replay_owner(owner_a)
     assert owner_a.release_count == 1
+    assert owner_a.generic_counters == (0, 0)
     assert not owner_b.released
     owner_b.release()
 
@@ -3592,20 +3742,65 @@ def test_visible_native_or_summary_reasoning_disables_retry() -> None:
 def test_failed_attempt_reasoning_and_function_calls_roll_back_together() -> (
     None
 ):
-    owner = _owner()
+    owner = _owner(StreamRetentionPolicy(openai_replay_item_limit=4))
     owner.admit(_reasoning_item("kept", "cipher-kept", []))
     owner.commit_attempt()
-    baseline = (owner.replay_items(), owner.counters)
+    baseline = (owner.replay_items(), owner.counters, owner.generic_counters)
     owner.begin_attempt()
     owner.admit(_reasoning_item("failed", "cipher-failed", []))
     owner.admit(_function_item("failed-call"))
 
     owner.rollback_attempt()
 
-    assert (owner.replay_items(), owner.counters) == baseline
+    assert (
+        owner.replay_items(),
+        owner.counters,
+        owner.generic_counters,
+    ) == baseline
     assert all(
         item.get("call_id") != "failed-call" for item in owner.replay_items()
     )
+
+    owner.begin_attempt()
+    owner.admit(_reasoning_item("committed", "cipher-committed", []))
+    owner.admit(_function_item("committed-call"))
+    owner.commit_attempt()
+    committed = (
+        owner.replay_items(),
+        owner.counters,
+        owner.generic_counters,
+    )
+    assert [item["type"] for item in owner.replay_items()] == [
+        "reasoning",
+        "reasoning",
+        "function_call",
+    ]
+
+    owner.begin_attempt()
+    assert owner.admit(_function_item("exact-call"))
+    before_overflow = (
+        owner.replay_items(),
+        owner.counters,
+        owner.generic_counters,
+    )
+    with pytest.raises(openai_module._ReasoningReplayRetentionError):
+        owner.admit(_function_item("overflow-call"))
+    assert (
+        owner.replay_items(),
+        owner.counters,
+        owner.generic_counters,
+    ) == before_overflow
+    owner.rollback_attempt()
+    assert (
+        owner.replay_items(),
+        owner.counters,
+        owner.generic_counters,
+    ) == committed
+
+    owner.release()
+    assert owner.replay_items() == ()
+    assert owner.counters == (0, 0, 0, 0)
+    assert owner.generic_counters == (0, 0)
 
 
 def test_summary_delta_emits_immediately() -> None:
@@ -3623,7 +3818,7 @@ def test_summary_delta_emits_immediately() -> None:
 
 
 def test_summary_delta_does_not_wait_for_later_output() -> None:
-    async def scenario() -> tuple[CanonicalStreamItem, int, int]:
+    async def scenario() -> tuple[CanonicalStreamItem, int, int, float]:
         events = _trace_events("one_part")
         source = _AsyncEvents(events)
         canonical = OpenAIStream(source).canonical_stream(
@@ -3633,17 +3828,20 @@ def test_summary_delta_does_not_wait_for_later_output() -> None:
         )
         started = await anext(canonical)
         assert started.kind is StreamItemKind.STREAM_STARTED
+        started_at = perf_counter()
         delta = await anext(canonical)
+        first_summary_ms = (perf_counter() - started_at) * 1000
         reads_at_delta = source.read_count
         await canonical.aclose()
-        return delta, reads_at_delta, len(events)
+        return delta, reads_at_delta, len(events), first_summary_ms
 
-    delta, reads_at_delta, event_count = run(scenario())
+    delta, reads_at_delta, event_count, first_summary_ms = run(scenario())
 
     assert delta.kind is StreamItemKind.REASONING_DELTA
     assert delta.text_delta == "Inspect inputs."
     assert reads_at_delta == 3
     assert reads_at_delta < event_count
+    assert first_summary_ms <= StreamPerformanceBudget().time_to_first_item_ms
 
 
 def test_summary_delta_uses_canonical_reasoning() -> None:

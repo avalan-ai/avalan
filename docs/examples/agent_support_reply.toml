@@ -13,8 +13,14 @@ Draft a concise support reply for this customer ticket:
 """
 
 [engine]
-uri = "ai://env:OPENAI_API_KEY@openai/gpt-4o-mini"
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-5-mini"
 
 [run]
 max_new_tokens = 512
 skip_special_tokens = true
+
+# Provider summary requests are independent from CLI display. Run this agent
+# with --display-reasoning only when the private summary should be rendered.
+[run.reasoning]
+effort = "low"
+summary = "concise"

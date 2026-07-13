@@ -17,6 +17,12 @@ REQUIRED_ACCEPTANCE_DIMENSIONS = (
     "event stats isolation",
     "reasoning parser correctness",
     "server no-listener memory bounds",
+    "reasoning summary public activation",
+    "reasoning summary multipart and tool continuation",
+    "reasoning summary invalid and unsupported",
+    "reasoning summary performance heartbeat queues and replay bounds",
+    "reasoning summary privacy",
+    "reasoning summary Responses MCP and A2A",
 )
 
 REQUIRED_HARDENING_DIMENSIONS = (
@@ -74,6 +80,12 @@ REQUIRED_FINAL_GATE_DIMENSIONS = (
     "reasoning parsing",
     "listener-less memory boundedness",
     "final negative/e2e suites",
+    "reasoning summary public activation",
+    "reasoning summary multipart and tool continuation",
+    "reasoning summary invalid and unsupported",
+    "reasoning summary performance heartbeat queues and replay bounds",
+    "reasoning summary privacy",
+    "reasoning summary Responses MCP and A2A",
 )
 
 
@@ -399,6 +411,130 @@ ACCEPTANCE_HARNESS_TESTS = {
             "tests/server/orchestrator_di_test.py"
             "::OrchestratorDiTestCase"
             "::test_di_get_orchestrator_from_settings"
+        ),
+    ),
+    "reasoning summary public activation": (
+        (
+            "tests/e2e/reasoning_summary_public_e2e_test.py"
+            "::test_summary_request_is_prompt_independent"
+        ),
+        (
+            "tests/e2e/reasoning_summary_public_e2e_test.py"
+            "::test_request_and_display_controls_are_independent"
+        ),
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_summary_only_request_is_forwarded"
+        ),
+    ),
+    "reasoning summary multipart and tool continuation": (
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_multipart_summary_preserves_emission_order"
+        ),
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_encrypted_replay_survives_tool_cycles"
+        ),
+        (
+            "tests/cli/reasoning_summary_e2e_test.py"
+            "::test_cli_summary_tool_continuation_is_credential_free[basic]"
+        ),
+        (
+            "tests/cli/reasoning_summary_e2e_test.py"
+            "::test_cli_summary_tool_continuation_is_credential_free[fancy]"
+        ),
+    ),
+    "reasoning summary invalid and unsupported": (
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_invalid_summary_fails_before_responses_create"
+        ),
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_declared_unsupported_summary_fails_before_provider_call"
+        ),
+        (
+            "tests/cli/reasoning_summary_e2e_test.py"
+            "::test_cli_invalid_summary_value_is_zero_call_and_leak_free"
+        ),
+        (
+            "tests/cli/reasoning_summary_e2e_test.py"
+            "::test_cli_unsupported_adapter_is_zero_call_and_leak_free"
+        ),
+        (
+            "tests/server/responses_test.py"
+            "::ResponsesEndpointTestCase"
+            "::test_response_endpoint_rejects_invalid_summary_with_422"
+        ),
+        (
+            "tests/server/responses_test.py"
+            "::ResponsesEndpointTestCase"
+            "::test_response_endpoint_preserves_summary_authority_rejection"
+        ),
+    ),
+    "reasoning summary performance heartbeat queues and replay bounds": (
+        (
+            "tests/reasoning_summary_phase0_test.py"
+            "::test_phase9_summary_benchmark_is_mutation_enforced_hard_gate"
+        ),
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_replay_item_limit_is_prospective_at_limit_boundaries"
+        ),
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_replay_serialized_byte_limit_counts_complete_normalized_items[item0]"
+        ),
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_replay_serialized_byte_limit_counts_complete_normalized_items[item1]"
+        ),
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_function_replay_overflow_is_one_terminal_without_retry"
+        ),
+        (
+            "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+            "::test_failed_attempt_reasoning_and_function_calls_roll_back_together"
+        ),
+        (
+            "tests/server/streaming_latency_budget_test.py"
+            "::StreamingLatencyBudgetTestCase"
+            "::test_cancellation_and_close_latency_budget_across_surfaces"
+        ),
+    ),
+    "reasoning summary privacy": (
+        (
+            "tests/model/text_generation_response_reasoning_summary_test.py"
+            "::test_summary_isolated_from_answer_tools_and_memory"
+        ),
+        (
+            "tests/model/reasoning_summary_observability_test.py"
+            "::test_summary_observability_is_content_free"
+        ),
+        (
+            "tests/model/reasoning_summary_observability_test.py"
+            "::test_summary_text_never_enters_generic_telemetry"
+        ),
+        (
+            "tests/server/reasoning_summary_protocol_test.py"
+            "::test_protocols_never_promote_summary_to_answer"
+        ),
+    ),
+    "reasoning summary Responses MCP and A2A": (
+        (
+            "tests/server/responses_test.py"
+            "::ResponsesEndpointTestCase"
+            "::test_http_stream_and_non_stream_preserve_mixed_reasoning"
+        ),
+        (
+            "tests/server/reasoning_summary_protocol_test.py"
+            "::test_mcp_and_a2a_preserve_representation"
+        ),
+        (
+            "tests/server/reasoning_summary_protocol_test.py"
+            "::test_protocols_never_promote_summary_to_answer"
         ),
     ),
 }
@@ -1357,6 +1493,13 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
     ),
 }
 
+_SUMMARY_MULTIPART_DIMENSION = (
+    "reasoning summary multipart and tool continuation"
+)
+_SUMMARY_PERFORMANCE_DIMENSION = (
+    "reasoning summary performance heartbeat queues and replay bounds"
+)
+
 FINAL_GATE_ACCEPTANCE_HARNESSES = {
     "stream accumulation/to_str": _FinalGateHarnessEvidence(
         synthetic=(
@@ -1763,6 +1906,163 @@ FINAL_GATE_ACCEPTANCE_HARNESSES = {
                 "tests/server/streaming_latency_budget_test.py"
                 "::StreamingLatencyBudgetTestCase"
                 "::test_cancellation_and_close_latency_budget_across_surfaces"
+            ),
+        ),
+    ),
+    "reasoning summary public activation": _FinalGateHarnessEvidence(
+        synthetic=(
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_summary_only_request_is_forwarded"
+            ),
+        ),
+        integration=(
+            (
+                "tests/e2e/reasoning_summary_public_e2e_test.py"
+                "::test_summary_request_is_prompt_independent"
+            ),
+            (
+                "tests/e2e/reasoning_summary_public_e2e_test.py"
+                "::test_request_and_display_controls_are_independent"
+            ),
+        ),
+    ),
+    _SUMMARY_MULTIPART_DIMENSION: _FinalGateHarnessEvidence(
+        synthetic=(
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_multipart_summary_preserves_emission_order"
+            ),
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_encrypted_replay_survives_tool_cycles"
+            ),
+        ),
+        integration=(
+            (
+                "tests/cli/reasoning_summary_e2e_test.py"
+                "::test_cli_summary_tool_continuation_is_credential_free[basic]"
+            ),
+            (
+                "tests/cli/reasoning_summary_e2e_test.py"
+                "::test_cli_summary_tool_continuation_is_credential_free[fancy]"
+            ),
+        ),
+    ),
+    "reasoning summary invalid and unsupported": _FinalGateHarnessEvidence(
+        synthetic=(
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_invalid_summary_fails_before_responses_create"
+            ),
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_declared_unsupported_summary_fails_before_provider_call"
+            ),
+        ),
+        integration=(
+            (
+                "tests/cli/reasoning_summary_e2e_test.py"
+                "::test_cli_invalid_summary_value_is_zero_call_and_leak_free"
+            ),
+            (
+                "tests/cli/reasoning_summary_e2e_test.py"
+                "::test_cli_unsupported_adapter_is_zero_call_and_leak_free"
+            ),
+            (
+                "tests/server/responses_test.py"
+                "::ResponsesEndpointTestCase"
+                "::test_response_endpoint_rejects_invalid_summary_with_422"
+            ),
+            (
+                "tests/server/responses_test.py"
+                "::ResponsesEndpointTestCase"
+                "::test_response_endpoint_preserves_summary_authority_rejection"
+            ),
+        ),
+    ),
+    _SUMMARY_PERFORMANCE_DIMENSION: _FinalGateHarnessEvidence(
+        synthetic=(
+            (
+                "tests/reasoning_summary_phase0_test.py"
+                "::test_phase9_summary_benchmark_is_mutation_enforced_hard_gate"
+            ),
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_replay_item_limit_is_prospective_at_limit_boundaries"
+            ),
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_replay_serialized_byte_limit_counts_complete_normalized_items[item0]"
+            ),
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_replay_serialized_byte_limit_counts_complete_normalized_items[item1]"
+            ),
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_function_replay_overflow_is_one_terminal_without_retry"
+            ),
+            (
+                "tests/model/nlp/vendor_openai_reasoning_summary_test.py"
+                "::test_failed_attempt_reasoning_and_function_calls_roll_back_together"
+            ),
+        ),
+        integration=(
+            (
+                "tests/server/streaming_latency_budget_test.py"
+                "::StreamingLatencyBudgetTestCase"
+                "::test_cancellation_and_close_latency_budget_across_surfaces"
+            ),
+            (
+                "tests/server/create_response_sse_test.py"
+                "::CreateResponseSSEEventsTestCase"
+                "::test_streaming_response_long_stream_flushes_bounded_deltas"
+            ),
+        ),
+    ),
+    "reasoning summary privacy": _FinalGateHarnessEvidence(
+        synthetic=(
+            (
+                "tests/model/text_generation_response_reasoning_summary_test.py"
+                "::test_summary_isolated_from_answer_tools_and_memory"
+            ),
+            (
+                "tests/model/reasoning_summary_observability_test.py"
+                "::test_summary_observability_is_content_free"
+            ),
+            (
+                "tests/model/reasoning_summary_observability_test.py"
+                "::test_summary_text_never_enters_generic_telemetry"
+            ),
+        ),
+        integration=(
+            (
+                "tests/server/reasoning_summary_protocol_test.py"
+                "::test_protocols_never_promote_summary_to_answer"
+            ),
+            (
+                "tests/cli/reasoning_summary_e2e_test.py"
+                "::test_cli_summary_tool_continuation_is_credential_free[basic]"
+            ),
+        ),
+    ),
+    "reasoning summary Responses MCP and A2A": _FinalGateHarnessEvidence(
+        synthetic=(
+            (
+                "tests/server/reasoning_summary_protocol_test.py"
+                "::test_protocols_never_promote_summary_to_answer"
+            ),
+        ),
+        integration=(
+            (
+                "tests/server/responses_test.py"
+                "::ResponsesEndpointTestCase"
+                "::test_http_stream_and_non_stream_preserve_mixed_reasoning"
+            ),
+            (
+                "tests/server/reasoning_summary_protocol_test.py"
+                "::test_mcp_and_a2a_preserve_representation"
             ),
         ),
     ),

@@ -103,6 +103,9 @@ block_repeated_tool_calls = {{ orchestrator.call_options['block_repeated_tool_ca
 {% endif %}
 {% if orchestrator.call_options.get('reasoning') %}
 
+# Reasoning request settings are provider-dependent. A summary value, when
+# present, is one of "auto", "concise", or "detailed". Display remains a CLI
+# concern controlled independently with --display-reasoning.
 [run.reasoning]
 {% for key, value in orchestrator.call_options['reasoning'].items() %}
 {{ key }} = {{ value | toml_value }}

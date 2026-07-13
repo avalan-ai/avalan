@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "reasoning_summary",
-  "active_phase": 8,
+  "active_phase": 9,
   "dimensions": {
     "phase 0 infrastructure": [
       "tests/reasoning_summary_phase0_test.py::test_provider_trace_inventory_is_complete_and_valid",
@@ -72,17 +72,17 @@
       "tests/reasoning_summary_phase1_test.py::test_engine_normalizes_summary_once_and_preserves_typed_values",
       "tests/reasoning_summary_phase1_test.py::test_private_capable_adapter_crosses_shared_modality_choke",
       "tests/reasoning_summary_phase1_test.py::test_shared_modality_choke_rejects_before_adapter_invocation",
-      "tests/reasoning_summary_phase1_test.py::test_request_capability_is_typed_dormant_and_omission_safe",
-      "tests/reasoning_summary_phase1_test.py::test_direct_model_entries_reject_before_provider_call",
-      "tests/reasoning_summary_phase1_test.py::test_direct_vendor_clients_reject_before_request_side_effects",
+      "tests/reasoning_summary_phase1_test.py::test_request_capability_is_typed_scoped_and_omission_safe",
+      "tests/reasoning_summary_phase1_test.py::test_unsupported_direct_model_entries_reject_before_provider_call",
+      "tests/reasoning_summary_phase1_test.py::test_unsupported_vendor_clients_reject_before_request_side_effects",
       "tests/reasoning_summary_phase1_test.py::test_third_party_vendor_model_identity_is_generic",
-      "tests/reasoning_summary_phase1_test.py::test_openai_provider_identity_is_client_derived_and_zero_call",
+      "tests/reasoning_summary_phase1_test.py::test_openai_provider_identity_and_capability_are_client_derived",
       "tests/reasoning_summary_phase1_test.py::test_hosted_provider_omission_keeps_exact_dispatch_shape",
       "tests/reasoning_summary_phase1_test.py::test_raw_vendor_omission_keeps_exact_provider_payloads",
       "tests/reasoning_summary_phase1_test.py::test_local_provider_omissions_reach_unchanged_dispatch_shapes",
       "tests/reasoning_summary_phase1_test.py::test_local_omission_keeps_exact_backend_request_shapes",
       "tests/reasoning_summary_phase1_test.py::test_shared_local_omission_invokes_adapter_once",
-      "tests/reasoning_summary_phase1_test.py::test_private_capable_openai_adapter_forwards_without_fallback_retry",
+      "tests/reasoning_summary_phase1_test.py::test_openai_model_forwards_without_fallback_retry",
       "tests/reasoning_summary_phase1_test.py::test_explicit_local_provider_error_and_zero_adapter_calls",
       "tests/reasoning_summary_phase1_test.py::test_raw_reasoning_summary_preserves_authority_rejection",
       "tests/server/remote_container_test.py::RemoteContainerProfileSelectionTestCase::test_rejects_authority_nested_inside_reasoning_summary",
@@ -131,7 +131,7 @@
       "tests/model/reasoning_summary_native_provider_regression_test.py::test_native_providers_remain_compatible",
       "tests/model/reasoning_summary_native_provider_regression_test.py::test_shared_local_reasoning_parser_backend_parity",
       "tests/model/reasoning_summary_native_provider_regression_test.py::test_mlx_reasoning_parser_preserves_untagged_cancel_and_close",
-      "tests/model/reasoning_summary_native_provider_regression_test.py::test_public_stream_capabilities_keep_summary_support_disabled",
+      "tests/model/reasoning_summary_native_provider_regression_test.py::test_public_stream_capabilities_activate_only_openai_summary_support",
       "tests/model/nlp/vendor_anthropic_test.py::test_canonical_stream_maps_anthropic_events",
       "tests/model/nlp/vendor_bedrock_test.py::BedrockTestCase::test_canonical_stream_maps_bedrock_events",
       "tests/model/nlp/vendor_extra_test.py::LiteLLMTestCase::test_canonical_stream_maps_chat_chunks",
@@ -392,6 +392,13 @@
       "tests/model/reasoning_summary_observability_test.py::test_summary_text_never_enters_generic_telemetry",
       "tests/server/reasoning_summary_protocol_test.py::test_mcp_and_a2a_preserve_representation",
       "tests/model/reasoning_summary_observability_test.py::test_observability_remains_content_free"
+    ],
+    "phase 9 public acceptance and release gates": [
+      "tests/e2e/reasoning_summary_public_e2e_test.py::test_summary_request_is_prompt_independent",
+      "tests/e2e/reasoning_summary_public_e2e_test.py::test_request_and_display_controls_are_independent",
+      "tests/e2e/reasoning_summary_release_gate_test.py::test_full_quality_and_coverage_gate",
+      "tests/server/streaming_acceptance_inventory_test.py::StreamingAcceptanceInventoryTestCase::test_streaming_acceptance_inventory_collects_unskipped_tests",
+      "tests/server/streaming_acceptance_inventory_test.py::StreamingAcceptanceInventoryTestCase::test_final_gate_inventory_collects_unskipped_tests"
     ]
   }
 }

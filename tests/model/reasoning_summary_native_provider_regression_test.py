@@ -1586,10 +1586,62 @@ def test_mlx_reasoning_parser_preserves_untagged_cancel_and_close() -> None:
     run(_mlx_untagged_cancel_and_close_cases())
 
 
-def test_public_stream_capabilities_keep_summary_support_disabled() -> None:
+def test_public_stream_capabilities_activate_only_openai_summary_support() -> (
+    None
+):
     default = StreamProviderCapabilities(backend=StreamProducerBackend.LOCAL)
     assert default.supports_reasoning_summary is False
     assert default.to_metadata()["supports_reasoning_summary"] is False
+
+    async def openai_capabilities(
+        provider_family: str,
+        *,
+        supports_reasoning_summary: bool | None = None,
+    ) -> dict[str, object]:
+        kwargs = (
+            {}
+            if supports_reasoning_summary is None
+            else {"supports_reasoning_summary": supports_reasoning_summary}
+        )
+        items = await _canonical_adapter_items(
+            OpenAIStream(
+                _raw_events(
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(usage=None),
+                    )
+                ),
+                provider_family=provider_family,
+                **kwargs,
+            )
+        )
+        return cast(
+            dict[str, object],
+            items[0].metadata["capabilities"],
+        )
+
+    for provider_family in ("openai", "azure_openai"):
+        assert (
+            run(openai_capabilities(provider_family))[
+                "supports_reasoning_summary"
+            ]
+            is True
+        )
+    assert (
+        run(openai_capabilities("openai_compatible"))[
+            "supports_reasoning_summary"
+        ]
+        is False
+    )
+    assert (
+        run(
+            openai_capabilities(
+                "openai",
+                supports_reasoning_summary=False,
+            )
+        )["supports_reasoning_summary"]
+        is False
+    )
 
     source_root = Path(__file__).parents[2] / "src" / "avalan"
     capability_calls: list[tuple[Path, ast.Call]] = []
@@ -1608,13 +1660,20 @@ def test_public_stream_capabilities_keep_summary_support_disabled() -> None:
         source_root / "model" / "nlp" / "text" / "mlxlm.py",
         source_root / "model" / "nlp" / "text" / "vllm.py",
     }
+    openai_path = (
+        source_root / "model" / "nlp" / "text" / "vendor" / "openai.py"
+    )
     for source_path, call in capability_calls:
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
         summary_support = keywords.get("supports_reasoning_summary")
-        assert summary_support is None or (
-            isinstance(summary_support, ast.Constant)
-            and summary_support.value is False
-        )
+        if source_path == openai_path:
+            assert isinstance(summary_support, ast.Attribute)
+            assert summary_support.attr == "_supports_reasoning_summary"
+        else:
+            assert summary_support is None or (
+                isinstance(summary_support, ast.Constant)
+                and summary_support.value is False
+            )
         if source_path in local_native_paths:
             native_support = keywords.get("supports_reasoning")
             assert isinstance(native_support, ast.Constant)

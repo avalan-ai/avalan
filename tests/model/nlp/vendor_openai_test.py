@@ -487,6 +487,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         StreamMock.assert_called_once_with(
             stream=stream_instance,
             provider_family="openai",
+            supports_reasoning_summary=True,
             replay_owner=ANY,
             replay_owner_retainer=client._retain_replay_owner,
             replay_owner_releaser=client._discard_replay_owner,
@@ -2353,6 +2354,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         stream_mock.assert_called_once_with(
             stream=stream_instance,
             provider_family="openai",
+            supports_reasoning_summary=True,
             replay_owner=ANY,
             replay_owner_retainer=client._retain_replay_owner,
             replay_owner_releaser=client._discard_replay_owner,
