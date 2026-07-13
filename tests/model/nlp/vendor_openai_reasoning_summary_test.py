@@ -6504,9 +6504,7 @@ def test_output_status_and_closed_channel_transitions_are_strict() -> None:
         assert secret not in repr([terminal, terminal.to_trace_dict()])
 
 
-def test_reasoning_duplicates_require_exact_replay_significant_fields() -> (
-    None
-):
+def test_reasoning_done_is_exact_and_terminal_cipher_is_opaque() -> None:
     secret = "REASONING_CIPHERTEXT_CONFLICT_SENTINEL"
     first = _summary_item_done(["safe"], "exact-reasoning", 0)
     exact_events = [
@@ -6570,7 +6568,7 @@ def test_reasoning_duplicates_require_exact_replay_significant_fields() -> (
     )
 
     cast(dict[str, object], terminal_item)["encrypted_content"] = secret
-    conflicting_terminal = run(
+    changed_terminal_items = run(
         _consume(
             OpenAIStream(
                 _AsyncEvents(
@@ -6583,15 +6581,32 @@ def test_reasoning_duplicates_require_exact_replay_significant_fields() -> (
             )
         )
     )
-    terminal = _assert_structured_summary_error(
-        conflicting_terminal,
-        event_type="response.completed",
-        field="item",
-        value_shape="conflict",
-        output_index=0,
-        summary_index=None,
+    assert not any(
+        item.kind is StreamItemKind.STREAM_ERRORED
+        for item in changed_terminal_items
     )
-    assert secret not in repr([terminal, terminal.to_trace_dict()])
+    assert secret not in repr(
+        [item.to_trace_dict() for item in changed_terminal_items]
+    )
+
+    cast(dict[str, object], terminal_item).pop("encrypted_content")
+    missing_terminal_items = run(
+        _consume(
+            OpenAIStream(
+                _AsyncEvents(
+                    [
+                        _summary_item_added("exact-reasoning", 0),
+                        deepcopy(first),
+                        exact_terminal,
+                    ]
+                )
+            )
+        )
+    )
+    assert not any(
+        item.kind is StreamItemKind.STREAM_ERRORED
+        for item in missing_terminal_items
+    )
 
 
 def test_text_content_index_is_strict_and_stable() -> None:
