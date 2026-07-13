@@ -3187,17 +3187,48 @@ def test_benchmark_execution_report_matches_locked_protocol() -> None:
     assert report["protocol"]["network_allowed"] is False
 
 
+def _phase9_subprocess_report(
+    *,
+    marker: str,
+    failure_reasons: tuple[str, ...] = (),
+    sample_microseconds: float = 1.0,
+) -> dict[str, object]:
+    def workload(delta_count: int) -> dict[str, object]:
+        return {
+            "delta_count": delta_count,
+            "deterministic": {},
+            "sample_microseconds": [sample_microseconds] * 20,
+        }
+
+    return {
+        "generated_at": marker,
+        "hard_gate": {
+            "passed": not failure_reasons,
+            "failure_reasons": list(failure_reasons),
+        },
+        "machine": "test-machine",
+        "phase9_budgets": {},
+        "phase9_metrics": {
+            "heartbeat": {},
+            "queue_pressure": {"server_listen_disabled": {}},
+            "responses_coalescing": {},
+        },
+        "platform": "test-platform",
+        "processor": "test-processor",
+        "protocol": {},
+        "python": "test-python",
+        "python_implementation": "CPython",
+        "schema_version": 1,
+        "stream_performance_budget": {},
+        "suite": "reasoning-summary-phase9-performance",
+        "workloads": [workload(4096), workload(8192)],
+    }
+
+
 def test_phase9_subprocess_runner_is_sanitized_and_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = {
-        "schema_version": 1,
-        "suite": "reasoning-summary-phase9-performance",
-        "protocol": {},
-        "workloads": [],
-        "phase9_metrics": {},
-        "hard_gate": {"passed": True, "failure_reasons": []},
-    }
+    payload = _phase9_subprocess_report(marker="success")
     captured: dict[str, object] = {}
 
     def successful_run(
@@ -3291,6 +3322,126 @@ def test_phase9_subprocess_runner_is_sanitized_and_fail_closed(
         run_phase9_benchmark_subprocess()
 
 
+def test_phase9_subprocess_retries_two_timing_failures_then_returns_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reports = (
+        _phase9_subprocess_report(
+            marker="first-failure",
+            failure_reasons=("median 8192-to-4096 work ratio exceeded 2.5",),
+            sample_microseconds=1.0,
+        ),
+        _phase9_subprocess_report(
+            marker="second-failure",
+            failure_reasons=(
+                "heartbeat maximum drift exceeded 100 milliseconds",
+            ),
+            sample_microseconds=2.0,
+        ),
+        _phase9_subprocess_report(
+            marker="confirmed-success",
+            sample_microseconds=3.0,
+        ),
+    )
+    calls = 0
+
+    def timed_run(
+        command: list[str],
+        **_: object,
+    ) -> CompletedProcess[str]:
+        nonlocal calls
+        report = reports[calls]
+        calls += 1
+        return CompletedProcess(
+            command,
+            0 if calls == 3 else 1,
+            dumps(report),
+            "",
+        )
+
+    monkeypatch.setattr(
+        "reasoning_summary_script_loader.run_process",
+        timed_run,
+    )
+
+    confirmed = run_phase9_benchmark_subprocess()
+
+    assert calls == 3
+    assert confirmed == reports[2]
+    confirmed_workloads = cast(list[dict[str, object]], confirmed["workloads"])
+    assert confirmed_workloads[0]["sample_microseconds"] == [3.0] * 20
+
+
+def test_phase9_subprocess_fails_after_three_timing_only_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasons = (
+        "median 8192-to-4096 work ratio exceeded 2.5",
+        "p95 8192-to-4096 work ratio exceeded 2.5",
+        "heartbeat maximum drift exceeded 100 milliseconds",
+    )
+    calls = 0
+
+    def timed_run(
+        command: list[str],
+        **_: object,
+    ) -> CompletedProcess[str]:
+        nonlocal calls
+        reason = reasons[calls]
+        calls += 1
+        report = _phase9_subprocess_report(
+            marker=f"failure-{calls}",
+            failure_reasons=(reason,),
+        )
+        return CompletedProcess(command, 1, dumps(report), "")
+
+    monkeypatch.setattr(
+        "reasoning_summary_script_loader.run_process",
+        timed_run,
+    )
+
+    with pytest.raises(
+        Phase9BenchmarkSubprocessError,
+        match="timing confirmation failed after 3 attempts",
+    ) as error:
+        run_phase9_benchmark_subprocess()
+
+    assert calls == 3
+    for index, reason in enumerate(reasons, start=1):
+        assert f"attempt {index}: {reason}" in str(error.value)
+
+
+def test_phase9_subprocess_does_not_retry_non_timing_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = _phase9_subprocess_report(
+        marker="deterministic-failure",
+        failure_reasons=("workload 4096 read-ahead must equal zero",),
+    )
+    calls = 0
+
+    def failed_run(
+        command: list[str],
+        **_: object,
+    ) -> CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return CompletedProcess(command, 1, dumps(report), "")
+
+    monkeypatch.setattr(
+        "reasoning_summary_script_loader.run_process",
+        failed_run,
+    )
+
+    with pytest.raises(
+        Phase9BenchmarkSubprocessError,
+        match="workload 4096 read-ahead must equal zero",
+    ):
+        run_phase9_benchmark_subprocess()
+
+    assert calls == 1
+
+
 def test_phase9_heartbeat_detects_blocking_inline_projection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3329,6 +3480,19 @@ def test_phase9_heartbeat_detects_blocking_inline_projection(
     assert (
         heartbeat["maximum_drift_milliseconds"]
         > _BENCHMARK_SCRIPT._PHASE9_HEARTBEAT_MAXIMUM_DRIFT_MILLISECONDS
+    )
+
+
+def test_phase9_workload_sampling_order_alternates_pairs() -> None:
+    delta_counts = (4096, 8192)
+
+    assert _BENCHMARK_SCRIPT._phase9_interleaved_order(delta_counts, 0) == (
+        4096,
+        8192,
+    )
+    assert _BENCHMARK_SCRIPT._phase9_interleaved_order(delta_counts, 1) == (
+        8192,
+        4096,
     )
 
 

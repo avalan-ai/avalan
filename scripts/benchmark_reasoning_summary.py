@@ -500,10 +500,7 @@ def run_phase9_benchmark() -> dict[str, object]:
     """Run bounded Phase 9 summary workloads and return their report."""
     protocol = benchmark_protocol()
     with _network_denied():
-        workloads = tuple(
-            _run_phase9_workload(delta_count, protocol)
-            for delta_count in protocol.delta_counts
-        )
+        workloads = _run_phase9_workloads(protocol)
     asynchronous_metrics = _isolated_phase9_asynchronous_metrics(protocol)
     budget = StreamPerformanceBudget()
     report: dict[str, object] = {
@@ -765,54 +762,90 @@ def _run_workload(
     )
 
 
-def _run_phase9_workload(
-    delta_count: int,
+def _run_phase9_workloads(
     protocol: BenchmarkProtocol,
-) -> Phase9WorkloadResult:
-    fixture = _phase9_fixture_items(delta_count, protocol.delta_text)
-    for _ in range(protocol.warmups):
+) -> tuple[Phase9WorkloadResult, ...]:
+    fixtures = {
+        delta_count: _phase9_fixture_items(delta_count, protocol.delta_text)
+        for delta_count in protocol.delta_counts
+    }
+    for warmup_index in range(protocol.warmups):
+        for delta_count in _phase9_interleaved_order(
+            protocol.delta_counts,
+            warmup_index,
+        ):
+            collect()
+            _project_phase9_fixture(fixtures[delta_count])
+
+    samples_by_count: dict[int, list[float]] = {
+        delta_count: [] for delta_count in protocol.delta_counts
+    }
+    deterministic_by_count: dict[int, DeterministicCounts] = {}
+    for sample_index in range(protocol.samples):
+        for delta_count in _phase9_interleaved_order(
+            protocol.delta_counts,
+            sample_index,
+        ):
+            collect()
+            started = perf_counter()
+            deterministic_by_count[delta_count] = _project_phase9_fixture(
+                fixtures[delta_count]
+            )
+            samples_by_count[delta_count].append(
+                (perf_counter() - started) * 1_000_000
+            )
+
+    results: list[Phase9WorkloadResult] = []
+    for delta_count in protocol.delta_counts:
         collect()
-        _project_phase9_fixture(fixture)
-    samples: list[float] = []
-    deterministic: DeterministicCounts | None = None
-    for _ in range(protocol.samples):
-        collect()
-        started = perf_counter()
-        deterministic = _project_phase9_fixture(fixture)
-        samples.append((perf_counter() - started) * 1_000_000)
-    collect()
-    memory = _isolated_phase9_memory_probe(
-        delta_count,
-        protocol.delta_text,
-        protocol,
-    )
-    assert deterministic is not None
-    median_us = median(samples)
-    p95_us = _nearest_rank(samples, 95)
-    result = WorkloadResult(
-        delta_count=delta_count,
-        item_count=len(fixture.items),
-        sample_microseconds=tuple(samples),
-        median_microseconds=median_us,
-        p95_microseconds=p95_us,
-        median_per_item_microseconds=median_us / len(fixture.items),
-        p95_per_item_microseconds=p95_us / len(fixture.items),
-        peak_processing_bytes_excluding_source_fixture=(
-            memory.peak_processing_bytes_excluding_source_fixture
-        ),
-        current_retained_bytes_including_source_fixture=(
-            memory.current_retained_bytes_including_source_fixture
-        ),
-        peak_total_bytes_including_source_fixture=(
-            memory.peak_total_bytes_including_source_fixture
-        ),
-        deterministic=deterministic,
-    )
-    return Phase9WorkloadResult(
-        name=_PHASE9_WORKLOAD_NAME,
-        representation=StreamReasoningRepresentation.SUMMARY.value,
-        summary_part_count=_phase9_summary_part_count(delta_count),
-        workload=result,
+        memory = _isolated_phase9_memory_probe(
+            delta_count,
+            protocol.delta_text,
+            protocol,
+        )
+        fixture = fixtures[delta_count]
+        samples = samples_by_count[delta_count]
+        deterministic = deterministic_by_count[delta_count]
+        median_us = median(samples)
+        p95_us = _nearest_rank(samples, 95)
+        workload = WorkloadResult(
+            delta_count=delta_count,
+            item_count=len(fixture.items),
+            sample_microseconds=tuple(samples),
+            median_microseconds=median_us,
+            p95_microseconds=p95_us,
+            median_per_item_microseconds=median_us / len(fixture.items),
+            p95_per_item_microseconds=p95_us / len(fixture.items),
+            peak_processing_bytes_excluding_source_fixture=(
+                memory.peak_processing_bytes_excluding_source_fixture
+            ),
+            current_retained_bytes_including_source_fixture=(
+                memory.current_retained_bytes_including_source_fixture
+            ),
+            peak_total_bytes_including_source_fixture=(
+                memory.peak_total_bytes_including_source_fixture
+            ),
+            deterministic=deterministic,
+        )
+        results.append(
+            Phase9WorkloadResult(
+                name=_PHASE9_WORKLOAD_NAME,
+                representation=StreamReasoningRepresentation.SUMMARY.value,
+                summary_part_count=_phase9_summary_part_count(delta_count),
+                workload=workload,
+            )
+        )
+    return tuple(results)
+
+
+def _phase9_interleaved_order(
+    delta_counts: tuple[int, ...],
+    iteration: int,
+) -> tuple[int, ...]:
+    assert delta_counts
+    assert type(iteration) is int and iteration >= 0
+    return (
+        delta_counts if iteration % 2 == 0 else tuple(reversed(delta_counts))
     )
 
 
