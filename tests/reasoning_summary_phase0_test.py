@@ -8,7 +8,7 @@ from json import dumps, loads
 from math import ceil, isfinite
 from pathlib import Path
 from statistics import median
-from subprocess import CompletedProcess
+from subprocess import CompletedProcess, TimeoutExpired
 from typing import Any, cast
 
 import pytest
@@ -31,8 +31,10 @@ from reasoning_summary_fixtures import (
     validate_reasoning_summary_trace_payload,
 )
 from reasoning_summary_script_loader import (
+    Phase9BenchmarkSubprocessError,
     canonical_json_pointer,
     load_reasoning_summary_script,
+    run_phase9_benchmark_subprocess,
     strict_json_loads,
     typed_json_path,
 )
@@ -3184,21 +3186,125 @@ def test_benchmark_execution_report_matches_locked_protocol() -> None:
     assert report["protocol"]["network_allowed"] is False
 
 
+def test_phase9_subprocess_runner_is_sanitized_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "suite": "reasoning-summary-phase9-performance",
+        "protocol": {},
+        "workloads": [],
+        "phase9_metrics": {},
+        "hard_gate": {"passed": True, "failure_reasons": []},
+    }
+    captured: dict[str, object] = {}
+
+    def successful_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> CompletedProcess[str]:
+        captured["command"] = command
+        captured.update(kwargs)
+        return CompletedProcess(command, 0, dumps(payload), "")
+
+    for name in (
+        "PYTHONPATH",
+        "PYTEST_CURRENT_TEST",
+        "COV_CORE_SOURCE",
+        "COVERAGE_PROCESS_START",
+        "COVERAGE_FILE",
+    ):
+        monkeypatch.setenv(name, "must-not-propagate")
+    monkeypatch.setattr(
+        "reasoning_summary_script_loader.run_process",
+        successful_run,
+    )
+
+    assert run_phase9_benchmark_subprocess() == payload
+    command = cast(list[str], captured["command"])
+    assert command[1:] == [
+        str(
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "benchmark_reasoning_summary.py"
+        ),
+        "--phase9",
+    ]
+    subprocess_environment = cast(dict[str, str], captured["env"])
+    assert subprocess_environment["PYTHONNOUSERSITE"] == "1"
+    assert not any(
+        name in subprocess_environment
+        for name in (
+            "PYTHONPATH",
+            "PYTEST_CURRENT_TEST",
+            "COV_CORE_SOURCE",
+            "COVERAGE_PROCESS_START",
+            "COVERAGE_FILE",
+        )
+    )
+    assert captured["capture_output"] is True
+    assert captured["check"] is False
+    assert captured["text"] is True
+    assert captured["timeout"] == 60
+    assert captured["cwd"] == Path(__file__).resolve().parents[1]
+
+    def timeout_run(
+        command: list[str],
+        **_: object,
+    ) -> CompletedProcess[str]:
+        raise TimeoutExpired(command, 60)
+
+    monkeypatch.setattr(
+        "reasoning_summary_script_loader.run_process",
+        timeout_run,
+    )
+    with pytest.raises(
+        Phase9BenchmarkSubprocessError,
+        match="timed out after 60 seconds",
+    ):
+        run_phase9_benchmark_subprocess()
+
+    monkeypatch.setattr(
+        "reasoning_summary_script_loader.run_process",
+        lambda command, **_: CompletedProcess(
+            command,
+            1,
+            "report failed",
+            "hard gate failed",
+        ),
+    )
+    with pytest.raises(
+        Phase9BenchmarkSubprocessError,
+        match="exited with code 1: report failed\nhard gate failed",
+    ):
+        run_phase9_benchmark_subprocess()
+
+    monkeypatch.setattr(
+        "reasoning_summary_script_loader.run_process",
+        lambda command, **_: CompletedProcess(command, 0, "{", ""),
+    )
+    with pytest.raises(
+        Phase9BenchmarkSubprocessError,
+        match="returned invalid JSON",
+    ):
+        run_phase9_benchmark_subprocess()
+
+
 def test_phase9_summary_benchmark_is_mutation_enforced_hard_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    report = _BENCHMARK_SCRIPT.run_phase9_benchmark()
+    report = run_phase9_benchmark_subprocess()
     protocol = _BENCHMARK_SCRIPT.benchmark_protocol()
     budget = StreamPerformanceBudget()
     workloads = cast(list[dict[str, object]], report["workloads"])
 
     assert report["suite"] == "reasoning-summary-phase9-performance"
-    assert report["protocol"] == asdict(protocol)
+    assert report["protocol"] == loads(dumps(asdict(protocol)))
     hard_gate = _BENCHMARK_SCRIPT.evaluate_phase9_hard_gate(report)
     assert hard_gate.passed
     assert hard_gate.failure_reasons == ()
-    assert report["hard_gate"] == asdict(hard_gate)
+    assert report["hard_gate"] == loads(dumps(asdict(hard_gate)))
     assert len(workloads) == 2
     assert [workload["delta_count"] for workload in workloads] == [4096, 8192]
     for workload in workloads:

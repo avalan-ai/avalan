@@ -120,13 +120,13 @@ def _final_gate_catalog(module: ModuleType) -> dict[str, object]:
 
 def test_full_quality_and_coverage_gate() -> None:
     """Assert the real hard gate and exact release catalogs."""
-    report = _BENCHMARK.run_phase9_benchmark()
+    report = _SCRIPT_LOADER.run_phase9_benchmark_subprocess()
     hard_gate = _BENCHMARK.evaluate_phase9_hard_gate(report)
     assert hard_gate.passed
     assert hard_gate.failure_reasons == ()
     assert report["hard_gate"] == {
         "passed": True,
-        "failure_reasons": (),
+        "failure_reasons": [],
     }
     metrics = cast(dict[str, object], report["phase9_metrics"])
     heartbeat = cast(dict[str, object], metrics["heartbeat"])
