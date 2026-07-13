@@ -9,7 +9,7 @@ from json import dumps
 from logging import getLogger
 from subprocess import run as run_process
 from sys import executable, modules
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -50,7 +50,6 @@ from avalan.model.nlp.text.vendor.hyperbolic import (
     HyperbolicClient,
     HyperbolicModel,
 )
-from avalan.model.nlp.text.vendor.litellm import LiteLLMClient, LiteLLMModel
 from avalan.model.nlp.text.vendor.ollama import OllamaClient, OllamaModel
 from avalan.model.nlp.text.vendor.openai import OpenAIClient, OpenAIModel
 from avalan.model.nlp.text.vendor.openrouter import (
@@ -66,6 +65,32 @@ from avalan.model.reasoning import (
 )
 from avalan.model.stream import StreamRetentionPolicy
 from avalan.server.entities import ResponsesRequest
+
+
+def _load_litellm_vendor_module() -> ModuleType:
+    module_name = "avalan.model.nlp.text.vendor.litellm"
+    try:
+        return import_module(module_name)
+    except ModuleNotFoundError as error:
+        if error.name != "litellm":
+            raise
+
+    stub = ModuleType("litellm")
+    setattr(stub, "acompletion", AsyncMock())
+    previous_sdk = modules.get("litellm")
+    modules["litellm"] = stub
+    try:
+        return import_module(module_name)
+    finally:
+        if previous_sdk is None:
+            modules.pop("litellm", None)
+        else:
+            modules["litellm"] = previous_sdk
+
+
+_LITELLM_VENDOR_MODULE = _load_litellm_vendor_module()
+LiteLLMClient = cast(Any, getattr(_LITELLM_VENDOR_MODULE, "LiteLLMClient"))
+LiteLLMModel = cast(Any, getattr(_LITELLM_VENDOR_MODULE, "LiteLLMModel"))
 
 
 def _initialize_openai_client_state(client: OpenAIClient) -> None:
