@@ -252,6 +252,7 @@ class CliStreamDisplayFlagsSnapshot:
     display_time_to_n_token: int | None
     display_reasoning_time: bool
     display_reasoning: bool
+    display_reasoning_raw: bool
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -514,6 +515,7 @@ def display_flags_from_config(
         display_time_to_n_token=config.display_time_to_n_token,
         display_reasoning_time=config.display_reasoning_time,
         display_reasoning=config.display_reasoning,
+        display_reasoning_raw=config.display_reasoning_raw,
     )
 
 

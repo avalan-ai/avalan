@@ -201,6 +201,11 @@ class CliInitTestCase(TestCase):
         self.assertIn("--stats", model_run_help)
         self.assertIn("--display-tools", model_run_help)
         self.assertIn("--display-tools-events", model_run_help)
+        self.assertIn("--display-reasoning-raw", model_run_help)
+        self.assertIn(
+            "requires --display-reasoning",
+            model_run_help,
+        )
         self.assertIn("Show tool lifecycle details", model_run_help)
         self.assertNotIn(
             "If --display-events is specified and there's an orchestrator",

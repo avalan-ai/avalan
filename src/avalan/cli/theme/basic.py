@@ -893,7 +893,11 @@ def _basic_reasoning_activity_entries(
             _BasicActivityEntry(
                 sequence=block.first_sequence,
                 fallback_order=block_index,
-                renderable=_basic_reasoning_markdown(block.text),
+                renderable=(
+                    _basic_reasoning_source(block.text)
+                    if request.snapshot.display.display_reasoning_raw
+                    else _basic_reasoning_markdown(block.text)
+                ),
             )
         )
     return tuple(entries)
@@ -935,6 +939,15 @@ def _basic_reasoning_markdown(text: str) -> Markdown:
     assert isinstance(text, str)
     assert text
     return Markdown(
+        f"{_BASIC_REASONING_ICON} {text}",
+        style=_BASIC_REASONING_STYLE,
+    )
+
+
+def _basic_reasoning_source(text: str) -> Text:
+    assert isinstance(text, str)
+    assert text
+    return Text(
         f"{_BASIC_REASONING_ICON} {text}",
         style=_BASIC_REASONING_STYLE,
     )

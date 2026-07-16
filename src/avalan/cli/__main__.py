@@ -1302,6 +1302,14 @@ class CLI:
             help="Display streamed reasoning text in the live response panel",
         )
         model_inference_display_parser.add_argument(
+            "--display-reasoning-raw",
+            action="store_true",
+            help=(
+                "Display Basic-theme reasoning as literal Markdown source "
+                "(requires --display-reasoning)"
+            ),
+        )
+        model_inference_display_parser.add_argument(
             "--display-tokens",
             type=int,
             nargs="?",
