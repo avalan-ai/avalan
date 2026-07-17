@@ -1,19 +1,22 @@
 from asyncio import CancelledError, create_task, sleep
 from asyncio import Event as AsyncEvent
 from datetime import datetime, timezone
+from io import StringIO
 from threading import Event
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import MagicMock, call, patch
 from uuid import uuid4
 
-from rich.console import Group
+from rich.console import Console, Group
 from rich.spinner import Spinner
 
 from avalan.cli.display import CliStreamDisplayConfig
 from avalan.cli.stream_coordinator import (
     CliStreamCoordinator,
     _default_live_factory,
+    _TailOverflowLive,
+    _TailOverflowRenderable,
     stream_recording_filename,
 )
 from avalan.cli.stream_presenter import (
@@ -1368,7 +1371,128 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
 
 
 class CliStreamCoordinatorHelperTestCase(TestCase):
-    def test_default_live_factory_delegates_to_rich_live(self) -> None:
+    def test_tail_overflow_renderable_keeps_latest_rows(self) -> None:
+        output = StringIO()
+        console = Console(
+            file=output,
+            force_terminal=False,
+            width=20,
+            height=3,
+        )
+
+        console.print(
+            _TailOverflowRenderable(
+                Group("line 0", "line 1", "line 2", "line 3")
+            )
+        )
+
+        self.assertEqual(
+            [line.strip() for line in output.getvalue().splitlines()],
+            ["...", "line 2", "line 3"],
+        )
+
+    def test_tail_overflow_renderable_uses_latest_row_at_height_one(
+        self,
+    ) -> None:
+        output = StringIO()
+        console = Console(
+            file=output,
+            force_terminal=False,
+            width=20,
+            height=1,
+        )
+
+        console.print(_TailOverflowRenderable(Group("old", "latest")))
+
+        self.assertEqual(output.getvalue().strip(), "latest")
+
+    def test_tail_overflow_renderable_preserves_short_output(self) -> None:
+        output = StringIO()
+        console = Console(
+            file=output,
+            force_terminal=False,
+            width=20,
+            height=3,
+        )
+
+        console.print(_TailOverflowRenderable(Group("first", "second")))
+
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            ["first", "second"],
+        )
+        self.assertEqual(
+            str(_TailOverflowRenderable(Group("first", "second"))),
+            "first\nsecond",
+        )
+        self.assertEqual(
+            _TailOverflowRenderable(Group("first", "second")).renderables,
+            ["first", "second"],
+        )
+
+    def test_tail_overflow_renderable_restores_complete_output(self) -> None:
+        output = StringIO()
+        console = Console(
+            file=output,
+            force_terminal=False,
+            width=20,
+            height=2,
+        )
+        renderable = _TailOverflowRenderable(
+            Group("line 0", "line 1", "line 2")
+        )
+
+        renderable.show_all()
+        console.print(renderable)
+
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            ["line 0", "line 1", "line 2"],
+        )
+
+    def test_tail_overflow_live_delegates_and_restores_full_render(
+        self,
+    ) -> None:
+        delegate = _FakeLive()
+        full_render = Group("old", "latest")
+        live = _TailOverflowLive(delegate, None)
+
+        self.assertIs(live.__enter__(), live)
+        live.auto_refresh = False
+        live.update(full_render)
+        live.refresh()
+        result = live.__exit__(None, None, None)
+
+        self.assertFalse(result)
+        self.assertFalse(live.auto_refresh)
+        self.assertEqual(delegate.entered, 1)
+        self.assertEqual(delegate.exited, 1)
+        self.assertEqual(delegate.refreshed, 1)
+        self.assertIsInstance(
+            delegate.updates[0],
+            _TailOverflowRenderable,
+        )
+        self.assertEqual(len(delegate.updates), 1)
+        output = StringIO()
+        Console(
+            file=output,
+            force_terminal=False,
+            width=20,
+            height=1,
+        ).print(delegate.updates[0])
+        self.assertEqual(output.getvalue().splitlines(), ["old", "latest"])
+
+    def test_tail_overflow_live_without_render_exits_cleanly(self) -> None:
+        delegate = _FakeLive()
+        live = _TailOverflowLive(delegate, None)
+
+        result = live.__exit__(None, None, None)
+
+        self.assertFalse(result)
+        self.assertEqual(delegate.updates, [])
+        self.assertEqual(delegate.exited, 1)
+
+    def test_default_live_factory_wraps_rich_live(self) -> None:
         console = MagicMock()
         live = MagicMock()
         with patch(
@@ -1381,12 +1505,36 @@ class CliStreamCoordinatorHelperTestCase(TestCase):
                 screen=True,
             )
 
-        self.assertIs(result, live)
+        self.assertIsInstance(result, _TailOverflowLive)
+        initial_renderable = live_type.call_args.args[0]
+        self.assertIsInstance(initial_renderable, _TailOverflowRenderable)
+        self.assertEqual(initial_renderable.renderable, "frame")
         live_type.assert_called_once_with(
-            "frame",
+            initial_renderable,
             console=console,
             refresh_per_second=3,
             screen=True,
+        )
+
+    def test_default_live_factory_preserves_empty_initial_render(self) -> None:
+        console = MagicMock()
+        live = MagicMock()
+        with patch(
+            "avalan.cli.stream_coordinator.Live", return_value=live
+        ) as live_type:
+            result = _default_live_factory(
+                None,
+                console=console,
+                refresh_per_second=3,
+                screen=False,
+            )
+
+        self.assertIsInstance(result, _TailOverflowLive)
+        live_type.assert_called_once_with(
+            None,
+            console=console,
+            refresh_per_second=3,
+            screen=False,
         )
 
     def test_stream_recording_filename_uses_utc_timestamp(self) -> None:
