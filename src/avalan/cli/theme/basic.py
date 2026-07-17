@@ -42,6 +42,7 @@ from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
 from rich.spinner import Spinner
+from rich.table import Table
 from rich.text import Text
 
 _BASIC_SUMMARY_LIMIT = 160
@@ -51,6 +52,14 @@ _BASIC_TOOL_DYNAMIC_MAX_SECONDS = 3600.0
 _BASIC_TOOL_RUNNING_STYLE = "cyan"
 _BASIC_REASONING_ICON = "💭"
 _BASIC_REASONING_STYLE = "dim"
+_BASIC_REASONING_TITLE_PATTERN = compile(r"\*\*([^*\r\n]+)\*\*")
+_BASIC_REASONING_PLAIN_TITLE_PATTERN = compile(r"(?:[^\W_]|[ .,/()'!?+\-])+")
+_BASIC_REASONING_BLOCK_LINE_PATTERN = compile(
+    r"(?:#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]|$)|"
+    r"\d{1,9}[.)](?:[ \t]|$)|`{3,}|~{3,}|<|\[[^\]]+\]:)"
+)
+_BASIC_REASONING_RULE_LINE_PATTERN = compile(r"[-_*= \t]+")
+_BASIC_REASONING_FENCE_PREFIXES = ("```", "~~~")
 
 if TYPE_CHECKING:
     from ...agent.orchestrator import Orchestrator
@@ -219,6 +228,12 @@ class _BasicToolLineEntry:
 class _BasicReasoningActivityBlock:
     first_sequence: int | None
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _BasicReasoningPair:
+    title: str
+    description: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -896,7 +911,12 @@ def _basic_reasoning_activity_entries(
                 renderable=(
                     _basic_reasoning_source(block.text)
                     if request.snapshot.display.display_reasoning_raw
-                    else _basic_reasoning_markdown(block.text)
+                    else _basic_reasoning_markdown(
+                        block.text,
+                        simple=(
+                            request.snapshot.display.display_reasoning_simple
+                        ),
+                    )
                 ),
             )
         )
@@ -935,13 +955,162 @@ def _basic_reasoning_activity_blocks(
     return tuple(blocks)
 
 
-def _basic_reasoning_markdown(text: str) -> Markdown:
+def _basic_reasoning_markdown(
+    text: str,
+    *,
+    simple: bool = False,
+) -> Markdown | Table:
     assert isinstance(text, str)
     assert text
+    assert isinstance(simple, bool)
+    pairs = None if simple else _basic_reasoning_pairs(text)
+    if pairs is None:
+        markup = f"{_BASIC_REASONING_ICON} {text}"
+    elif len(pairs) > 1:
+        return _basic_reasoning_pair_table(pairs)
+    else:
+        compacted = _basic_reasoning_pair_markdown(pairs[0])
+        markup = f"{_BASIC_REASONING_ICON} {compacted}"
     return Markdown(
-        f"{_BASIC_REASONING_ICON} {text}",
+        markup,
         style=_BASIC_REASONING_STYLE,
     )
+
+
+def _basic_reasoning_pairs(
+    text: str,
+) -> tuple[_BasicReasoningPair, ...] | None:
+    assert isinstance(text, str)
+    assert text
+    normalized = text.replace("\r\n", "\n")
+    if "\r" in normalized:
+        return None
+    lines = [
+        "" if not line.strip() else line for line in normalized.split("\n")
+    ]
+    if any(
+        line.lstrip().startswith(_BASIC_REASONING_FENCE_PREFIXES)
+        for line in lines
+    ):
+        return None
+
+    pairs: list[_BasicReasoningPair] = []
+    pair_start = 0
+    while pair_start < len(lines):
+        title = _basic_reasoning_title(lines[pair_start])
+        if (
+            title is None
+            or pair_start + 1 >= len(lines)
+            or lines[pair_start + 1]
+        ):
+            return None
+
+        description_start = pair_start + 2
+        next_pair_start: int | None = None
+        for index in range(description_start, len(lines)):
+            at_block_boundary = (
+                index == description_start or not lines[index - 1]
+            )
+            if not at_block_boundary or not lines[index].startswith("*"):
+                continue
+            next_title = _basic_reasoning_title(lines[index])
+            if (
+                next_title is None
+                or index + 1 >= len(lines)
+                or lines[index + 1]
+            ):
+                return None
+            next_pair_start = index
+            break
+
+        description_end = (
+            next_pair_start if next_pair_start is not None else len(lines)
+        )
+        description_lines = list(lines[description_start:description_end])
+        while description_lines and not description_lines[-1]:
+            description_lines.pop()
+        if not description_lines or not any(
+            line.strip() for line in description_lines
+        ):
+            return None
+        if not _basic_reasoning_description_is_safe(description_lines):
+            return None
+        pairs.append(
+            _BasicReasoningPair(
+                title=title,
+                description="\n".join(description_lines),
+            )
+        )
+        if next_pair_start is None:
+            break
+        pair_start = next_pair_start
+
+    return tuple(pairs)
+
+
+def _basic_reasoning_title(line: str) -> str | None:
+    match = _BASIC_REASONING_TITLE_PATTERN.fullmatch(line)
+    if match is None:
+        return None
+    title = match.group(1)
+    if (
+        title != title.strip()
+        or title.endswith(":")
+        or _BASIC_REASONING_PLAIN_TITLE_PATTERN.fullmatch(title) is None
+    ):
+        return None
+    return title
+
+
+def _basic_reasoning_description_is_safe(lines: Sequence[str]) -> bool:
+    for line in lines:
+        if not line:
+            continue
+        if (
+            line[0].isspace()
+            or line.startswith("[")
+            or "|" in line
+            or _BASIC_REASONING_BLOCK_LINE_PATTERN.match(line) is not None
+            or _BASIC_REASONING_RULE_LINE_PATTERN.fullmatch(line) is not None
+        ):
+            return False
+    return True
+
+
+def _basic_reasoning_pair_table(
+    pairs: Sequence[_BasicReasoningPair],
+) -> Table:
+    assert pairs
+    assert len(pairs) > 1
+    table = Table.grid(padding=(0, 1))
+    table.add_column(no_wrap=True, vertical="top")
+    table.add_column(no_wrap=True, vertical="top")
+    table.add_column(ratio=1)
+    for index, pair in enumerate(pairs):
+        table.add_row(
+            Text(
+                _BASIC_REASONING_ICON if not index else "",
+                style=_BASIC_REASONING_STYLE,
+            ),
+            Text("•", style=_BASIC_REASONING_STYLE),
+            Markdown(
+                _basic_reasoning_pair_markdown(pair),
+                style=_BASIC_REASONING_STYLE,
+            ),
+        )
+    return table
+
+
+def _basic_reasoning_pair_markdown(
+    pair: _BasicReasoningPair,
+) -> str:
+    prefix = f"**{pair.title}**:"
+    description_lines = pair.description.split("\n")
+    first_line = description_lines[0]
+    if len(description_lines) == 1:
+        return f"{prefix} {first_line}"
+    remainder = "\n".join(description_lines[1:])
+    return f"{prefix} {first_line}\n{remainder}"
 
 
 def _basic_reasoning_source(text: str) -> Text:

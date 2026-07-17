@@ -1452,6 +1452,9 @@ def _legacy_stream_display_config(
         display_reasoning_raw=bool(
             getattr(args, "display_reasoning_raw", False)
         ),
+        display_reasoning_simple=bool(
+            getattr(args, "display_reasoning_simple", False)
+        ),
     )
 
 

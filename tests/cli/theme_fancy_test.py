@@ -1668,6 +1668,42 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
             with self.subTest(index=index):
                 self.assertIn(f"reasoning-line-{index}", output)
 
+    async def test_reasoning_simple_flag_does_not_affect_fancy_theme(
+        self,
+    ) -> None:
+        outputs: list[str] = []
+        for simple in (False, True):
+            config = _stream_config(
+                stats=False,
+                display_tools=False,
+                display_events=False,
+                display_reasoning=True,
+                display_reasoning_simple=simple,
+            )
+            builder = CliStreamSnapshotBuilder(config)
+            builder.append_reasoning_text(
+                "**Plan**\n\nInspect the implementation."
+            )
+            presenter = FancyStreamPresenter(
+                self.theme,
+                getLogger(__name__),
+            )
+
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+            reasoning_frame = next(
+                item
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+                and item.role == "reasoning"
+            )
+            outputs.append(_frame_text(reasoning_frame))
+
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertIn("**Plan**", outputs[0])
+
     async def test_tool_request_height_truncates_to_legacy_content_budget(
         self,
     ) -> None:

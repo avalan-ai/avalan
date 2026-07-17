@@ -29,6 +29,7 @@ def _args(**overrides: object) -> Namespace:
         "skip_display_reasoning_time": False,
         "display_reasoning": False,
         "display_reasoning_raw": False,
+        "display_reasoning_simple": False,
     }
     values.update(overrides)
     return Namespace(**values)
@@ -49,6 +50,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     "display_tools_events": None,
                     "display_reasoning": False,
                     "display_reasoning_raw": False,
+                    "display_reasoning_simple": False,
                     "diagnostic_channel": "none",
                     "answer_stdout_only": False,
                 },
@@ -71,6 +73,18 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 {
                     "display_reasoning": False,
                     "display_reasoning_raw": True,
+                    "show_reasoning": False,
+                    "diagnostic_channel": "none",
+                    "answer_stdout_only": False,
+                },
+            ),
+            (
+                "display-reasoning-simple-without-display-reasoning",
+                _args(display_reasoning_simple=True),
+                True,
+                {
+                    "display_reasoning": False,
+                    "display_reasoning_simple": True,
                     "show_reasoning": False,
                     "diagnostic_channel": "none",
                     "answer_stdout_only": False,
@@ -189,6 +203,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     display_time_to_n_token=256,
                     display_reasoning=True,
                     display_reasoning_raw=True,
+                    display_reasoning_simple=True,
                 ),
                 True,
                 {
@@ -204,6 +219,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     "display_reasoning_time": False,
                     "display_reasoning": False,
                     "display_reasoning_raw": False,
+                    "display_reasoning_simple": False,
                     "show_stats": False,
                     "show_tools": False,
                     "show_events": False,
@@ -320,6 +336,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
             ("display_pause", -1),
             ("display_time_to_n_token", 0),
             ("display_reasoning_raw", "yes"),
+            ("display_reasoning_simple", "yes"),
         ]
 
         for attribute, value in cases:
@@ -341,6 +358,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 "--display-tools-events",
                 "0",
                 "--display-reasoning-raw",
+                "--display-reasoning-simple",
             ]
         )
         agent_args = cli._parser.parse_args(
@@ -354,6 +372,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 "--display-tools-events",
                 "0",
                 "--display-reasoning-raw",
+                "--display-reasoning-simple",
             ]
         )
 
@@ -363,6 +382,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
             self.assertTrue(parsed.display_events)
             self.assertEqual(parsed.display_tools_events, 0)
             self.assertTrue(parsed.display_reasoning_raw)
+            self.assertTrue(parsed.display_reasoning_simple)
 
     def test_model_and_agent_run_default_to_unbounded_tool_history(
         self,
@@ -374,6 +394,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
         for parsed in (model_args, agent_args):
             self.assertIsNone(parsed.display_tools_events)
             self.assertFalse(parsed.display_reasoning_raw)
+            self.assertFalse(parsed.display_reasoning_simple)
             config = cli_stream_display_config(
                 parsed,
                 refresh_per_second=1,

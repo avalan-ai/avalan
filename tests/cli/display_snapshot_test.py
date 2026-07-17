@@ -210,6 +210,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
             display_time_to_n_token=32,
             display_reasoning=True,
             display_reasoning_raw=True,
+            display_reasoning_simple=True,
         )
         builder = CliStreamSnapshotBuilder(config)
         arguments = {"password": "secret", "query": "weather"}
@@ -347,6 +348,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertTrue(snapshot.display.record_enabled)
         self.assertTrue(snapshot.display.show_timing)
         self.assertTrue(snapshot.display.display_reasoning_raw)
+        self.assertTrue(snapshot.display.display_reasoning_simple)
         self.assertEqual(snapshot.token_counts.input_tokens, 3)
         self.assertEqual(snapshot.token_counts.output_tokens, 4)
         self.assertEqual(snapshot.token_counts.reasoning_usage_tokens, 1)

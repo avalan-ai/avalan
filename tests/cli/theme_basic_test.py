@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.spinner import Spinner
+from rich.table import Table
 from rich.text import Text
 
 from avalan.cli.commands import cache as cache_cmds
@@ -37,6 +38,7 @@ from avalan.cli.theme.basic import (
     _basic_has_executed_tool_frame,
     _basic_json_tool_answer,
     _basic_open_harmony_pattern,
+    _basic_reasoning_markdown,
     _basic_reasoning_renderable,
     _basic_tool_elapsed_text,
     _basic_tool_result_summary,
@@ -182,6 +184,11 @@ def _render_text(renderable: object) -> str:
     return output.getvalue()
 
 
+def _markdown_markup(renderable: object) -> str:
+    assert isinstance(renderable, Markdown)
+    return renderable.markup
+
+
 def _visible_text(items: list[object]) -> str:
     parts: list[str] = []
     for item in items:
@@ -193,6 +200,255 @@ def _visible_text(items: list[object]) -> str:
 
 
 class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
+    def test_reasoning_markdown_compacts_one_title_description_pair(
+        self,
+    ) -> None:
+        markdown = _basic_reasoning_markdown(
+            "**Exploring codebase**\n\n"
+            "Find the CLI flag and trace its configuration."
+        )
+
+        self.assertEqual(
+            _markdown_markup(markdown),
+            "💭 **Exploring codebase**: "
+            "Find the CLI flag and trace its configuration.",
+        )
+        output = _render_text(markdown)
+        self.assertIn(
+            "💭 Exploring codebase: Find the CLI flag and trace its",
+            output,
+        )
+        self.assertNotIn("**", output)
+        multiline = _basic_reasoning_markdown(
+            "**Reviewing result**\n\n"
+            "Check the first paragraph.\n\n"
+            "Keep the second paragraph."
+        )
+        self.assertEqual(
+            _markdown_markup(multiline),
+            "💭 **Reviewing result**: Check the first paragraph.\n\n"
+            "Keep the second paragraph.",
+        )
+
+    def test_reasoning_markdown_compacts_pairs_as_real_bullets(
+        self,
+    ) -> None:
+        renderable = _basic_reasoning_markdown(
+            "**Exploring paths**\n\n"
+            "Inspect the CLI definition.\n\n"
+            "Trace the normalized configuration.\n\n"
+            "Keep later paragraphs associated.\n\n"
+            "**Analyzing flow**\n\n"
+            "Follow the snapshot into the Basic renderer."
+        )
+
+        self.assertIsInstance(renderable, Table)
+        output = _render_text(renderable)
+        self.assertEqual(output.count("💭"), 1)
+        self.assertEqual(output.count("•"), 2)
+        self.assertTrue(output.startswith("💭 • Exploring paths:"))
+        self.assertNotIn("💭\n", output)
+        self.assertIn("Exploring paths: Inspect the CLI definition.", output)
+        self.assertIn(
+            "Analyzing flow: Follow the snapshot into the Basic renderer.",
+            output,
+        )
+
+    def test_reasoning_markdown_leaves_block_descriptions_unchanged(
+        self,
+    ) -> None:
+        cases = (
+            "**Checks**\n\n- Validate input.\n- Render output.",
+            "**Checks**\n\n  - Validate input.\n  - Render output.",
+            "**Divider**\n\n---",
+            "**Setext**\n\nHeading\n---",
+            "**Table**\n\nName | State\n--- | ---\nA | ready",
+            "**HTML**\n\n<section>Details</section>",
+        )
+
+        for source in cases:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    _markdown_markup(_basic_reasoning_markdown(source)),
+                    f"💭 {source}",
+                )
+
+        indented_list = _basic_reasoning_markdown(cases[1])
+        output = _render_text(indented_list)
+        self.assertEqual(output.count("•"), 2)
+        self.assertIn("Validate input.", output)
+        self.assertIn("Render output.", output)
+
+    def test_reasoning_markdown_supports_whitespace_only_blank_lines(
+        self,
+    ) -> None:
+        markdown = _basic_reasoning_markdown(
+            "**Plan**\n \t \nInspect.\n\t\n**Verify**\n  \nConfirm the result."
+        )
+
+        self.assertIsInstance(markdown, Table)
+        output = _render_text(markdown)
+        self.assertTrue(output.startswith("💭 • Plan: Inspect."))
+        self.assertIn("• Verify: Confirm the result.", output)
+
+    def test_reasoning_markdown_does_not_duplicate_title_colon(self) -> None:
+        source = "**Plan:**\n\nInspect."
+        markdown = _basic_reasoning_markdown(source)
+
+        self.assertEqual(_markdown_markup(markdown), f"💭 {source}")
+        output = _render_text(markdown)
+        self.assertIn("Plan:", output)
+        self.assertNotIn("Plan::", output)
+
+    def test_reasoning_markdown_rejects_markup_titles_ending_in_colon(
+        self,
+    ) -> None:
+        sources = (
+            "**[Plan:](https://example.com)**\n\nInspect.",
+            "**`Plan:`**\n\nInspect.",
+            "**Plan&#58;**\n\nInspect.",
+            "**Plan:\u200b**\n\nInspect.",
+            "**Plan:\u2060**\n\nInspect.",
+            "**Plan:\ufe0f**\n\nInspect.",
+        )
+
+        for source in sources:
+            with self.subTest(source=source):
+                markdown = _basic_reasoning_markdown(source)
+                self.assertEqual(_markdown_markup(markdown), f"💭 {source}")
+                output = _render_text(markdown)
+                self.assertIn("Plan:", output)
+                self.assertNotIn("Plan::", output)
+
+        plain_cli_title = _basic_reasoning_markdown(
+            "**Tracing --tool-skills-file**\n\nInspect the CLI definition."
+        )
+        self.assertEqual(
+            _markdown_markup(plain_cli_title),
+            "💭 **Tracing --tool-skills-file**: Inspect the CLI definition.",
+        )
+
+    def test_reasoning_markdown_preserves_escaped_reference_definition(
+        self,
+    ) -> None:
+        source = (
+            "**References**\n\n[foo\\]]: https://example.com\n\nOpen [foo\\]]."
+        )
+        markdown = _basic_reasoning_markdown(source)
+
+        self.assertEqual(_markdown_markup(markdown), f"💭 {source}")
+        output = _render_text(markdown)
+        self.assertIn("Open foo].", output)
+        self.assertNotIn("https://example.com", output)
+
+    def test_reasoning_markdown_leaves_nonmatching_content_unchanged(
+        self,
+    ) -> None:
+        cases = (
+            "# Vendor heading\n\nDescription.",
+            "Introduction.\n\n**Title**\n\nDescription.",
+            "**Title**\nDescription.",
+            "** Title **\n\nDescription.",
+            "**Title** \n\nDescription.",
+            "**Title**\n\n",
+            "**Title**\n\nDescription.\n\n**Next**",
+            "**Title**\n\nDescription.\n\n**Next",
+            "**Title**\r\n\rDescription.",
+            "**Title**\n\n```text\n**Not a pair**\n\nexample\n```",
+        )
+
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    _markdown_markup(_basic_reasoning_markdown(text)),
+                    f"💭 {text}",
+                )
+
+    def test_reasoning_markdown_waits_for_complete_streamed_pairs(
+        self,
+    ) -> None:
+        progressive = (
+            ("**Plan**", "💭 **Plan**"),
+            ("**Plan**\n\n", "💭 **Plan**\n\n"),
+            ("**Plan**\n\nInspect.", "💭 **Plan**: Inspect."),
+            (
+                "**Plan**\n\nInspect.\n\n*",
+                "💭 **Plan**\n\nInspect.\n\n*",
+            ),
+            (
+                "**Plan**\n\nInspect.\n\n**Continue**",
+                "💭 **Plan**\n\nInspect.\n\n**Continue**",
+            ),
+            (
+                "**Plan**\n\nInspect.\n\n**Continue**\n\n",
+                "💭 **Plan**\n\nInspect.\n\n**Continue**\n\n",
+            ),
+        )
+
+        for text, expected in progressive:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    _markdown_markup(_basic_reasoning_markdown(text)),
+                    expected,
+                )
+
+        complete = _basic_reasoning_markdown(
+            "**Plan**\n\nInspect.\n\n**Continue**\n\nVerify."
+        )
+        self.assertIsInstance(complete, Table)
+        output = _render_text(complete)
+        self.assertTrue(output.startswith("💭 • Plan: Inspect."))
+        self.assertIn("• Continue: Verify.", output)
+
+    async def test_reasoning_simple_keeps_markdown_without_compaction(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_reasoning=True,
+            display_reasoning_simple=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("**Plan**\n\nInspect the files.")
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        frame = _frames(items)[0]
+        self.assertIsInstance(frame.renderable, Markdown)
+        markdown = cast(Markdown, frame.renderable)
+        self.assertEqual(
+            _markdown_markup(markdown),
+            "💭 **Plan**\n\nInspect the files.",
+        )
+        self.assertIn("Plan", _render_text(markdown))
+        self.assertNotIn("**", _render_text(markdown))
+
+    async def test_reasoning_raw_takes_precedence_over_simple(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_reasoning=True,
+            display_reasoning_raw=True,
+            display_reasoning_simple=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        source = "**Plan**\n\nInspect the files."
+        builder.append_reasoning_text(source)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        frame = _frames(items)[0]
+        self.assertIsInstance(frame.renderable, Text)
+        rendered = cast(Text, frame.renderable)
+        self.assertEqual(rendered.plain, f"💭 {source}")
+
     async def test_reasoning_live_frame_is_opt_in_bounded_and_subtle(
         self,
     ) -> None:

@@ -253,6 +253,7 @@ class CliStreamDisplayFlagsSnapshot:
     display_reasoning_time: bool
     display_reasoning: bool
     display_reasoning_raw: bool
+    display_reasoning_simple: bool
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -516,6 +517,7 @@ def display_flags_from_config(
         display_reasoning_time=config.display_reasoning_time,
         display_reasoning=config.display_reasoning,
         display_reasoning_raw=config.display_reasoning_raw,
+        display_reasoning_simple=config.display_reasoning_simple,
     )
 
 

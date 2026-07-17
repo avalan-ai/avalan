@@ -96,9 +96,15 @@ does not cancel a provider reasoning-summary request; it only prevents that
 private diagnostic from being rendered or recorded.
 
 With `--theme basic --display-reasoning`, streamed reasoning renders as
-Markdown by default. Add `--display-reasoning-raw` to show the literal Markdown
-source instead. This formatting flag does not enable reasoning display by
-itself and has no effect on other themes.
+Markdown. When an entire reasoning block consists only of conservative
+plain-text `**title**` lines followed by blank-line-separated plain
+paragraphs, the Basic theme compacts one pair to `**title**: description` and
+multiple pairs to a Markdown list. Block-structured or ambiguous Markdown
+keeps its ordinary rendering. Add `--display-reasoning-simple` to disable this
+compaction, or `--display-reasoning-raw` to show the literal Markdown source.
+Raw display takes precedence when both formatting flags are present. Neither
+formatting flag enables reasoning display by itself, and neither affects other
+themes.
 
 ![Running the CLI in spanish](https://avalan.ai/images/spanish_translation.png)
 
@@ -783,7 +789,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
                         [--skip-display-reasoning-time] [--display-reasoning]
-                        [--display-reasoning-raw]
+                        [--display-reasoning-raw] [--display-reasoning-simple]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
                         [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
@@ -990,6 +996,11 @@ options:
   --display-reasoning-raw
                         Display Basic-theme reasoning as literal Markdown
                         source (requires --display-reasoning)
+  --display-reasoning-simple
+                        Display Basic-theme reasoning as ordinary Markdown
+                        without conservative plain title-description
+                        compaction (requires --display-reasoning; --display-
+                        reasoning-raw takes precedence)
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a
                         time
@@ -3506,7 +3517,7 @@ plicate}]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]] [--skip-display-reasoning-time]
-                        [--display-reasoning] [--display-reasoning-raw]
+                        [--display-reasoning] [--display-reasoning-raw] [--display-reasoning-simple]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
                         [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
@@ -3621,6 +3632,9 @@ plicate}
   --display-reasoning   Display streamed reasoning text in the live response panel
   --display-reasoning-raw
                         Display Basic-theme reasoning as literal Markdown source (requires --display-reasoning)
+  --display-reasoning-simple
+                        Display Basic-theme reasoning as ordinary Markdown without conservative plain title-description
+                        compaction (requires --display-reasoning; --display-reasoning-raw takes precedence)
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a time
   --display-tools       Show tool lifecycle details for agent or orchestrator runs.

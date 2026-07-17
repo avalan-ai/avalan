@@ -1310,6 +1310,16 @@ class CLI:
             ),
         )
         model_inference_display_parser.add_argument(
+            "--display-reasoning-simple",
+            action="store_true",
+            help=(
+                "Display Basic-theme reasoning as ordinary Markdown without "
+                "conservative plain title-description compaction (requires "
+                "--display-reasoning; --display-reasoning-raw takes "
+                "precedence)"
+            ),
+        )
+        model_inference_display_parser.add_argument(
             "--display-tokens",
             type=int,
             nargs="?",
