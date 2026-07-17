@@ -95,6 +95,11 @@ suppresses diagnostics and recording, and leaves answer-only stdout. Quiet
 does not cancel a provider reasoning-summary request; it only prevents that
 private diagnostic from being rendered or recorded.
 
+With `--theme basic --display-reasoning`, streamed reasoning renders as
+Markdown by default. Add `--display-reasoning-raw` to show the literal Markdown
+source instead. This formatting flag does not enable reasoning display by
+itself and has no effect on other themes.
+
 ![Running the CLI in spanish](https://avalan.ai/images/spanish_translation.png)
 
 You'll need your Huggingface access token exported as `HF_TOKEN`.
@@ -778,6 +783,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
                         [--skip-display-reasoning-time] [--display-reasoning]
+                        [--display-reasoning-raw]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
                         [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
@@ -981,6 +987,9 @@ options:
   --skip-display-reasoning-time
                         Don't display total reasoning time
   --display-reasoning   Display streamed reasoning text in the live response panel
+  --display-reasoning-raw
+                        Display Basic-theme reasoning as literal Markdown
+                        source (requires --display-reasoning)
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a
                         time
@@ -3497,7 +3506,8 @@ plicate}]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]] [--skip-display-reasoning-time]
-                        [--display-reasoning] [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
+                        [--display-reasoning] [--display-reasoning-raw]
+                        [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
                         [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
                         [--attention {eager,flash_attention_2,flex_attention,sdpa}] [--output-hidden-states] [--path PATH]
@@ -3609,6 +3619,8 @@ plicate}
   --skip-display-reasoning-time
                         Don't display total reasoning time
   --display-reasoning   Display streamed reasoning text in the live response panel
+  --display-reasoning-raw
+                        Display Basic-theme reasoning as literal Markdown source (requires --display-reasoning)
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a time
   --display-tools       Show tool lifecycle details for agent or orchestrator runs.

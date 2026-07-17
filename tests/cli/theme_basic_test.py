@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.spinner import Spinner
+from rich.text import Text
 
 from avalan.cli.commands import cache as cache_cmds
 from avalan.cli.commands import model as model_cmds
@@ -247,6 +248,76 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("\x1b[2m", ansi)
         for background_escape in ("\x1b[4", "\x1b[48;", "\x1b[10"):
             self.assertNotIn(background_escape, ansi)
+
+    async def test_live_reasoning_raw_preserves_markdown_source_between_tools(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_reasoning=True,
+            display_reasoning_raw=True,
+            display_tools=True,
+            display_tools_events=8,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text(
+            "**inspect** `[literal]`",
+            sequence=1,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="search-call",
+            name="search",
+            status="result",
+            result="found",
+            arguments_count=1,
+            sequence=2,
+        )
+        builder.append_reasoning_text(
+            "## Continue with [docs](https://example.com)",
+            sequence=3,
+            representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        self.assertIsInstance(frames[0].renderable, Group)
+        activity = cast(Group, frames[0].renderable)
+        reasoning_sources = tuple(
+            renderable
+            for renderable in activity.renderables
+            if isinstance(renderable, Text)
+        )
+        self.assertEqual(len(reasoning_sources), 2)
+        self.assertFalse(
+            any(
+                isinstance(renderable, Markdown)
+                for renderable in activity.renderables
+            )
+        )
+        self.assertEqual(reasoning_sources[0].style, "dim")
+        self.assertEqual(
+            reasoning_sources[0].plain,
+            "💭 **inspect** `[literal]`",
+        )
+        self.assertEqual(
+            reasoning_sources[1].plain,
+            "💭 ## Continue with [docs](https://example.com)",
+        )
+        output = _render_text(activity)
+        ordered_fragments = (
+            "💭 **inspect** `[literal]`",
+            "Executed tool search",
+            "💭 ## Continue with [docs](https://example.com)",
+        )
+        positions = [output.index(fragment) for fragment in ordered_fragments]
+        self.assertEqual(positions, sorted(positions))
 
     async def test_live_reasoning_interleaves_with_tools_by_sequence(
         self,
