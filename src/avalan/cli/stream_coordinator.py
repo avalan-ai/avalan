@@ -17,9 +17,17 @@ from time import perf_counter
 from types import TracebackType
 from typing import Protocol, TypeAlias
 
-from rich.console import Console, Group, RenderableType
+from rich.console import (
+    Console,
+    ConsoleOptions,
+    Group,
+    RenderableType,
+    RenderResult,
+)
 from rich.live import Live
+from rich.segment import Segment
 from rich.spinner import Spinner
+from rich.text import Text
 
 _FRAME_ROLE_ORDER: tuple[StreamFrameRole, ...] = (
     "events",
@@ -91,6 +99,98 @@ class CliStreamLiveFactory(Protocol):
         refresh_per_second: int,
         screen: bool,
     ) -> CliStreamLive: ...
+
+
+class _TailOverflowRenderable(Group):
+    """Render the newest rows when live output exceeds the terminal."""
+
+    def __init__(self, renderable: RenderableType) -> None:
+        if isinstance(renderable, Group):
+            super().__init__(*renderable.renderables, fit=renderable.fit)
+        else:
+            super().__init__(renderable)
+        self.renderable = renderable
+        self._show_all = False
+
+    def __str__(self) -> str:
+        return _stderr_renderable_key(self.renderable)
+
+    def show_all(self) -> None:
+        """Disable tail cropping for the final live render."""
+        self._show_all = True
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        lines = console.render_lines(self.renderable, options, pad=False)
+        maximum_height = options.size.height
+        if not self._show_all and len(lines) > maximum_height:
+            if maximum_height == 1:
+                lines = lines[-1:]
+            else:
+                overflow = Text(
+                    "...",
+                    overflow="crop",
+                    justify="center",
+                    end="",
+                    style="live.ellipsis",
+                )
+                lines = [
+                    list(console.render(overflow, options)),
+                    *lines[-(maximum_height - 1) :],
+                ]
+
+        for index, line in enumerate(lines):
+            yield from line
+            if index < len(lines) - 1:
+                yield Segment.line()
+
+
+class _TailOverflowLive:
+    """Show the live tail while preserving the complete final render."""
+
+    def __init__(
+        self,
+        live: CliStreamLive,
+        renderable: _TailOverflowRenderable | None,
+    ) -> None:
+        self._live = live
+        self._renderable = renderable
+
+    @property
+    def auto_refresh(self) -> bool:
+        """Return whether the delegated live display refreshes itself."""
+        return self._live.auto_refresh
+
+    @auto_refresh.setter
+    def auto_refresh(self, value: bool) -> None:
+        """Set whether the delegated live display refreshes itself."""
+        self._live.auto_refresh = value
+
+    def __enter__(self) -> "_TailOverflowLive":
+        self._live = self._live.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        if self._renderable is not None:
+            self._renderable.show_all()
+        return self._live.__exit__(exc_type, exc_value, traceback)
+
+    def refresh(self) -> None:
+        """Refresh the delegated live display."""
+        self._live.refresh()
+
+    def update(self, renderable: RenderableType) -> None:
+        """Display the newest rows and retain the complete renderable."""
+        self._renderable = _TailOverflowRenderable(renderable)
+        self._live.update(self._renderable)
 
 
 RecordFilenameFactory = Callable[[], str]
@@ -495,11 +595,17 @@ def _default_live_factory(
     refresh_per_second: int,
     screen: bool,
 ) -> CliStreamLive:
-    return Live(
-        renderable,
-        console=console,
-        refresh_per_second=refresh_per_second,
-        screen=screen,
+    live_renderable = (
+        _TailOverflowRenderable(renderable) if renderable is not None else None
+    )
+    return _TailOverflowLive(
+        Live(
+            live_renderable,
+            console=console,
+            refresh_per_second=refresh_per_second,
+            screen=screen,
+        ),
+        live_renderable,
     )
 
 
