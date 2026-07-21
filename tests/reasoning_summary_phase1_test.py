@@ -382,6 +382,10 @@ def test_azure_provider_identity_falls_back_to_configured_base_url() -> None:
 
     assert model.reasoning_summary_provider == "azure_openai"
 
+    cast(Any, model)._settings = SimpleNamespace(base_url=None)
+
+    assert model.reasoning_summary_provider == "openai"
+
 
 class _PrivateCapableAdapter:
     reasoning_summary_request_capability = ReasoningSummaryRequestCapability(

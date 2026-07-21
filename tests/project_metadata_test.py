@@ -76,6 +76,36 @@ def _makefile_enforces_coverage_fail_under(makefile: str) -> bool:
     )
 
 
+def _workflow_enforces_exact_input_gates(workflow: str) -> bool:
+    type_gate = (
+        "      - name: Verify structured-input type contracts\n"
+        "        run: |\n"
+        "          make lint\n"
+        "          make typecheck-input-contract INPUT_PHASE=0\n"
+    )
+    postgresql_gate = (
+        "      - name: Run exact tests with PostgreSQL\n"
+        "        if: matrix.target.os == 'ubuntu-latest'\n"
+        "        run: make test-pgsql-exact no-install INPUT_PHASE=0\n"
+    )
+    portable_gate = (
+        "      - name: Run exact tests\n"
+        "        if: matrix.target.os != 'ubuntu-latest'\n"
+        "        run: |\n"
+        "          make test-coverage-exact no-install\n"
+        "          poetry run python scripts/verify_input_acceptance.py "
+        "--through-phase 0\n"
+    )
+    metadata_gate = (
+        "      - name: Verify clean generated metadata\n"
+        "        run: git diff --check\n"
+    )
+    return all(
+        gate in workflow
+        for gate in (type_gate, postgresql_gate, portable_gate, metadata_gate)
+    )
+
+
 def _requirements(extra: str) -> list[Requirement]:
     return [
         Requirement(requirement)
@@ -123,26 +153,7 @@ def test_test_workflow_covers_supported_matrix_and_build_gates() -> None:
         _supported_python_versions(),
         _supported_python_versions(),
     ]
-    assert (
-        "if: matrix.target.os == 'ubuntu-latest' && matrix.python != '3.14'"
-        in workflow
-    )
-    assert "run: make test-pgsql coverage no-install" in workflow
-    assert (
-        "if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.14'"
-        in workflow
-    )
-    assert "run: make test-pgsql coverage-report no-install" in workflow
-    assert (
-        "if: matrix.target.os != 'ubuntu-latest' && matrix.python != '3.14'"
-        in workflow
-    )
-    assert "run: make test coverage no-install" in workflow
-    assert (
-        "if: matrix.target.os != 'ubuntu-latest' && matrix.python == '3.14'"
-        in workflow
-    )
-    assert "run: make test coverage-report no-install" in workflow
+    assert _workflow_enforces_exact_input_gates(workflow)
     assert "run: poetry build --format wheel --clean" in workflow
     assert "path: dist/*.whl" in workflow
 
@@ -159,6 +170,15 @@ def test_workflow_event_detection_rejects_missing_pull_request() -> None:
     workflow = "on:\n  push:\n  workflow_dispatch:\n"
 
     assert not _workflow_declares_event(workflow, "pull_request")
+
+
+def test_workflow_exact_gate_detection_rejects_partial_coverage() -> None:
+    workflow = _read_repository_text(".github/workflows/test.yml").replace(
+        "make test-coverage-exact no-install",
+        "make test coverage no-install",
+    )
+
+    assert not _workflow_enforces_exact_input_gates(workflow)
 
 
 def test_make_coverage_command_enforces_fail_under_gate() -> None:

@@ -8,8 +8,70 @@ from socket import AF_INET, SOCK_STREAM, socket
 from subprocess import CalledProcessError, run
 from sys import executable, stderr
 from time import monotonic, sleep
+from types import TracebackType
+from typing import Protocol, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import uuid4
+
+
+class _PgsqlCursor(Protocol):
+    """Describe the cursor operations used by the database harness."""
+
+    def __enter__(self) -> "_PgsqlCursor": ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None: ...
+
+    def execute(
+        self,
+        query: object,
+        params: tuple[str, ...] | None = None,
+    ) -> object: ...
+
+
+class _PgsqlConnection(Protocol):
+    """Describe the connection operations used by the database harness."""
+
+    def __enter__(self) -> "_PgsqlConnection": ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None: ...
+
+    def cursor(self) -> _PgsqlCursor: ...
+
+
+class _PsycopgModule(Protocol):
+    """Describe the dynamically loaded psycopg entry point."""
+
+    def connect(
+        self,
+        dsn: str,
+        *,
+        autocommit: bool,
+        connect_timeout: int | None = None,
+    ) -> _PgsqlConnection: ...
+
+
+class _SqlTemplate(Protocol):
+    """Describe a composable SQL template."""
+
+    def format(self, value: object) -> object: ...
+
+
+class _SqlModule(Protocol):
+    """Describe the dynamically loaded psycopg SQL helpers."""
+
+    def SQL(self, value: str) -> _SqlTemplate: ...
+
+    def Identifier(self, value: str) -> object: ...
 
 
 def main() -> int:
@@ -47,14 +109,16 @@ def main() -> int:
         ),
         type=float,
     )
-    args, pytest_args = parser.parse_known_args()
-    pytest_args = _pytest_args(pytest_args)
+    parser.add_argument("--runner-script")
+    args, raw_child_args = parser.parse_known_args()
+    child_args = _pytest_args(raw_child_args)
     if args.docker:
         return _run_with_docker(
             args.database_prefix,
-            pytest_args,
+            child_args,
             image=args.docker_image,
             timeout_seconds=args.docker_timeout_seconds,
+            runner_script=args.runner_script,
         )
     admin_dsn = args.admin_dsn
     if not admin_dsn:
@@ -62,14 +126,17 @@ def main() -> int:
     return _run_with_admin_dsn(
         admin_dsn,
         args.database_prefix,
-        pytest_args,
+        child_args,
+        runner_script=args.runner_script,
     )
 
 
 def _run_with_admin_dsn(
     admin_dsn: str,
     database_prefix: str,
-    pytest_args: tuple[str, ...],
+    child_args: tuple[str, ...],
+    *,
+    runner_script: str | None = None,
 ) -> int:
     _require_runtime_modules()
     database_name = _database_name(database_prefix)
@@ -79,8 +146,13 @@ def _run_with_admin_dsn(
         _create_database(admin_dsn, database_name)
         child_env = environ.copy()
         child_env["AVALAN_TASK_TEST_POSTGRESQL_DSN"] = test_dsn
+        command = (
+            (executable, runner_script, *child_args)
+            if runner_script is not None
+            else (executable, "-m", "pytest", *child_args)
+        )
         completed = run(
-            (executable, "-m", "pytest", *pytest_args),
+            command,
             check=False,
             env=child_env,
         )
@@ -101,10 +173,11 @@ def _run_with_admin_dsn(
 
 def _run_with_docker(
     database_prefix: str,
-    pytest_args: tuple[str, ...],
+    child_args: tuple[str, ...],
     *,
     image: str,
     timeout_seconds: float,
+    runner_script: str | None = None,
 ) -> int:
     _require_runtime_modules()
     container_name = _docker_container_name()
@@ -121,7 +194,12 @@ def _run_with_docker(
         )
         started = True
         _wait_for_database(admin_dsn, timeout_seconds)
-        return _run_with_admin_dsn(admin_dsn, database_prefix, pytest_args)
+        return _run_with_admin_dsn(
+            admin_dsn,
+            database_prefix,
+            child_args,
+            runner_script=runner_script,
+        )
     finally:
         if started:
             _stop_docker_container(container_name)
@@ -147,13 +225,15 @@ def _database_dsn(admin_dsn: str, database_name: str) -> str:
     parts = urlsplit(admin_dsn)
     if not parts.scheme or not parts.netloc:
         raise SystemExit("admin DSN must be a URL-style PostgreSQL DSN")
-    return urlunsplit((
-        parts.scheme,
-        parts.netloc,
-        "/" + quote(database_name, safe=""),
-        parts.query,
-        parts.fragment,
-    ))
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            "/" + quote(database_name, safe=""),
+            parts.query,
+            parts.fragment,
+        )
+    )
 
 
 def _docker_admin_dsn(port: int, password: str) -> str:
@@ -214,12 +294,15 @@ def _free_tcp_port() -> int:
     return port
 
 
-def _psycopg_modules() -> tuple[object, object]:
+def _psycopg_modules() -> tuple[_PsycopgModule, _SqlModule]:
     if find_spec("psycopg") is None:
         raise SystemExit(
             "psycopg is required for PostgreSQL test database setup"
         )
-    return import_module("psycopg"), import_module("psycopg.sql")
+    return (
+        cast(_PsycopgModule, import_module("psycopg")),
+        cast(_SqlModule, import_module("psycopg.sql")),
+    )
 
 
 def _run_docker(command: tuple[str, ...]) -> str:
@@ -250,23 +333,25 @@ def _start_docker_postgres(
     password: str,
     port: int,
 ) -> None:
-    _run_docker((
-        "docker",
-        "run",
-        "--detach",
-        "--rm",
-        "--name",
-        name,
-        "--env",
-        "POSTGRES_USER=postgres",
-        "--env",
-        "POSTGRES_DB=postgres",
-        "--env",
-        f"POSTGRES_PASSWORD={password}",
-        "--publish",
-        f"127.0.0.1:{port}:5432",
-        image,
-    ))
+    _run_docker(
+        (
+            "docker",
+            "run",
+            "--detach",
+            "--rm",
+            "--name",
+            name,
+            "--env",
+            "POSTGRES_USER=postgres",
+            "--env",
+            "POSTGRES_DB=postgres",
+            "--env",
+            f"POSTGRES_PASSWORD={password}",
+            "--publish",
+            f"127.0.0.1:{port}:5432",
+            image,
+        )
+    )
 
 
 def _stop_docker_container(name: str) -> None:

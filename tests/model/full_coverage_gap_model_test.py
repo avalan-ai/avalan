@@ -502,9 +502,7 @@ class OpenAiAdditionalCoverageTestCase(TestCase):
         self.assertEqual(
             error_data,
             {
-                "message": (
-                    "response tool call id must be a non-empty string"
-                ),
+                "message": "response tool call id must be a non-empty string",
                 "error": {
                     "type": "invalid_provider_event",
                     "code": "invalid_reasoning_summary_event",
