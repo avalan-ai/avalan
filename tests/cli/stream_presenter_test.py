@@ -24,6 +24,7 @@ from avalan.cli.stream_presenter import (
     LegacyThemeStreamPresenter,
     reasoning_display_blocks,
     reasoning_display_text,
+    stream_terminal_completed,
 )
 from avalan.cli.theme import (
     Theme,
@@ -612,6 +613,20 @@ class StreamAnswerPresenterTestCase(IsolatedAsyncioTestCase):
                 if isinstance(item, CliStreamAnswerTextChunk)
             ],
             ['{\n  "items": [\n    {\n      "amount": 134\n    }\n  ]\n}'],
+        )
+
+    def test_input_required_is_not_successful_terminal_completion(
+        self,
+    ) -> None:
+        config = _config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.INPUT_REQUIRED,
+        )
+
+        self.assertFalse(
+            stream_terminal_completed(_request(config, builder.snapshot()))
         )
 
     async def test_answer_presenter_keeps_invalid_and_incremental_json(

@@ -14,6 +14,7 @@ from avalan.model.stream import (
     StreamReasoningRepresentation,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
+    StreamValidationError,
     StreamVisibility,
 )
 from avalan.server.entities import (
@@ -151,6 +152,7 @@ def _assert_exact_segment_shape(segment: dict[str, object]) -> None:
         "completed",
         "failed",
         "cancelled",
+        "input_required",
     }
     for field_name in ("output_index", "summary_index"):
         if field_name in segment:
@@ -201,7 +203,20 @@ def _terminal_item(
         StreamTerminalOutcome.COMPLETED: StreamItemKind.STREAM_COMPLETED,
         StreamTerminalOutcome.ERRORED: StreamItemKind.STREAM_ERRORED,
         StreamTerminalOutcome.CANCELLED: StreamItemKind.STREAM_CANCELLED,
+        StreamTerminalOutcome.INPUT_REQUIRED: (
+            StreamItemKind.STREAM_INPUT_REQUIRED
+        ),
     }[outcome]
+    correlation = (
+        StreamItemCorrelation(
+            request_id="request-1",
+            continuation_id="input-continuation-1",
+            agent_id="agent-1",
+            branch_id="branch-1",
+        )
+        if outcome is StreamTerminalOutcome.INPUT_REQUIRED
+        else StreamItemCorrelation()
+    )
     return CanonicalStreamItem(
         stream_session_id="stream-1",
         run_id="run-1",
@@ -209,8 +224,26 @@ def _terminal_item(
         sequence=sequence,
         kind=kind,
         channel=StreamChannel.CONTROL,
+        correlation=correlation,
         usage={} if outcome is StreamTerminalOutcome.COMPLETED else None,
         terminal_outcome=outcome,
+    )
+
+
+def _interaction_pending_item(sequence: int) -> CanonicalStreamItem:
+    return CanonicalStreamItem(
+        stream_session_id="stream-1",
+        run_id="run-1",
+        turn_id="turn-1",
+        sequence=sequence,
+        kind=StreamItemKind.INTERACTION_PENDING,
+        channel=StreamChannel.INTERACTION,
+        correlation=StreamItemCorrelation(
+            request_id="request-1",
+            continuation_id="input-continuation-1",
+            agent_id="agent-1",
+            branch_id="branch-1",
+        ),
     )
 
 
@@ -347,6 +380,86 @@ class MCPReasoningSummaryTestCase(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("plan", repr(result["content"]))
 
+    async def test_input_required_uses_existing_mcp_error_path(self) -> None:
+        state = mcp_router._MCPStreamProjectionState(
+            accumulator=mcp_router.ProtocolStreamAccumulator(),
+            tool_summaries={},
+            resources={},
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/mcp",
+        )
+        await mcp_router._mcp_canonical_stream_item_notifications(
+            _start_item(), state, "progress"
+        )
+        await mcp_router._mcp_canonical_stream_item_notifications(
+            _interaction_pending_item(1), state, "progress"
+        )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "MCP input-required projection is unavailable",
+        ):
+            await mcp_router._mcp_canonical_stream_item_notifications(
+                _terminal_item(2, StreamTerminalOutcome.INPUT_REQUIRED),
+                state,
+                "progress",
+            )
+        self.assertIs(
+            state.accumulator.terminal_outcome,
+            StreamTerminalOutcome.INPUT_REQUIRED,
+        )
+
+        response = _Response(
+            [
+                _start_item(),
+                _interaction_pending_item(1),
+                _terminal_item(2, StreamTerminalOutcome.INPUT_REQUIRED),
+                CanonicalStreamItem(
+                    stream_session_id="stream-1",
+                    run_id="run-1",
+                    turn_id="turn-1",
+                    sequence=3,
+                    kind=StreamItemKind.STREAM_CLOSED,
+                    channel=StreamChannel.CONTROL,
+                ),
+            ]
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        chunks: list[str] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="request-input-required",
+            request_model=ChatCompletionRequest(
+                model="model-1",
+                messages=[ChatMessage(role="user", content="question")],
+                stream=True,
+            ),
+            response=cast(Any, response),
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/mcp",
+            cancel_event=AsyncEvent(),
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [loads(line) for line in "".join(chunks).splitlines()]
+        self.assertFalse(any("result" in message for message in messages))
+        errors = [
+            message["error"] for message in messages if "error" in message
+        ]
+        self.assertEqual(
+            errors,
+            [
+                {
+                    "code": -32603,
+                    "message": "An internal server error occurred.",
+                }
+            ],
+        )
+
     def test_exact_segment_fields_types_state_triples_and_bool_int_mutations(
         self,
     ) -> None:
@@ -364,6 +477,14 @@ class MCPReasoningSummaryTestCase(IsolatedAsyncioTestCase):
                 StreamTerminalOutcome.CANCELLED,
                 (False, "incomplete", "cancelled"),
             ),
+            (
+                StreamTerminalOutcome.INPUT_REQUIRED,
+                (False, "incomplete", "input_required"),
+            ),
+        )
+        self.assertEqual(
+            {outcome for outcome, _expected in cases if outcome is not None},
+            set(StreamTerminalOutcome),
         )
         for outcome, expected in cases:
             with self.subTest(outcome=outcome):

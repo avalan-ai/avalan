@@ -1,10 +1,86 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "recorded_at": "2026-07-20T23:33:53-03:00",
+  "recorded_at": "2026-07-21T04:48:36-03:00",
   "implementation_owner": "/root",
   "independent_reviewer": "/root/input_contract_audit",
+  "review_history_sha256": "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85",
+  "review_history_phase0_sha256": "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b",
+  "review_history": [
+    {
+      "sequence": 0,
+      "phase": 0,
+      "role": "baseline",
+      "reviewer": "/root/input_contract_audit",
+      "status": "approved",
+      "recorded_at": "2026-07-21T03:59:00-03:00",
+      "evidence": "Preserve the independent phase-0 contract review identity without rewriting historical approval."
+    },
+    {
+      "sequence": 1,
+      "phase": 1,
+      "role": "semantic",
+      "reviewer": "/root/interaction_round4_semantic",
+      "status": "pending",
+      "recorded_at": "2026-07-21T03:59:00-03:00",
+      "evidence": "Phase-1 semantic approval remains pending until the round-5 findings are reviewed."
+    },
+    {
+      "sequence": 2,
+      "phase": 1,
+      "role": "gate",
+      "reviewer": "/root/interaction_round4_gates",
+      "status": "pending",
+      "recorded_at": "2026-07-21T03:59:00-03:00",
+      "evidence": "Phase-1 gate approval remains pending until fresh current-tree quality evidence is reviewed."
+    },
+    {
+      "sequence": 3,
+      "phase": 1,
+      "role": "semantic",
+      "reviewer": "/root/interaction_round4_semantic",
+      "status": "approved",
+      "recorded_at": "2026-07-21T04:48:36-03:00",
+      "evidence": "Independent Phase-1 semantic review completed with zero P1, P2, or P3 findings against the frozen implementation."
+    },
+    {
+      "sequence": 4,
+      "phase": 1,
+      "role": "gate",
+      "reviewer": "/root/interaction_round4_gates",
+      "status": "approved",
+      "recorded_at": "2026-07-21T04:48:36-03:00",
+      "evidence": "Independent Phase-1 gate and evidence review completed with zero P1, P2, or P3 findings against the fresh authoritative results and frozen tree."
+    }
+  ],
   "active_test_node_ids": [
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_004",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_005",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_006",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_007",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_008",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_009",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_010",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_011",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_012",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_013",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_014",
+    "tests/input/security_contract_test.py::test_requirement_input_n_015",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_029",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_030",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_031",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_032",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_033",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_034",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_035",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_036",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_037",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_038",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_039",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_040",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_041",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_042",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_043",
     "tests/input_contract_test.py::test_requirement_catalog_is_complete",
     "tests/input_contract_test.py::test_acceptance_manifest_lifecycle_is_monotonic",
     "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory",
@@ -28,7 +104,35 @@
     "tests/input_contract_test.py::test_contract_decisions_are_frozen",
     "tests/input_contract_test.py::test_no_bc_removal_inventory_is_frozen",
     "tests/input_contract_test.py::test_baseline_evidence_is_complete",
-    "tests/input_contract_test.py::test_capability_remains_absent"
+    "tests/input_contract_test.py::test_capability_remains_dormant",
+    "tests/input/interaction_boundary_e2e_test.py::test_codec_and_snapshot_round_trip",
+    "tests/input/interaction_boundary_e2e_test.py::test_illegal_transition_preserves_prior_request",
+    "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_projects_correlated_input_required",
+    "tests/input/interaction_boundary_e2e_test.py::test_canonical_interaction_boundary_e2e",
+    "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content",
+    "tests/src_coverage_verifier_test.py::test_exact_coverage_allows_only_reviewed_exclusion_relocations",
+    "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_terminal_validator_rejects_input_required_without_one_pending",
+    "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_invalid_interaction_state_fails_closed",
+    "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
+    "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
+    "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_references",
+    "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question",
+    "tests/interaction/interaction_state_test.py::test_answer_set_rejects_unknown_missing_and_invalid_text",
+    "tests/interaction/interaction_state_test.py::test_selection_answers_validate_values_and_cardinality",
+    "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults",
+    "tests/interaction/interaction_state_test.py::test_transition_error_rejects_invalid_public_constructor_values",
+    "tests/interaction/interaction_state_test.py::test_pending_transition_rejects_invalid_preconditions_and_overflow",
+    "tests/interaction/interaction_state_test.py::test_resolution_transition_rejects_revision_and_resolution_errors",
+    "tests/interaction/interaction_validation_test.py::test_invalid_primitives",
+    "tests/interaction/interaction_codec_test.py::test_codec_rejects_invalid_root_types_and_unsupported_variants",
+    "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
+    "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text",
+    "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_pending_interaction_rejects_false_stream_completion",
+    "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_multiple_pending_requests_reject_input_required_cardinality",
+    "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation",
+    "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_illegal_lifecycle_order",
+    "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
+    "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix"
   ],
   "git": {
     "branch": "input",
@@ -49,8 +153,31 @@
     "seconds": 159.84
   },
   "boundary": {
-    "production_capability": "absent",
-    "production_source_changes": [],
+    "production_capability": "dormant_unadvertised",
+    "production_capability_history": [
+      {
+        "phase": 0,
+        "state": "absent"
+      },
+      {
+        "phase": 1,
+        "state": "dormant_unadvertised"
+      }
+    ],
+    "production_source_changes": [
+      "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+      "src/avalan/cli/commands/model.py",
+      "src/avalan/cli/display_reducer.py",
+      "src/avalan/event/__init__.py",
+      "src/avalan/event/manager.py",
+      "src/avalan/interaction/",
+      "src/avalan/model/stream.py",
+      "src/avalan/server/a2a/router.py",
+      "src/avalan/server/routers/chat.py",
+      "src/avalan/server/routers/mcp.py",
+      "src/avalan/server/routers/responses.py",
+      "src/avalan/task/event.py"
+    ],
     "changed_paths": [
       ".github/workflows/test.yml",
       "Makefile",
@@ -60,7 +187,25 @@
       "scripts/verify_input_acceptance.py",
       "scripts/verify_input_types.py",
       "scripts/verify_src_coverage.py",
+      "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+      "src/avalan/cli/commands/model.py",
+      "src/avalan/cli/display_reducer.py",
+      "src/avalan/event/__init__.py",
+      "src/avalan/event/manager.py",
+      "src/avalan/interaction/",
+      "src/avalan/model/stream.py",
+      "src/avalan/server/a2a/router.py",
+      "src/avalan/server/routers/chat.py",
+      "src/avalan/server/routers/mcp.py",
+      "src/avalan/server/routers/responses.py",
+      "src/avalan/task/event.py",
+      "tests/agent/orchestrator_response_additional_test.py",
+      "tests/cli/display_reducer_test.py",
+      "tests/cli/model_test.py",
+      "tests/cli/stream_presenter_test.py",
+      "tests/event/interaction_lifecycle_test.py",
       "tests/fixtures/input/",
+      "tests/input/",
       "tests/input_acceptance_verifier_test.py",
       "tests/input_contract_fixtures.py",
       "tests/input_contract_harness_test.py",
@@ -68,78 +213,134 @@
       "tests/input_contract_test.py",
       "tests/input_type_contract_test.py",
       "tests/input_type_contracts/",
+      "tests/interaction/",
       "tests/model/full_coverage_gap_model_test.py",
+      "tests/model/model_stream_contract_test.py",
+      "tests/model/model_stream_interaction_test.py",
+      "tests/model/text_generation_response_more_test.py",
       "tests/project_metadata_test.py",
       "tests/reasoning_summary_phase1_test.py",
-      "tests/src_coverage_verifier_test.py"
+      "tests/server/a2a_v1_router_test.py",
+      "tests/server/chat_router_unit_test.py",
+      "tests/server/mcp_reasoning_summary_test.py",
+      "tests/server/responses_phase7_contract_test.py",
+      "tests/server/responses_utils_test.py",
+      "tests/server/router_streaming_test.py",
+      "tests/src_coverage_verifier_test.py",
+      "tests/task/interaction_event_sanitization_test.py"
     ]
   },
   "inventory": {
     "behavior_requirements": 107,
     "public_scenarios": 12,
     "delivery_requirements": 12,
-    "active_acceptance_nodes": 24,
-    "planned_acceptance_nodes": 217,
+    "active_acceptance_nodes": 79,
+    "active_pytest_instances": 118,
+    "planned_acceptance_nodes": 190,
     "failure_conditions": 15,
     "failure_surfaces": 84,
     "failure_cells": 1260,
     "applicable_failure_cells": 564,
     "non_applicable_failure_cells": 696
   },
-  "quality_gate": [
-    {
-      "command": "poetry run pytest --verbose -s",
-      "exit_code": 0,
-      "passed": 10029,
-      "skipped": 66,
-      "deselected": 0,
-      "xfail": 0,
-      "xpass": 0
+  "quality_gate": {
+    "state": "complete",
+    "required_commands": [
+      "poetry run pytest --verbose -s",
+      "make test-coverage -- -100 src/",
+      "make test-coverage-exact no-install",
+      "poetry run python scripts/verify_input_acceptance.py --through-phase 1",
+      "make typecheck-input-contract INPUT_PHASE=1",
+      "make lint",
+      "git diff --check",
+      "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py tests/interaction tests/input tests/event/interaction_lifecycle_test.py tests/model/model_stream_contract_test.py tests/model/model_stream_interaction_test.py tests/task/interaction_event_sanitization_test.py tests/agent/orchestrator_response_additional_test.py tests/cli/display_reducer_test.py tests/cli/model_test.py tests/cli/stream_presenter_test.py tests/model/text_generation_response_more_test.py tests/server/a2a_v1_router_test.py tests/server/chat_router_unit_test.py tests/server/mcp_reasoning_summary_test.py tests/server/responses_phase7_contract_test.py tests/server/responses_utils_test.py tests/server/router_streaming_test.py"
+    ],
+    "state_details": {
+      "completed_at": "2026-07-21T04:48:36-03:00",
+      "gate_run_id": "phase-1-bd778836b645098f"
     },
-    {
-      "command": "make test-coverage -- -100 src/",
-      "exit_code": 0,
-      "output_lines": []
+    "results": [
+      {
+        "command": "poetry run pytest --verbose -s",
+        "exit_code": 0,
+        "passed": 10287,
+        "skipped": 66,
+        "subtests_passed": 7949,
+        "seconds": 160.06,
+        "deselected": 0,
+        "xfail": 0,
+        "xpass": 0
+      },
+      {
+        "command": "make test-coverage -- -100 src/",
+        "exit_code": 0,
+        "output_lines": []
+      },
+      {
+        "command": "make test-coverage-exact no-install",
+        "exit_code": 0,
+        "passed": 10287,
+        "skipped": 66,
+        "subtests_passed": 7949,
+        "seconds": 261.2,
+        "source_files": 416,
+        "covered_statements": 102059,
+        "total_statements": 102059,
+        "missing_lines": 0,
+        "missing_files": 0
+      },
+      {
+        "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 1",
+        "exit_code": 0,
+        "active_nodes": 79,
+        "active_instances": 118
+      },
+      {
+        "command": "make typecheck-input-contract INPUT_PHASE=1",
+        "exit_code": 0,
+        "active_fixtures": 6
+      },
+      {
+        "command": "make lint",
+        "exit_code": 0,
+        "source_files_typechecked": 416,
+        "script_files_typechecked": 6
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0
+      },
+      {
+        "command": "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py tests/interaction tests/input tests/event/interaction_lifecycle_test.py tests/model/model_stream_contract_test.py tests/model/model_stream_interaction_test.py tests/task/interaction_event_sanitization_test.py tests/agent/orchestrator_response_additional_test.py tests/cli/display_reducer_test.py tests/cli/model_test.py tests/cli/stream_presenter_test.py tests/model/text_generation_response_more_test.py tests/server/a2a_v1_router_test.py tests/server/chat_router_unit_test.py tests/server/mcp_reasoning_summary_test.py tests/server/responses_phase7_contract_test.py tests/server/responses_utils_test.py tests/server/router_streaming_test.py",
+        "exit_code": 0,
+        "passed": 1209,
+        "skipped": 0,
+        "subtests_passed": 1135,
+        "seconds": 33.0,
+        "deselected": 0,
+        "xfail": 0,
+        "xpass": 0
+      }
+    ],
+    "tree_binding": {
+      "head": "c1fabe0c0fc1d60e58d11f5c40e4a2456a8e7a33",
+      "diff_sha256": "a90c2f85924eee788704aa87a85248bee8c45b7810f403f61afc73baac0e9653",
+      "untracked_inventory_sha256": "473513f0441b9bddc221638aa34b4d8bdf8026c0d31f6aad9b2afd2ad4f8d9c6",
+      "normalized_evidence_sha256": "dbb6164795131f906ab8e48c0f193e2aaf371351cdf551a91580f5044e3a80bf",
+      "normalized_verifier_sha256": "61e3a49642f0935b2d0e7b79a8ff3c152b4a3eb08646063128df288504e8055a",
+      "tree_sha256": "5eb5d878b0a1fbd8cce9a490750b4eaa64c3c890e36411a162682565864c3ae4"
     },
-    {
-      "command": "make test-coverage-exact no-install",
-      "exit_code": 0,
-      "covered_statements": 99647,
-      "total_statements": 99647,
-      "missing_lines": 0,
-      "missing_files": 0
-    },
-    {
-      "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 0",
-      "exit_code": 0,
-      "active_nodes": 24
-    },
-    {
-      "command": "make typecheck-input-contract INPUT_PHASE=0",
-      "exit_code": 0,
-      "active_fixtures": 1
-    },
-    {
-      "command": "make lint",
-      "exit_code": 0
-    },
-    {
-      "command": "git diff --check",
-      "exit_code": 0
-    },
-    {
-      "command": "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py",
-      "exit_code": 0,
-      "passed": 53,
-      "skipped": 0,
-      "deselected": 0,
-      "xfail": 0,
-      "xpass": 0
+    "coverage_binding": {
+      "report_sha256": "d3328a8612d3ff3086e9e2ebfdabde4f28819f0e48912a8d372fe7abfe963359",
+      "source_inventory_sha256": "fa8e8a13abd57a51b413208e76c538bd2526f598cbe0ad8822cfb7a97408b9b3",
+      "source_file_count": 416,
+      "statement_count": 102059,
+      "excluded_line_count": 1225
     }
-  ],
+  },
   "typing_async_audit": {
-    "strict_type_fixture_count": 1,
-    "negative_type_fixtures_planned": 4,
+    "strict_type_fixture_count": 6,
+    "negative_type_fixtures_planned": 1,
     "effect_interfaces_async": [
       "scripted provider",
       "async barrier",
@@ -151,6 +352,6 @@
   },
   "unresolved_risks": [
     "Database-backed exact target requires Docker or an admin DSN when exercised outside CI.",
-    "Public interaction behavior remains deliberately unimplemented and unadvertised."
+    "Canonical interaction behavior remains dormant and unadvertised until atomic capability activation."
   ]
 }

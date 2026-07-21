@@ -16,6 +16,7 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamReasoningRepresentation,
     StreamTerminalOutcome,
+    StreamValidationError,
     StreamVisibility,
 )
 from avalan.server.a2a import router as a2a_router
@@ -2066,6 +2067,103 @@ async def test_translator_handles_projection_cancel_error_and_bad_items(
 
 
 @pytest.mark.anyio
+async def test_translator_leaves_input_required_task_nonterminal(
+    fake_a2a_imports,
+) -> None:
+    assert set(StreamTerminalOutcome) == {
+        StreamTerminalOutcome.COMPLETED,
+        StreamTerminalOutcome.ERRORED,
+        StreamTerminalOutcome.CANCELLED,
+        StreamTerminalOutcome.INPUT_REQUIRED,
+    }
+    assert {
+        outcome: a2a_router._a2a_reasoning_terminal_outcome(outcome)
+        for outcome in StreamTerminalOutcome
+    } == {
+        StreamTerminalOutcome.COMPLETED: "completed",
+        StreamTerminalOutcome.ERRORED: "failed",
+        StreamTerminalOutcome.CANCELLED: "cancelled",
+        StreamTerminalOutcome.INPUT_REQUIRED: "input_required",
+    }
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+    correlation = StreamItemCorrelation(
+        request_id="request-1",
+        continuation_id="continuation-1",
+        agent_id="agent-1",
+        branch_id="branch-1",
+    )
+    await translator.process(
+        _item(
+            0,
+            StreamItemKind.REASONING_DELTA,
+            text_delta="plan",
+        )
+    )
+    await translator.process(
+        _item(
+            1,
+            StreamItemKind.STREAM_INPUT_REQUIRED,
+            correlation=correlation,
+            terminal_outcome=StreamTerminalOutcome.INPUT_REQUIRED,
+        )
+    )
+
+    await translator.finish()
+    await translator.finish()
+
+    assert translator.succeeded is False
+    assert updater.completed == 0
+    assert updater.cancelled == 0
+    assert updater.failed_count == 0
+    assert updater.statuses == [
+        {"state": "input_required", "metadata": {}},
+    ]
+    reasoning_close = next(
+        artifact
+        for artifact in reversed(updater.artifacts)
+        if artifact.get("artifact_id") == "reasoning-r-0-0"
+        and artifact.get("last_chunk") is True
+    )
+    metadata = reasoning_close["metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["status"] == "incomplete"
+    assert metadata["terminal_outcome"] == "input_required"
+
+
+@pytest.mark.anyio
+async def test_translator_rejects_missing_input_required_task_state(
+    fake_a2a_imports,
+) -> None:
+    del fake_a2a_imports.TaskState.TASK_STATE_INPUT_REQUIRED
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+    await translator.process(
+        _item(
+            0,
+            StreamItemKind.STREAM_INPUT_REQUIRED,
+            correlation=StreamItemCorrelation(
+                request_id="request-1",
+                continuation_id="continuation-1",
+                agent_id="agent-1",
+                branch_id="branch-1",
+            ),
+            terminal_outcome=StreamTerminalOutcome.INPUT_REQUIRED,
+        )
+    )
+
+    with pytest.raises(
+        StreamValidationError,
+        match="A2A SDK input-required task state is unavailable",
+    ):
+        await translator.finish()
+
+    assert updater.completed == 0
+    assert updater.cancelled == 0
+    assert updater.failed_count == 0
+
+
+@pytest.mark.anyio
 async def test_executor_cancel_and_exception_paths(
     monkeypatch,
     fake_a2a_imports,
@@ -2187,6 +2285,7 @@ class _FakeA2APb2:
     TaskState = SimpleNamespace(
         TASK_STATE_SUBMITTED="submitted",
         TASK_STATE_WORKING="working",
+        TASK_STATE_INPUT_REQUIRED="input_required",
     )
 
 
@@ -2411,6 +2510,7 @@ def _item(
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CANCELLED,
                 StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_INPUT_REQUIRED,
             }
             else StreamChannel.REASONING
         ),

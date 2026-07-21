@@ -1,12 +1,22 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "current_phase": 0,
+  "current_phase": 1,
   "activation_history": [
     {
       "phase": 0,
       "fixture_ids": [
         "deterministic-fixtures-positive"
+      ]
+    },
+    {
+      "phase": 1,
+      "fixture_ids": [
+        "canonical-answers-positive",
+        "strict-resolution-variants-negative",
+        "typed-resolution-payload-negative",
+        "input-required-identity-negative",
+        "unchecked-any-leak-negative"
       ]
     }
   ],
@@ -17,6 +27,50 @@
         "deterministic-fixtures-positive"
       ],
       "sha256": "e72e5294c5f6e93166f11535b6c1bfe5dfcf5690611363fd6f890a6de73515b7"
+    },
+    {
+      "phase": 1,
+      "fixture_ids": [
+        "deterministic-fixtures-positive",
+        "canonical-answers-positive",
+        "strict-resolution-variants-negative",
+        "typed-resolution-payload-negative",
+        "input-required-identity-negative",
+        "unchecked-any-leak-negative"
+      ],
+      "sha256": "693f47a2c1ab40660685e23f80929d00f6c1fe5b7dc94dd7e4558e5e9dd932b4"
+    }
+  ],
+  "planned_replacements": [
+    {
+      "phase": 1,
+      "old_fixture_id": "wrong-answer-variants-negative",
+      "replacement_fixture_ids": [
+        "strict-resolution-variants-negative"
+      ],
+      "reason": "The frozen public API exposes resolve_request and forbids compatibility aliases.",
+      "reviewed_by": "/root",
+      "evidence": "Strict mypy diagnostics exercise resolve_request argument 2 with typed InputResolution."
+    },
+    {
+      "phase": 1,
+      "old_fixture_id": "untyped-payload-negative",
+      "replacement_fixture_ids": [
+        "typed-resolution-payload-negative"
+      ],
+      "reason": "The frozen public API exposes resolve_request and forbids compatibility aliases.",
+      "reviewed_by": "/root",
+      "evidence": "Strict mypy diagnostics reject dictionary payloads passed to resolve_request."
+    },
+    {
+      "phase": 1,
+      "old_fixture_id": "mixed-identity-token-negative",
+      "replacement_fixture_ids": [
+        "input-required-identity-negative"
+      ],
+      "reason": "The frozen result contract binds request and continuation identities through InputRequiredResult.",
+      "reviewed_by": "/root",
+      "evidence": "Strict mypy diagnostics reject RunId and InputRequestId in the wrong InputRequiredResult fields."
     }
   ],
   "replacements": [],
@@ -32,7 +86,7 @@
     {
       "id": "canonical-answers-positive",
       "kind": "positive",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "path": "tests/input_type_contracts/canonical_answers_positive.py",
       "expected_diagnostics": []
@@ -40,7 +94,7 @@
     {
       "id": "wrong-answer-variants-negative",
       "kind": "negative",
-      "lifecycle": "planned",
+      "lifecycle": "replaced",
       "active_from_phase": 1,
       "path": "tests/input_type_contracts/wrong_answer_variants_negative.py",
       "expected_diagnostics": [
@@ -51,7 +105,7 @@
     {
       "id": "untyped-payload-negative",
       "kind": "negative",
-      "lifecycle": "planned",
+      "lifecycle": "replaced",
       "active_from_phase": 1,
       "path": "tests/input_type_contracts/untyped_payload_negative.py",
       "expected_diagnostics": [
@@ -61,7 +115,7 @@
     {
       "id": "mixed-identity-token-negative",
       "kind": "negative",
-      "lifecycle": "planned",
+      "lifecycle": "replaced",
       "active_from_phase": 1,
       "path": "tests/input_type_contracts/mixed_identity_token_negative.py",
       "expected_diagnostics": [
@@ -85,6 +139,50 @@
       "path": "tests/input_type_contracts/synchronous_handler_negative.py",
       "expected_diagnostics": [
         "tests/input_type_contracts/synchronous_handler_negative.py:12: error: Argument \"handler\" to \"InteractionRuntime\" has incompatible type \"Callable[[InputRequest], InputResolution]\"; expected \"InputHandler\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "strict-resolution-variants-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/input_type_contracts/wrong_answer_variants_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/wrong_answer_variants_negative.py:10:9: error: Argument 2 to \"resolve_request\" has incompatible type \"str\"; expected \"InputResolution\"  [arg-type]",
+        "tests/input_type_contracts/wrong_answer_variants_negative.py:15:9: error: Argument 2 to \"resolve_request\" has incompatible type \"int\"; expected \"InputResolution\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "typed-resolution-payload-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/input_type_contracts/untyped_payload_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/untyped_payload_negative.py:11:9: error: Argument 2 to \"resolve_request\" has incompatible type \"dict[str, object]\"; expected \"InputResolution\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "input-required-identity-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/input_type_contracts/mixed_identity_token_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/mixed_identity_token_negative.py:13:16: error: Argument \"request_id\" to \"InputRequiredResult\" has incompatible type \"RunId\"; expected \"InputRequestId\"  [arg-type]",
+        "tests/input_type_contracts/mixed_identity_token_negative.py:14:21: error: Argument \"continuation_id\" to \"InputRequiredResult\" has incompatible type \"InputRequestId\"; expected \"ContinuationId\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "unchecked-any-leak-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/input_type_contracts/unchecked_any_leak_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/unchecked_any_leak_negative.py:13:19: error: Incompatible types in assignment (expression has type \"InputTransitionApplied | InputTransitionRejected\", variable has type \"str\")  [assignment]",
+        "tests/input_type_contracts/unchecked_any_leak_negative.py:22:30: error: Incompatible types in assignment (expression has type \"object\", variable has type \"str\")  [assignment]",
+        "tests/input_type_contracts/unchecked_any_leak_negative.py:23:32: error: Incompatible types in assignment (expression has type \"InteractionLifecyclePayload | None\", variable has type \"str\")  [assignment]"
       ]
     }
   ]

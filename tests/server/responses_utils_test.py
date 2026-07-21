@@ -21,11 +21,13 @@ from avalan.server.entities import (
 )
 from avalan.server.routers.responses import (
     _RESPONSE_SSE_CONTENT_INDEX_FIELDS,
+    _RESPONSES_TERMINAL_STATUSES,
     _canonical_item_to_sse,
     _function_call_arguments_done,
     _response_projection_state,
     _response_sse_delta_data,
     _response_sse_indexed_data,
+    _responses_terminal_status,
     _ResponsesSSEEvent,
     _ResponsesSSEItemState,
     _ResponsesSSEProjectionAdapter,
@@ -428,6 +430,23 @@ class ResponsesUtilsTestCase(TestCase):
 
     def test_terminal_response_events_preserve_outcome(self) -> None:
         self.assertEqual(
+            set(_RESPONSES_TERMINAL_STATUSES),
+            set(StreamTerminalOutcome),
+        )
+        self.assertEqual(_responses_terminal_status(None), "completed")
+        self.assertEqual(
+            {
+                outcome: _responses_terminal_status(outcome)
+                for outcome in StreamTerminalOutcome
+            },
+            {
+                StreamTerminalOutcome.COMPLETED: "completed",
+                StreamTerminalOutcome.ERRORED: "failed",
+                StreamTerminalOutcome.CANCELLED: "cancelled",
+                StreamTerminalOutcome.INPUT_REQUIRED: "incomplete",
+            },
+        )
+        self.assertEqual(
             _terminal_response_events(StreamTerminalOutcome.COMPLETED)[
                 0
             ].event,
@@ -442,6 +461,14 @@ class ResponsesUtilsTestCase(TestCase):
         self.assertEqual(
             _terminal_response_events(StreamTerminalOutcome.ERRORED)[0].event,
             "response.failed",
+        )
+        input_required = _terminal_response_events(
+            StreamTerminalOutcome.INPUT_REQUIRED
+        )[0]
+        self.assertEqual(input_required.event, "response.incomplete")
+        self.assertEqual(
+            input_required.data,
+            {"type": "response.incomplete"},
         )
         self.assertEqual(
             _terminal_response_events(None)[0].event,

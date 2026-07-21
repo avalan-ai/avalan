@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "current_phase": 0,
+  "current_phase": 1,
   "categories": [
     "unit",
     "integration",
@@ -9,6 +9,82 @@
     "race",
     "security",
     "public_e2e"
+  ],
+  "parameter_expansions": [
+    {
+      "node_id": "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
+      "instance_node_ids": [
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections[choices0]",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections[choices1]",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections[choices2]",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections[choices3]"
+      ],
+      "sha256": "2a7aca97ae584e481e6ae5118223697e1db88ccada8a363128c03bcd011c120c"
+    },
+    {
+      "node_id": "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question",
+      "instance_node_ids": [
+        "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question[question0-answer0]",
+        "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question[question1-answer1]",
+        "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question[question2-answer2]",
+        "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question[question3-answer3]",
+        "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question[question4-answer4]"
+      ],
+      "sha256": "31c9e81a2bffcefc42d5def18cd9000b17dbe542164c5390a7fd79345fe1fdf9"
+    },
+    {
+      "node_id": "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults",
+      "instance_node_ids": [
+        "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults[question0-matching0-mismatching0]",
+        "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults[question1-matching1-mismatching1]",
+        "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults[question2-matching2-mismatching2]",
+        "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults[question3-matching3-mismatching3]",
+        "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults[question4-matching4-mismatching4]"
+      ],
+      "sha256": "193ac66e9ed7ba9a848bfebc3e5b09912ec0a15abc9ca12bf5fd709690bc7eaa"
+    },
+    {
+      "node_id": "tests/interaction/interaction_validation_test.py::test_invalid_primitives",
+      "instance_node_ids": [
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_type0]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_format0]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.empty0]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.out_of_bounds0]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_format1]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_format2]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.out_of_bounds1]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_format3]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.empty1]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_format4]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.out_of_bounds2]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_format5]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.empty2]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_format6]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_type1]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.naive_timestamp]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_type2]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_type3]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.out_of_bounds3]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.out_of_bounds4]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.out_of_bounds5]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.invalid_type4]",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives[<lambda>-input.non_json_value]"
+      ],
+      "sha256": "828c5bcb401c66bdd90d24d3b489c6a618447a981f6752053393a4a10c848c1a"
+    },
+    {
+      "node_id": "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix",
+      "instance_node_ids": [
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix[resolution0-required-True]",
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix[resolution1-required-True]",
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix[resolution2-required-False]",
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix[resolution3-advisory-True]",
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix[resolution4-required-True]",
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix[resolution5-required-False]",
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix[resolution6-required-False]"
+      ],
+      "sha256": "4c0911d80b7dd27362a74040b3d221684c291ebbf3190f6731a640164c7ae6ef"
+    }
   ],
   "activation_history": [
     {
@@ -36,8 +112,68 @@
         "gate-008-test_deterministic_fixtures_are_reproducible",
         "gate-009-test_contract_decisions_are_frozen",
         "gate-010-test_no_bc_removal_inventory_is_frozen",
-        "gate-011-test_baseline_evidence_is_complete",
-        "gate-012-test_capability_remains_absent"
+        "gate-011-test_baseline_evidence_is_complete"
+      ]
+    },
+    {
+      "phase": 1,
+      "node_ids": [
+        "behavior-004",
+        "behavior-005",
+        "behavior-006",
+        "behavior-007",
+        "behavior-008",
+        "behavior-009",
+        "behavior-010",
+        "behavior-011",
+        "behavior-012",
+        "behavior-013",
+        "behavior-014",
+        "behavior-015",
+        "behavior-029",
+        "behavior-030",
+        "behavior-031",
+        "behavior-032",
+        "behavior-033",
+        "behavior-034",
+        "behavior-035",
+        "behavior-036",
+        "behavior-037",
+        "behavior-038",
+        "behavior-039",
+        "behavior-040",
+        "behavior-041",
+        "behavior-042",
+        "behavior-043",
+        "gate-012-test_capability_remains_dormant",
+        "boundary-codec-snapshot-round-trip",
+        "boundary-illegal-transition-immutability",
+        "boundary-observer-stream-projection",
+        "boundary-internal-e2e",
+        "boundary-security-negative",
+        "gate-005-test_exact_coverage_allows_only_reviewed_exclusion_relocations",
+        "boundary-input-required-cardinality-negative",
+        "boundary-invalid-observer-state-fail-closed",
+        "boundary-entity-request-aggregate-negative",
+        "boundary-selection-choice-collection-negative",
+        "boundary-selection-reference-negative",
+        "boundary-answer-type-negative",
+        "boundary-answer-set-negative",
+        "boundary-selection-answer-negative",
+        "boundary-trusted-default-negative",
+        "boundary-transition-error-constructor-negative",
+        "boundary-pending-transition-negative",
+        "boundary-resolution-transition-negative",
+        "boundary-validation-primitive-negative",
+        "boundary-codec-root-variant-negative",
+        "boundary-continuation-drift-secret-negative",
+        "boundary-prohibited-tag-security",
+        "boundary-stream-false-terminal-negative",
+        "boundary-stream-multiple-request-negative",
+        "boundary-stream-correlation-negative",
+        "boundary-stream-lifecycle-order-negative",
+        "boundary-provider-free-lifecycle-e2e",
+        "boundary-terminal-nonanswer-matrix"
       ]
     }
   ],
@@ -71,9 +207,228 @@
         "tests/input_contract_test.py::test_capability_remains_absent"
       ],
       "sha256": "21740a6bd434fe96aab92f4c7b73ab68714bbc7e96ef74a79a7bd47c920f101c"
+    },
+    {
+      "phase": 1,
+      "node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_004",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_005",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_006",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_007",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_008",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_009",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_010",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_011",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_012",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_013",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_014",
+        "tests/input/security_contract_test.py::test_requirement_input_n_015",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_029",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_030",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_031",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_032",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_033",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_034",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_035",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_036",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_037",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_038",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_039",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_040",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_041",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_042",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_043",
+        "tests/input_contract_test.py::test_requirement_catalog_is_complete",
+        "tests/input_contract_test.py::test_acceptance_manifest_lifecycle_is_monotonic",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory",
+        "tests/input_contract_test.py::test_failure_matrix_is_complete",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_na_reason_without_exact_ids",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_cli_executes_exact_synthetic_node",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_pytest_non_evidence",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_placeholder_and_execution_tricks",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_accepts_empty_module_variants",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_rejects_invalid_reports",
+        "tests/input_contract_metadata_test.py::test_exact_make_target_fails_closed_on_pytest_failure",
+        "tests/input_contract_metadata_test.py::test_project_metadata_pins_complete_common_gate",
+        "tests/project_metadata_test.py::test_workflow_exact_gate_detection_rejects_partial_coverage",
+        "tests/input_contract_harness_test.py::test_admin_dsn_runner_script_uses_ephemeral_database",
+        "tests/input_contract_harness_test.py::test_main_selects_admin_dsn_and_runner_script",
+        "tests/input_contract_harness_test.py::test_docker_forwards_runner_and_always_stops",
+        "tests/input_contract_harness_test.py::test_common_gate_cleans_partial_coverage",
+        "tests/input_contract_harness_test.py::test_common_gate_skips_acceptance_after_coverage_failure",
+        "tests/input_type_contract_test.py::test_type_contract_manifest_and_runner_are_strict",
+        "tests/input_contract_test.py::test_deterministic_fixtures_are_reproducible",
+        "tests/input_contract_test.py::test_contract_decisions_are_frozen",
+        "tests/input_contract_test.py::test_no_bc_removal_inventory_is_frozen",
+        "tests/input_contract_test.py::test_baseline_evidence_is_complete",
+        "tests/input_contract_test.py::test_capability_remains_dormant",
+        "tests/input/interaction_boundary_e2e_test.py::test_codec_and_snapshot_round_trip",
+        "tests/input/interaction_boundary_e2e_test.py::test_illegal_transition_preserves_prior_request",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_projects_correlated_input_required",
+        "tests/input/interaction_boundary_e2e_test.py::test_canonical_interaction_boundary_e2e",
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_allows_only_reviewed_exclusion_relocations",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_terminal_validator_rejects_input_required_without_one_pending",
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_invalid_interaction_state_fails_closed",
+        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_references",
+        "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question",
+        "tests/interaction/interaction_state_test.py::test_answer_set_rejects_unknown_missing_and_invalid_text",
+        "tests/interaction/interaction_state_test.py::test_selection_answers_validate_values_and_cardinality",
+        "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults",
+        "tests/interaction/interaction_state_test.py::test_transition_error_rejects_invalid_public_constructor_values",
+        "tests/interaction/interaction_state_test.py::test_pending_transition_rejects_invalid_preconditions_and_overflow",
+        "tests/interaction/interaction_state_test.py::test_resolution_transition_rejects_revision_and_resolution_errors",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives",
+        "tests/interaction/interaction_codec_test.py::test_codec_rejects_invalid_root_types_and_unsupported_variants",
+        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
+        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_pending_interaction_rejects_false_stream_completion",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_multiple_pending_requests_reject_input_required_cardinality",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_illegal_lifecycle_order",
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix"
+      ],
+      "sha256": "9e8fd6803ef5edb11fce4fbdde9b4e1a9657d9e422da139dfdb0a39d247d8ebc"
     }
   ],
-  "replacements": [],
+  "requirement_activation_slices": [
+    {
+      "requirement_id": "INPUT-N-018",
+      "phase": 1,
+      "active_owner": "canonical interaction security boundary",
+      "active_scope": "Reject secret-bearing continuation content and explicit prohibited authentication tags in the canonical boundary.",
+      "active_node_ids": [
+        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
+        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text"
+      ],
+      "remaining_owner": "future host security integration",
+      "remaining_scope": "Verify every public host and renderer refuses authentication material through the activated task-input capability.",
+      "planned_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_018"
+      ],
+      "reviewed_by": "/root",
+      "evidence": "Canonical codecs and tagged-field security checks are active while public host capability paths remain dormant."
+    },
+    {
+      "requirement_id": "INPUT-N-023",
+      "phase": 1,
+      "active_owner": "provider-free canonical lifecycle",
+      "active_scope": "Enforce bounded typed request aggregates and complete provider-free request, resolution, and continuation projection.",
+      "active_node_ids": [
+        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
+      ],
+      "remaining_owner": "future model capability composition",
+      "remaining_scope": "Advertise, await, and return the request through capable and incapable production model hosts.",
+      "planned_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_023"
+      ],
+      "reviewed_by": "/root",
+      "evidence": "The provider-free lifecycle is executable and typed without activating any model capability registry."
+    },
+    {
+      "requirement_id": "INPUT-N-025",
+      "phase": 1,
+      "active_owner": "canonical request aggregate",
+      "active_scope": "Validate the bounded related-question aggregate and reject malformed selection collections and references.",
+      "active_node_ids": [
+        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_references"
+      ],
+      "remaining_owner": "future model capability composition",
+      "remaining_scope": "Verify production model hosts render and return one related question bundle through the reserved capability.",
+      "planned_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_025"
+      ],
+      "reviewed_by": "/root",
+      "evidence": "Canonical aggregate and selection invariants are active while host rendering remains planned."
+    },
+    {
+      "requirement_id": "INPUT-N-026",
+      "phase": 1,
+      "active_owner": "canonical request aggregate",
+      "active_scope": "Reject empty, mutable, duplicate, untyped, or more-than-three-question canonical request aggregates.",
+      "active_node_ids": [
+        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants"
+      ],
+      "remaining_owner": "future model capability composition",
+      "remaining_scope": "Verify production model capability parsing rejects more than three requested questions before side effects.",
+      "planned_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_026"
+      ],
+      "reviewed_by": "/root",
+      "evidence": "The canonical constructor owns the three-question limit; provider batch enforcement remains planned."
+    },
+    {
+      "requirement_id": "INPUT-N-027",
+      "phase": 1,
+      "active_owner": "canonical continuation security boundary",
+      "active_scope": "Reject provider secrets, revision drift, invalid JSON, and unsafe continuation snapshot content before restoration.",
+      "active_node_ids": [
+        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json"
+      ],
+      "remaining_owner": "future model capability composition",
+      "remaining_scope": "Verify activated provider call handling never executes actions, reads process input, assumes a renderer, or fabricates human provenance.",
+      "planned_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_027"
+      ],
+      "reviewed_by": "/root",
+      "evidence": "Continuation security is active at the canonical codec boundary while provider execution policy remains planned."
+    },
+    {
+      "requirement_id": "INPUT-N-098",
+      "phase": 1,
+      "active_owner": "canonical secret-tag security boundary",
+      "active_scope": "Reject secret-bearing snapshots and explicit password, key, token, payment, and authentication-challenge tags.",
+      "active_node_ids": [
+        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
+        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text"
+      ],
+      "remaining_owner": "future public security integration",
+      "remaining_scope": "Verify every activated CLI, SDK, HTTP, MCP, A2A, task, and nested host refuses secret collection end to end.",
+      "planned_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_098"
+      ],
+      "reviewed_by": "/root",
+      "evidence": "Canonical tagged-field and snapshot rejection is active while production host surfaces remain unadvertised."
+    },
+    {
+      "requirement_id": "INPUT-N-102",
+      "phase": 1,
+      "active_owner": "core stream and task observer boundary",
+      "active_scope": "Project opaque correlation through content-safe observer tokens and fail closed on forged content or invalid lifecycle state.",
+      "active_node_ids": [
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_projects_correlated_input_required",
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content",
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_invalid_interaction_state_fails_closed"
+      ],
+      "remaining_owner": "future full telemetry integration",
+      "remaining_scope": "Verify complete telemetry retention, wait timing, category, duplicate, stale, cancellation, expiry, and resume behavior across every public surface.",
+      "planned_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_102"
+      ],
+      "reviewed_by": "/root",
+      "evidence": "Core observer projection and security are active; the comprehensive cross-surface telemetry contract remains planned."
+    }
+  ],
+  "replacements": [
+    {
+      "phase": 1,
+      "old_node_id": "tests/input_contract_test.py::test_capability_remains_absent",
+      "replacement_node_ids": [
+        "tests/input_contract_test.py::test_capability_remains_dormant"
+      ],
+      "requirement_ids": [
+        "INPUT-GATE-012"
+      ],
+      "reviewed_by": "/root",
+      "evidence": "Canonical types exist while all production capability registries remain unadvertised."
+    }
+  ],
   "nodes": [
     {
       "id": "behavior-001",
@@ -108,7 +463,7 @@
     {
       "id": "behavior-004",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-004"
@@ -118,7 +473,7 @@
     {
       "id": "behavior-005",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-005"
@@ -128,7 +483,7 @@
     {
       "id": "behavior-006",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-006"
@@ -138,7 +493,7 @@
     {
       "id": "behavior-007",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-007"
@@ -148,7 +503,7 @@
     {
       "id": "behavior-008",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-008"
@@ -158,7 +513,7 @@
     {
       "id": "behavior-009",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-009"
@@ -168,7 +523,7 @@
     {
       "id": "behavior-010",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-010"
@@ -178,7 +533,7 @@
     {
       "id": "behavior-011",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-011"
@@ -188,7 +543,7 @@
     {
       "id": "behavior-012",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-012"
@@ -198,7 +553,7 @@
     {
       "id": "behavior-013",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-013"
@@ -208,7 +563,7 @@
     {
       "id": "behavior-014",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-014"
@@ -218,7 +573,7 @@
     {
       "id": "behavior-015",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-015"
@@ -358,7 +713,7 @@
     {
       "id": "behavior-029",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-029"
@@ -368,7 +723,7 @@
     {
       "id": "behavior-030",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-030"
@@ -378,7 +733,7 @@
     {
       "id": "behavior-031",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-031"
@@ -388,7 +743,7 @@
     {
       "id": "behavior-032",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-032"
@@ -398,7 +753,7 @@
     {
       "id": "behavior-033",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-033"
@@ -408,7 +763,7 @@
     {
       "id": "behavior-034",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-034"
@@ -418,7 +773,7 @@
     {
       "id": "behavior-035",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-035"
@@ -428,7 +783,7 @@
     {
       "id": "behavior-036",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-036"
@@ -438,7 +793,7 @@
     {
       "id": "behavior-037",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-037"
@@ -448,7 +803,7 @@
     {
       "id": "behavior-038",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-038"
@@ -458,7 +813,7 @@
     {
       "id": "behavior-039",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-039"
@@ -468,7 +823,7 @@
     {
       "id": "behavior-040",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-040"
@@ -478,7 +833,7 @@
     {
       "id": "behavior-041",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-041"
@@ -488,7 +843,7 @@
     {
       "id": "behavior-042",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-042"
@@ -498,7 +853,7 @@
     {
       "id": "behavior-043",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-N-043"
@@ -1496,14 +1851,14 @@
       "node_id": "tests/input_contract_test.py::test_baseline_evidence_is_complete"
     },
     {
-      "id": "gate-012-test_capability_remains_absent",
+      "id": "gate-012-test_capability_remains_dormant",
       "category": "security",
       "lifecycle": "active",
-      "active_from_phase": 0,
+      "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-GATE-012"
       ],
-      "node_id": "tests/input_contract_test.py::test_capability_remains_absent"
+      "node_id": "tests/input_contract_test.py::test_capability_remains_dormant"
     },
     {
       "id": "failure-input-f-01-cli",
@@ -2484,6 +2839,317 @@
         "INPUT-N-106"
       ],
       "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15"
+    },
+    {
+      "id": "boundary-codec-snapshot-round-trip",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-029",
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/input/interaction_boundary_e2e_test.py::test_codec_and_snapshot_round_trip"
+    },
+    {
+      "id": "boundary-illegal-transition-immutability",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-040",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/input/interaction_boundary_e2e_test.py::test_illegal_transition_preserves_prior_request"
+    },
+    {
+      "id": "boundary-observer-stream-projection",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-029",
+        "INPUT-N-102"
+      ],
+      "node_id": "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_projects_correlated_input_required"
+    },
+    {
+      "id": "boundary-internal-e2e",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-006",
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/input/interaction_boundary_e2e_test.py::test_canonical_interaction_boundary_e2e"
+    },
+    {
+      "id": "boundary-security-negative",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-015",
+        "INPUT-N-102"
+      ],
+      "node_id": "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content"
+    },
+    {
+      "id": "gate-005-test_exact_coverage_allows_only_reviewed_exclusion_relocations",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-GATE-005"
+      ],
+      "node_id": "tests/src_coverage_verifier_test.py::test_exact_coverage_allows_only_reviewed_exclusion_relocations"
+    },
+    {
+      "id": "boundary-input-required-cardinality-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_terminal_validator_rejects_input_required_without_one_pending"
+    },
+    {
+      "id": "boundary-invalid-observer-state-fail-closed",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-102"
+      ],
+      "node_id": "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_invalid_interaction_state_fails_closed"
+    },
+    {
+      "id": "boundary-entity-request-aggregate-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-023",
+        "INPUT-N-025",
+        "INPUT-N-026",
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants"
+    },
+    {
+      "id": "boundary-selection-choice-collection-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-025",
+        "INPUT-N-033",
+        "INPUT-N-034"
+      ],
+      "node_id": "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections"
+    },
+    {
+      "id": "boundary-selection-reference-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-025",
+        "INPUT-N-034",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_references"
+    },
+    {
+      "id": "boundary-answer-type-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-033",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question"
+    },
+    {
+      "id": "boundary-answer-set-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-030",
+        "INPUT-N-032",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_state_test.py::test_answer_set_rejects_unknown_missing_and_invalid_text"
+    },
+    {
+      "id": "boundary-selection-answer-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-034",
+        "INPUT-N-036",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_state_test.py::test_selection_answers_validate_values_and_cardinality"
+    },
+    {
+      "id": "boundary-trusted-default-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-042",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults"
+    },
+    {
+      "id": "boundary-transition-error-constructor-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_state_test.py::test_transition_error_rejects_invalid_public_constructor_values"
+    },
+    {
+      "id": "boundary-pending-transition-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-040",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_state_test.py::test_pending_transition_rejects_invalid_preconditions_and_overflow"
+    },
+    {
+      "id": "boundary-resolution-transition-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-040",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_state_test.py::test_resolution_transition_rejects_revision_and_resolution_errors"
+    },
+    {
+      "id": "boundary-validation-primitive-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-029",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_validation_test.py::test_invalid_primitives"
+    },
+    {
+      "id": "boundary-codec-root-variant-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-029",
+        "INPUT-N-033",
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/interaction/interaction_codec_test.py::test_codec_rejects_invalid_root_types_and_unsupported_variants"
+    },
+    {
+      "id": "boundary-continuation-drift-secret-negative",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-018",
+        "INPUT-N-027",
+        "INPUT-N-098"
+      ],
+      "node_id": "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json"
+    },
+    {
+      "id": "boundary-prohibited-tag-security",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-018",
+        "INPUT-N-098"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text"
+    },
+    {
+      "id": "boundary-stream-false-terminal-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_pending_interaction_rejects_false_stream_completion"
+    },
+    {
+      "id": "boundary-stream-multiple-request-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_multiple_pending_requests_reject_input_required_cardinality"
+    },
+    {
+      "id": "boundary-stream-correlation-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-029",
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation"
+    },
+    {
+      "id": "boundary-stream-lifecycle-order-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_illegal_lifecycle_order"
+    },
+    {
+      "id": "boundary-provider-free-lifecycle-e2e",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-023",
+        "INPUT-N-040",
+        "INPUT-N-041",
+        "INPUT-N-042",
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
+    },
+    {
+      "id": "boundary-terminal-nonanswer-matrix",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix"
     }
   ]
 }

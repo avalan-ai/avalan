@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
+  "current_snapshot_sha256": "4b480b52db122eee22a7139ce5a3eaa7d8e436e0cef1122fe84af00bf0b90575",
+  "directive_count_before": 55,
+  "directive_count_after": 55,
+  "report_excluded_line_count_before": 1225,
+  "report_excluded_line_count_after": 1225,
+  "directive_relocations": [
+    {
+      "identity": "4dc50c9f835d5ea65fdf6e57609739acef672f6a488b660c46ebf57e0135bce1",
+      "path": "src/avalan/server/routers/mcp.py",
+      "text": "        except KeyError as exc:  # pragma: no cover - FastAPI handles",
+      "occurrence": 1,
+      "from_line": 944,
+      "to_line": 945,
+      "reviewed_by": "/root/interaction_round4_gates",
+      "reason": "One integration line was inserted before this unchanged MCP route exclusion."
+    },
+    {
+      "identity": "e4a79ba3c16ef75e08161e3b2733b575904a6fd4463e0b01889b0e6f5712fdca",
+      "path": "src/avalan/server/routers/mcp.py",
+      "text": "    except Exception as exc:  # pragma: no cover - validation error path",
+      "occurrence": 1,
+      "from_line": 1011,
+      "to_line": 1012,
+      "reviewed_by": "/root/interaction_round4_gates",
+      "reason": "One integration line was inserted before this unchanged MCP validation exclusion."
+    },
+    {
+      "identity": "dbc2a542f5318b08a215855423360a01887ef536a35e4bf2549eae0f27e49ca4",
+      "path": "src/avalan/server/routers/mcp.py",
+      "text": "    ) as exc:  # pragma: no cover - defensive validation",
+      "occurrence": 1,
+      "from_line": 1040,
+      "to_line": 1041,
+      "reviewed_by": "/root/interaction_round4_gates",
+      "reason": "One integration line was inserted before this unchanged MCP defensive exclusion."
+    },
+    {
+      "identity": "bdcc2f173666d9075fbbca70a09bb72bc2d366e67925d97066228a4d9080a292",
+      "path": "src/avalan/server/routers/mcp.py",
+      "text": "        except Exception:  # pragma: no cover - best effort cleanup",
+      "occurrence": 1,
+      "from_line": 2743,
+      "to_line": 2749,
+      "reviewed_by": "/root/interaction_round4_gates",
+      "reason": "Six integration lines were inserted before this unchanged MCP cleanup exclusion."
+    }
+  ],
+  "report_exclusion_relocations": [
+    {
+      "path": "src/avalan/server/routers/mcp.py",
+      "from_lines": [
+        137,
+        138,
+        139,
+        944,
+        945,
+        1011,
+        1012,
+        1038,
+        1041,
+        1086,
+        1087,
+        1088,
+        1089,
+        1090,
+        2743,
+        2744
+      ],
+      "to_lines": [
+        137,
+        138,
+        139,
+        945,
+        946,
+        1012,
+        1013,
+        1039,
+        1042,
+        1087,
+        1088,
+        1089,
+        1090,
+        1091,
+        2749,
+        2750
+      ],
+      "reviewed_by": "/root/interaction_round4_gates",
+      "reason": "Interaction routing shifted unchanged MCP parser exclusions while preserving all sixteen excluded lines."
+    },
+    {
+      "path": "src/avalan/task/event.py",
+      "from_lines": [
+        184,
+        185,
+        186,
+        187,
+        188,
+        189,
+        190,
+        191,
+        192,
+        193,
+        194
+      ],
+      "to_lines": [
+        209,
+        210,
+        211,
+        212,
+        213,
+        214,
+        215,
+        216,
+        217,
+        218,
+        219
+      ],
+      "reviewed_by": "/root/interaction_round4_gates",
+      "reason": "Interaction observability fields moved the unchanged TaskEventStore Protocol block while preserving all eleven excluded lines."
+    }
+  ],
+  "ledger_sha256": "efdc3890ced956313276da34397c282390f7955b98f3ddc801271a6cd10ad134"
+}

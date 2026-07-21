@@ -64,6 +64,7 @@ def _projection(
     metadata: dict[str, object] | None = None,
     tool_call_id: str | None = None,
     model_continuation_id: str | None = None,
+    correlation: StreamItemCorrelation | None = None,
     terminal_outcome: StreamTerminalOutcome | None = None,
     provider_family: str | None = None,
     provider_event_type: str | None = None,
@@ -75,7 +76,8 @@ def _projection(
         sequence=sequence,
         kind=kind,
         channel=_channel(kind),
-        correlation=StreamItemCorrelation(
+        correlation=correlation
+        or StreamItemCorrelation(
             model_continuation_id=model_continuation_id,
             tool_call_id=tool_call_id,
         ),
@@ -1392,6 +1394,33 @@ class DisplayReducerTestCase(TestCase):
         self.assertEqual(snapshot.build_stats.snapshots_built, 2)
         self.assertEqual(snapshot.build_stats.answer_chunks, 10_000)
         self.assertEqual(snapshot.build_stats.text_materializations, 4)
+
+    def test_input_required_is_terminal_but_not_completed_outcome(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(1.0),
+        )
+        correlation = StreamItemCorrelation(
+            request_id="request-1",
+            continuation_id="continuation-1",
+            agent_id="agent-1",
+            branch_id="branch-1",
+        )
+        terminal = _projection(
+            StreamItemKind.STREAM_INPUT_REQUIRED,
+            3,
+            correlation=correlation,
+            terminal_outcome=StreamTerminalOutcome.INPUT_REQUIRED,
+        )
+
+        self.assertTrue(reducer.apply_projection(terminal))
+        snapshot = reducer.snapshot()
+        self.assertTrue(reducer.terminal_completed)
+        self.assertTrue(snapshot.terminal.completed)
+        self.assertEqual(snapshot.terminal.outcome, "input_required")
+        self.assertFalse(reducer.apply_projection(terminal))
 
     def test_apply_projection_duplicate_terminal_is_noop(self) -> None:
         reducer = CliStreamSnapshotReducer(

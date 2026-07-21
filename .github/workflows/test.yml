@@ -125,17 +125,17 @@ jobs:
       - name: Verify structured-input type contracts
         run: |
           make lint
-          make typecheck-input-contract INPUT_PHASE=0
+          make typecheck-input-contract INPUT_PHASE=1
 
       - name: Run exact tests with PostgreSQL
         if: matrix.target.os == 'ubuntu-latest'
-        run: make test-pgsql-exact no-install INPUT_PHASE=0
+        run: make test-pgsql-exact no-install INPUT_PHASE=1
 
       - name: Run exact tests
         if: matrix.target.os != 'ubuntu-latest'
         run: |
           make test-coverage-exact no-install
-          poetry run python scripts/verify_input_acceptance.py --through-phase 0
+          poetry run python scripts/verify_input_acceptance.py --through-phase 1
 
       - name: Verify clean generated metadata
         run: git diff --check

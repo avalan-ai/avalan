@@ -23,7 +23,7 @@
     "25",
     "26"
   ],
-  "catalog_sha256": "4871c2cee6bab371387d03dcfac8f81c5d4a3583bd6d6c510e0314a37468f06a",
+  "catalog_sha256": "948782fec655e9368e8c17461218134ea9aedc3c6061cf268de86f5d8c6da8c5",
   "requirements": [
     {
       "id": "INPUT-N-001",
@@ -74,7 +74,7 @@
       "paraphrase": "Describe semantic input types in each request.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -88,7 +88,7 @@
       "paraphrase": "Avoid prescribing a widget and preserve stable choices and values across semantically equivalent native presentations.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -102,11 +102,19 @@
       "paraphrase": "Resolve the pending model request and continue the same logical run after an answered resolution.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "src/avalan/interaction/",
+        "tests/input/canonical_contract_test.py",
+        "tests/input/interaction_boundary_e2e_test.py",
+        "tests/interaction/interaction_entities_test.py",
+        "tests/interaction/interaction_state_test.py",
+        "tests/interaction/interaction_codec_test.py",
+        "tests/interaction/interaction_e2e_test.py",
+        "tests/model/model_stream_interaction_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_006"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_006",
+        "tests/input/interaction_boundary_e2e_test.py::test_canonical_interaction_boundary_e2e"
       ]
     },
     {
@@ -116,7 +124,7 @@
       "paraphrase": "Keep the canonical lifecycle independent of provider tool-call syntax and treat plain prose questions only as degraded fallback.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -130,7 +138,7 @@
       "paraphrase": "Advertise the capability only when the host can resolve it while attached or persist both request and continuation for later resolution.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -144,7 +152,7 @@
       "paraphrase": "Govern availability by host interaction capability rather than ordinary domain-tool permissions.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -158,7 +166,7 @@
       "paraphrase": "Represent decline, cancellation, timeout, unavailability, and expiry explicitly.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -172,7 +180,7 @@
       "paraphrase": "Never manufacture a human answer when no human supplied one.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -186,7 +194,7 @@
       "paraphrase": "Keep clarification, approval, steering, and authentication as distinct interaction classes.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -200,7 +208,7 @@
       "paraphrase": "Request input only when it materially affects the result and cannot be recovered safely from context.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -214,7 +222,7 @@
       "paraphrase": "Inspect context, prefer one focused question, offer concrete consequential choices, and continue on a safe reversible assumption when possible.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -228,11 +236,15 @@
       "paraphrase": "Distinguish task input, action approval, steering, and authentication by origin, meaning, and resolution effect.",
       "owner": "interaction security boundary",
       "implementation_artifacts": [
-        "planned:tests/input/security_contract_test.py",
+        "src/avalan/interaction/",
+        "src/avalan/task/event.py",
+        "tests/input/security_contract_test.py",
+        "tests/task/interaction_event_sanitization_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_015"
+        "tests/input/security_contract_test.py::test_requirement_input_n_015",
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content"
       ]
     },
     {
@@ -271,10 +283,14 @@
       "owner": "interaction security boundary",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
+        "tests/input/security_contract_test.py",
+        "tests/interaction/interaction_codec_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_018"
+        "tests/input/security_contract_test.py::test_requirement_input_n_018",
+        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
+        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text"
       ]
     },
     {
@@ -341,10 +357,14 @@
       "owner": "model capability composition",
       "implementation_artifacts": [
         "planned:tests/input/model_capability_contract_test.py",
+        "tests/interaction/interaction_entities_test.py",
+        "tests/interaction/interaction_e2e_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_023"
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_023",
+        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
       ]
     },
     {
@@ -369,10 +389,14 @@
       "owner": "model capability composition",
       "implementation_artifacts": [
         "planned:tests/input/model_capability_contract_test.py",
+        "tests/interaction/interaction_entities_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_025"
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_025",
+        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_references"
       ]
     },
     {
@@ -383,10 +407,12 @@
       "owner": "model capability composition",
       "implementation_artifacts": [
         "planned:tests/input/model_capability_contract_test.py",
+        "tests/interaction/interaction_entities_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_026"
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_026",
+        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants"
       ]
     },
     {
@@ -397,10 +423,12 @@
       "owner": "model capability composition",
       "implementation_artifacts": [
         "planned:tests/input/model_capability_contract_test.py",
+        "tests/interaction/interaction_codec_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_027"
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_027",
+        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json"
       ]
     },
     {
@@ -424,11 +452,22 @@
       "paraphrase": "Include opaque request identity, full execution correlation, typed stable question IDs, required/advisory intent, a reason, creation time, and lifecycle state.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "src/avalan/interaction/",
+        "src/avalan/model/stream.py",
+        "tests/input/canonical_contract_test.py",
+        "tests/input/interaction_boundary_e2e_test.py",
+        "tests/interaction/interaction_validation_test.py",
+        "tests/interaction/interaction_codec_test.py",
+        "tests/model/model_stream_interaction_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_029"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_029",
+        "tests/input/interaction_boundary_e2e_test.py::test_codec_and_snapshot_round_trip",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_projects_correlated_input_required",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives",
+        "tests/interaction/interaction_codec_test.py::test_codec_rejects_invalid_root_types_and_unsupported_variants",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation"
       ]
     },
     {
@@ -438,11 +477,13 @@
       "paraphrase": "Give each question a stable ID, concise prompt, semantic type, and accepted-response requirement.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
+        "tests/interaction/interaction_state_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_030"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_030",
+        "tests/interaction/interaction_state_test.py::test_answer_set_rejects_unknown_missing_and_invalid_text"
       ]
     },
     {
@@ -452,7 +493,7 @@
       "paraphrase": "Allow bounded headers, help, choices, recommendations, defaults, Other permission, validation constraints, and advisory presentation hints.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -466,11 +507,13 @@
       "paraphrase": "Key answers by stable question ID rather than displayed text.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
+        "tests/interaction/interaction_state_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_032"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_032",
+        "tests/interaction/interaction_state_test.py::test_answer_set_rejects_unknown_missing_and_invalid_text"
       ]
     },
     {
@@ -480,11 +523,17 @@
       "paraphrase": "Support confirmation, text, multiline text, single selection, and multiple selection while excluding nested forms, conditional subforms, uploads, and executable UI.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
+        "tests/interaction/interaction_entities_test.py",
+        "tests/interaction/interaction_state_test.py",
+        "tests/interaction/interaction_codec_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_033"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_033",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
+        "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question",
+        "tests/interaction/interaction_codec_test.py::test_codec_rejects_invalid_root_types_and_unsupported_variants"
       ]
     },
     {
@@ -494,11 +543,16 @@
       "paraphrase": "Give every choice a stable machine value and human-readable label.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
+        "tests/interaction/interaction_entities_test.py",
+        "tests/interaction/interaction_state_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_034"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_034",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_references",
+        "tests/interaction/interaction_state_test.py::test_selection_answers_validate_values_and_cardinality"
       ]
     },
     {
@@ -508,7 +562,7 @@
       "paraphrase": "Describe non-obvious choice consequences while allowing labels to change without changing stored or returned values.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -522,11 +576,13 @@
       "paraphrase": "Allow a tagged free-form Other alternative instead of a literal choice value.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
+        "tests/interaction/interaction_state_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_036"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_036",
+        "tests/interaction/interaction_state_test.py::test_selection_answers_validate_values_and_cardinality"
       ]
     },
     {
@@ -536,7 +592,7 @@
       "paraphrase": "Present structured choices first and open text entry only after the free-form alternative is selected.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -550,7 +606,7 @@
       "paraphrase": "Express compactness and native-control presentation preferences as hints.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -564,7 +620,7 @@
       "paraphrase": "Keep presentation hints advisory so hosts may choose semantically equivalent accessible controls.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -578,11 +634,27 @@
       "paraphrase": "Resolve a request exactly once as answered, declined, cancelled, timed_out, unavailable, expired, or superseded.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "src/avalan/interaction/",
+        "tests/input/canonical_contract_test.py",
+        "tests/input/interaction_boundary_e2e_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_040"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_040",
+        "tests/input/interaction_boundary_e2e_test.py::test_codec_and_snapshot_round_trip",
+        "tests/input/interaction_boundary_e2e_test.py::test_illegal_transition_preserves_prior_request",
+        "tests/input/interaction_boundary_e2e_test.py::test_canonical_interaction_boundary_e2e",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_terminal_validator_rejects_input_required_without_one_pending",
+        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
+        "tests/interaction/interaction_state_test.py::test_pending_transition_rejects_invalid_preconditions_and_overflow",
+        "tests/interaction/interaction_state_test.py::test_resolution_transition_rejects_revision_and_resolution_errors",
+        "tests/interaction/interaction_codec_test.py::test_codec_rejects_invalid_root_types_and_unsupported_variants",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_pending_interaction_rejects_false_stream_completion",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_multiple_pending_requests_reject_input_required_cardinality",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_illegal_lifecycle_order",
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix"
       ]
     },
     {
@@ -592,11 +664,13 @@
       "paraphrase": "Identify the request, keyed answers, per-answer provenance, and resolution time in an answered resolution.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
+        "tests/interaction/interaction_e2e_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_041"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_041",
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
       ]
     },
     {
@@ -606,11 +680,15 @@
       "paraphrase": "Distinguish human, explicit host/caller default, and policy provenance, and describe only explicit human input as human-selected or entered.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
+        "tests/interaction/interaction_state_test.py",
+        "tests/interaction/interaction_e2e_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_042"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_042",
+        "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults",
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
       ]
     },
     {
@@ -620,11 +698,28 @@
       "paraphrase": "Validate response types, choice values, required fields, and current request state before continuation.",
       "owner": "canonical interaction domain",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "src/avalan/interaction/",
+        "tests/input/canonical_contract_test.py",
+        "tests/input/interaction_boundary_e2e_test.py",
+        "tests/interaction/interaction_entities_test.py",
+        "tests/interaction/interaction_state_test.py",
+        "tests/interaction/interaction_validation_test.py",
+        "tests/interaction/interaction_e2e_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_043"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_043",
+        "tests/input/interaction_boundary_e2e_test.py::test_illegal_transition_preserves_prior_request",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_references",
+        "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question",
+        "tests/interaction/interaction_state_test.py::test_answer_set_rejects_unknown_missing_and_invalid_text",
+        "tests/interaction/interaction_state_test.py::test_selection_answers_validate_values_and_cardinality",
+        "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults",
+        "tests/interaction/interaction_state_test.py::test_transition_error_rejects_invalid_public_constructor_values",
+        "tests/interaction/interaction_state_test.py::test_pending_transition_rejects_invalid_preconditions_and_overflow",
+        "tests/interaction/interaction_state_test.py::test_resolution_transition_rejects_revision_and_resolution_errors",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives",
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
       ]
     },
     {
@@ -1391,10 +1486,14 @@
       "owner": "interaction security policy",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
+        "tests/input/security_contract_test.py",
+        "tests/interaction/interaction_codec_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_098"
+        "tests/input/security_contract_test.py::test_requirement_input_n_098",
+        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
+        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text"
       ]
     },
     {
@@ -1446,11 +1545,18 @@
       "paraphrase": "Preserve correlation in telemetry without logging raw answers by default.",
       "owner": "privacy and observability",
       "implementation_artifacts": [
+        "src/avalan/model/stream.py",
+        "src/avalan/task/event.py",
         "planned:tests/input/security_contract_test.py",
+        "tests/model/model_stream_interaction_test.py",
+        "tests/task/interaction_event_sanitization_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_102"
+        "tests/input/security_contract_test.py::test_requirement_input_n_102",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_projects_correlated_input_required",
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content",
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_invalid_interaction_state_fails_closed"
       ]
     },
     {
@@ -1840,11 +1946,14 @@
       "paraphrase": "Enforce exact total, per-file, source-inventory, evidence-line, and exclusion-baseline coverage.",
       "owner": "coverage gate",
       "implementation_artifacts": [
-        "scripts/verify_src_coverage.py"
+        "scripts/verify_src_coverage.py",
+        "tests/fixtures/input/coverage_exclusions_phase1.json",
+        "tests/fixtures/input/coverage_exclusion_relocations_phase1.json"
       ],
       "test_node_ids": [
         "tests/src_coverage_verifier_test.py::test_exact_coverage_accepts_empty_module_variants",
-        "tests/src_coverage_verifier_test.py::test_exact_coverage_rejects_invalid_reports"
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_rejects_invalid_reports",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_allows_only_reviewed_exclusion_relocations"
       ]
     },
     {
@@ -1936,13 +2045,14 @@
       "id": "INPUT-GATE-012",
       "source_section": "delivery_gate",
       "normative_level": "MUST",
-      "paraphrase": "Keep the reserved capability absent from every production model and host registry.",
+      "paraphrase": "Keep canonical production types dormant and unadvertised until the atomic capability activation boundary.",
       "owner": "activation guard",
       "implementation_artifacts": [
+        "tests/fixtures/input/baseline_evidence.json",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input_contract_test.py::test_capability_remains_absent"
+        "tests/input_contract_test.py::test_capability_remains_dormant"
       ]
     }
   ]

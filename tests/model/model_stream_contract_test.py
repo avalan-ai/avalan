@@ -3250,6 +3250,7 @@ class StreamContractTestCase(TestCase):
                 "reasoning",
                 "tool_call",
                 "tool_execution",
+                "interaction",
                 "flow",
                 "usage",
                 "control",
@@ -3257,7 +3258,7 @@ class StreamContractTestCase(TestCase):
         )
         self.assertEqual(
             {outcome.value for outcome in StreamTerminalOutcome},
-            {"completed", "errored", "cancelled"},
+            {"completed", "errored", "cancelled", "input_required"},
         )
         self.assertEqual(
             {visibility.value for visibility in StreamVisibility},
@@ -3278,6 +3279,12 @@ class StreamContractTestCase(TestCase):
         self.assertIs(
             stream_terminal_outcome_for_kind(StreamItemKind.STREAM_CANCELLED),
             StreamTerminalOutcome.CANCELLED,
+        )
+        self.assertIs(
+            stream_terminal_outcome_for_kind(
+                StreamItemKind.STREAM_INPUT_REQUIRED
+            ),
+            StreamTerminalOutcome.INPUT_REQUIRED,
         )
         self.assertIsNone(
             stream_terminal_outcome_for_kind(StreamItemKind.STREAM_CLOSED)

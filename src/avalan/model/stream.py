@@ -1,3 +1,12 @@
+from ..event import project_observer_id
+from ..interaction import (
+    AgentId,
+    BranchId,
+    ContinuationId,
+    InputRequestId,
+    RequestState,
+)
+from ..interaction.validation import validate_opaque_id
 from ..observability import observability_key_sample
 from ..types import LooseJsonValue
 from .provider import ProviderFamily, provider_family_value
@@ -5,13 +14,14 @@ from .provider import ProviderFamily, provider_family_value
 from abc import ABC, abstractmethod
 from asyncio import CancelledError
 from collections import deque
-from collections.abc import AsyncIterable, Awaitable, Iterable
+from collections.abc import AsyncIterable, Awaitable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 from inspect import isawaitable
 from json import JSONDecodeError, loads
+from types import MappingProxyType
 from typing import Any, AsyncIterator, cast
 
 
@@ -20,6 +30,7 @@ class StreamChannel(StrEnum):
     REASONING = "reasoning"
     TOOL_CALL = "tool_call"
     TOOL_EXECUTION = "tool_execution"
+    INTERACTION = "interaction"
     FLOW = "flow"
     USAGE = "usage"
     CONTROL = "control"
@@ -46,11 +57,21 @@ class StreamItemKind(StrEnum):
     FLOW_EVENT = "flow.event"
     USAGE_UPDATE = "usage.update"
     USAGE_COMPLETED = "usage.completed"
+    INTERACTION_CREATED = "interaction.created"
+    INTERACTION_PENDING = "interaction.pending"
+    INTERACTION_ANSWERED = "interaction.answered"
+    INTERACTION_DECLINED = "interaction.declined"
+    INTERACTION_CANCELLED = "interaction.cancelled"
+    INTERACTION_TIMED_OUT = "interaction.timed_out"
+    INTERACTION_UNAVAILABLE = "interaction.unavailable"
+    INTERACTION_EXPIRED = "interaction.expired"
+    INTERACTION_SUPERSEDED = "interaction.superseded"
     STREAM_STARTED = "stream.started"
     STREAM_DIAGNOSTIC = "stream.diagnostic"
     STREAM_COMPLETED = "stream.completed"
     STREAM_ERRORED = "stream.errored"
     STREAM_CANCELLED = "stream.cancelled"
+    STREAM_INPUT_REQUIRED = "stream.input_required"
     STREAM_CLOSED = "stream.closed"
 
 
@@ -58,6 +79,7 @@ class StreamTerminalOutcome(StrEnum):
     COMPLETED = "completed"
     ERRORED = "errored"
     CANCELLED = "cancelled"
+    INPUT_REQUIRED = "input_required"
 
 
 class StreamVisibility(StrEnum):
@@ -364,6 +386,11 @@ class StreamItemCorrelation:
     provider_summary_index: int | None = None
     task_id: str | None = None
     artifact_id: str | None = None
+    request_id: InputRequestId | None = None
+    continuation_id: ContinuationId | None = None
+    agent_id: AgentId | None = None
+    branch_id: BranchId | None = None
+    parent_branch_id: BranchId | None = None
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -379,6 +406,26 @@ class StreamItemCorrelation:
             if value is not None:
                 assert isinstance(value, str), f"{field_name} must be a string"
                 assert value.strip(), f"{field_name} must not be empty"
+        for field_name, constructor in (
+            ("request_id", InputRequestId),
+            ("continuation_id", ContinuationId),
+            ("agent_id", AgentId),
+            ("branch_id", BranchId),
+            ("parent_branch_id", BranchId),
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    constructor(validate_opaque_id(value, field_name)),
+                )
+        if self.task_id is not None and self._has_interaction_identity:
+            object.__setattr__(
+                self,
+                "task_id",
+                validate_opaque_id(self.task_id, "task_id"),
+            )
         if self.parent_sequence is not None:
             assert isinstance(
                 self.parent_sequence, int
@@ -405,12 +452,39 @@ class StreamItemCorrelation:
             ("protocol_item_id", self.protocol_item_id),
             ("provider_output_index", self.provider_output_index),
             ("provider_summary_index", self.provider_summary_index),
-            ("task_id", self.task_id),
             ("artifact_id", self.artifact_id),
         ):
             if value is not None:
                 result[field_name] = value
+        if self.task_id is not None:
+            result["task_id"] = (
+                project_observer_id(self.task_id, "task_id")
+                if self._has_interaction_identity
+                else self.task_id
+            )
+        for field_name, value in (
+            ("request_id", self.request_id),
+            ("continuation_id", self.continuation_id),
+            ("agent_id", self.agent_id),
+            ("branch_id", self.branch_id),
+            ("parent_branch_id", self.parent_branch_id),
+        ):
+            if value is not None:
+                result[field_name] = project_observer_id(value, field_name)
         return result
+
+    @property
+    def _has_interaction_identity(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.request_id,
+                self.continuation_id,
+                self.agent_id,
+                self.branch_id,
+                self.parent_branch_id,
+            )
+        )
 
 
 _EMPTY_STREAM_ITEM_CORRELATION = StreamItemCorrelation()
@@ -468,6 +542,7 @@ class StreamReasoningSegment:
             assert self.terminal_outcome in (
                 StreamTerminalOutcome.ERRORED,
                 StreamTerminalOutcome.CANCELLED,
+                StreamTerminalOutcome.INPUT_REQUIRED,
             )
 
 
@@ -642,6 +717,7 @@ class StreamProviderEvent:
         assert isinstance(self.kind, StreamItemKind)
         assert self.kind is not StreamItemKind.STREAM_STARTED
         assert self.kind is not StreamItemKind.STREAM_CLOSED
+        assert self.kind not in _INTERACTION_STREAM_KINDS
         assert isinstance(self.correlation, StreamItemCorrelation)
         assert isinstance(self.visibility, StreamVisibility)
         assert isinstance(self.metadata, dict), "metadata must be a dict"
@@ -1082,7 +1158,7 @@ class CanonicalStreamItem:
     visibility: StreamVisibility = StreamVisibility.PUBLIC
     reasoning_representation: StreamReasoningRepresentation | None = None
     segment_instance_ordinal: int | None = None
-    metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
+    metadata: Mapping[str, LooseJsonValue] = field(default_factory=dict)
     provider_payload: LooseJsonValue | None = None
     provider_family: str | None = None
     provider_event_type: str | None = None
@@ -1101,9 +1177,22 @@ class CanonicalStreamItem:
         assert isinstance(self.kind, StreamItemKind)
         assert isinstance(self.channel, StreamChannel)
         assert self.channel is stream_channel_for_kind(self.kind)
+        if self.kind in _INTERACTION_STREAM_KINDS:
+            for field_name in ("stream_session_id", "run_id", "turn_id"):
+                object.__setattr__(
+                    self,
+                    field_name,
+                    validate_opaque_id(getattr(self, field_name), field_name),
+                )
         assert isinstance(self.correlation, StreamItemCorrelation)
         assert isinstance(self.visibility, StreamVisibility)
-        assert isinstance(self.metadata, dict), "metadata must be a dict"
+        assert isinstance(self.metadata, Mapping), "metadata must be a mapping"
+        if self.kind in _INTERACTION_STREAM_KINDS:
+            object.__setattr__(
+                self,
+                "metadata",
+                MappingProxyType(dict(self.metadata)),
+            )
         if self.text_delta is not None:
             assert isinstance(self.text_delta, str)
         if self.provider_family is not None:
@@ -1131,10 +1220,27 @@ class CanonicalStreamItem:
         return is_tool_execution_terminal_kind(self.kind)
 
     def to_trace_dict(self) -> dict[str, object]:
+        self._validate_kind_payload()
+        interaction = self.kind in _INTERACTION_STREAM_KINDS
         result: dict[str, object] = {
-            "stream_session_id": self.stream_session_id,
-            "run_id": self.run_id,
-            "turn_id": self.turn_id,
+            "stream_session_id": (
+                project_observer_id(
+                    self.stream_session_id,
+                    "stream_session_id",
+                )
+                if interaction
+                else self.stream_session_id
+            ),
+            "run_id": (
+                project_observer_id(self.run_id, "run_id")
+                if interaction
+                else self.run_id
+            ),
+            "turn_id": (
+                project_observer_id(self.turn_id, "turn_id")
+                if interaction
+                else self.turn_id
+            ),
             "sequence": self.sequence,
             "kind": self.kind.value,
             "channel": self.channel.value,
@@ -1181,6 +1287,20 @@ class CanonicalStreamItem:
         if self.kind in _TOOL_CORRELATED_KINDS:
             assert self.correlation.tool_call_id is not None
 
+        _validate_interaction_item_payload(
+            self.kind,
+            self.correlation,
+            stream_session_id=self.stream_session_id,
+            run_id=self.run_id,
+            turn_id=self.turn_id,
+            data=self.data,
+            usage=self.usage,
+            metadata=self.metadata,
+            provider_payload=self.provider_payload,
+            provider_family=self.provider_family,
+            provider_event_type=self.provider_event_type,
+        )
+
         if self.usage is not None:
             assert self.kind in _USAGE_KINDS or (
                 self.kind is StreamItemKind.STREAM_COMPLETED
@@ -1211,7 +1331,7 @@ class StreamConsumerProjection:
     visibility: StreamVisibility = StreamVisibility.PUBLIC
     reasoning_representation: StreamReasoningRepresentation | None = None
     segment_instance_ordinal: int | None = None
-    metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
+    metadata: Mapping[str, LooseJsonValue] = field(default_factory=dict)
     provider_family: str | None = None
     provider_event_type: str | None = None
 
@@ -1227,9 +1347,22 @@ class StreamConsumerProjection:
         assert isinstance(self.kind, StreamItemKind)
         assert isinstance(self.channel, StreamChannel)
         assert self.channel is stream_channel_for_kind(self.kind)
+        if self.kind in _INTERACTION_STREAM_KINDS:
+            for field_name in ("stream_session_id", "run_id", "turn_id"):
+                object.__setattr__(
+                    self,
+                    field_name,
+                    validate_opaque_id(getattr(self, field_name), field_name),
+                )
         assert isinstance(self.correlation, StreamItemCorrelation)
         assert isinstance(self.visibility, StreamVisibility)
-        assert isinstance(self.metadata, dict), "metadata must be a dict"
+        assert isinstance(self.metadata, Mapping), "metadata must be a mapping"
+        if self.kind in _INTERACTION_STREAM_KINDS:
+            object.__setattr__(
+                self,
+                "metadata",
+                MappingProxyType(dict(self.metadata)),
+            )
         if self.text_delta is not None:
             assert isinstance(self.text_delta, str)
         if self.terminal_outcome is not None:
@@ -1264,6 +1397,20 @@ class StreamConsumerProjection:
         if self.kind in _TOOL_CORRELATED_KINDS:
             assert self.correlation.tool_call_id is not None
 
+        _validate_interaction_item_payload(
+            self.kind,
+            self.correlation,
+            stream_session_id=self.stream_session_id,
+            run_id=self.run_id,
+            turn_id=self.turn_id,
+            data=self.data,
+            usage=self.usage,
+            metadata=self.metadata,
+            provider_payload=None,
+            provider_family=self.provider_family,
+            provider_event_type=self.provider_event_type,
+        )
+
         if self.usage is not None:
             assert self.kind in _USAGE_KINDS or (
                 self.kind is StreamItemKind.STREAM_COMPLETED
@@ -1283,6 +1430,7 @@ class StreamConsumerProjection:
         item: CanonicalStreamItem,
     ) -> "StreamConsumerProjection":
         assert isinstance(item, CanonicalStreamItem)
+        item._validate_kind_payload()
         return cls(
             stream_session_id=item.stream_session_id,
             run_id=item.run_id,
@@ -1322,6 +1470,7 @@ def canonical_item_from_consumer_projection(
     projection: StreamConsumerProjection,
 ) -> CanonicalStreamItem:
     assert isinstance(projection, StreamConsumerProjection)
+    projection._validate_kind_payload()
     return CanonicalStreamItem(
         stream_session_id=projection.stream_session_id,
         run_id=projection.run_id,
@@ -1545,6 +1694,9 @@ def stream_observability_payload(
     item: CanonicalStreamItem,
 ) -> dict[str, LooseJsonValue]:
     assert isinstance(item, CanonicalStreamItem)
+    item._validate_kind_payload()
+    if item.kind in _INTERACTION_STREAM_KINDS:
+        return _interaction_stream_observability_payload(item)
     payload: dict[str, LooseJsonValue] = {
         "stream_session_id": item.stream_session_id,
         "run_id": item.run_id,
@@ -1568,6 +1720,41 @@ def stream_observability_payload(
         payload["provider_family"] = item.provider_family
     if item.provider_event_type is not None:
         payload["provider_event_type"] = item.provider_event_type
+    return payload
+
+
+def _interaction_stream_observability_payload(
+    item: CanonicalStreamItem,
+) -> dict[str, LooseJsonValue]:
+    correlation = item.correlation
+    assert correlation.request_id is not None
+    assert correlation.agent_id is not None
+    assert correlation.branch_id is not None
+    state = _INTERACTION_KIND_STATES.get(item.kind, RequestState.PENDING)
+    payload: dict[str, LooseJsonValue] = {
+        "request_id": project_observer_id(
+            correlation.request_id,
+            "request_id",
+        ),
+        "run_id": project_observer_id(item.run_id, "run_id"),
+        "turn_id": project_observer_id(item.turn_id, "turn_id"),
+        "agent_id": project_observer_id(
+            correlation.agent_id,
+            "agent_id",
+        ),
+        "branch_id": project_observer_id(
+            correlation.branch_id,
+            "branch_id",
+        ),
+        "state": state.value,
+    }
+    if correlation.task_id is not None:
+        payload["task_id"] = project_observer_id(
+            correlation.task_id,
+            "task_id",
+        )
+    if state not in {RequestState.CREATED, RequestState.PENDING}:
+        payload["resolution_category"] = state.value
     return payload
 
 
@@ -1684,18 +1871,47 @@ _STREAM_KIND_CHANNELS: dict[StreamItemKind, StreamChannel] = {
     StreamItemKind.FLOW_EVENT: StreamChannel.FLOW,
     StreamItemKind.USAGE_UPDATE: StreamChannel.USAGE,
     StreamItemKind.USAGE_COMPLETED: StreamChannel.USAGE,
+    StreamItemKind.INTERACTION_CREATED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_PENDING: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_ANSWERED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_DECLINED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_CANCELLED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_TIMED_OUT: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_UNAVAILABLE: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_EXPIRED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_SUPERSEDED: StreamChannel.INTERACTION,
     StreamItemKind.STREAM_STARTED: StreamChannel.CONTROL,
     StreamItemKind.STREAM_DIAGNOSTIC: StreamChannel.CONTROL,
     StreamItemKind.STREAM_COMPLETED: StreamChannel.CONTROL,
     StreamItemKind.STREAM_ERRORED: StreamChannel.CONTROL,
     StreamItemKind.STREAM_CANCELLED: StreamChannel.CONTROL,
+    StreamItemKind.STREAM_INPUT_REQUIRED: StreamChannel.CONTROL,
     StreamItemKind.STREAM_CLOSED: StreamChannel.CONTROL,
 }
 _STREAM_TERMINAL_OUTCOMES: dict[StreamItemKind, StreamTerminalOutcome] = {
     StreamItemKind.STREAM_COMPLETED: StreamTerminalOutcome.COMPLETED,
     StreamItemKind.STREAM_ERRORED: StreamTerminalOutcome.ERRORED,
     StreamItemKind.STREAM_CANCELLED: StreamTerminalOutcome.CANCELLED,
+    StreamItemKind.STREAM_INPUT_REQUIRED: StreamTerminalOutcome.INPUT_REQUIRED,
 }
+_INTERACTION_KIND_STATES: dict[StreamItemKind, RequestState] = {
+    StreamItemKind.INTERACTION_CREATED: RequestState.CREATED,
+    StreamItemKind.INTERACTION_PENDING: RequestState.PENDING,
+    StreamItemKind.INTERACTION_ANSWERED: RequestState.ANSWERED,
+    StreamItemKind.INTERACTION_DECLINED: RequestState.DECLINED,
+    StreamItemKind.INTERACTION_CANCELLED: RequestState.CANCELLED,
+    StreamItemKind.INTERACTION_TIMED_OUT: RequestState.TIMED_OUT,
+    StreamItemKind.INTERACTION_UNAVAILABLE: RequestState.UNAVAILABLE,
+    StreamItemKind.INTERACTION_EXPIRED: RequestState.EXPIRED,
+    StreamItemKind.INTERACTION_SUPERSEDED: RequestState.SUPERSEDED,
+}
+_INTERACTION_LIFECYCLE_KINDS = frozenset(_INTERACTION_KIND_STATES)
+_INTERACTION_STREAM_KINDS = frozenset(
+    {
+        *_INTERACTION_LIFECYCLE_KINDS,
+        StreamItemKind.STREAM_INPUT_REQUIRED,
+    }
+)
 _TEXT_DELTA_KINDS = frozenset(
     {
         StreamItemKind.ANSWER_DELTA,
@@ -1769,6 +1985,70 @@ _STREAM_PERFORMANCE_BUDGET_FIELDS = (
 )
 
 
+def _validate_interaction_item_payload(
+    kind: StreamItemKind,
+    correlation: StreamItemCorrelation,
+    *,
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+    data: LooseJsonValue | None,
+    usage: LooseJsonValue | None,
+    metadata: Mapping[str, LooseJsonValue],
+    provider_payload: LooseJsonValue | None,
+    provider_family: str | None,
+    provider_event_type: str | None,
+) -> None:
+    if kind not in _INTERACTION_STREAM_KINDS:
+        return
+    for field_name, value in (
+        ("request_id", correlation.request_id),
+        ("continuation_id", correlation.continuation_id),
+        ("agent_id", correlation.agent_id),
+        ("branch_id", correlation.branch_id),
+    ):
+        assert value is not None, f"{kind.value} requires {field_name}"
+    for field_name, canonical_value in (
+        ("stream_session_id", stream_session_id),
+        ("run_id", run_id),
+        ("turn_id", turn_id),
+    ):
+        assert (
+            validate_opaque_id(canonical_value, field_name) == canonical_value
+        )
+    for field_name, optional_canonical_value in (
+        ("request_id", correlation.request_id),
+        ("continuation_id", correlation.continuation_id),
+        ("task_id", correlation.task_id),
+        ("agent_id", correlation.agent_id),
+        ("branch_id", correlation.branch_id),
+        ("parent_branch_id", correlation.parent_branch_id),
+    ):
+        if optional_canonical_value is not None:
+            assert (
+                validate_opaque_id(optional_canonical_value, field_name)
+                == optional_canonical_value
+            )
+    prohibited_correlation = (
+        correlation.provider_request_id,
+        correlation.model_continuation_id,
+        correlation.tool_call_id,
+        correlation.flow_run_id,
+        correlation.node_id,
+        correlation.protocol_item_id,
+        correlation.provider_output_index,
+        correlation.provider_summary_index,
+        correlation.artifact_id,
+    )
+    assert all(value is None for value in prohibited_correlation)
+    assert data is None
+    assert usage is None
+    assert not metadata
+    assert provider_payload is None
+    assert provider_family is None
+    assert provider_event_type is None
+
+
 @dataclass(slots=True)
 class _ToolLifecycleState:
     ready: bool = False
@@ -1803,6 +2083,12 @@ class _ToolExecutionBoundaryState:
 class _ModelContinuationBoundaryState:
     started: bool = False
     terminal_kind: StreamItemKind | None = None
+
+
+@dataclass(slots=True)
+class _InteractionBoundaryState:
+    state: RequestState
+    correlation_identity: tuple[str | None, ...]
 
 
 def _assert_positive_int(value: object, field_name: str) -> None:
@@ -2165,13 +2451,16 @@ def validate_canonical_stream_items(
     tool_call_states: dict[str, _ToolCallBoundaryState] = {}
     tool_execution_states: dict[str, _ToolExecutionBoundaryState] = {}
     model_continuation_states: dict[str, _ModelContinuationBoundaryState] = {}
+    interaction_states: dict[str, _InteractionBoundaryState] = {}
 
     for index, item in enumerate(result):
+        item._validate_kind_payload()
         _validate_stream_start(item, index == 0)
         _validate_sequence_identity(item, session_id, run_id, turn_id)
         last_sequence = _validate_sequence_order(item, last_sequence)
         _validate_parent_sequence(item)
         _observe_canonical_reasoning_segment(reasoning_segments, item)
+        _validate_interaction_boundary(item, interaction_states)
 
         if closed:
             raise StreamValidationError("stream item emitted after closed")
@@ -2210,6 +2499,7 @@ def validate_canonical_stream_items(
         _validate_tool_execution_boundary(item, tool_execution_states)
 
         if outcome is not None:
+            _validate_interaction_terminal_outcome(item, interaction_states)
             if (
                 outcome is StreamTerminalOutcome.COMPLETED
                 and not usage_completed
@@ -2473,6 +2763,96 @@ def _validate_model_continuation_boundary(
     if not state.started:
         raise StreamValidationError("model continuation terminal before start")
     state.terminal_kind = item.kind
+
+
+def _validate_interaction_boundary(
+    item: CanonicalStreamItem,
+    states: dict[str, _InteractionBoundaryState],
+) -> None:
+    if item.kind not in _INTERACTION_STREAM_KINDS:
+        return
+    request_id = item.correlation.request_id
+    assert request_id is not None
+    identity = _interaction_correlation_identity(item.correlation)
+    current = states.get(request_id)
+    if item.kind is StreamItemKind.STREAM_INPUT_REQUIRED:
+        if current is None or current.state is not RequestState.PENDING:
+            raise StreamValidationError(
+                "input_required emitted without a pending interaction"
+            )
+        if current.correlation_identity != identity:
+            raise StreamValidationError(
+                "interaction correlation changed before input_required"
+            )
+        return
+
+    next_state = _INTERACTION_KIND_STATES[item.kind]
+    if current is None:
+        if states:
+            raise StreamValidationError(
+                "multiple interaction requests in one stream"
+            )
+        states[request_id] = _InteractionBoundaryState(
+            state=next_state,
+            correlation_identity=identity,
+        )
+        return
+    if current.correlation_identity != identity:
+        raise StreamValidationError("interaction correlation changed")
+    if current.state is RequestState.CREATED:
+        expected_state = RequestState.PENDING
+    elif current.state is RequestState.PENDING:
+        expected_state = next_state
+        if next_state in {RequestState.CREATED, RequestState.PENDING}:
+            raise StreamValidationError("illegal interaction state transition")
+    else:
+        raise StreamValidationError(
+            "interaction item emitted after terminal state"
+        )
+    if next_state is not expected_state:
+        raise StreamValidationError("illegal interaction state transition")
+    current.state = next_state
+
+
+def _validate_interaction_terminal_outcome(
+    item: CanonicalStreamItem,
+    states: dict[str, _InteractionBoundaryState],
+) -> None:
+    outcome = stream_terminal_outcome_for_kind(item.kind)
+    assert outcome is not None
+    pending = tuple(
+        state
+        for state in states.values()
+        if state.state is RequestState.PENDING
+    )
+    created = tuple(
+        state
+        for state in states.values()
+        if state.state is RequestState.CREATED
+    )
+    if outcome is StreamTerminalOutcome.INPUT_REQUIRED:
+        if len(states) != 1 or len(pending) != 1:
+            raise StreamValidationError(
+                "input_required requires exactly one pending interaction"
+            )
+        return
+    if pending or created:
+        raise StreamValidationError(
+            "unresolved interaction cannot use this stream terminal outcome"
+        )
+
+
+def _interaction_correlation_identity(
+    correlation: StreamItemCorrelation,
+) -> tuple[str | None, ...]:
+    return (
+        correlation.request_id,
+        correlation.continuation_id,
+        correlation.task_id,
+        correlation.agent_id,
+        correlation.branch_id,
+        correlation.parent_branch_id,
+    )
 
 
 def _validate_open_channel_boundaries_closed(
@@ -2892,6 +3272,7 @@ class StreamReasoningSegmentAccumulator:
         if self._terminal_outcome in (
             StreamTerminalOutcome.ERRORED,
             StreamTerminalOutcome.CANCELLED,
+            StreamTerminalOutcome.INPUT_REQUIRED,
         ):
             return StreamReasoningSegmentStatus.INCOMPLETE, False
         return StreamReasoningSegmentStatus.IN_PROGRESS, False
@@ -2939,6 +3320,7 @@ class CanonicalStreamAccumulator:
         self._model_continuation_states: dict[
             str, _ModelContinuationBoundaryState
         ] = {}
+        self._interaction_states: dict[str, _InteractionBoundaryState] = {}
 
     @property
     def retention_policy(self) -> StreamRetentionPolicy:
@@ -3053,6 +3435,7 @@ class CanonicalStreamAccumulator:
         return self.items
 
     def _validate_next(self, item: CanonicalStreamItem) -> None:
+        item._validate_kind_payload()
         is_first = self._session_id is None
         _validate_stream_start(item, is_first)
 
@@ -3097,8 +3480,12 @@ class CanonicalStreamAccumulator:
         _validate_reasoning_boundary(item, self._reasoning_boundary)
         _validate_tool_call_boundary(item, self._tool_call_states)
         _validate_tool_execution_boundary(item, self._tool_execution_states)
+        _validate_interaction_boundary(item, self._interaction_states)
 
         if outcome is not None:
+            _validate_interaction_terminal_outcome(
+                item, self._interaction_states
+            )
             if (
                 outcome is StreamTerminalOutcome.COMPLETED
                 and not self._usage_completed

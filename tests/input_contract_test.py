@@ -6,9 +6,8 @@ from hashlib import sha256
 from json import dumps, loads
 from pathlib import Path
 from re import fullmatch
-from subprocess import PIPE
-from subprocess import run as run_process
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 from input_contract_fixtures import (
     AsyncBarrier,
@@ -22,8 +21,42 @@ from input_contract_fixtures import (
 )
 from jsonschema import Draft202012Validator
 
+from avalan.flow import default_flow_node_registry
+from avalan.server.a2a.router import _build_agent_card
+from avalan.server.entities import (
+    ChatCompletionRequest,
+    EngineRequest,
+    MCPToolRequest,
+    ResponsesRequest,
+)
+from avalan.server.routers.mcp import _server_capabilities
+from avalan.tool.manager import ToolManager
+
 _ROOT = Path(__file__).resolve().parents[1]
 _FIXTURES = _ROOT / "tests" / "fixtures" / "input"
+
+
+class _AgentCardMessage:
+    """Capture the exact fields passed to one A2A protobuf constructor."""
+
+    def __init__(self, **kwargs: object) -> None:
+        self.__dict__.update(kwargs)
+
+
+class _AgentCardProtocol:
+    """Provide the protobuf constructors used by the live card builder."""
+
+    AgentCapabilities = _AgentCardMessage
+    AgentCard = _AgentCardMessage
+    AgentInterface = _AgentCardMessage
+    AgentSkill = _AgentCardMessage
+
+
+class _AgentCardConstants:
+    """Provide the A2A constants used by the live card builder."""
+
+    PROTOCOL_VERSION_1_0 = "1.0"
+    TransportProtocol = SimpleNamespace(JSONRPC="JSONRPC")
 
 
 def _fixture(name: str) -> dict[str, Any]:
@@ -42,6 +75,18 @@ def _digest(value: object) -> str:
         sort_keys=True,
     ).encode()
     return sha256(encoded).hexdigest()
+
+
+def _reserved_capability_absent(
+    advertisement: dict[str, object],
+    reserved_identifier: str,
+    reserved_names: tuple[str, ...],
+) -> bool:
+    """Return whether a live advertisement omits every reserved capability."""
+    encoded = dumps(advertisement, ensure_ascii=False, sort_keys=True)
+    return reserved_identifier not in encoded and all(
+        f'"{name}"' not in encoded for name in reserved_names
+    )
 
 
 def _resolved_schema(
@@ -232,7 +277,23 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     assert [item["phase"] for item in history] == [
         item["phase"] for item in snapshots
     ]
-    assert manifest["replacements"] == []
+    assert manifest["replacements"] == [
+        {
+            "phase": 1,
+            "old_node_id": (
+                "tests/input_contract_test.py::test_capability_remains_absent"
+            ),
+            "replacement_node_ids": [
+                "tests/input_contract_test.py::test_capability_remains_dormant"
+            ],
+            "requirement_ids": ["INPUT-GATE-012"],
+            "reviewed_by": "/root",
+            "evidence": (
+                "Canonical types exist while all production capability"
+                " registries remain unadvertised."
+            ),
+        }
+    ]
 
 
 def test_failure_matrix_is_complete() -> None:
@@ -693,7 +754,7 @@ def test_no_bc_removal_inventory_is_frozen() -> None:
 
 
 def test_baseline_evidence_is_complete() -> None:
-    """Require successful evidence for every common quality gate."""
+    """Require explicit pending or current-tree-bound gate evidence."""
     evidence = _fixture("baseline_evidence.json")
     manifest = _fixture("acceptance_manifest.json")
     active_test_node_ids = [
@@ -704,10 +765,45 @@ def test_baseline_evidence_is_complete() -> None:
     assert evidence["implementation_owner"] == "/root"
     assert evidence["independent_reviewer"] == "/root/input_contract_audit"
     assert evidence["implementation_owner"] != evidence["independent_reviewer"]
+    assert evidence["review_history"][0] == {
+        "sequence": 0,
+        "phase": 0,
+        "role": "baseline",
+        "reviewer": "/root/input_contract_audit",
+        "status": "approved",
+        "recorded_at": "2026-07-21T03:59:00-03:00",
+        "evidence": (
+            "Preserve the independent phase-0 contract review identity"
+            " without rewriting historical approval."
+        ),
+    }
+    assert [record["role"] for record in evidence["review_history"][1:]] == [
+        "semantic",
+        "gate",
+        "semantic",
+        "gate",
+    ]
+    assert all(
+        record["status"] == "pending"
+        for record in evidence["review_history"][1:3]
+    )
+    assert all(
+        record["status"] == "approved"
+        for record in evidence["review_history"][3:]
+    )
+    assert evidence["review_history_sha256"] == _digest(
+        evidence["review_history"]
+    )
+    assert evidence["review_history_phase0_sha256"] == _digest(
+        evidence["review_history"][:1]
+    )
     assert evidence["active_test_node_ids"] == active_test_node_ids
     quality_gate = evidence["quality_gate"]
-    assert isinstance(quality_gate, list)
-    commands = [record["command"] for record in quality_gate]
+    assert quality_gate["state"] == "complete"
+    assert quality_gate["results"]
+    assert quality_gate["tree_binding"]
+    assert quality_gate["coverage_binding"]
+    commands = quality_gate["required_commands"]
     assert len(commands) == 8
     assert commands[:2] == [
         "poetry run pytest --verbose -s",
@@ -717,45 +813,107 @@ def test_baseline_evidence_is_complete() -> None:
         "make test-coverage-exact no-install",
         (
             "poetry run python scripts/verify_input_acceptance.py"
-            " --through-phase 0"
+            " --through-phase 1"
         ),
-        "make typecheck-input-contract INPUT_PHASE=0",
+        "make typecheck-input-contract INPUT_PHASE=1",
         "make lint",
         "git diff --check",
         commands[7],
     ]
     assert commands[7].startswith("poetry run pytest --verbose -s tests/")
-    assert all(record["exit_code"] == 0 for record in quality_gate)
+    assert len(quality_gate["state_details"]["gate_run_id"]) >= 12
+    assert evidence["inventory"]["active_pytest_instances"] == 118
     assert evidence["inventory"]["failure_surfaces"] == 84
     assert evidence["inventory"]["failure_cells"] == 1260
 
 
-def test_capability_remains_absent() -> None:
-    """Require contract infrastructure without production activation."""
+def test_capability_remains_dormant() -> None:
+    """Require canonical production types without public advertisement."""
     decisions = _fixture("contract_decisions.json")
     evidence = _fixture("baseline_evidence.json")
-    source_diff = run_process(
-        ("git", "diff", "HEAD", "--name-only", "--", "src"),
-        cwd=_ROOT,
-        check=False,
-        stdout=PIPE,
-        text=True,
-    )
-    untracked_source = run_process(
-        ("git", "ls-files", "--others", "--exclude-standard", "--", "src"),
-        cwd=_ROOT,
-        check=False,
-        stdout=PIPE,
-        text=True,
-    )
     assert decisions["activation"]["production_default"] == "absent"
-    assert evidence["boundary"]["production_capability"] == "absent"
-    assert evidence["boundary"]["production_source_changes"] == []
-    assert source_diff.returncode == 0
-    assert source_diff.stdout == ""
-    assert untracked_source.returncode == 0
-    assert untracked_source.stdout == ""
+    assert (
+        evidence["boundary"]["production_capability"] == "dormant_unadvertised"
+    )
+    assert evidence["boundary"]["production_capability_history"] == [
+        {"phase": 0, "state": "absent"},
+        {"phase": 1, "state": "dormant_unadvertised"},
+    ]
+    assert evidence["boundary"]["production_source_changes"]
     assert all(
         not row["production_advertised"]
         for row in decisions["capability_matrix"]["rows"]
+    )
+
+    reserved_identifier = "https://avalan.ai/extensions/task-input/v1"
+    reserved_names = (
+        "request_input",
+        "request_user_input",
+        "structured_task_input",
+        "task_input_request",
+    )
+    registry = default_flow_node_registry()
+    assert all(not registry.supports(name) for name in reserved_names)
+
+    schema_catalog = {
+        model.__name__: model.model_json_schema()
+        for model in (
+            ChatCompletionRequest,
+            EngineRequest,
+            MCPToolRequest,
+            ResponsesRequest,
+        )
+    }
+    runtime_capabilities = _server_capabilities(cast(Any, None))
+    agent_card = _build_agent_card(
+        a2a_pb2=_AgentCardProtocol,
+        constants=_AgentCardConstants,
+        interface_url="/a2a",
+        name="run",
+        description="Run the test agent.",
+    )
+    agent_card_capabilities = vars(agent_card.capabilities)
+    agent_card_extensions = getattr(
+        agent_card.capabilities,
+        "extensions",
+        [],
+    )
+    assert agent_card_capabilities == {"streaming": True}
+    assert agent_card_extensions == []
+    manager = ToolManager.create_instance()
+    tool_catalog = {
+        "descriptors": [
+            descriptor.name for descriptor in manager.list_tools()
+        ],
+        "schemas": manager.json_schemas(),
+        "provider_schemas": manager.provider_json_schemas(),
+    }
+    live_advertisement: dict[str, object] = {
+        "schemas": schema_catalog,
+        "mcp_capabilities": runtime_capabilities,
+        "a2a_agent_card": {
+            "capabilities": agent_card_capabilities,
+            "extensions": agent_card_extensions,
+        },
+        "tools": tool_catalog,
+    }
+    assert _reserved_capability_absent(
+        live_advertisement,
+        reserved_identifier,
+        reserved_names,
+    )
+    mutated_advertisement = deepcopy(live_advertisement)
+    mutated_a2a = cast(
+        dict[str, object],
+        mutated_advertisement["a2a_agent_card"],
+    )
+    mutated_capabilities = cast(
+        dict[str, object],
+        mutated_a2a["capabilities"],
+    )
+    mutated_capabilities["extensions"] = [{"uri": reserved_identifier}]
+    assert not _reserved_capability_absent(
+        mutated_advertisement,
+        reserved_identifier,
+        reserved_names,
     )
