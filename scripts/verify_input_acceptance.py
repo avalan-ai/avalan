@@ -63,10 +63,15 @@ from subprocess import CompletedProcess, TimeoutExpired, run
 from sys import executable, stderr
 from typing import Protocol, cast
 
+from coverage import Coverage
 from input_contract_json import (
     StrictJsonError,
     strict_json_loads,
     strict_json_path,
+)
+from verify_src_coverage import (
+    CoverageVerificationError,
+    verify_src_coverage,
 )
 
 _FEATURE = "structured_task_input"
@@ -226,7 +231,7 @@ _EXPECTED_NO_BC_IDS = frozenset(
     }
 )
 _EXPECTED_REQUIREMENTS_SHA256 = (
-    "4871c2cee6bab371387d03dcfac8f81c5d4a3583bd6d6c510e0314a37468f06a"
+    "948782fec655e9368e8c17461218134ea9aedc3c6061cf268de86f5d8c6da8c5"
 )
 _EXPECTED_FAILURE_MATRIX_SHA256 = (
     "e5ce3aac0d441897b80a09d6a693853c65d4a446ed7e4c0184b3e3bc0b212c08"
@@ -238,13 +243,22 @@ _EXPECTED_NO_BC_SHA256 = (
     "4a0140865a8ba58d2590fbc75245326c3d791f3dc541c52e8d3657b987d563b6"
 )
 _EXPECTED_ACCEPTANCE_LEDGER_SHA256 = (
-    "d84ff52b1cc1c6b6dbba78aa92c309d671d801df966343450256c9b2f2066dbd"
+    "73c30d481aa80453769bcda4dbfe8e88a670bddfdee486c62788de16222a6629"
 )
 _EXPECTED_EVIDENCE_SHA256 = (
-    "75fab61eece213c6b968b6c75e15ba2905cdaeefc775349bd71312d2cc1dbccb"
+    "a4c16a90cf2d451b423da22ba763b50742e47f583230ded87c9997d77e1b93b8"
+)
+_EXPECTED_REVIEW_HISTORY_SHA256 = (
+    "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85"
+)
+_EXPECTED_PHASE0_REVIEW_SHA256 = (
+    "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b"
 )
 _EXPECTED_IMPLEMENTATION_OWNER = "/root"
 _EXPECTED_INDEPENDENT_REVIEWER = "/root/input_contract_audit"
+_EXPECTED_SEMANTIC_REVIEWER = "/root/interaction_round4_semantic"
+_EXPECTED_GATE_REVIEWER = "/root/interaction_round4_gates"
+_EXPECTED_CURRENT_REVIEW_STATUS = "approved"
 _EXPECTED_BASELINE_HEAD = "609aa091c17756ab952cf5fe668ca3d867f0e311"
 _EXPECTED_BASELINE_SUBJECT = "Bump version to v1.5.8 (#1067)"
 _EXPECTED_BOUNDARY_PATHS = frozenset(
@@ -257,7 +271,25 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "scripts/verify_input_acceptance.py",
         "scripts/verify_input_types.py",
         "scripts/verify_src_coverage.py",
+        "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+        "src/avalan/cli/commands/model.py",
+        "src/avalan/cli/display_reducer.py",
+        "src/avalan/event/__init__.py",
+        "src/avalan/event/manager.py",
+        "src/avalan/interaction/",
+        "src/avalan/model/stream.py",
+        "src/avalan/server/a2a/router.py",
+        "src/avalan/server/routers/chat.py",
+        "src/avalan/server/routers/mcp.py",
+        "src/avalan/server/routers/responses.py",
+        "src/avalan/task/event.py",
+        "tests/agent/orchestrator_response_additional_test.py",
+        "tests/cli/display_reducer_test.py",
+        "tests/cli/model_test.py",
+        "tests/cli/stream_presenter_test.py",
+        "tests/event/interaction_lifecycle_test.py",
         "tests/fixtures/input/",
+        "tests/input/",
         "tests/input_acceptance_verifier_test.py",
         "tests/input_contract_fixtures.py",
         "tests/input_contract_harness_test.py",
@@ -265,25 +297,53 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "tests/input_contract_test.py",
         "tests/input_type_contract_test.py",
         "tests/input_type_contracts/",
+        "tests/interaction/",
         "tests/model/full_coverage_gap_model_test.py",
+        "tests/model/model_stream_contract_test.py",
+        "tests/model/model_stream_interaction_test.py",
+        "tests/model/text_generation_response_more_test.py",
         "tests/project_metadata_test.py",
         "tests/reasoning_summary_phase1_test.py",
+        "tests/server/a2a_v1_router_test.py",
+        "tests/server/chat_router_unit_test.py",
+        "tests/server/mcp_reasoning_summary_test.py",
+        "tests/server/responses_phase7_contract_test.py",
+        "tests/server/responses_utils_test.py",
+        "tests/server/router_streaming_test.py",
         "tests/src_coverage_verifier_test.py",
+        "tests/task/interaction_event_sanitization_test.py",
     }
 )
-_EXPECTED_COMMON_GATE_COMMANDS = frozenset(
+_EXPECTED_PRODUCTION_SOURCE_PATHS = frozenset(
     {
-        "poetry run pytest --verbose -s",
-        "make test-coverage -- -100 src/",
-        "make test-coverage-exact no-install",
-        (
-            "poetry run python scripts/verify_input_acceptance.py"
-            " --through-phase 0"
-        ),
-        "make typecheck-input-contract INPUT_PHASE=0",
-        "make lint",
-        "git diff --check",
+        "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+        "src/avalan/cli/commands/model.py",
+        "src/avalan/cli/display_reducer.py",
+        "src/avalan/event/__init__.py",
+        "src/avalan/event/manager.py",
+        "src/avalan/interaction/",
+        "src/avalan/model/stream.py",
+        "src/avalan/server/a2a/router.py",
+        "src/avalan/server/routers/chat.py",
+        "src/avalan/server/routers/mcp.py",
+        "src/avalan/server/routers/responses.py",
+        "src/avalan/task/event.py",
     }
+)
+_EXPECTED_ORDERED_COMMON_GATE_COMMANDS = (
+    "poetry run pytest --verbose -s",
+    "make test-coverage -- -100 src/",
+    "make test-coverage-exact no-install",
+    (
+        "poetry run python scripts/verify_input_acceptance.py"
+        + " --through-phase 1"
+    ),
+    "make typecheck-input-contract INPUT_PHASE=1",
+    "make lint",
+    "git diff --check",
+)
+_EXPECTED_COMMON_GATE_COMMANDS = frozenset(
+    _EXPECTED_ORDERED_COMMON_GATE_COMMANDS
 )
 
 _COLLECT_DRIVER = f"""
@@ -427,12 +487,38 @@ class AcceptanceNode:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class RequirementActivationSlice:
+    """Store reviewed ownership for one partially active requirement."""
+
+    requirement_id: str
+    phase: int
+    active_owner: str
+    active_scope: str
+    active_node_ids: tuple[str, ...]
+    remaining_owner: str
+    remaining_scope: str
+    planned_node_ids: tuple[str, ...]
+    reviewed_by: str
+    evidence: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ParameterExpansion:
+    """Store the exact pytest instances owned by one parametrized node."""
+
+    node_id: str
+    instance_node_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class AcceptanceManifest:
     """Store the validated acceptance inventory."""
 
     path: Path
     current_phase: int
     nodes: tuple[AcceptanceNode, ...]
+    requirement_activation_slices: tuple[RequirementActivationSlice, ...]
+    parameter_expansions: tuple[ParameterExpansion, ...]
 
     def active_nodes(self, through_phase: int) -> tuple[AcceptanceNode, ...]:
         """Return active nodes introduced no later than the requested gate."""
@@ -442,6 +528,18 @@ class AcceptanceManifest:
             for node in self.nodes
             if node.lifecycle == "active"
             and node.active_from_phase <= through_phase
+        )
+
+    def active_pytest_instances(self, through_phase: int) -> tuple[str, ...]:
+        """Return the exact pytest instances required by the selected gate."""
+        expansions = {
+            expansion.node_id: expansion.instance_node_ids
+            for expansion in self.parameter_expansions
+        }
+        return tuple(
+            instance
+            for node in self.active_nodes(through_phase)
+            for instance in expansions.get(node.node_id, (node.node_id,))
         )
 
 
@@ -482,6 +580,8 @@ def load_manifest(path: Path) -> AcceptanceManifest:
             "categories",
             "activation_history",
             "activation_snapshots",
+            "requirement_activation_slices",
+            "parameter_expansions",
             "replacements",
             "nodes",
         },
@@ -508,6 +608,15 @@ def load_manifest(path: Path) -> AcceptanceManifest:
         raise AcceptanceVerificationError(
             "every acceptance category must own at least one node"
         )
+    requirement_activation_slices = _requirement_activation_slices(
+        payload.get("requirement_activation_slices"),
+        nodes,
+        current_phase,
+    )
+    parameter_expansions = _parameter_expansions(
+        payload.get("parameter_expansions"),
+        nodes,
+    )
     _activation_history(
         payload.get("activation_history"),
         nodes,
@@ -516,6 +625,8 @@ def load_manifest(path: Path) -> AcceptanceManifest:
     _activation_snapshots(
         payload.get("activation_snapshots"),
         payload.get("replacements"),
+        payload.get("requirement_activation_slices"),
+        payload.get("parameter_expansions"),
         nodes,
         current_phase,
     )
@@ -523,6 +634,8 @@ def load_manifest(path: Path) -> AcceptanceManifest:
         path=path,
         current_phase=current_phase,
         nodes=nodes,
+        requirement_activation_slices=requirement_activation_slices,
+        parameter_expansions=parameter_expansions,
     )
 
 
@@ -550,6 +663,7 @@ def verify_acceptance(
             "the selected acceptance inventory has no active nodes"
         )
     node_ids = tuple(node.node_id for node in active)
+    instance_node_ids = manifest.active_pytest_instances(through_phase)
     _validate_execution_scope(path, node_ids, root)
     for node_id in node_ids:
         _validate_test_implementation(node_id, root)
@@ -559,14 +673,14 @@ def verify_acceptance(
         node_ids,
         root,
     )
-    _verify_collection(node_ids, collection)
+    collected_node_ids = _verify_collection(instance_node_ids, collection)
     execution = _run_probe(
         _EXECUTE_DRIVER,
         _EXECUTE_SENTINEL,
         node_ids,
         root,
     )
-    _verify_execution(node_ids, execution)
+    _verify_execution(instance_node_ids, execution, collected_node_ids)
     return manifest
 
 
@@ -649,6 +763,239 @@ def _acceptance_node(raw: object, current_phase: int) -> AcceptanceNode:
     )
 
 
+def _parameter_expansions(
+    raw: object,
+    nodes: tuple[AcceptanceNode, ...],
+) -> tuple[ParameterExpansion, ...]:
+    if not isinstance(raw, list):
+        raise AcceptanceVerificationError(
+            "parameter expansions must be a list"
+        )
+    by_node_id = {node.node_id: node for node in nodes}
+    manifest_node_ids = frozenset(by_node_id)
+    expansions: list[ParameterExpansion] = []
+    all_instances: list[str] = []
+    for value in raw:
+        if not isinstance(value, dict):
+            raise AcceptanceVerificationError(
+                "parameter expansion must be an object"
+            )
+        item = cast(dict[str, object], value)
+        _exact_keys(
+            item,
+            {"node_id", "instance_node_ids", "sha256"},
+            "parameter expansion",
+        )
+        node_id = _node_id(item.get("node_id"))
+        node = by_node_id.get(node_id)
+        if node is None or node.lifecycle != "active":
+            raise AcceptanceVerificationError(
+                "parameter expansion must own one active manifest node:"
+                f" {node_id}"
+            )
+        if "[" in node_id.rsplit("::", 1)[-1]:
+            raise AcceptanceVerificationError(
+                "explicit parameter instance must remain exact-only:"
+                f" {node_id}"
+            )
+        instances = _string_list(
+            item.get("instance_node_ids"),
+            "parameter instance node IDs",
+        )
+        _unique(instances, f"parameter instance for {node_id}")
+        for instance in instances:
+            _node_id(instance)
+            if not instance.startswith(f"{node_id}[") or not instance.endswith(
+                "]"
+            ):
+                raise AcceptanceVerificationError(
+                    "parameter instance does not belong to its base node:"
+                    f" {instance}"
+                )
+            if instance in manifest_node_ids:
+                raise AcceptanceVerificationError(
+                    "parameter instance duplicates a manifest node:"
+                    f" {instance}"
+                )
+        digest = _nonempty_string(
+            item.get("sha256"),
+            "parameter expansion SHA-256",
+        )
+        calculated = sha256("\n".join(instances).encode("utf-8")).hexdigest()
+        if digest != calculated:
+            raise AcceptanceVerificationError(
+                f"parameter expansion digest mismatch: {node_id}"
+            )
+        expansions.append(
+            ParameterExpansion(
+                node_id=node_id,
+                instance_node_ids=instances,
+            )
+        )
+        all_instances.extend(instances)
+    _unique(
+        (expansion.node_id for expansion in expansions),
+        "parameter expansion base node",
+    )
+    _unique(all_instances, "parameter instance across expansions")
+    node_order = {node.node_id: index for index, node in enumerate(nodes)}
+    expansion_order = [
+        node_order[expansion.node_id] for expansion in expansions
+    ]
+    if expansion_order != sorted(expansion_order):
+        raise AcceptanceVerificationError(
+            "parameter expansions must preserve manifest node order"
+        )
+    return tuple(expansions)
+
+
+def _requirement_activation_slices(
+    raw: object,
+    nodes: tuple[AcceptanceNode, ...],
+    current_phase: int,
+) -> tuple[RequirementActivationSlice, ...]:
+    if not isinstance(raw, list):
+        raise AcceptanceVerificationError(
+            "requirement activation slices must be a list"
+        )
+    active_by_requirement: dict[str, tuple[AcceptanceNode, ...]] = {}
+    planned_by_requirement: dict[str, tuple[AcceptanceNode, ...]] = {}
+    for requirement_id in _EXPECTED_REQUIREMENT_IDS:
+        active = tuple(
+            node
+            for node in nodes
+            if requirement_id in node.requirement_ids
+            and node.lifecycle == "active"
+        )
+        planned = tuple(
+            node
+            for node in nodes
+            if requirement_id in node.requirement_ids
+            and node.lifecycle == "planned"
+        )
+        if active:
+            active_by_requirement[requirement_id] = active
+        if planned:
+            planned_by_requirement[requirement_id] = planned
+    mixed_requirements = set(active_by_requirement) & set(
+        planned_by_requirement
+    )
+    slices: list[RequirementActivationSlice] = []
+    expected_keys = {
+        "requirement_id",
+        "phase",
+        "active_owner",
+        "active_scope",
+        "active_node_ids",
+        "remaining_owner",
+        "remaining_scope",
+        "planned_node_ids",
+        "reviewed_by",
+        "evidence",
+    }
+    for value in raw:
+        if not isinstance(value, dict) or set(value) != expected_keys:
+            raise AcceptanceVerificationError(
+                "requirement activation slice has invalid shape"
+            )
+        item = cast(dict[str, object], value)
+        requirement_id = _nonempty_string(
+            item.get("requirement_id"),
+            "slice requirement_id",
+        )
+        if requirement_id not in mixed_requirements:
+            raise AcceptanceVerificationError(
+                "requirement activation slice is not mixed-lifecycle:"
+                f" {requirement_id}"
+            )
+        phase = _phase(item.get("phase"), "slice phase")
+        if phase > current_phase:
+            raise AcceptanceVerificationError(
+                "requirement activation slice phase is not implemented"
+            )
+        active_nodes = active_by_requirement[requirement_id]
+        planned_nodes = planned_by_requirement[requirement_id]
+        expected_phase = min(node.active_from_phase for node in active_nodes)
+        if phase != expected_phase:
+            raise AcceptanceVerificationError(
+                "requirement activation slice phase differs from its first"
+                f" active node: {requirement_id}"
+            )
+        active_node_ids = _string_list(
+            item.get("active_node_ids"),
+            "slice active_node_ids",
+        )
+        planned_node_ids = _string_list(
+            item.get("planned_node_ids"),
+            "slice planned_node_ids",
+        )
+        _unique(active_node_ids, "slice active node ID")
+        _unique(planned_node_ids, "slice planned node ID")
+        if active_node_ids != tuple(node.node_id for node in active_nodes):
+            raise AcceptanceVerificationError(
+                "requirement activation slice active inventory changed:"
+                f" {requirement_id}"
+            )
+        if planned_node_ids != tuple(node.node_id for node in planned_nodes):
+            raise AcceptanceVerificationError(
+                "requirement activation slice planned inventory changed:"
+                f" {requirement_id}"
+            )
+        active_owner = _slice_detail(item, "active_owner")
+        active_scope = _slice_detail(item, "active_scope")
+        remaining_owner = _slice_detail(item, "remaining_owner")
+        remaining_scope = _slice_detail(item, "remaining_scope")
+        reviewed_by = _nonempty_string(
+            item.get("reviewed_by"),
+            "slice reviewed_by",
+        )
+        if reviewed_by != _EXPECTED_IMPLEMENTATION_OWNER:
+            raise AcceptanceVerificationError(
+                "requirement activation slice lacks implementation review"
+            )
+        evidence = _slice_detail(item, "evidence")
+        slices.append(
+            RequirementActivationSlice(
+                requirement_id=requirement_id,
+                phase=phase,
+                active_owner=active_owner,
+                active_scope=active_scope,
+                active_node_ids=active_node_ids,
+                remaining_owner=remaining_owner,
+                remaining_scope=remaining_scope,
+                planned_node_ids=planned_node_ids,
+                reviewed_by=reviewed_by,
+                evidence=evidence,
+            )
+        )
+    _unique(
+        (item.requirement_id for item in slices),
+        "requirement activation slice ID",
+    )
+    observed = {item.requirement_id for item in slices}
+    if observed != mixed_requirements:
+        raise AcceptanceVerificationError(
+            "mixed-lifecycle requirements lack exact activation slices:"
+            f" expected={sorted(mixed_requirements)},"
+            f" observed={sorted(observed)}"
+        )
+    return tuple(slices)
+
+
+def _slice_detail(item: dict[str, object], field: str) -> str:
+    value = _nonempty_string(item.get(field), f"slice {field}").strip()
+    if len(value) < 20 or value.lower() in {
+        "pending",
+        "placeholder",
+        "tbd",
+        "todo",
+    }:
+        raise AcceptanceVerificationError(
+            f"requirement activation slice {field} is not concrete"
+        )
+    return value
+
+
 def _activation_history(
     raw: object,
     nodes: tuple[AcceptanceNode, ...],
@@ -691,6 +1038,8 @@ def _activation_history(
 def _activation_snapshots(
     raw_snapshots: object,
     raw_replacements: object,
+    raw_requirement_slices: object,
+    raw_parameter_expansions: object,
     nodes: tuple[AcceptanceNode, ...],
     current_phase: int,
 ) -> None:
@@ -703,6 +1052,10 @@ def _activation_snapshots(
         )
     if not isinstance(raw_replacements, list):
         raise AcceptanceVerificationError("replacements must be a list")
+    if not isinstance(raw_parameter_expansions, list):
+        raise AcceptanceVerificationError(
+            "parameter expansions must be a list"
+        )
     replacements: dict[str, tuple[str, ...]] = {}
     replacement_phases: dict[str, int] = {}
     replacement_requirements: dict[str, frozenset[str]] = {}
@@ -769,6 +1122,8 @@ def _activation_snapshots(
             {
                 "activation_snapshots": raw_snapshots,
                 "replacements": raw_replacements,
+                "requirement_activation_slices": raw_requirement_slices,
+                "parameter_expansions": raw_parameter_expansions,
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -1383,6 +1738,7 @@ def _validate_type_manifest(
             "current_phase",
             "activation_history",
             "activation_snapshots",
+            "planned_replacements",
             "replacements",
             "fixtures",
         },
@@ -1400,7 +1756,7 @@ def _validate_type_manifest(
             "type fixtures must be a non-empty list"
         )
     identifiers: list[str] = []
-    paths: list[str] = []
+    active_paths: list[str] = []
     active_ids: list[str] = []
     for raw in raw_fixtures:
         if not isinstance(raw, dict):
@@ -1429,15 +1785,24 @@ def _validate_type_manifest(
             item.get("active_from_phase"), "type active_from_phase"
         )
         lifecycle = _nonempty_string(item.get("lifecycle"), "type lifecycle")
+        if lifecycle not in {"active", "planned", "replaced"}:
+            raise AcceptanceVerificationError(
+                f"invalid type fixture lifecycle: {lifecycle}"
+            )
         expected = "active" if active_from <= current_phase else "planned"
-        if lifecycle != expected:
+        if lifecycle != "replaced" and lifecycle != expected:
             raise AcceptanceVerificationError(
                 f"type fixture lifecycle regression: {item.get('id')}"
+            )
+        if lifecycle == "replaced" and active_from > current_phase:
+            raise AcceptanceVerificationError(
+                f"unimplemented type fixture replacement: {item.get('id')}"
             )
         if lifecycle == "active":
             active_ids.append(identifier)
         raw_path = _nonempty_string(item.get("path"), "type fixture path")
-        paths.append(raw_path)
+        if lifecycle != "replaced":
+            active_paths.append(raw_path)
         _type_fixture_path(raw_path, root)
         diagnostics = item.get("expected_diagnostics")
         if not isinstance(diagnostics, list) or not all(
@@ -1451,7 +1816,7 @@ def _validate_type_manifest(
                 f"type diagnostics do not match fixture kind: {item.get('id')}"
             )
     _unique(identifiers, "type fixture ID")
-    _unique(paths, "type fixture path")
+    _unique(active_paths, "type fixture path")
     history = payload.get("activation_history")
     if not isinstance(history, list) or len(history) != current_phase + 1:
         raise AcceptanceVerificationError(
@@ -1477,6 +1842,7 @@ def _validate_type_manifest(
             cast(str, item["id"])
             for item in cast(list[dict[str, object]], raw_fixtures)
             if item.get("active_from_phase") == expected_phase
+            and item.get("lifecycle") == "active"
         )
         if set(phase_ids) != set(expected_ids) or len(phase_ids) != len(
             expected_ids
@@ -2456,6 +2822,9 @@ def _validate_evidence(
             "recorded_at",
             "implementation_owner",
             "independent_reviewer",
+            "review_history_sha256",
+            "review_history_phase0_sha256",
+            "review_history",
             "active_test_node_ids",
             "git",
             "baseline",
@@ -2483,6 +2852,13 @@ def _validate_evidence(
         raise AcceptanceVerificationError(
             "implementation evidence ownership identities changed"
         )
+    _validate_review_history(
+        payload.get("review_history"),
+        payload.get("review_history_sha256"),
+        payload.get("review_history_phase0_sha256"),
+        manifest.current_phase,
+        implementation_owner,
+    )
     active_test_node_ids = _string_list(
         payload.get("active_test_node_ids"), "active_test_node_ids"
     )
@@ -2586,6 +2962,7 @@ def _validate_evidence(
         boundary,
         {
             "production_capability",
+            "production_capability_history",
             "production_source_changes",
             "changed_paths",
         },
@@ -2595,21 +2972,31 @@ def _validate_evidence(
         boundary.get("changed_paths"), "boundary changed_paths"
     )
     _unique(changed_paths, "boundary changed path")
+    production_source_changes = _string_list(
+        boundary.get("production_source_changes"),
+        "production source changes",
+    )
+    _unique(production_source_changes, "production source change")
+    capability_history = _production_capability_history(
+        boundary.get("production_capability_history"),
+        manifest.current_phase,
+    )
     if (
-        boundary.get("production_capability") != "absent"
-        or boundary.get("production_source_changes") != []
+        boundary.get("production_capability") != capability_history[-1]
+        or frozenset(production_source_changes)
+        != _EXPECTED_PRODUCTION_SOURCE_PATHS
+        or len(production_source_changes)
+        != len(_EXPECTED_PRODUCTION_SOURCE_PATHS)
         or frozenset(changed_paths) != _EXPECTED_BOUNDARY_PATHS
         or len(changed_paths) != len(_EXPECTED_BOUNDARY_PATHS)
-        or any(
-            path == "src" or path.startswith("src/") for path in changed_paths
-        )
     ):
         raise AcceptanceVerificationError(
-            "implementation evidence crossed the production boundary"
+            "implementation evidence production boundary is stale"
         )
     _validate_live_boundary(
         root,
         changed_paths,
+        production_source_changes,
         preserved_untracked,
     )
 
@@ -2642,6 +3029,7 @@ def _validate_evidence(
             "public_scenarios",
             "delivery_requirements",
             "active_acceptance_nodes",
+            "active_pytest_instances",
             "planned_acceptance_nodes",
             "failure_conditions",
             "failure_surfaces",
@@ -2669,6 +3057,9 @@ def _validate_evidence(
         "public_scenarios": 12,
         "delivery_requirements": 12,
         "active_acceptance_nodes": active,
+        "active_pytest_instances": len(
+            manifest.active_pytest_instances(manifest.current_phase)
+        ),
         "planned_acceptance_nodes": planned,
         "failure_conditions": len(conditions),
         "failure_surfaces": len(surfaces),
@@ -2742,7 +3133,13 @@ def _validate_evidence(
     _validate_quality_gate_evidence(
         payload.get("quality_gate"),
         active_acceptance_nodes=active,
+        active_pytest_instances=len(
+            manifest.active_pytest_instances(manifest.current_phase)
+        ),
         active_type_fixtures=active_type_fixtures,
+        root=root,
+        preserved_untracked=preserved_untracked,
+        evidence_payload=payload,
     )
     _verify_digest(
         payload,
@@ -2752,9 +3149,55 @@ def _validate_evidence(
     )
 
 
+def _production_capability_history(
+    raw: object,
+    current_phase: int,
+) -> tuple[str, ...]:
+    """Return the exact production-capability state through this phase."""
+    if not isinstance(raw, list) or len(raw) != current_phase + 1:
+        raise AcceptanceVerificationError(
+            "production capability history must contain every implemented"
+            " phase"
+        )
+    states: list[str] = []
+    for expected_phase, value in enumerate(raw):
+        if not isinstance(value, dict):
+            raise AcceptanceVerificationError(
+                "production capability history entries must be objects"
+            )
+        entry = cast(dict[str, object], value)
+        _exact_keys(
+            entry,
+            {"phase", "state"},
+            "production capability history entry",
+        )
+        phase = _phase(entry.get("phase"), "production capability phase")
+        if phase != expected_phase:
+            raise AcceptanceVerificationError(
+                "production capability phases must be contiguous"
+            )
+        state = _nonempty_string(
+            entry.get("state"), "production capability state"
+        )
+        expected_state = (
+            "absent"
+            if phase == 0
+            else "active" if phase == _MAX_PHASE else "dormant_unadvertised"
+        )
+        if state != expected_state:
+            raise AcceptanceVerificationError(
+                "production capability activated outside the atomic"
+                f" boundary: phase={phase}, expected={expected_state},"
+                f" observed={state}"
+            )
+        states.append(state)
+    return tuple(states)
+
+
 def _validate_live_boundary(
     root: Path,
     declared_paths: Sequence[str],
+    declared_source_paths: Sequence[str],
     preserved_untracked: Sequence[str],
 ) -> None:
     tracked = set(
@@ -2784,13 +3227,6 @@ def _validate_live_boundary(
         for path in untracked
         if not any(path.startswith(prefix) for prefix in preserved_untracked)
     }
-    source_changes = sorted(
-        path for path in live_files if path == "src" or path.startswith("src/")
-    )
-    if source_changes:
-        raise AcceptanceVerificationError(
-            f"live production source changes are prohibited: {source_changes}"
-        )
     directory_claims = tuple(
         path for path in declared_paths if path.endswith("/")
     )
@@ -2805,6 +3241,27 @@ def _validate_live_boundary(
         raise AcceptanceVerificationError(
             "live changed paths differ from implementation evidence:"
             f" declared={sorted(declared_paths)}, live={sorted(normalized)}"
+        )
+    source_directory_claims = tuple(
+        path for path in declared_source_paths if path.endswith("/")
+    )
+    source_changes = {
+        next(
+            (
+                prefix
+                for prefix in source_directory_claims
+                if path.startswith(prefix)
+            ),
+            path,
+        )
+        for path in live_files
+        if path == "src" or path.startswith("src/")
+    }
+    if source_changes != set(declared_source_paths):
+        raise AcceptanceVerificationError(
+            "live production source changes differ from implementation"
+            f" evidence: declared={sorted(declared_source_paths)},"
+            f" live={sorted(source_changes)}"
         )
 
 
@@ -2847,6 +3304,134 @@ def _git_output(root: Path, *arguments: str) -> str:
     return lines[0]
 
 
+def _validate_review_history(
+    raw: object,
+    raw_digest: object,
+    raw_phase0_digest: object,
+    current_phase: int,
+    implementation_owner: str,
+) -> None:
+    if not isinstance(raw, list) or not raw:
+        raise AcceptanceVerificationError(
+            "implementation evidence review history must be non-empty"
+        )
+    _verify_digest(
+        raw[:1],
+        raw_phase0_digest,
+        _EXPECTED_PHASE0_REVIEW_SHA256,
+        "phase-0 review prefix",
+    )
+    latest_status: dict[tuple[int, str], str] = {}
+    recorded_times: list[str] = []
+    for expected_sequence, value in enumerate(raw):
+        record = _evidence_mapping(value, "review history record")
+        _exact_keys(
+            record,
+            {
+                "sequence",
+                "phase",
+                "role",
+                "reviewer",
+                "status",
+                "recorded_at",
+                "evidence",
+            },
+            "review history record",
+        )
+        if record.get("sequence") != expected_sequence:
+            raise AcceptanceVerificationError(
+                "review history sequences must be contiguous and append-only"
+            )
+        phase = _phase(record.get("phase"), "review history phase")
+        if phase > current_phase:
+            raise AcceptanceVerificationError(
+                "review history phase is not implemented"
+            )
+        role = _nonempty_string(record.get("role"), "review role")
+        reviewer = _nonempty_string(record.get("reviewer"), "reviewer")
+        status = _nonempty_string(record.get("status"), "review status")
+        recorded_at = _nonempty_string(
+            record.get("recorded_at"),
+            "review recorded_at",
+        )
+        evidence = _nonempty_string(
+            record.get("evidence"),
+            "review evidence",
+        )
+        if len(evidence) < 20:
+            raise AcceptanceVerificationError(
+                "review history evidence must be concrete"
+            )
+        if reviewer == implementation_owner:
+            raise AcceptanceVerificationError(
+                "implementation owner cannot review its own evidence"
+            )
+        if phase == 0:
+            if (
+                role != "baseline"
+                or reviewer != _EXPECTED_INDEPENDENT_REVIEWER
+            ):
+                raise AcceptanceVerificationError(
+                    "phase-0 review identity changed"
+                )
+        elif role == "semantic":
+            if reviewer != _EXPECTED_SEMANTIC_REVIEWER:
+                raise AcceptanceVerificationError(
+                    "semantic review identity changed"
+                )
+        elif role == "gate":
+            if reviewer != _EXPECTED_GATE_REVIEWER:
+                raise AcceptanceVerificationError(
+                    "gate review identity changed"
+                )
+        else:
+            raise AcceptanceVerificationError(
+                f"invalid review role for phase {phase}: {role}"
+            )
+        if status not in {"pending", "approved", "rejected"}:
+            raise AcceptanceVerificationError(
+                f"invalid review status: {status}"
+            )
+        key = (phase, role)
+        previous = latest_status.get(key)
+        if previous is None:
+            if phase == 0 and status != "approved":
+                raise AcceptanceVerificationError(
+                    "phase-0 review must preserve its approval"
+                )
+            if phase > 0 and status != "pending":
+                raise AcceptanceVerificationError(
+                    "new review roles must begin pending"
+                )
+        elif previous != "pending" or status not in {"approved", "rejected"}:
+            raise AcceptanceVerificationError(
+                "review history rewrites or extends a terminal decision"
+            )
+        latest_status[key] = status
+        recorded_times.append(recorded_at)
+    if recorded_times != sorted(recorded_times):
+        raise AcceptanceVerificationError(
+            "review history timestamps must be monotonic"
+        )
+    if latest_status.get((0, "baseline")) != "approved":
+        raise AcceptanceVerificationError("phase-0 review approval is missing")
+    for role in ("semantic", "gate"):
+        if (
+            latest_status.get((current_phase, role))
+            != _EXPECTED_CURRENT_REVIEW_STATUS
+        ):
+            raise AcceptanceVerificationError(
+                f"current {role} review status is not"
+                f" {_EXPECTED_CURRENT_REVIEW_STATUS}"
+            )
+    _verify_digest(
+        raw,
+        raw_digest,
+        _EXPECTED_REVIEW_HISTORY_SHA256,
+        "review history",
+    )
+
+
 def _evidence_mapping(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, dict) or not value:
         raise AcceptanceVerificationError(
@@ -2859,16 +3444,108 @@ def _validate_quality_gate_evidence(
     raw: object,
     *,
     active_acceptance_nodes: int,
+    active_pytest_instances: int,
     active_type_fixtures: int,
+    root: Path,
+    preserved_untracked: tuple[str, ...],
+    evidence_payload: dict[str, object],
 ) -> None:
-    if not isinstance(raw, list) or len(raw) != 8:
+    quality_gate = _evidence_mapping(raw, "quality gate")
+    _exact_keys(
+        quality_gate,
+        {
+            "state",
+            "required_commands",
+            "state_details",
+            "results",
+            "tree_binding",
+            "coverage_binding",
+        },
+        "quality gate",
+    )
+    state = _nonempty_string(quality_gate.get("state"), "quality state")
+    if state not in {"pending", "complete"}:
         raise AcceptanceVerificationError(
-            "implementation evidence must contain eight exact gate results"
+            f"invalid quality gate evidence state: {state}"
+        )
+    required_commands = _string_list(
+        quality_gate.get("required_commands"),
+        "required quality commands",
+    )
+    _unique(required_commands, "required quality command")
+    if len(required_commands) != 8:
+        raise AcceptanceVerificationError(
+            "implementation evidence must require eight exact gate commands"
+        )
+    if required_commands[:7] != _EXPECTED_ORDERED_COMMON_GATE_COMMANDS:
+        raise AcceptanceVerificationError(
+            "required common quality commands changed order or identity"
+        )
+    required = frozenset(required_commands)
+    if not _EXPECTED_COMMON_GATE_COMMANDS <= required:
+        raise AcceptanceVerificationError(
+            "implementation evidence omits a common gate command"
+        )
+    focused = required - _EXPECTED_COMMON_GATE_COMMANDS
+    if len(focused) != 1 or not next(iter(focused)).startswith(
+        "poetry run pytest --verbose -s tests/"
+    ):
+        raise AcceptanceVerificationError(
+            "implementation evidence lacks one exact focused pytest command"
+        )
+    raw_results = quality_gate.get("results")
+    if not isinstance(raw_results, list):
+        raise AcceptanceVerificationError(
+            "implementation evidence quality results must be a list"
+        )
+    state_details = quality_gate.get("state_details")
+    tree_binding = quality_gate.get("tree_binding")
+    coverage_binding = quality_gate.get("coverage_binding")
+    if state == "pending":
+        details = _evidence_mapping(state_details, "pending quality state")
+        _exact_keys(
+            details,
+            {"requested_at", "reason"},
+            "pending quality state",
+        )
+        _nonempty_string(details.get("requested_at"), "quality requested_at")
+        reason = _nonempty_string(details.get("reason"), "quality reason")
+        if len(reason) < 20:
+            raise AcceptanceVerificationError(
+                "pending quality evidence requires a concrete reason"
+            )
+        if raw_results or tree_binding != {} or coverage_binding != {}:
+            raise AcceptanceVerificationError(
+                "pending quality evidence cannot claim completed results or"
+                " bindings"
+            )
+        return
+
+    details = _evidence_mapping(state_details, "complete quality state")
+    _exact_keys(
+        details,
+        {"completed_at", "gate_run_id"},
+        "complete quality state",
+    )
+    _nonempty_string(details.get("completed_at"), "quality completed_at")
+    gate_run_id = _nonempty_string(
+        details.get("gate_run_id"),
+        "quality gate_run_id",
+    )
+    if len(gate_run_id) < 12:
+        raise AcceptanceVerificationError(
+            "completed quality evidence requires a concrete gate run ID"
+        )
+    if len(raw_results) != len(required_commands):
+        raise AcceptanceVerificationError(
+            "completed quality evidence lacks exact gate results"
         )
     results: dict[str, dict[str, object]] = {}
-    for value in raw:
+    observed_commands: list[str] = []
+    for value in raw_results:
         result = _evidence_mapping(value, "quality gate result")
         command = _nonempty_string(result.get("command"), "quality command")
+        observed_commands.append(command)
         if (
             command in results
             or type(result.get("exit_code")) is not int
@@ -2882,17 +3559,9 @@ def _validate_quality_gate_evidence(
                 f"quality gate result contains null evidence: {command}"
             )
         results[command] = result
-    commands = frozenset(results)
-    if not _EXPECTED_COMMON_GATE_COMMANDS <= commands:
+    if tuple(observed_commands) != required_commands:
         raise AcceptanceVerificationError(
-            "implementation evidence omits a common gate command"
-        )
-    focused = commands - _EXPECTED_COMMON_GATE_COMMANDS
-    if len(focused) != 1 or not next(iter(focused)).startswith(
-        "poetry run pytest --verbose -s tests/"
-    ):
-        raise AcceptanceVerificationError(
-            "implementation evidence lacks one exact focused pytest command"
+            "completed quality results must preserve required command order"
         )
     focused_command = next(iter(focused))
     for command in (
@@ -2907,6 +3576,8 @@ def _validate_quality_gate_evidence(
                 "exit_code",
                 "passed",
                 "skipped",
+                "subtests_passed",
+                "seconds",
                 "deselected",
                 "xfail",
                 "xpass",
@@ -2918,11 +3589,13 @@ def _validate_quality_gate_evidence(
             for name in (
                 "passed",
                 "skipped",
+                "subtests_passed",
                 "deselected",
                 "xfail",
                 "xpass",
             )
         }
+        _positive_number(result.get("seconds"), f"quality seconds: {command}")
         if (
             counts["passed"] == 0
             or counts["deselected"] != 0
@@ -2950,36 +3623,72 @@ def _validate_quality_gate_evidence(
             "exit_code",
             "covered_statements",
             "total_statements",
+            "source_files",
             "missing_lines",
             "missing_files",
+            "passed",
+            "skipped",
+            "subtests_passed",
+            "seconds",
         },
         "exact coverage evidence",
     )
-    covered = exact_coverage.get("covered_statements")
-    if (
-        type(covered) is not int
-        or covered <= 0
-        or exact_coverage.get("total_statements") != covered
-        or exact_coverage.get("missing_lines") != 0
-        or exact_coverage.get("missing_files") != 0
-    ):
+    exact_test_counts = {
+        name: _nonnegative_int(
+            exact_coverage.get(name),
+            f"exact coverage {name}",
+        )
+        for name in ("passed", "skipped", "subtests_passed")
+    }
+    _positive_number(
+        exact_coverage.get("seconds"),
+        "exact coverage seconds",
+    )
+    if exact_test_counts["passed"] == 0:
         raise AcceptanceVerificationError(
-            "exact source-coverage evidence is incomplete"
+            "exact coverage evidence has no passing tests"
+        )
+    try:
+        verified_coverage = verify_src_coverage(
+            report_path=root / "coverage.json",
+            repo_root=root,
+        )
+    except CoverageVerificationError as exc:
+        raise AcceptanceVerificationError(
+            f"live exact source coverage is invalid: {exc}"
+        ) from exc
+    derived_coverage = {
+        "covered_statements": verified_coverage.summary.covered_lines,
+        "total_statements": verified_coverage.summary.num_statements,
+        "source_files": len(verified_coverage.files),
+        "missing_lines": verified_coverage.summary.missing_lines,
+        "missing_files": 0,
+    }
+    observed_coverage_result = {
+        key: exact_coverage.get(key) for key in derived_coverage
+    }
+    if observed_coverage_result != derived_coverage:
+        raise AcceptanceVerificationError(
+            "exact source-coverage evidence differs from the validated live"
+            " report"
         )
     acceptance = results[
         "poetry run python scripts/verify_input_acceptance.py"
-        " --through-phase 0"
+        " --through-phase 1"
     ]
     _exact_keys(
         acceptance,
-        {"command", "exit_code", "active_nodes"},
+        {"command", "exit_code", "active_nodes", "active_instances"},
         "acceptance evidence",
     )
-    if acceptance.get("active_nodes") != active_acceptance_nodes:
+    if (
+        acceptance.get("active_nodes") != active_acceptance_nodes
+        or acceptance.get("active_instances") != active_pytest_instances
+    ):
         raise AcceptanceVerificationError(
-            "acceptance gate evidence has a stale node count"
+            "acceptance gate evidence has stale node or instance counts"
         )
-    type_result = results["make typecheck-input-contract INPUT_PHASE=0"]
+    type_result = results["make typecheck-input-contract INPUT_PHASE=1"]
     _exact_keys(
         type_result,
         {"command", "exit_code", "active_fixtures"},
@@ -2989,12 +3698,336 @@ def _validate_quality_gate_evidence(
         raise AcceptanceVerificationError(
             "type gate evidence has a stale fixture count"
         )
-    for command in ("make lint", "git diff --check"):
-        _exact_keys(
-            results[command],
-            {"command", "exit_code"},
-            "quality command evidence",
+    lint = results["make lint"]
+    _exact_keys(
+        lint,
+        {
+            "command",
+            "exit_code",
+            "source_files_typechecked",
+            "script_files_typechecked",
+        },
+        "lint quality evidence",
+    )
+    lint_source_files = _nonnegative_int(
+        lint.get("source_files_typechecked"),
+        "lint source files typechecked",
+    )
+    lint_script_files = _nonnegative_int(
+        lint.get("script_files_typechecked"),
+        "lint script files typechecked",
+    )
+    if lint_source_files == 0 or lint_script_files == 0:
+        raise AcceptanceVerificationError(
+            "lint quality evidence has empty typechecked inventories"
         )
+    _exact_keys(
+        results["git diff --check"],
+        {"command", "exit_code"},
+        "quality command evidence",
+    )
+    live_tree_binding = _current_tree_binding(
+        root,
+        preserved_untracked,
+        evidence_payload,
+    )
+    if tree_binding != live_tree_binding:
+        raise AcceptanceVerificationError(
+            "completed quality evidence does not match the live git tree"
+        )
+    coverage = _evidence_mapping(
+        coverage_binding,
+        "coverage binding",
+    )
+    _exact_keys(
+        coverage,
+        {
+            "report_sha256",
+            "source_inventory_sha256",
+            "source_file_count",
+            "statement_count",
+            "excluded_line_count",
+        },
+        "coverage binding",
+    )
+    report_digest = _sha256_string(
+        coverage.get("report_sha256"),
+        "coverage report SHA-256",
+    )
+    inventory_digest = _sha256_string(
+        coverage.get("source_inventory_sha256"),
+        "coverage source inventory SHA-256",
+    )
+    if report_digest == "0" * 64 or report_digest == inventory_digest:
+        raise AcceptanceVerificationError(
+            "coverage report digest is missing or reused"
+        )
+    live_inventory = _source_statement_inventory(root)
+    live_report = _coverage_report_binding(root)
+    if report_digest != live_report[0]:
+        raise AcceptanceVerificationError(
+            "coverage report digest does not match the live report"
+        )
+    if live_report[1:] != live_inventory:
+        raise AcceptanceVerificationError(
+            "coverage report source inventory differs from live source"
+        )
+    if (
+        len(verified_coverage.files) != live_inventory[1]
+        or verified_coverage.summary.num_statements != live_inventory[2]
+        or verified_coverage.summary.excluded_lines != live_inventory[3]
+    ):
+        raise AcceptanceVerificationError(
+            "validated exact coverage inventory differs from live source"
+        )
+    expected_coverage = {
+        "source_inventory_sha256": live_inventory[0],
+        "source_file_count": live_inventory[1],
+        "statement_count": live_inventory[2],
+        "excluded_line_count": live_inventory[3],
+    }
+    observed_coverage = {key: coverage.get(key) for key in expected_coverage}
+    if observed_coverage != expected_coverage:
+        raise AcceptanceVerificationError(
+            "coverage source inventory does not match the live source tree"
+        )
+    if exact_coverage.get("total_statements") != live_inventory[2]:
+        raise AcceptanceVerificationError(
+            "exact coverage statement count differs from its source inventory"
+        )
+    if lint_source_files != live_inventory[1]:
+        raise AcceptanceVerificationError(
+            "lint source-file count differs from the live source inventory"
+        )
+
+
+def _current_tree_binding(
+    root: Path,
+    preserved_untracked: tuple[str, ...],
+    evidence_payload: dict[str, object],
+) -> dict[str, object]:
+    evidence_path = "tests/fixtures/input/baseline_evidence.json"
+    verifier_path = "scripts/verify_input_acceptance.py"
+    diff = _git_bytes(
+        root,
+        "diff",
+        "--binary",
+        "--no-ext-diff",
+        "HEAD",
+        "--",
+        ".",
+        f":(exclude){evidence_path}",
+        f":(exclude){verifier_path}",
+    )
+    untracked = _git_lines(
+        root,
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "--",
+    )
+    ignored_paths = {evidence_path, verifier_path}
+    untracked_inventory: list[dict[str, str]] = []
+    for relative in sorted(untracked):
+        if relative in ignored_paths or any(
+            relative.startswith(prefix) for prefix in preserved_untracked
+        ):
+            continue
+        path = (root / relative).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise AcceptanceVerificationError(
+                f"untracked tree path escapes repository: {relative}"
+            ) from exc
+        if not path.is_file():
+            raise AcceptanceVerificationError(
+                f"untracked tree entry is not a file: {relative}"
+            )
+        untracked_inventory.append(
+            {
+                "path": relative,
+                "sha256": sha256(path.read_bytes()).hexdigest(),
+            }
+        )
+    normalized_evidence = deepcopy(evidence_payload)
+    normalized_quality = normalized_evidence.get("quality_gate")
+    if not isinstance(normalized_quality, dict):
+        raise AcceptanceVerificationError(
+            "cannot normalize quality evidence tree binding"
+        )
+    cast(dict[str, object], normalized_quality)["tree_binding"] = {}
+    evidence_digest = sha256(
+        dumps(
+            normalized_evidence,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    verifier_source = (root / verifier_path).read_text(encoding="utf-8")
+    normalized_verifier = verifier_source.replace(
+        _EXPECTED_EVIDENCE_SHA256,
+        "0" * 64,
+    )
+    verifier_digest = sha256(normalized_verifier.encode("utf-8")).hexdigest()
+    untracked_digest = sha256(
+        dumps(
+            untracked_inventory,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    values: dict[str, object] = {
+        "head": _git_output(root, "rev-parse", "HEAD"),
+        "diff_sha256": sha256(diff).hexdigest(),
+        "untracked_inventory_sha256": untracked_digest,
+        "normalized_evidence_sha256": evidence_digest,
+        "normalized_verifier_sha256": verifier_digest,
+    }
+    values["tree_sha256"] = sha256(
+        dumps(
+            values,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    return values
+
+
+def _git_bytes(root: Path, *arguments: str) -> bytes:
+    completed = run(
+        ("git", *arguments),
+        cwd=root,
+        capture_output=True,
+        check=False,
+        text=False,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise AcceptanceVerificationError(
+            "cannot verify live git tree binding:"
+            f" git {' '.join(arguments)}: {detail}"
+        )
+    return completed.stdout
+
+
+def _source_statement_inventory(root: Path) -> tuple[str, int, int, int]:
+    source_root = root / "src"
+    if not source_root.is_dir():
+        raise AcceptanceVerificationError(
+            "coverage source inventory root is missing"
+        )
+    analyzer = Coverage(config_file=False, data_file=None)
+    inventory: list[dict[str, object]] = []
+    for path in sorted(source_root.rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        try:
+            _, statements, excluded, _, _ = analyzer.analysis2(str(path))
+        except Exception as exc:
+            raise AcceptanceVerificationError(
+                f"cannot analyze coverage source inventory: {relative}: {exc}"
+            ) from exc
+        inventory.append(
+            {
+                "path": relative,
+                "statements": len(statements),
+                "excluded_lines": len(excluded),
+            }
+        )
+    digest = sha256(
+        dumps(
+            inventory,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    return (
+        digest,
+        len(inventory),
+        sum(cast(int, entry["statements"]) for entry in inventory),
+        sum(cast(int, entry["excluded_lines"]) for entry in inventory),
+    )
+
+
+def _coverage_report_binding(
+    root: Path,
+) -> tuple[str, str, int, int, int]:
+    report_path = root / "coverage.json"
+    if not report_path.is_file():
+        raise AcceptanceVerificationError(
+            "completed quality evidence requires the live coverage report"
+        )
+    report_digest = sha256(report_path.read_bytes()).hexdigest()
+    report = _strict_mapping(report_path, "coverage report evidence")
+    raw_files = report.get("files")
+    if not isinstance(raw_files, dict) or not raw_files:
+        raise AcceptanceVerificationError(
+            "coverage report evidence has no source files"
+        )
+    inventory: list[dict[str, object]] = []
+    for relative, raw in sorted(raw_files.items()):
+        if not isinstance(relative, str) or not relative.startswith("src/"):
+            raise AcceptanceVerificationError(
+                f"coverage report contains a non-source path: {relative!r}"
+            )
+        if not isinstance(raw, dict):
+            raise AcceptanceVerificationError(
+                f"coverage report file entry must be an object: {relative}"
+            )
+        summary = cast(dict[str, object], raw).get("summary")
+        if not isinstance(summary, dict):
+            raise AcceptanceVerificationError(
+                f"coverage report file summary is missing: {relative}"
+            )
+        statements = summary.get("num_statements")
+        excluded = summary.get("excluded_lines")
+        if (
+            type(statements) is not int
+            or statements < 0
+            or type(excluded) is not int
+            or excluded < 0
+        ):
+            raise AcceptanceVerificationError(
+                f"coverage report file counts are invalid: {relative}"
+            )
+        inventory.append(
+            {
+                "path": relative,
+                "statements": statements,
+                "excluded_lines": excluded,
+            }
+        )
+    inventory_digest = sha256(
+        dumps(
+            inventory,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    return (
+        report_digest,
+        inventory_digest,
+        len(inventory),
+        sum(cast(int, entry["statements"]) for entry in inventory),
+        sum(cast(int, entry["excluded_lines"]) for entry in inventory),
+    )
+
+
+def _sha256_string(value: object, label: str) -> str:
+    digest = _nonempty_string(value, label)
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        raise AcceptanceVerificationError(
+            f"{label} must be lowercase hexadecimal"
+        )
+    return digest
 
 
 def _contains_none(value: object) -> bool:
@@ -3089,7 +4122,7 @@ def _probe_payload(
 
 def _verify_collection(
     expected: tuple[str, ...], payload: dict[str, object]
-) -> None:
+) -> tuple[str, ...]:
     _exact_keys(
         payload,
         {
@@ -3130,11 +4163,15 @@ def _verify_collection(
                 f"{node_id} has disallowed markers: {disallowed}"
             )
         observed.append(node_id)
-    _verify_exact_nodes(expected, tuple(observed), "collected")
+    collected = tuple(observed)
+    _verify_identical_nodes(expected, collected, "collected")
+    return collected
 
 
 def _verify_execution(
-    expected: tuple[str, ...], payload: dict[str, object]
+    expected: tuple[str, ...],
+    payload: dict[str, object],
+    collected: tuple[str, ...],
 ) -> None:
     _exact_keys(
         payload,
@@ -3150,13 +4187,14 @@ def _verify_execution(
         "execution payload",
     )
     _verify_probe_common(payload)
+    _verify_identical_nodes(expected, collected, "collected")
     raw_items = _string_list(payload.get("items"), "execution items")
-    _verify_exact_nodes(expected, raw_items, "executed")
+    _verify_identical_nodes(collected, raw_items, "executed")
     raw_reports = payload.get("reports")
     if not isinstance(raw_reports, list):
         raise AcceptanceVerificationError("execution reports must be a list")
     by_node: dict[str, list[dict[str, object]]] = {
-        node: [] for node in expected
+        node: [] for node in raw_items
     }
     for raw in raw_reports:
         if not isinstance(raw, dict):
@@ -3177,7 +4215,12 @@ def _verify_execution(
         by_node[node_id].append(report)
     for node_id, reports in by_node.items():
         phases = [report.get("when") for report in reports]
-        if len(reports) != 3 or set(phases) != {"setup", "call", "teardown"}:
+        if (
+            phases.count("setup") != 1
+            or phases.count("call") < 1
+            or phases.count("teardown") != 1
+            or set(phases) != {"setup", "call", "teardown"}
+        ):
             raise AcceptanceVerificationError(
                 f"{node_id} was not exactly once fully executed: {phases}"
             )
@@ -3223,7 +4266,7 @@ def _verify_probe_common(payload: dict[str, object]) -> None:
         )
 
 
-def _verify_exact_nodes(
+def _verify_identical_nodes(
     expected: tuple[str, ...], observed: tuple[str, ...], label: str
 ) -> None:
     missing = sorted(set(expected) - set(observed))
@@ -3766,6 +4809,16 @@ def _nonnegative_int(value: object, label: str) -> int:
     return value
 
 
+def _positive_number(value: object, label: str) -> int | float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or value <= 0
+    ):
+        raise AcceptanceVerificationError(f"{label} must be positive")
+    return value
+
+
 def _nonempty_string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise AcceptanceVerificationError(
@@ -3855,9 +4908,11 @@ def main() -> int:
         print(f"structured-input acceptance failed: {exc}", file=stderr)
         return 1
     active_count = len(manifest.active_nodes(args.through_phase))
+    instance_count = len(manifest.active_pytest_instances(args.through_phase))
     print(
         "structured-input acceptance passed: "
         f"through_phase={args.through_phase} nodes={active_count}"
+        f" instances={instance_count}"
     )
     return 0
 

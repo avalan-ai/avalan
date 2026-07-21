@@ -71,6 +71,14 @@ _RESPONSE_SSE_CONTENT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType(
     }
 )
 _RESPONSE_SSE_UNSET = object()
+_RESPONSES_TERMINAL_STATUSES = MappingProxyType(
+    {
+        StreamTerminalOutcome.COMPLETED: "completed",
+        StreamTerminalOutcome.ERRORED: "failed",
+        StreamTerminalOutcome.CANCELLED: "cancelled",
+        StreamTerminalOutcome.INPUT_REQUIRED: "incomplete",
+    }
+)
 
 
 def _response_sse_index_value(
@@ -1851,11 +1859,7 @@ async def create_response(
             "non-contiguous Responses outward output indices"
         )
     output = [indexed_output[index] for index in output_indices]
-    status = {
-        StreamTerminalOutcome.COMPLETED: "completed",
-        StreamTerminalOutcome.ERRORED: "failed",
-        StreamTerminalOutcome.CANCELLED: "cancelled",
-    }[terminal_snapshot.outcome or StreamTerminalOutcome.COMPLETED]
+    status = _responses_terminal_status(terminal_snapshot.outcome)
     body = {
         "id": str(response_id),
         "created": timestamp,
@@ -1915,6 +1919,17 @@ def _terminal_response_events(
                 data=data,
             )
         ]
+    if terminal_outcome is StreamTerminalOutcome.INPUT_REQUIRED:
+        data = {"type": "response.incomplete"}
+        if terminal_snapshot.sequence is not None:
+            data["sequence_number"] = terminal_snapshot.sequence
+        return [
+            _ResponsesSSEEvent(
+                event="response.incomplete",
+                data=data,
+            )
+        ]
+    assert terminal_outcome is StreamTerminalOutcome.ERRORED
     data = {"type": "response.failed"}
     if terminal_snapshot.sequence is not None:
         data["sequence_number"] = terminal_snapshot.sequence
@@ -1935,6 +1950,15 @@ def _terminal_response_events(
             event="response.failed",
             data=data,
         )
+    ]
+
+
+def _responses_terminal_status(
+    outcome: StreamTerminalOutcome | None,
+) -> str:
+    assert outcome is None or isinstance(outcome, StreamTerminalOutcome)
+    return _RESPONSES_TERMINAL_STATUSES[
+        outcome or StreamTerminalOutcome.COMPLETED
     ]
 
 

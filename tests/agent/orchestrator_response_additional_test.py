@@ -2612,6 +2612,136 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         )
         validate_canonical_stream_items(resp.canonical_items)
 
+    async def test_response_input_required_terminal_preserves_correlation(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        correlation = StreamItemCorrelation(
+            request_id="request-1",
+            continuation_id="continuation-1",
+            agent_id="agent-1",
+            branch_id="branch-1",
+        )
+        resp._append_canonical_item(StreamItemKind.STREAM_STARTED)
+        resp._append_canonical_response_item(
+            _canonical_item(
+                StreamItemKind.INTERACTION_CREATED,
+                0,
+                correlation=correlation,
+            )
+        )
+        resp._append_canonical_response_item(
+            _canonical_item(
+                StreamItemKind.INTERACTION_PENDING,
+                1,
+                correlation=correlation,
+            )
+        )
+
+        self.assertIsNone(
+            resp._append_canonical_response_item(
+                _canonical_item(
+                    StreamItemKind.STREAM_INPUT_REQUIRED,
+                    2,
+                    correlation=correlation,
+                    terminal_outcome=(StreamTerminalOutcome.INPUT_REQUIRED),
+                )
+            )
+        )
+
+        self.assertEqual(
+            [item.kind for item in resp.canonical_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.INTERACTION_CREATED,
+                StreamItemKind.INTERACTION_PENDING,
+                StreamItemKind.STREAM_INPUT_REQUIRED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        terminal = resp.canonical_items[-2]
+        self.assertEqual(terminal.correlation, correlation)
+        self.assertIs(
+            terminal.terminal_outcome,
+            StreamTerminalOutcome.INPUT_REQUIRED,
+        )
+        self.assertIs(
+            resp._canonical_stream_terminal,
+            StreamTerminalOutcome.INPUT_REQUIRED,
+        )
+        validate_canonical_stream_items(resp.canonical_items)
+
+    async def test_input_required_does_not_complete_active_continuation(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        correlation = StreamItemCorrelation(
+            request_id="request-1",
+            continuation_id="continuation-1",
+            agent_id="agent-1",
+            branch_id="branch-1",
+        )
+        model_continuation_id = "model-continuation-1"
+        resp._append_canonical_item(StreamItemKind.STREAM_STARTED)
+        resp._append_canonical_response_item(
+            _canonical_item(
+                StreamItemKind.INTERACTION_PENDING,
+                0,
+                correlation=correlation,
+            )
+        )
+        resp._append_canonical_model_continuation(
+            StreamItemKind.MODEL_CONTINUATION_STARTED,
+            model_continuation_id,
+        )
+        resp._set_active_model_continuation(model_continuation_id)
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "input-required stream cannot close an active model continuation",
+        ):
+            resp._append_canonical_response_item(
+                _canonical_item(
+                    StreamItemKind.STREAM_INPUT_REQUIRED,
+                    1,
+                    correlation=correlation,
+                    terminal_outcome=(StreamTerminalOutcome.INPUT_REQUIRED),
+                )
+            )
+
+        self.assertEqual(
+            resp._active_model_continuation_id,
+            model_continuation_id,
+        )
+        self.assertNotIn(
+            StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+            [item.kind for item in resp.canonical_items],
+        )
+        self.assertNotIn(
+            StreamItemKind.STREAM_INPUT_REQUIRED,
+            [item.kind for item in resp.canonical_items],
+        )
+
     async def test_execute_tool_call_without_manager_returns_none(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)

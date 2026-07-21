@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha256
 from json import dumps
-from os import environ
+from os import environ, pathsep
 from pathlib import Path, PurePosixPath
 from subprocess import run
 from sys import executable, stderr
@@ -17,7 +17,7 @@ from input_contract_json import StrictJsonError, strict_json_path
 _FEATURE = "structured_task_input"
 _MAX_PHASE = 12
 _EXPECTED_TYPE_LEDGER_SHA256 = (
-    "3aade03590126acfd31df623804a768dd1f7b95c89743765b3c3a9aab86435f1"
+    "e39ca984f8c8a63e77659622afff4152c71bd7ea5b9ce807428bca2146e0ff3c"
 )
 
 
@@ -78,6 +78,7 @@ def load_manifest(path: Path) -> TypeContractManifest:
         "current_phase",
         "activation_history",
         "activation_snapshots",
+        "planned_replacements",
         "replacements",
         "fixtures",
     }
@@ -106,7 +107,15 @@ def load_manifest(path: Path) -> TypeContractManifest:
         _type_fixture(item, current_phase) for item in raw_fixtures
     )
     _require_unique((item.id for item in fixtures), "fixture ID")
-    _require_unique((item.path for item in fixtures), "fixture path")
+    _require_unique(
+        (item.path for item in fixtures if item.lifecycle != "replaced"),
+        "fixture path",
+    )
+    _planned_replacements(
+        payload.get("planned_replacements"),
+        fixtures,
+        current_phase,
+    )
     _activation_history(
         payload.get("activation_history"),
         fixtures,
@@ -115,6 +124,7 @@ def load_manifest(path: Path) -> TypeContractManifest:
     _activation_snapshots(
         payload.get("activation_snapshots"),
         payload.get("replacements"),
+        payload.get("planned_replacements"),
         fixtures,
         current_phase,
     )
@@ -162,7 +172,12 @@ def verify_input_types(
         for key, value in environ.items()
         if key.upper() != "PYTHONPATH" and not key.upper().startswith("MYPY")
     }
-    environment["MYPYPATH"] = str(root / "tests")
+    environment["MYPYPATH"] = pathsep.join(
+        (
+            str(root / "tests"),
+            str(root / "src"),
+        )
+    )
     for fixture in selected:
         path = _fixture_path(fixture.path, root)
         if not path.is_file():
@@ -177,6 +192,7 @@ def verify_input_types(
                 "--strict",
                 "--show-error-codes",
                 "--no-error-summary",
+                "--no-pretty",
                 fixture.path,
             ],
             cwd=root,
@@ -236,7 +252,12 @@ def _type_fixture(raw: object, current_phase: int) -> TypeFixture:
     expected_lifecycle = (
         "active" if active_from_phase <= current_phase else "planned"
     )
-    if lifecycle != expected_lifecycle:
+    if lifecycle == "replaced":
+        if active_from_phase > current_phase:
+            raise TypeContractVerificationError(
+                f"type fixture replaced before activation: {identifier}"
+            )
+    elif lifecycle != expected_lifecycle:
         raise TypeContractVerificationError(
             f"type fixture lifecycle regression for {identifier}"
         )
@@ -331,7 +352,8 @@ def _activation_history(
         expected_ids = tuple(
             fixture.id
             for fixture in fixtures
-            if fixture.active_from_phase == phase
+            if fixture.lifecycle == "active"
+            and fixture.active_from_phase == phase
         )
         if set(fixture_ids) != set(expected_ids) or len(fixture_ids) != len(
             expected_ids
@@ -346,6 +368,98 @@ def _activation_history(
     if set(observed) != set(active_ids) or len(observed) != len(active_ids):
         raise TypeContractVerificationError(
             "type activation history does not preserve active fixtures"
+        )
+
+
+def _planned_replacements(
+    raw: object,
+    fixtures: tuple[TypeFixture, ...],
+    current_phase: int,
+) -> None:
+    if not isinstance(raw, list):
+        raise TypeContractVerificationError(
+            "planned type replacements must be a list"
+        )
+    fixtures_by_id = {fixture.id: fixture for fixture in fixtures}
+    replaced_ids: set[str] = set()
+    replacement_targets: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict) or set(item) != {
+            "phase",
+            "old_fixture_id",
+            "replacement_fixture_ids",
+            "reason",
+            "reviewed_by",
+            "evidence",
+        }:
+            raise TypeContractVerificationError(
+                "planned type replacement has invalid shape"
+            )
+        phase = _phase(item.get("phase"), "planned replacement phase")
+        if phase == 0 or phase > current_phase:
+            raise TypeContractVerificationError(
+                "planned type replacement phase is not implemented"
+            )
+        old_fixture_id = _string(
+            item.get("old_fixture_id"),
+            "planned old fixture id",
+        )
+        if old_fixture_id in replaced_ids:
+            raise TypeContractVerificationError(
+                "planned type fixture is replaced more than once: "
+                f"{old_fixture_id}"
+            )
+        replaced_ids.add(old_fixture_id)
+        old_fixture = fixtures_by_id.get(old_fixture_id)
+        if (
+            old_fixture is None
+            or old_fixture.lifecycle != "replaced"
+            or old_fixture.active_from_phase != phase
+        ):
+            raise TypeContractVerificationError(
+                "planned type replacement source was not genuinely planned: "
+                f"{old_fixture_id}"
+            )
+        raw_targets = item.get("replacement_fixture_ids")
+        if (
+            not isinstance(raw_targets, list)
+            or not raw_targets
+            or not all(
+                isinstance(value, str) and value for value in raw_targets
+            )
+        ):
+            raise TypeContractVerificationError(
+                "planned replacement fixture IDs must be a non-empty "
+                "string list"
+            )
+        targets = tuple(cast(list[str], raw_targets))
+        _require_unique(targets, "planned replacement fixture ID")
+        for target_id in targets:
+            if target_id in replacement_targets:
+                raise TypeContractVerificationError(
+                    f"planned replacement type target is reused: {target_id}"
+                )
+            replacement_targets.add(target_id)
+            target = fixtures_by_id.get(target_id)
+            if (
+                target is None
+                or target.lifecycle != "active"
+                or target.active_from_phase != phase
+            ):
+                raise TypeContractVerificationError(
+                    "planned replacement target is not an exact same-phase "
+                    f"active fixture: {target_id}"
+                )
+        _string(item.get("reason"), "planned replacement reason")
+        _string(item.get("reviewed_by"), "planned replacement reviewed_by")
+        _string(item.get("evidence"), "planned replacement evidence")
+    expected_replaced_ids = {
+        fixture.id for fixture in fixtures if fixture.lifecycle == "replaced"
+    }
+    if replaced_ids != expected_replaced_ids:
+        raise TypeContractVerificationError(
+            "planned type replacement ledger does not exactly preserve "
+            "replaced fixtures"
         )
 
 
@@ -364,6 +478,7 @@ def _acceptance_current_phase(path: Path) -> int:
 def _activation_snapshots(
     raw_snapshots: object,
     raw_replacements: object,
+    raw_planned_replacements: object,
     fixtures: tuple[TypeFixture, ...],
     current_phase: int,
 ) -> None:
@@ -431,6 +546,7 @@ def _activation_snapshots(
         dumps(
             {
                 "activation_snapshots": raw_snapshots,
+                "planned_replacements": raw_planned_replacements,
                 "replacements": raw_replacements,
             },
             ensure_ascii=False,

@@ -4,8 +4,14 @@ from ..event import (
     EventStats,
     EventStatsSnapshot,
     EventType,
+    InteractionLifecyclePayload,
 )
-from ..model.stream import CanonicalStreamItem, stream_observability_payload
+from ..model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamTerminalOutcome,
+    stream_observability_payload,
+)
 from ..types import (
     assert_optional_non_negative_int,
     assert_optional_non_negative_number,
@@ -456,6 +462,11 @@ class EventManager:
     ) -> None:
         assert isinstance(item, CanonicalStreamItem)
         assert isinstance(event_type, EventType)
+        if (
+            item.channel is StreamChannel.INTERACTION
+            or item.terminal_outcome is StreamTerminalOutcome.INPUT_REQUIRED
+        ):
+            event_type = EventType.INTERACTION_LIFECYCLE
         if not self.should_emit(event_type):
             return
         payload = EventObservabilityPayload.canonical_stream(
@@ -467,6 +478,14 @@ class EventManager:
                 observability_payload=payload,
             )
         )
+
+    async def trigger_interaction_lifecycle(
+        self,
+        payload: InteractionLifecyclePayload,
+    ) -> None:
+        """Publish one typed content-safe interaction lifecycle event."""
+        assert isinstance(payload, InteractionLifecyclePayload)
+        await self.trigger(Event.from_interaction_lifecycle(payload))
 
     async def trigger(self, event: Event) -> None:
         if not self.should_emit(event.type):

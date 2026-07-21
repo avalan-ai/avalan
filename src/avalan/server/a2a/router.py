@@ -1246,6 +1246,17 @@ class A2AResponseTranslator:
     async def finish(self) -> None:
         if self._finished:
             return
+        input_required_state: object | None = None
+        if self._terminal_outcome is StreamTerminalOutcome.INPUT_REQUIRED:
+            input_required_state = getattr(
+                self._a2a_pb2.TaskState,
+                "TASK_STATE_INPUT_REQUIRED",
+                None,
+            )
+            if input_required_state is None:
+                raise StreamValidationError(
+                    "A2A SDK input-required task state is unavailable"
+                )
         self._finished = True
         if self._locally_closed and self._terminal_outcome is None:
             return
@@ -1256,7 +1267,14 @@ class A2AResponseTranslator:
             await self._updater.cancel()
         elif self._terminal_outcome is StreamTerminalOutcome.ERRORED:
             await self._updater.failed()
+        elif self._terminal_outcome is StreamTerminalOutcome.INPUT_REQUIRED:
+            assert input_required_state is not None
+            await self._updater.update_status(input_required_state)
         else:
+            assert self._terminal_outcome in (
+                None,
+                StreamTerminalOutcome.COMPLETED,
+            )
             await self._updater.complete()
 
     async def abort(self, outcome: StreamTerminalOutcome) -> None:
@@ -1572,6 +1590,7 @@ class A2AResponseTranslator:
             in (
                 StreamTerminalOutcome.CANCELLED,
                 StreamTerminalOutcome.ERRORED,
+                StreamTerminalOutcome.INPUT_REQUIRED,
             )
             or current.suppressed
         ):
@@ -1771,8 +1790,10 @@ def _a2a_reasoning_terminal_outcome(
         return "completed"
     if outcome is StreamTerminalOutcome.ERRORED:
         return "failed"
-    assert outcome is StreamTerminalOutcome.CANCELLED
-    return "cancelled"
+    if outcome is StreamTerminalOutcome.CANCELLED:
+        return "cancelled"
+    assert outcome is StreamTerminalOutcome.INPUT_REQUIRED
+    return "input_required"
 
 
 def _a2a_tool_item_category(data: Mapping[str, object]) -> str | None:

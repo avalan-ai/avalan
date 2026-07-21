@@ -2190,6 +2190,15 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
     def test_chat_terminal_event_preserves_non_completed_outcomes(
         self,
     ) -> None:
+        self.assertEqual(
+            set(StreamTerminalOutcome),
+            {
+                StreamTerminalOutcome.COMPLETED,
+                StreamTerminalOutcome.ERRORED,
+                StreamTerminalOutcome.CANCELLED,
+                StreamTerminalOutcome.INPUT_REQUIRED,
+            },
+        )
         self.assertIsNone(
             self.chat._chat_terminal_event(
                 "response-id",
@@ -2232,6 +2241,16 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             loads(failed.split("data: ")[1])["type"],
             "chat.completion.failed",
         )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "Chat input-required projection is unavailable",
+        ):
+            self.chat._chat_terminal_event(
+                "response-id",
+                1,
+                "model-id",
+                StreamTerminalOutcome.INPUT_REQUIRED,
+            )
 
     def test_chat_terminal_event_preserves_error_data(self) -> None:
         item = CanonicalStreamItem(

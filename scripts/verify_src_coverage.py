@@ -26,6 +26,13 @@ _PYTEST_COVERAGE_OPTION_PATTERN = compile_regex(
 _EXPECTED_EXCLUSION_BASELINE_SHA256 = (
     "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c"
 )
+_EXPECTED_EXCLUSION_CURRENT_SHA256 = (
+    "4b480b52db122eee22a7139ce5a3eaa7d8e436e0cef1122fe84af00bf0b90575"
+)
+_EXPECTED_EXCLUSION_RELOCATION_SHA256 = (
+    "efdc3890ced956313276da34397c282390f7955b98f3ddc801271a6cd10ad134"
+)
+_EXPECTED_EXCLUSION_REVIEWER = "/root/interaction_round4_gates"
 
 
 class CoverageVerificationError(RuntimeError):
@@ -50,6 +57,26 @@ class CoverageVerification:
     summary: CoverageSummary
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _ExclusionDirective:
+    """Store one stable source exclusion identity and location."""
+
+    identity: str
+    path: str
+    line: int
+    text: str
+    occurrence: int
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _ExclusionSnapshot:
+    """Store one pinned exclusion snapshot."""
+
+    directives: tuple[_ExclusionDirective, ...]
+    report_lines: dict[str, tuple[int, ...]]
+    digest: str
+
+
 def repository_root() -> Path:
     """Return the repository root containing this script."""
     return Path(__file__).resolve().parents[1]
@@ -71,11 +98,35 @@ def default_exclusion_baseline_path() -> Path:
     )
 
 
+def default_exclusion_current_path() -> Path:
+    """Return the tracked current source-exclusion snapshot path."""
+    return (
+        repository_root()
+        / "tests"
+        / "fixtures"
+        / "input"
+        / "coverage_exclusions_phase1.json"
+    )
+
+
+def default_exclusion_relocation_path() -> Path:
+    """Return the tracked source-exclusion relocation ledger path."""
+    return (
+        repository_root()
+        / "tests"
+        / "fixtures"
+        / "input"
+        / "coverage_exclusion_relocations_phase1.json"
+    )
+
+
 def verify_src_coverage(
     report_path: Path | None = None,
     *,
     repo_root: Path | None = None,
     exclusion_baseline_path: Path | None = None,
+    exclusion_current_path: Path | None = None,
+    exclusion_relocation_path: Path | None = None,
 ) -> CoverageVerification:
     """Verify exact total, per-file, and inventory source coverage."""
     root = (repo_root or repository_root()).resolve()
@@ -103,9 +154,21 @@ def verify_src_coverage(
         root,
         source_root,
     )
-    expected_excluded_lines = _verify_exclusion_baseline(
+    expected_excluded_lines = _verify_exclusion_history(
         exclusion_baseline_path
         or root / "tests" / "fixtures" / "input" / "coverage_exclusions.json",
+        exclusion_current_path
+        or root
+        / "tests"
+        / "fixtures"
+        / "input"
+        / "coverage_exclusions_phase1.json",
+        exclusion_relocation_path
+        or root
+        / "tests"
+        / "fixtures"
+        / "input"
+        / "coverage_exclusion_relocations_phase1.json",
         root,
         source_root,
     )
@@ -289,11 +352,67 @@ def _source_inventory(
     return allowed, required, empty
 
 
-def _verify_exclusion_baseline(
-    path: Path,
+def _verify_exclusion_history(
+    baseline_path: Path,
+    current_path: Path,
+    relocation_path: Path,
     root: Path,
     source_root: Path,
 ) -> dict[str, tuple[int, ...]]:
+    baseline = _read_exclusion_snapshot(
+        baseline_path,
+        root,
+        source_root,
+        digest_field="baseline_sha256",
+        expected_digest=_EXPECTED_EXCLUSION_BASELINE_SHA256,
+        label="baseline",
+    )
+    current = _read_exclusion_snapshot(
+        current_path,
+        root,
+        source_root,
+        digest_field="snapshot_sha256",
+        expected_digest=_EXPECTED_EXCLUSION_CURRENT_SHA256,
+        label="current",
+    )
+    _verify_exclusion_relocations(
+        relocation_path,
+        baseline,
+        current,
+        root,
+        source_root,
+    )
+    observed: list[tuple[str, int, str]] = []
+    for source_path in sorted(source_root.rglob("*.py")):
+        normalized = source_path.resolve().relative_to(root).as_posix()
+        for line_number, text in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
+            if _EXCLUSION_PATTERN.search(text):
+                observed.append((normalized, line_number, text))
+    expected = [
+        (directive.path, directive.line, directive.text)
+        for directive in current.directives
+    ]
+    if expected != observed:
+        raise CoverageVerificationError(
+            "source coverage exclusions differ from the reviewed current"
+            " snapshot"
+        )
+    _verify_coverage_configuration(root)
+    return current.report_lines
+
+
+def _read_exclusion_snapshot(
+    path: Path,
+    root: Path,
+    source_root: Path,
+    *,
+    digest_field: str,
+    expected_digest: str,
+    label: str,
+) -> _ExclusionSnapshot:
     try:
         raw = strict_json_path(path)
     except StrictJsonError as exc:
@@ -304,10 +423,10 @@ def _verify_exclusion_baseline(
         "exclusions",
         "report_excluded_lines",
         "coverage_configuration",
-        "baseline_sha256",
+        digest_field,
     }:
         raise CoverageVerificationError(
-            "coverage exclusion baseline has invalid shape"
+            f"coverage exclusion {label} snapshot has invalid shape"
         )
     if (
         type(raw.get("schema_version")) is not int
@@ -327,7 +446,8 @@ def _verify_exclusion_baseline(
     expected_raw = raw.get("exclusions")
     if not isinstance(expected_raw, list):
         raise CoverageVerificationError("coverage exclusions must be a list")
-    expected: list[tuple[str, int, str]] = []
+    directives: list[_ExclusionDirective] = []
+    occurrences: dict[tuple[str, str], int] = {}
     for entry in expected_raw:
         if not isinstance(entry, dict) or set(entry) != {
             "path",
@@ -351,23 +471,29 @@ def _verify_exclusion_baseline(
                 "coverage exclusion entry has invalid fields"
             )
         normalized = _normalize_source_path(raw_path, root, source_root)
-        expected.append((normalized, line, text))
-    if len(expected) != len(set(expected)):
-        raise CoverageVerificationError(
-            "coverage exclusion baseline contains duplicates"
+        occurrence_key = (normalized, text)
+        occurrence = occurrences.get(occurrence_key, 0) + 1
+        occurrences[occurrence_key] = occurrence
+        directives.append(
+            _ExclusionDirective(
+                identity=_directive_identity(normalized, text, occurrence),
+                path=normalized,
+                line=line,
+                text=text,
+                occurrence=occurrence,
+            )
         )
-    observed: list[tuple[str, int, str]] = []
-    for source_path in sorted(source_root.rglob("*.py")):
-        normalized = source_path.resolve().relative_to(root).as_posix()
-        for line_number, text in enumerate(
-            source_path.read_text(encoding="utf-8").splitlines(),
-            start=1,
-        ):
-            if _EXCLUSION_PATTERN.search(text):
-                observed.append((normalized, line_number, text))
-    if expected != observed:
+    locations = [
+        (directive.path, directive.line, directive.text)
+        for directive in directives
+    ]
+    if len(locations) != len(set(locations)):
         raise CoverageVerificationError(
-            "source coverage exclusions differ from the frozen baseline"
+            f"coverage exclusion {label} snapshot contains duplicates"
+        )
+    if locations != sorted(locations):
+        raise CoverageVerificationError(
+            f"coverage exclusion {label} snapshot is not sorted"
         )
     raw_report_lines = raw.get("report_excluded_lines")
     if not isinstance(raw_report_lines, dict):
@@ -410,13 +536,350 @@ def _verify_exclusion_baseline(
         ).encode("utf-8")
     ).hexdigest()
     if (
-        raw.get("baseline_sha256") != calculated_digest
-        or calculated_digest != _EXPECTED_EXCLUSION_BASELINE_SHA256
+        raw.get(digest_field) != calculated_digest
+        or calculated_digest != expected_digest
     ):
         raise CoverageVerificationError(
-            "coverage exclusion baseline digest changed without verifier"
+            f"coverage exclusion {label} snapshot digest changed without"
+            " verifier"
             " review"
         )
+    return _ExclusionSnapshot(
+        directives=tuple(directives),
+        report_lines=report_lines,
+        digest=calculated_digest,
+    )
+
+
+def _verify_exclusion_relocations(
+    path: Path,
+    baseline: _ExclusionSnapshot,
+    current: _ExclusionSnapshot,
+    root: Path,
+    source_root: Path,
+) -> None:
+    try:
+        raw = strict_json_path(path)
+    except StrictJsonError as exc:
+        raise CoverageVerificationError(str(exc)) from exc
+    expected_keys = {
+        "schema_version",
+        "baseline_snapshot_sha256",
+        "current_snapshot_sha256",
+        "directive_count_before",
+        "directive_count_after",
+        "report_excluded_line_count_before",
+        "report_excluded_line_count_after",
+        "directive_relocations",
+        "report_exclusion_relocations",
+        "ledger_sha256",
+    }
+    if not isinstance(raw, dict) or set(raw) != expected_keys:
+        raise CoverageVerificationError(
+            "coverage exclusion relocation ledger has invalid shape"
+        )
+    if (
+        type(raw.get("schema_version")) is not int
+        or raw.get("schema_version") != 1
+    ):
+        raise CoverageVerificationError(
+            "coverage exclusion relocation schema_version must be the"
+            " integer 1"
+        )
+    if (
+        raw.get("baseline_snapshot_sha256") != baseline.digest
+        or raw.get("current_snapshot_sha256") != current.digest
+    ):
+        raise CoverageVerificationError(
+            "coverage exclusion relocation snapshot references changed"
+        )
+    _verify_exclusion_counts(raw, baseline, current)
+    directive_relocations = _directive_relocations(
+        raw.get("directive_relocations"),
+        root,
+        source_root,
+    )
+    report_relocations = _report_exclusion_relocations(
+        raw.get("report_exclusion_relocations"),
+        root,
+        source_root,
+    )
+    _verify_directive_relocations(
+        baseline.directives,
+        current.directives,
+        directive_relocations,
+    )
+    _verify_report_relocations(
+        baseline.report_lines,
+        current.report_lines,
+        report_relocations,
+    )
+    digest_payload = {
+        key: raw[key] for key in expected_keys if key != "ledger_sha256"
+    }
+    calculated_digest = sha256(
+        dumps(
+            digest_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    if (
+        raw.get("ledger_sha256") != calculated_digest
+        or calculated_digest != _EXPECTED_EXCLUSION_RELOCATION_SHA256
+    ):
+        raise CoverageVerificationError(
+            "coverage exclusion relocation ledger digest changed without"
+            " verifier review"
+        )
+
+
+def _verify_exclusion_counts(
+    raw: dict[str, object],
+    baseline: _ExclusionSnapshot,
+    current: _ExclusionSnapshot,
+) -> None:
+    counts = {
+        "directive_count_before": len(baseline.directives),
+        "directive_count_after": len(current.directives),
+        "report_excluded_line_count_before": sum(
+            len(lines) for lines in baseline.report_lines.values()
+        ),
+        "report_excluded_line_count_after": sum(
+            len(lines) for lines in current.report_lines.values()
+        ),
+    }
+    for field, expected in counts.items():
+        value = raw.get(field)
+        if type(value) is not int or value != expected:
+            raise CoverageVerificationError(
+                f"coverage exclusion relocation {field} is inconsistent"
+            )
+    if (
+        counts["directive_count_before"] != counts["directive_count_after"]
+        or counts["report_excluded_line_count_before"]
+        != counts["report_excluded_line_count_after"]
+    ):
+        raise CoverageVerificationError(
+            "coverage exclusion relocation changed exclusion counts"
+        )
+
+
+def _directive_relocations(
+    raw: object,
+    root: Path,
+    source_root: Path,
+) -> dict[str, tuple[str, str, int, int, int]]:
+    if not isinstance(raw, list):
+        raise CoverageVerificationError(
+            "coverage directive relocations must be a list"
+        )
+    relocations: dict[str, tuple[str, str, int, int, int]] = {}
+    expected_keys = {
+        "identity",
+        "path",
+        "text",
+        "occurrence",
+        "from_line",
+        "to_line",
+        "reviewed_by",
+        "reason",
+    }
+    for entry in raw:
+        if not isinstance(entry, dict) or set(entry) != expected_keys:
+            raise CoverageVerificationError(
+                "coverage directive relocation has invalid shape"
+            )
+        identity = entry.get("identity")
+        raw_path = entry.get("path")
+        text = entry.get("text")
+        occurrence = entry.get("occurrence")
+        from_line = entry.get("from_line")
+        to_line = entry.get("to_line")
+        if (
+            not isinstance(identity, str)
+            or not isinstance(raw_path, str)
+            or not isinstance(text, str)
+            or not _EXCLUSION_PATTERN.search(text)
+            or type(occurrence) is not int
+            or occurrence <= 0
+            or type(from_line) is not int
+            or from_line <= 0
+            or type(to_line) is not int
+            or to_line <= 0
+            or from_line == to_line
+        ):
+            raise CoverageVerificationError(
+                "coverage directive relocation has invalid fields"
+            )
+        _verify_relocation_review(entry)
+        normalized = _normalize_source_path(raw_path, root, source_root)
+        if identity != _directive_identity(normalized, text, occurrence):
+            raise CoverageVerificationError(
+                "coverage directive relocation identity changed"
+            )
+        if identity in relocations:
+            raise CoverageVerificationError(
+                "coverage directive relocation is duplicated"
+            )
+        relocations[identity] = (
+            normalized,
+            text,
+            occurrence,
+            from_line,
+            to_line,
+        )
+    return relocations
+
+
+def _report_exclusion_relocations(
+    raw: object,
+    root: Path,
+    source_root: Path,
+) -> dict[str, tuple[tuple[int, ...], tuple[int, ...]]]:
+    if not isinstance(raw, list):
+        raise CoverageVerificationError(
+            "coverage report exclusion relocations must be a list"
+        )
+    relocations: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {}
+    expected_keys = {
+        "path",
+        "from_lines",
+        "to_lines",
+        "reviewed_by",
+        "reason",
+    }
+    for entry in raw:
+        if not isinstance(entry, dict) or set(entry) != expected_keys:
+            raise CoverageVerificationError(
+                "coverage report exclusion relocation has invalid shape"
+            )
+        raw_path = entry.get("path")
+        from_raw = entry.get("from_lines")
+        to_raw = entry.get("to_lines")
+        if (
+            not isinstance(raw_path, str)
+            or not isinstance(from_raw, list)
+            or not isinstance(to_raw, list)
+        ):
+            raise CoverageVerificationError(
+                "coverage report exclusion relocation has invalid fields"
+            )
+        _verify_relocation_review(entry)
+        normalized = _normalize_source_path(raw_path, root, source_root)
+        from_lines = _line_numbers(
+            from_raw,
+            normalized,
+            label="baseline excluded",
+        )
+        to_lines = _line_numbers(
+            to_raw,
+            normalized,
+            label="current excluded",
+        )
+        if not from_lines or len(from_lines) != len(to_lines):
+            raise CoverageVerificationError(
+                "coverage report exclusion relocation changed line count"
+            )
+        if from_lines == to_lines:
+            raise CoverageVerificationError(
+                "coverage report exclusion relocation did not move"
+            )
+        if normalized in relocations:
+            raise CoverageVerificationError(
+                "coverage report exclusion relocation is duplicated"
+            )
+        relocations[normalized] = (from_lines, to_lines)
+    return relocations
+
+
+def _verify_relocation_review(entry: dict[str, object]) -> None:
+    reviewer = entry.get("reviewed_by")
+    reason = entry.get("reason")
+    if reviewer != _EXPECTED_EXCLUSION_REVIEWER:
+        raise CoverageVerificationError(
+            "coverage exclusion relocation is unreviewed"
+        )
+    if (
+        not isinstance(reason, str)
+        or len(reason.strip()) < 30
+        or reason.strip().lower() in {"pending", "placeholder", "tbd", "todo"}
+    ):
+        raise CoverageVerificationError(
+            "coverage exclusion relocation lacks a concrete reason"
+        )
+
+
+def _verify_directive_relocations(
+    baseline: tuple[_ExclusionDirective, ...],
+    current: tuple[_ExclusionDirective, ...],
+    relocations: dict[str, tuple[str, str, int, int, int]],
+) -> None:
+    baseline_by_id = {directive.identity: directive for directive in baseline}
+    current_by_id = {directive.identity: directive for directive in current}
+    if (
+        len(baseline_by_id) != len(baseline)
+        or len(current_by_id) != len(current)
+        or set(baseline_by_id) != set(current_by_id)
+    ):
+        raise CoverageVerificationError(
+            "coverage directive identity, text, or count changed"
+        )
+    changed = {
+        identity
+        for identity, directive in baseline_by_id.items()
+        if directive.line != current_by_id[identity].line
+    }
+    if set(relocations) != changed:
+        raise CoverageVerificationError(
+            "coverage directive relocation is missing, extra, or unreviewed"
+        )
+    for identity in changed:
+        before = baseline_by_id[identity]
+        after = current_by_id[identity]
+        expected = (
+            before.path,
+            before.text,
+            before.occurrence,
+            before.line,
+            after.line,
+        )
+        if relocations[identity] != expected:
+            raise CoverageVerificationError(
+                "coverage directive relocation differs from snapshots"
+            )
+
+
+def _verify_report_relocations(
+    baseline: dict[str, tuple[int, ...]],
+    current: dict[str, tuple[int, ...]],
+    relocations: dict[str, tuple[tuple[int, ...], tuple[int, ...]]],
+) -> None:
+    if set(baseline) != set(current):
+        raise CoverageVerificationError(
+            "coverage report exclusion path inventory changed"
+        )
+    changed = {
+        path for path, lines in baseline.items() if lines != current[path]
+    }
+    if set(relocations) != changed:
+        raise CoverageVerificationError(
+            "coverage report exclusion relocation is missing, extra, or"
+            " unreviewed"
+        )
+    for path in changed:
+        if relocations[path] != (baseline[path], current[path]):
+            raise CoverageVerificationError(
+                "coverage report exclusion relocation differs from snapshots"
+            )
+
+
+def _directive_identity(path: str, text: str, occurrence: int) -> str:
+    return sha256(f"{path}\0{text}\0{occurrence}".encode("utf-8")).hexdigest()
+
+
+def _verify_coverage_configuration(root: Path) -> None:
     direct_configuration = root / ".coveragerc"
     if direct_configuration.exists():
         raise CoverageVerificationError(
@@ -440,7 +903,6 @@ def _verify_exclusion_baseline(
             raise CoverageVerificationError(
                 f"unfrozen coverage configuration is prohibited: {config.name}"
             )
-    return report_lines
 
 
 def _normalize_source_path(
@@ -546,6 +1008,16 @@ def _parse_args() -> Namespace:
         default=default_exclusion_baseline_path(),
     )
     parser.add_argument(
+        "--exclusion-current",
+        type=Path,
+        default=default_exclusion_current_path(),
+    )
+    parser.add_argument(
+        "--exclusion-relocations",
+        type=Path,
+        default=default_exclusion_relocation_path(),
+    )
+    parser.add_argument(
         "--repo-root",
         type=Path,
         default=repository_root(),
@@ -561,6 +1033,8 @@ def main() -> int:
             args.report,
             repo_root=args.repo_root,
             exclusion_baseline_path=args.exclusion_baseline,
+            exclusion_current_path=args.exclusion_current,
+            exclusion_relocation_path=args.exclusion_relocations,
         )
     except CoverageVerificationError as exc:
         print(f"exact source coverage failed: {exc}", file=stderr)

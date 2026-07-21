@@ -299,11 +299,19 @@ def _chat_terminal_event(
         or terminal_outcome is StreamTerminalOutcome.COMPLETED
     ):
         return None
+    if terminal_outcome is StreamTerminalOutcome.INPUT_REQUIRED:
+        raise StreamValidationError(
+            "Chat input-required projection is unavailable"
+        )
 
     event = (
         "chat.completion.cancelled"
         if terminal_outcome is StreamTerminalOutcome.CANCELLED
         else "chat.completion.failed"
+    )
+    assert terminal_outcome in (
+        StreamTerminalOutcome.CANCELLED,
+        StreamTerminalOutcome.ERRORED,
     )
     data = {
         "id": response_id,

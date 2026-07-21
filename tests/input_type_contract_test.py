@@ -58,6 +58,7 @@ def _ledger_digest(payload: dict[str, Any]) -> str:
     """Return the type activation ledger digest."""
     value = {
         "activation_snapshots": payload["activation_snapshots"],
+        "planned_replacements": payload["planned_replacements"],
         "replacements": payload["replacements"],
     }
     return sha256(
@@ -91,6 +92,7 @@ def _replacement_manifest() -> dict[str, Any]:
             {"phase": 1, "fixture_ids": ["replacement-positive"]},
         ],
         "activation_snapshots": snapshots,
+        "planned_replacements": [],
         "replacements": [
             {
                 "phase": 1,
@@ -113,6 +115,84 @@ def _replacement_manifest() -> dict[str, Any]:
     }
 
 
+def _planned_replacement_manifest() -> dict[str, Any]:
+    """Return a valid synthetic planned-fixture replacement ledger."""
+    phase_zero = ["base-positive"]
+    phase_one = ["base-positive", "replacement-positive", "other-positive"]
+    return {
+        "schema_version": 1,
+        "feature": "structured_task_input",
+        "current_phase": 1,
+        "activation_history": [
+            {"phase": 0, "fixture_ids": ["base-positive"]},
+            {
+                "phase": 1,
+                "fixture_ids": [
+                    "replacement-positive",
+                    "other-positive",
+                ],
+            },
+        ],
+        "activation_snapshots": [
+            {
+                "phase": 0,
+                "fixture_ids": phase_zero,
+                "sha256": _snapshot_digest(phase_zero),
+            },
+            {
+                "phase": 1,
+                "fixture_ids": phase_one,
+                "sha256": _snapshot_digest(phase_one),
+            },
+        ],
+        "planned_replacements": [
+            {
+                "phase": 1,
+                "old_fixture_id": "planned-negative",
+                "replacement_fixture_ids": ["replacement-positive"],
+                "reason": "The frozen public callable has a different name.",
+                "reviewed_by": "synthetic-reviewer",
+                "evidence": "strict synthetic mypy evidence",
+            }
+        ],
+        "replacements": [],
+        "fixtures": [
+            {
+                "id": "base-positive",
+                "kind": "positive",
+                "lifecycle": "active",
+                "active_from_phase": 0,
+                "path": "tests/input_type_contracts/base.py",
+                "expected_diagnostics": [],
+            },
+            {
+                "id": "planned-negative",
+                "kind": "negative",
+                "lifecycle": "replaced",
+                "active_from_phase": 1,
+                "path": "tests/input_type_contracts/replacement.py",
+                "expected_diagnostics": ["historical diagnostic"],
+            },
+            {
+                "id": "replacement-positive",
+                "kind": "positive",
+                "lifecycle": "active",
+                "active_from_phase": 1,
+                "path": "tests/input_type_contracts/replacement.py",
+                "expected_diagnostics": [],
+            },
+            {
+                "id": "other-positive",
+                "kind": "positive",
+                "lifecycle": "active",
+                "active_from_phase": 1,
+                "path": "tests/input_type_contracts/other.py",
+                "expected_diagnostics": [],
+            },
+        ],
+    }
+
+
 def test_type_contract_manifest_and_runner_are_strict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -125,15 +205,22 @@ def test_type_contract_manifest_and_runner_are_strict(
     loaded = _VERIFIER.verify_input_types(
         real_path,
         repo_root=_ROOT,
-        through_phase=0,
+        through_phase=1,
         acceptance_manifest_path=_FIXTURES / "acceptance_manifest.json",
     )
-    assert loaded.current_phase == 0
+    assert loaded.current_phase == 1
     assert [
         fixture.id
         for fixture in loaded.fixtures
         if fixture.lifecycle == "active"
-    ] == ["deterministic-fixtures-positive"]
+    ] == [
+        "deterministic-fixtures-positive",
+        "canonical-answers-positive",
+        "strict-resolution-variants-negative",
+        "typed-resolution-payload-negative",
+        "input-required-identity-negative",
+        "unchecked-any-leak-negative",
+    ]
 
     invalid = deepcopy(manifest)
     negative = next(
@@ -184,6 +271,7 @@ def test_type_contract_manifest_and_runner_are_strict(
                 "sha256": _snapshot_digest(["strict-negative"]),
             }
         ],
+        "planned_replacements": [],
         "replacements": [],
         "fixtures": [
             {
@@ -214,3 +302,88 @@ def test_type_contract_manifest_and_runner_are_strict(
             through_phase=0,
             acceptance_manifest_path=acceptance_path,
         )
+
+
+def test_planned_type_replacements_are_exact_and_append_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accept only reviewed one-time replacements of planned fixtures."""
+    manifest = _planned_replacement_manifest()
+    expected_digest = _ledger_digest(manifest)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_TYPE_LEDGER_SHA256",
+        expected_digest,
+    )
+    path = tmp_path / "planned-replacement.json"
+    _write(path, manifest)
+
+    loaded = _VERIFIER.load_manifest(path)
+
+    assert loaded.current_phase == 1
+    assert [
+        fixture.id
+        for fixture in loaded.fixtures
+        if fixture.lifecycle == "replaced"
+    ] == ["planned-negative"]
+
+    not_planned = deepcopy(manifest)
+    old = next(
+        fixture
+        for fixture in not_planned["fixtures"]
+        if fixture["id"] == "planned-negative"
+    )
+    old["lifecycle"] = "active"
+    old["path"] = "tests/input_type_contracts/old.py"
+    _write(path, not_planned)
+    with pytest.raises(
+        _VERIFIER.TypeContractVerificationError,
+        match="not genuinely planned",
+    ):
+        _VERIFIER.load_manifest(path)
+
+    duplicate = deepcopy(manifest)
+    duplicate["planned_replacements"].append(
+        deepcopy(duplicate["planned_replacements"][0])
+    )
+    _write(path, duplicate)
+    with pytest.raises(
+        _VERIFIER.TypeContractVerificationError,
+        match="replaced more than once",
+    ):
+        _VERIFIER.load_manifest(path)
+
+    wrong_target = deepcopy(manifest)
+    wrong_target["planned_replacements"][0]["replacement_fixture_ids"] = [
+        "base-positive"
+    ]
+    _write(path, wrong_target)
+    with pytest.raises(
+        _VERIFIER.TypeContractVerificationError,
+        match="exact same-phase active fixture",
+    ):
+        _VERIFIER.load_manifest(path)
+
+    for field_name, changed_value in (
+        ("replacement_fixture_ids", ["other-positive"]),
+        ("reason", "A different non-empty reason."),
+        ("reviewed_by", "another-reviewer"),
+        ("evidence", "different non-empty evidence"),
+    ):
+        changed = deepcopy(manifest)
+        changed["planned_replacements"][0][field_name] = changed_value
+        _write(path, changed)
+        with pytest.raises(
+            _VERIFIER.TypeContractVerificationError,
+            match="ledger changed without verifier review",
+        ):
+            _VERIFIER.load_manifest(path)
+
+    missing = deepcopy(manifest)
+    missing["planned_replacements"] = []
+    _write(path, missing)
+    with pytest.raises(
+        _VERIFIER.TypeContractVerificationError,
+        match="does not exactly preserve",
+    ):
+        _VERIFIER.load_manifest(path)

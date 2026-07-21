@@ -2503,6 +2503,95 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(presenter.terminal_sequences, [3])
         self.assertEqual(console.print.call_args_list[0], call("done", end=""))
 
+    async def test_token_generation_fails_closed_for_input_required(
+        self,
+    ) -> None:
+        class EmptyPresenter:
+            requires_completion_snapshot = True
+
+            async def present(
+                self,
+                request: CliStreamPresenterRequest,
+            ) -> AsyncIterator[CliStreamAnswerTextChunk]:
+                if request.snapshot.answer_text:
+                    yield CliStreamAnswerTextChunk(
+                        text=request.snapshot.answer_text
+                    )
+
+        class EmptyTheme:
+            def stream_presenter(
+                self,
+                logger: object,
+                *,
+                event_stats: object | None = None,
+            ) -> EmptyPresenter:
+                _ = logger, event_stats
+                return EmptyPresenter()
+
+        async def fake_stream(
+            *_args: object,
+            **_kwargs: object,
+        ) -> AsyncIterator[StreamConsumerProjection]:
+            yield StreamConsumerProjection(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_INPUT_REQUIRED,
+                channel=StreamChannel.CONTROL,
+                correlation=StreamItemCorrelation(
+                    request_id="request-1",
+                    continuation_id="continuation-1",
+                    agent_id="agent-1",
+                    branch_id="branch-1",
+                ),
+                terminal_outcome=StreamTerminalOutcome.INPUT_REQUIRED,
+            )
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+        with (
+            patch.object(
+                model_cmds,
+                "_stream_render_projections",
+                fake_stream,
+            ),
+            patch.object(
+                model_cmds,
+                "_stream_completed_projection",
+                wraps=model_cmds._stream_completed_projection,
+            ) as completed_projection,
+            self.assertRaisesRegex(
+                StreamValidationError,
+                "CLI input-required projection is unavailable",
+            ),
+        ):
+            await model_cmds.token_generation(
+                args=Namespace(skip_display_reasoning_time=False),
+                console=MagicMock(),
+                theme=EmptyTheme(),  # type: ignore[arg-type]
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),  # type: ignore[arg-type]
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(interactive=False),
+            )
+
+        completed_projection.assert_not_called()
+
     async def test_token_generation_retry_presentation_error_propagates(
         self,
     ) -> None:

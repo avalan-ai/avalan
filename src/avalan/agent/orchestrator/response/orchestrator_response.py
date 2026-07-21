@@ -74,6 +74,7 @@ from asyncio import (
     Event as AsyncioEvent,
 )
 from base64 import b64encode
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from hashlib import sha256
 from inspect import Signature, isawaitable, signature
@@ -491,6 +492,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 item.kind,
                 data=item.data,
                 usage=item.usage,
+                correlation=correlation,
             )
             return None
         assert self._canonical_stream_terminal is None
@@ -547,7 +549,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         reasoning_representation: StreamReasoningRepresentation | None,
         segment_instance_ordinal: int | None,
         correlation: StreamItemCorrelation,
-        metadata: dict[str, Any],
+        metadata: Mapping[str, Any],
     ) -> None:
         if kind is not StreamItemKind.REASONING_DELTA:
             self._canonical_reasoning_segments.complete_segment()
@@ -560,7 +562,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 visibility=visibility,
                 reasoning_representation=reasoning_representation,
                 segment_instance_ordinal=segment_instance_ordinal,
-                metadata=metadata,
+                metadata=dict(metadata),
             )
         )
 
@@ -730,7 +732,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         usage: Any | None = None,
         correlation: StreamItemCorrelation,
         visibility: StreamVisibility = StreamVisibility.PUBLIC,
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
         provider_family: str | None = None,
         provider_event_type: str | None = None,
     ) -> CanonicalStreamItem | None:
@@ -769,11 +771,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 )
             return diagnostic
 
+        item_metadata = None if metadata is None else dict(metadata)
         if kind is StreamItemKind.TOOL_CALL_READY:
-            metadata = self._tool_call_ready_display_metadata(
+            item_metadata = self._tool_call_ready_display_metadata(
                 tool_call_id,
                 data,
-                metadata,
+                item_metadata,
             )
 
         item = self._append_canonical_item(
@@ -783,7 +786,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             usage=usage,
             correlation=correlation,
             visibility=visibility,
-            metadata=metadata,
+            metadata=item_metadata,
             provider_family=provider_family,
             provider_event_type=provider_event_type,
         )
@@ -3080,29 +3083,41 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         *,
         data: Any | None = None,
         usage: Any | None = None,
+        correlation: StreamItemCorrelation | None = None,
     ) -> None:
         outcomes = {
             StreamItemKind.STREAM_COMPLETED: StreamTerminalOutcome.COMPLETED,
             StreamItemKind.STREAM_ERRORED: StreamTerminalOutcome.ERRORED,
             StreamItemKind.STREAM_CANCELLED: StreamTerminalOutcome.CANCELLED,
+            StreamItemKind.STREAM_INPUT_REQUIRED: (
+                StreamTerminalOutcome.INPUT_REQUIRED
+            ),
         }
         outcome = outcomes[kind]
         if self._canonical_stream_terminal is not None:
             return
-        self._finish_active_model_continuation(
-            {
-                StreamItemKind.STREAM_COMPLETED: (
-                    StreamItemKind.MODEL_CONTINUATION_COMPLETED
-                ),
-                StreamItemKind.STREAM_ERRORED: (
-                    StreamItemKind.MODEL_CONTINUATION_ERROR
-                ),
-                StreamItemKind.STREAM_CANCELLED: (
-                    StreamItemKind.MODEL_CONTINUATION_CANCELLED
-                ),
-            }[kind],
-            data=data if kind is StreamItemKind.STREAM_ERRORED else None,
-        )
+        continuation_terminal = {
+            StreamItemKind.STREAM_COMPLETED: (
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED
+            ),
+            StreamItemKind.STREAM_ERRORED: (
+                StreamItemKind.MODEL_CONTINUATION_ERROR
+            ),
+            StreamItemKind.STREAM_CANCELLED: (
+                StreamItemKind.MODEL_CONTINUATION_CANCELLED
+            ),
+        }.get(kind)
+        if continuation_terminal is None:
+            if self._active_model_continuation_id is not None:
+                raise StreamValidationError(
+                    "input-required stream cannot close an active model "
+                    "continuation"
+                )
+        else:
+            self._finish_active_model_continuation(
+                continuation_terminal,
+                data=data if kind is StreamItemKind.STREAM_ERRORED else None,
+            )
         self._finalize_incomplete_canonical_tool_calls()
         self._append_open_canonical_channel_done_items()
         terminal_usage: Any | None = None
@@ -3116,6 +3131,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             kind,
             data=data,
             usage=terminal_usage,
+            correlation=correlation,
             terminal_outcome=outcome,
         )
         self._canonical_stream_terminal = outcome

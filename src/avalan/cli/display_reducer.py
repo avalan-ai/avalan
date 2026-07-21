@@ -297,6 +297,7 @@ class CliStreamSnapshotReducer:
             StreamItemKind.STREAM_COMPLETED,
             StreamItemKind.STREAM_ERRORED,
             StreamItemKind.STREAM_CANCELLED,
+            StreamItemKind.STREAM_INPUT_REQUIRED,
         ):
             self._finish_stream(projection, now)
 
@@ -353,6 +354,7 @@ class CliStreamSnapshotReducer:
             StreamItemKind.STREAM_COMPLETED,
             StreamItemKind.STREAM_ERRORED,
             StreamItemKind.STREAM_CANCELLED,
+            StreamItemKind.STREAM_INPUT_REQUIRED,
         )
 
     def _projection_adds_stats_summary(
@@ -379,6 +381,7 @@ class CliStreamSnapshotReducer:
             StreamItemKind.STREAM_COMPLETED,
             StreamItemKind.STREAM_ERRORED,
             StreamItemKind.STREAM_CANCELLED,
+            StreamItemKind.STREAM_INPUT_REQUIRED,
         )
 
     def _remember_tool_ready(

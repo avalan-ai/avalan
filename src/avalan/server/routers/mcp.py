@@ -411,14 +411,15 @@ class _MCPReasoningSegment:
             self.completed = True
             self.status = "completed"
             self.terminal_outcome = "completed"
-        else:
-            self.completed = False
-            self.status = "incomplete"
-            self.terminal_outcome = (
-                "failed"
-                if outcome is StreamTerminalOutcome.ERRORED
-                else "cancelled"
-            )
+            return
+        self.completed = False
+        self.status = "incomplete"
+        terminal_outcomes = {
+            StreamTerminalOutcome.ERRORED: "failed",
+            StreamTerminalOutcome.CANCELLED: "cancelled",
+            StreamTerminalOutcome.INPUT_REQUIRED: "input_required",
+        }
+        self.terminal_outcome = terminal_outcomes[outcome]
 
 
 class _MCPReasoningOwner:
@@ -1939,6 +1940,10 @@ async def _mcp_canonical_stream_item_notifications(
                 item.sequence,
             )
         )
+        if item.terminal_outcome is StreamTerminalOutcome.INPUT_REQUIRED:
+            raise StreamValidationError(
+                "MCP input-required projection is unavailable"
+            )
     if item.kind is StreamItemKind.FLOW_EVENT:
         notifications.append(_canonical_flow_notification(item))
         return notifications
@@ -2210,6 +2215,7 @@ def _canonical_reasoning_deltas(
         StreamItemKind.STREAM_COMPLETED,
         StreamItemKind.STREAM_ERRORED,
         StreamItemKind.STREAM_CANCELLED,
+        StreamItemKind.STREAM_INPUT_REQUIRED,
         StreamItemKind.STREAM_CLOSED,
         StreamItemKind.USAGE_UPDATE,
         StreamItemKind.USAGE_COMPLETED,

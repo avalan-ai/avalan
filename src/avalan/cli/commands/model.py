@@ -1100,6 +1100,13 @@ async def token_generation(
                     side_channel_events_enabled = False
                     stop_signal.set()
                 await reduce_projection(projection)
+                if (
+                    projection.terminal_outcome
+                    is StreamTerminalOutcome.INPUT_REQUIRED
+                ):
+                    raise StreamValidationError(
+                        "CLI input-required projection is unavailable"
+                    )
         except BaseException:
             stop_signal.set()
             raise

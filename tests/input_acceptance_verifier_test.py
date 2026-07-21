@@ -7,7 +7,7 @@ from json import dumps, loads
 from pathlib import Path
 from sys import modules
 from sys import path as sys_path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -57,6 +57,10 @@ def _ledger_digest(payload: dict[str, Any]) -> str:
     value = {
         "activation_snapshots": payload["activation_snapshots"],
         "replacements": payload["replacements"],
+        "requirement_activation_slices": payload[
+            "requirement_activation_slices"
+        ],
+        "parameter_expansions": payload["parameter_expansions"],
     }
     return sha256(
         dumps(
@@ -153,6 +157,8 @@ def _synthetic_contract_inventory() -> tuple[dict[str, Any], dict[str, Any]]:
                 "sha256": _snapshot_digest(active_node_ids),
             }
         ],
+        "requirement_activation_slices": [],
+        "parameter_expansions": [],
         "replacements": [],
         "nodes": nodes,
     }
@@ -226,6 +232,8 @@ def _replacement_manifest() -> dict[str, Any]:
                 "sha256": _snapshot_digest(phase_one),
             },
         ],
+        "requirement_activation_slices": [],
+        "parameter_expansions": [],
         "replacements": [
             {
                 "phase": 1,
@@ -560,7 +568,7 @@ def test_acceptance_rejects_invalid_inventory(
     )
     path = tmp_path / "manifest.json"
     _write(path, manifest)
-    assert _VERIFIER.load_manifest(path).current_phase == 0
+    assert _VERIFIER.load_manifest(path).current_phase == 1
 
     invalid = deepcopy(manifest)
     invalid["categories"].append("unit")
@@ -576,6 +584,61 @@ def test_acceptance_rejects_invalid_inventory(
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
         match="duplicate pytest node ID",
+    ):
+        _VERIFIER.load_manifest(path)
+
+    unsliced = deepcopy(manifest)
+    unsliced["requirement_activation_slices"].pop()
+    _write(path, unsliced)
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="mixed-lifecycle requirements lack exact activation slices",
+    ):
+        _VERIFIER.load_manifest(path)
+
+    unreviewed_slice = deepcopy(manifest)
+    unreviewed_slice["requirement_activation_slices"][0][
+        "reviewed_by"
+    ] = "pending"
+    _write(path, unreviewed_slice)
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="lacks implementation review",
+    ):
+        _VERIFIER.load_manifest(path)
+
+    incomplete_slice = deepcopy(manifest)
+    incomplete_slice["requirement_activation_slices"][0][
+        "active_node_ids"
+    ].pop()
+    _write(path, incomplete_slice)
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="active inventory changed",
+    ):
+        _VERIFIER.load_manifest(path)
+
+    stale_expansion_hash = deepcopy(manifest)
+    stale_expansion_hash["parameter_expansions"][0]["instance_node_ids"].pop()
+    _write(path, stale_expansion_hash)
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="parameter expansion digest mismatch",
+    ):
+        _VERIFIER.load_manifest(path)
+
+    duplicate_expansion = deepcopy(manifest)
+    duplicate_instances = duplicate_expansion["parameter_expansions"][0][
+        "instance_node_ids"
+    ]
+    duplicate_instances.append(duplicate_instances[0])
+    duplicate_expansion["parameter_expansions"][0]["sha256"] = (
+        _snapshot_digest(duplicate_instances)
+    )
+    _write(path, duplicate_expansion)
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="duplicate parameter instance",
     ):
         _VERIFIER.load_manifest(path)
 
@@ -692,6 +755,391 @@ def test_acceptance_rejects_invalid_inventory(
         for requirement in synthetic_requirements["requirements"]
     )
     assert observed_reads
+
+
+def test_production_capability_history_is_atomic() -> None:
+    """Reject capability advertisement before the atomic boundary."""
+    history = [
+        {"phase": 0, "state": "absent"},
+        {"phase": 1, "state": "dormant_unadvertised"},
+    ]
+    assert _VERIFIER._production_capability_history(history, 1) == (
+        "absent",
+        "dormant_unadvertised",
+    )
+    final_history = [
+        {
+            "phase": phase,
+            "state": (
+                "absent"
+                if phase == 0
+                else "active" if phase == 12 else "dormant_unadvertised"
+            ),
+        }
+        for phase in range(13)
+    ]
+    assert (
+        _VERIFIER._production_capability_history(final_history, 12)[-1]
+        == "active"
+    )
+    invalid_histories: tuple[object, ...] = (
+        None,
+        history[:1],
+        [history[0], "invalid"],
+        [history[0], {"phase": 1, "state": "active", "extra": True}],
+        [history[0], {"phase": 0, "state": "dormant_unadvertised"}],
+        [history[0], {"phase": 1, "state": "active"}],
+    )
+    for invalid in invalid_histories:
+        with pytest.raises(_VERIFIER.AcceptanceVerificationError):
+            _VERIFIER._production_capability_history(invalid, 1)
+
+
+def test_evidence_state_and_review_history_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject premature gate claims and non-append-only review changes."""
+    evidence = _read("baseline_evidence.json")
+    complete_fixture = deepcopy(evidence["quality_gate"])
+    _VERIFIER._validate_quality_gate_evidence(
+        complete_fixture,
+        active_acceptance_nodes=79,
+        active_pytest_instances=118,
+        active_type_fixtures=6,
+        root=_ROOT,
+        preserved_untracked=("docs/examples/skills/code/",),
+        evidence_payload=evidence,
+    )
+    pending = {
+        "state": "pending",
+        "required_commands": complete_fixture["required_commands"],
+        "state_details": {
+            "requested_at": "2026-07-21T03:59:00-03:00",
+            "reason": "Fresh current-tree quality evidence is pending.",
+        },
+        "results": [],
+        "tree_binding": {},
+        "coverage_binding": {},
+    }
+    _VERIFIER._validate_quality_gate_evidence(
+        pending,
+        active_acceptance_nodes=79,
+        active_pytest_instances=118,
+        active_type_fixtures=6,
+        root=_ROOT,
+        preserved_untracked=("docs/examples/skills/code/",),
+        evidence_payload=evidence,
+    )
+    premature = deepcopy(pending)
+    premature["results"] = [{"command": "not executed"}]
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="cannot claim completed",
+    ):
+        _VERIFIER._validate_quality_gate_evidence(
+            premature,
+            active_acceptance_nodes=79,
+            active_pytest_instances=118,
+            active_type_fixtures=6,
+            root=_ROOT,
+            preserved_untracked=("docs/examples/skills/code/",),
+            evidence_payload=evidence,
+        )
+
+    commands = pending["required_commands"]
+    focused = commands[-1]
+    results = [
+        {
+            "command": commands[0],
+            "exit_code": 0,
+            "passed": 1,
+            "skipped": 0,
+            "subtests_passed": 1,
+            "seconds": 1.0,
+            "deselected": 0,
+            "xfail": 0,
+            "xpass": 0,
+        },
+        {
+            "command": commands[1],
+            "exit_code": 0,
+            "output_lines": [],
+        },
+        {
+            "command": commands[2],
+            "exit_code": 0,
+            "covered_statements": 100,
+            "total_statements": 100,
+            "source_files": 10,
+            "missing_lines": 0,
+            "missing_files": 0,
+            "passed": 1,
+            "skipped": 0,
+            "subtests_passed": 1,
+            "seconds": 1.0,
+        },
+        {
+            "command": commands[3],
+            "exit_code": 0,
+            "active_nodes": 79,
+            "active_instances": 118,
+        },
+        {"command": commands[4], "exit_code": 0, "active_fixtures": 6},
+        {
+            "command": commands[5],
+            "exit_code": 0,
+            "source_files_typechecked": 10,
+            "script_files_typechecked": 6,
+        },
+        {"command": commands[6], "exit_code": 0},
+        {
+            "command": focused,
+            "exit_code": 0,
+            "passed": 1,
+            "skipped": 0,
+            "subtests_passed": 1,
+            "seconds": 1.0,
+            "deselected": 0,
+            "xfail": 0,
+            "xpass": 0,
+        },
+    ]
+    tree_binding = {
+        "head": "a" * 40,
+        "diff_sha256": "b" * 64,
+        "untracked_inventory_sha256": "c" * 64,
+        "normalized_evidence_sha256": "d" * 64,
+        "normalized_verifier_sha256": "e" * 64,
+        "tree_sha256": "f" * 64,
+    }
+    inventory = ("1" * 64, 10, 100, 5)
+    complete = {
+        "state": "complete",
+        "required_commands": commands,
+        "state_details": {
+            "completed_at": "2026-07-21T04:00:00-03:00",
+            "gate_run_id": "round-5-gate-run",
+        },
+        "results": results,
+        "tree_binding": tree_binding,
+        "coverage_binding": {
+            "report_sha256": "2" * 64,
+            "source_inventory_sha256": inventory[0],
+            "source_file_count": inventory[1],
+            "statement_count": inventory[2],
+            "excluded_line_count": inventory[3],
+        },
+    }
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_current_tree_binding",
+        lambda *args: tree_binding,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_source_statement_inventory",
+        lambda root: inventory,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_coverage_report_binding",
+        lambda root: ("2" * 64, *inventory),
+    )
+    verified_coverage = SimpleNamespace(
+        files=tuple(f"src/file_{index}.py" for index in range(inventory[1])),
+        summary=SimpleNamespace(
+            covered_lines=inventory[2],
+            excluded_lines=inventory[3],
+            missing_lines=0,
+            num_statements=inventory[2],
+        ),
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "verify_src_coverage",
+        lambda **kwargs: verified_coverage,
+    )
+    _VERIFIER._validate_quality_gate_evidence(
+        complete,
+        active_acceptance_nodes=79,
+        active_pytest_instances=118,
+        active_type_fixtures=6,
+        root=_ROOT,
+        preserved_untracked=("docs/examples/skills/code/",),
+        evidence_payload=evidence,
+    )
+    missing_report = {
+        "meta": {"format": 3},
+        "files": {
+            "src/sample.py": {
+                "executed_lines": [1],
+                "missing_lines": [2],
+                "excluded_lines": [],
+                "summary": {
+                    "covered_lines": 1,
+                    "excluded_lines": 0,
+                    "missing_lines": 1,
+                    "num_statements": 2,
+                },
+            }
+        },
+        "totals": {
+            "covered_lines": 1,
+            "excluded_lines": 0,
+            "missing_lines": 1,
+            "num_statements": 2,
+        },
+    }
+    missing_report_path = tmp_path / "coverage.json"
+    _write(missing_report_path, missing_report)
+
+    def reject_missing_report(*, report_path: Path, repo_root: Path) -> object:
+        assert report_path == missing_report_path
+        assert repo_root == tmp_path
+        payload = loads(report_path.read_text(encoding="utf-8"))
+        summary = payload["files"]["src/sample.py"]["summary"]
+        if summary["missing_lines"]:
+            raise _VERIFIER.CoverageVerificationError(
+                "source coverage is not exact"
+            )
+        return verified_coverage
+
+    monkeypatch.setattr(
+        _VERIFIER,
+        "verify_src_coverage",
+        reject_missing_report,
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="live exact source coverage is invalid",
+    ):
+        _VERIFIER._validate_quality_gate_evidence(
+            complete,
+            active_acceptance_nodes=79,
+            active_pytest_instances=118,
+            active_type_fixtures=6,
+            root=tmp_path,
+            preserved_untracked=("docs/examples/skills/code/",),
+            evidence_payload=evidence,
+        )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "verify_src_coverage",
+        lambda **kwargs: verified_coverage,
+    )
+    stale_tree = deepcopy(complete)
+    stale_tree["tree_binding"]["tree_sha256"] = "0" * 64
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="live git tree",
+    ):
+        _VERIFIER._validate_quality_gate_evidence(
+            stale_tree,
+            active_acceptance_nodes=79,
+            active_pytest_instances=118,
+            active_type_fixtures=6,
+            root=_ROOT,
+            preserved_untracked=("docs/examples/skills/code/",),
+            evidence_payload=evidence,
+        )
+    stale_report = deepcopy(complete)
+    stale_report["coverage_binding"]["report_sha256"] = "3" * 64
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="live report",
+    ):
+        _VERIFIER._validate_quality_gate_evidence(
+            stale_report,
+            active_acceptance_nodes=79,
+            active_pytest_instances=118,
+            active_type_fixtures=6,
+            root=_ROOT,
+            preserved_untracked=("docs/examples/skills/code/",),
+            evidence_payload=evidence,
+        )
+    stale_coverage = deepcopy(complete)
+    stale_coverage["coverage_binding"]["statement_count"] = 99
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="live source tree",
+    ):
+        _VERIFIER._validate_quality_gate_evidence(
+            stale_coverage,
+            active_acceptance_nodes=79,
+            active_pytest_instances=118,
+            active_type_fixtures=6,
+            root=_ROOT,
+            preserved_untracked=("docs/examples/skills/code/",),
+            evidence_payload=evidence,
+        )
+
+    history = deepcopy(evidence["review_history"])
+    _VERIFIER._validate_review_history(
+        history,
+        evidence["review_history_sha256"],
+        evidence["review_history_phase0_sha256"],
+        1,
+        "/root",
+    )
+    pending_history = history[:3]
+    pending_digest = _canonical_digest(pending_history)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_CURRENT_REVIEW_STATUS",
+        "pending",
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_REVIEW_HISTORY_SHA256",
+        pending_digest,
+    )
+    _VERIFIER._validate_review_history(
+        pending_history,
+        pending_digest,
+        evidence["review_history_phase0_sha256"],
+        1,
+        "/root",
+    )
+    approved = deepcopy(history)
+    approved_digest = _canonical_digest(approved)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_CURRENT_REVIEW_STATUS",
+        "approved",
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_REVIEW_HISTORY_SHA256",
+        approved_digest,
+    )
+    _VERIFIER._validate_review_history(
+        approved,
+        approved_digest,
+        evidence["review_history_phase0_sha256"],
+        1,
+        "/root",
+    )
+    for field in ("recorded_at", "evidence"):
+        rewritten = deepcopy(approved)
+        rewritten[0][field] += " rewritten"
+        rewritten_digest = _canonical_digest(rewritten)
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_REVIEW_HISTORY_SHA256",
+            rewritten_digest,
+        )
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="phase-0 review prefix digest mismatch",
+        ):
+            _VERIFIER._validate_review_history(
+                rewritten,
+                rewritten_digest,
+                evidence["review_history_phase0_sha256"],
+                1,
+                "/root",
+            )
 
 
 def test_acceptance_rejects_na_reason_without_exact_ids(
@@ -838,14 +1286,14 @@ def test_acceptance_cli_executes_exact_synthetic_node(
         nodes,
         tmp_path,
     )
-    _VERIFIER._verify_collection(nodes, collection)
+    collected = _VERIFIER._verify_collection(nodes, collection)
     execution = _VERIFIER._run_probe(
         _VERIFIER._EXECUTE_DRIVER,
         _VERIFIER._EXECUTE_SENTINEL,
         nodes,
         tmp_path,
     )
-    _VERIFIER._verify_execution(nodes, execution)
+    _VERIFIER._verify_execution(nodes, execution, collected)
     assert execution["exit_code"] == 0
 
     notes = tmp_path / "notes"
@@ -909,7 +1357,7 @@ def test_acceptance_cli_executes_exact_synthetic_node(
         through_phase=0,
         contract_fixture_root=_FIXTURES,
     )
-    assert len(live_manifest.active_nodes(0)) == 24
+    assert len(live_manifest.active_nodes(0)) == 23
     assert observed_reads
 
 
@@ -970,6 +1418,42 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
         match="unexpected=",
     ):
         _VERIFIER._verify_collection((node,), collection)
+    parameter_instances = (f"{node}[case-a]", f"{node}[case-b]")
+    collection["items"] = [
+        {"nodeid": parameter, "markers": []}
+        for parameter in parameter_instances
+    ]
+    assert (
+        _VERIFIER._verify_collection(parameter_instances, collection)
+        == parameter_instances
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="unexpected=",
+    ):
+        _VERIFIER._verify_collection(
+            (parameter_instances[0],),
+            collection,
+        )
+    for mutated_instances in (
+        parameter_instances[:1],
+        (*parameter_instances, f"{node}[case-c]"),
+        (parameter_instances[0], f"{node}[renamed]"),
+        (parameter_instances[0], parameter_instances[0]),
+    ):
+        mutated_collection = deepcopy(collection)
+        mutated_collection["items"] = [
+            {"nodeid": parameter, "markers": []}
+            for parameter in mutated_instances
+        ]
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="acceptance nodes were not exactly collected",
+        ):
+            _VERIFIER._verify_collection(
+                parameter_instances,
+                mutated_collection,
+            )
     execution: dict[str, Any] = {
         "exit_code": 0,
         "items": [node],
@@ -990,7 +1474,7 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError, match="exactly once"
     ):
-        _VERIFIER._verify_execution((node,), execution)
+        _VERIFIER._verify_execution((node,), execution, (node,))
 
     execution["reports"] = [
         {
@@ -1006,7 +1490,7 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
         _VERIFIER.AcceptanceVerificationError,
         match="call outcome was failed",
     ):
-        _VERIFIER._verify_execution((node,), execution)
+        _VERIFIER._verify_execution((node,), execution, (node,))
 
     execution["reports"] = [
         {
@@ -1022,7 +1506,33 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
         _VERIFIER.AcceptanceVerificationError,
         match="xfail/xpass",
     ):
-        _VERIFIER._verify_execution((node,), execution)
+        _VERIFIER._verify_execution((node,), execution, (node,))
+
+    execution["reports"] = [
+        {
+            "nodeid": node,
+            "when": when,
+            "outcome": "passed",
+            "wasxfail": "",
+            "detail": "",
+        }
+        for when in ("setup", "call", "call", "teardown")
+    ]
+    _VERIFIER._verify_execution((node,), execution, (node,))
+    execution["reports"][2]["outcome"] = "failed"
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="call outcome was failed",
+    ):
+        _VERIFIER._verify_execution((node,), execution, (node,))
+
+    execution["items"] = list(parameter_instances)
+    execution["reports"] = []
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="unexpected=",
+    ):
+        _VERIFIER._verify_execution((node,), execution, (node,))
 
 
 def test_acceptance_rejects_placeholder_and_execution_tricks(
@@ -1150,6 +1660,7 @@ def test_acceptance_rejects_placeholder_and_execution_tricks(
     _VERIFIER._validate_live_boundary(
         tmp_path,
         declared_paths,
+        (),
         preserved_untracked,
     )
     tracked_paths.add("undeclared.txt")
@@ -1160,6 +1671,7 @@ def test_acceptance_rejects_placeholder_and_execution_tricks(
         _VERIFIER._validate_live_boundary(
             tmp_path,
             declared_paths,
+            (),
             preserved_untracked,
         )
     tracked_paths.remove("undeclared.txt")
@@ -1171,5 +1683,25 @@ def test_acceptance_rejects_placeholder_and_execution_tricks(
         _VERIFIER._validate_live_boundary(
             tmp_path,
             declared_paths,
+            (),
             preserved_untracked,
         )
+    untracked_paths.remove("undeclared.txt")
+    tracked_paths.add("src/canonical.py")
+    declared_with_source = (*declared_paths, "src/canonical.py")
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="live production source changes differ",
+    ):
+        _VERIFIER._validate_live_boundary(
+            tmp_path,
+            declared_with_source,
+            (),
+            preserved_untracked,
+        )
+    _VERIFIER._validate_live_boundary(
+        tmp_path,
+        declared_with_source,
+        ("src/canonical.py",),
+        preserved_untracked,
+    )
