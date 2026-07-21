@@ -56,12 +56,18 @@ SessionId = NewType("SessionId", str)
 QuestionId = NewType("QuestionId", str)
 ChoiceValue = NewType("ChoiceValue", str)
 StateRevision = NewType("StateRevision", int)
+InteractionStoreRevision = NewType("InteractionStoreRevision", int)
+InteractionStoreGeneration = NewType("InteractionStoreGeneration", int)
+DeadlineScheduleRevision = NewType("DeadlineScheduleRevision", int)
 ProviderFamilyName = NewType("ProviderFamilyName", str)
 ModelId = NewType("ModelId", str)
 ProviderConfigRevision = NewType("ProviderConfigRevision", str)
 ModelConfigRevision = NewType("ModelConfigRevision", str)
 CapabilityRevision = NewType("CapabilityRevision", str)
 ProviderIdempotencyKey = NewType("ProviderIdempotencyKey", str)
+ResolutionIdempotencyKey = NewType("ResolutionIdempotencyKey", str)
+ControllerId = NewType("ControllerId", str)
+ActiveControlLeaseNonce = NewType("ActiveControlLeaseNonce", str)
 
 _SNAPSHOT_KIND_PATTERN = compile_pattern(r"^[a-z][a-z0-9._-]{0,63}$")
 _PROHIBITED_SNAPSHOT_KEY_SUFFIXES = (
@@ -1277,9 +1283,20 @@ _INPUT_RESOLUTION_VARIANT_TYPES: tuple[type[InputResolution], ...] = (
     SupersededResolution,
 )
 
+InputCandidateResolution: TypeAlias = AnsweredResolution | DeclinedResolution
+
+_INPUT_CANDIDATE_RESOLUTION_TYPES: tuple[type[InputResolution], ...] = (
+    AnsweredResolution,
+    DeclinedResolution,
+)
+
 
 def _is_input_resolution_variant(value: object) -> bool:
     return type(value) in _INPUT_RESOLUTION_VARIANT_TYPES
+
+
+def _is_input_candidate_resolution(value: object) -> bool:
+    return type(value) in _INPUT_CANDIDATE_RESOLUTION_TYPES
 
 
 @final
@@ -1944,11 +1961,7 @@ def _validate_request_advisory_timing(request: InputRequest) -> None:
             )
         return
     if deadline is None:
-        raise InputValidationError(
-            InputErrorCode.ILLEGAL_TRANSITION,
-            "advisory_deadline",
-            "pending and terminal advisory requests require a deadline",
-        )
+        return
     assert request.advisory_wait_seconds is not None
     if (
         deadline - request.created_at

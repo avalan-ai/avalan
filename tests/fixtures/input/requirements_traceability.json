@@ -23,7 +23,7 @@
     "25",
     "26"
   ],
-  "catalog_sha256": "948782fec655e9368e8c17461218134ea9aedc3c6061cf268de86f5d8c6da8c5",
+  "catalog_sha256": "0d2ede16f94cb1094cd455a585b00293bb11ca32178de65c37a81999b91013b4",
   "requirements": [
     {
       "id": "INPUT-N-001",
@@ -298,13 +298,16 @@
       "source_section": "9",
       "normative_level": "MUST",
       "paraphrase": "Make the interaction broker own identity, correlation, origin, capability negotiation, delivery, persistence, validation, idempotency, cancellation, timeout, expiry, and privacy-aware observability.",
-      "owner": "interaction broker",
+      "owner": "interaction broker and model capability composition",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
+        "src/avalan/interaction/",
+        "tests/input/broker_contract_test.py",
+        "planned:tests/input/model_capability_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_019"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_019",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022"
       ]
     },
     {
@@ -314,7 +317,7 @@
       "paraphrase": "Limit renderers to presentation ownership.",
       "owner": "interaction broker",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
+        "tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -328,7 +331,7 @@
       "paraphrase": "Prevent renderers from redefining request meaning or execution state.",
       "owner": "interaction broker",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
+        "tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -1373,7 +1376,7 @@
       "paraphrase": "Scope each request to the trusted user, tenant, session, task, turn, and execution branch and apply first-valid-resolution-wins.",
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
+        "tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -1387,7 +1390,7 @@
       "paraphrase": "Treat an authorized semantically identical resolution as idempotent.",
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
+        "tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -1401,7 +1404,7 @@
       "paraphrase": "Prevent a conflicting later resolution from resuming execution again.",
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
+        "tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -1415,7 +1418,7 @@
       "paraphrase": "Reject responses to expired, cancelled, or superseded requests as stale.",
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
+        "tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -1947,8 +1950,11 @@
       "owner": "coverage gate",
       "implementation_artifacts": [
         "scripts/verify_src_coverage.py",
+        "tests/fixtures/input/coverage_exclusions.json",
         "tests/fixtures/input/coverage_exclusions_phase1.json",
-        "tests/fixtures/input/coverage_exclusion_relocations_phase1.json"
+        "tests/fixtures/input/coverage_exclusion_relocations_phase1.json",
+        "tests/fixtures/input/coverage_exclusions_phase2.json",
+        "tests/fixtures/input/coverage_exclusion_relocations_phase2.json"
       ],
       "test_node_ids": [
         "tests/src_coverage_verifier_test.py::test_exact_coverage_accepts_empty_module_variants",

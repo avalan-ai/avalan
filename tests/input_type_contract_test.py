@@ -205,10 +205,10 @@ def test_type_contract_manifest_and_runner_are_strict(
     loaded = _VERIFIER.verify_input_types(
         real_path,
         repo_root=_ROOT,
-        through_phase=1,
+        through_phase=2,
         acceptance_manifest_path=_FIXTURES / "acceptance_manifest.json",
     )
-    assert loaded.current_phase == 1
+    assert loaded.current_phase == 2
     assert [
         fixture.id
         for fixture in loaded.fixtures
@@ -216,6 +216,14 @@ def test_type_contract_manifest_and_runner_are_strict(
     ] == [
         "deterministic-fixtures-positive",
         "canonical-answers-positive",
+        "async-handler-positive",
+        "synchronous-handler-negative",
+        "untyped-handler-result-negative",
+        "broker-identity-interchange-negative",
+        "store-revision-interchange-negative",
+        "controller-identity-interchange-negative",
+        "synchronous-resumer-negative",
+        "candidate-resolution-variants-negative",
         "strict-resolution-variants-negative",
         "typed-resolution-payload-negative",
         "input-required-identity-negative",

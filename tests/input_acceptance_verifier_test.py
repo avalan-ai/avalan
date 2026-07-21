@@ -5,6 +5,7 @@ from hashlib import sha256
 from importlib.util import module_from_spec, spec_from_file_location
 from json import dumps, loads
 from pathlib import Path
+from subprocess import run
 from sys import modules
 from sys import path as sys_path
 from types import ModuleType, SimpleNamespace
@@ -45,6 +46,18 @@ def _read(name: str) -> dict[str, Any]:
 def _write(path: Path, value: object) -> None:
     """Write deterministic JSON for a synthetic verifier input."""
     path.write_text(dumps(value, indent=2) + "\n", encoding="utf-8")
+
+
+def _git(root: Path, *arguments: str) -> None:
+    """Run one synthetic repository command successfully."""
+    completed = run(
+        ("git", *arguments),
+        cwd=root,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def _snapshot_digest(values: list[str]) -> str:
@@ -568,7 +581,7 @@ def test_acceptance_rejects_invalid_inventory(
     )
     path = tmp_path / "manifest.json"
     _write(path, manifest)
-    assert _VERIFIER.load_manifest(path).current_phase == 1
+    assert _VERIFIER.load_manifest(path).current_phase == 2
 
     invalid = deepcopy(manifest)
     invalid["categories"].append("unit")
@@ -795,6 +808,152 @@ def test_production_capability_history_is_atomic() -> None:
             _VERIFIER._production_capability_history(invalid, 1)
 
 
+def test_tree_binding_is_commit_stable_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """Bind file content independently of tracked working-tree state."""
+    _git(tmp_path, "init", "--quiet")
+    _git(tmp_path, "config", "user.email", "acceptance@example.invalid")
+    _git(tmp_path, "config", "user.name", "Acceptance Test")
+    _git(tmp_path, "config", "commit.gpgsign", "false")
+    _git(tmp_path, "config", "core.filemode", "true")
+    verifier = tmp_path / "scripts" / "verify_input_acceptance.py"
+    verifier.parent.mkdir()
+    verifier.write_text(
+        f'EXPECTED = "{_VERIFIER._EXPECTED_EVIDENCE_SHA256}"\n',
+        encoding="utf-8",
+    )
+    evidence_path = (
+        tmp_path / "tests" / "fixtures" / "input" / "baseline_evidence.json"
+    )
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text("{}\n", encoding="utf-8")
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("baseline\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "--quiet", "-m", "baseline")
+
+    tracked.write_text("updated\n", encoding="utf-8")
+    added = tmp_path / "added.txt"
+    added.write_text("new\n", encoding="utf-8")
+    preserved = tmp_path / "preserved" / "example.txt"
+    preserved.parent.mkdir()
+    preserved.write_text("unrelated\n", encoding="utf-8")
+    evidence = {"quality_gate": {"tree_binding": {"stale": True}}}
+    before_commit = _VERIFIER._current_tree_binding(
+        tmp_path,
+        ("preserved/",),
+        evidence,
+    )
+    assert before_commit.keys() == {
+        "baseline_head",
+        "inventory_file_count",
+        "inventory_sha256",
+        "normalized_evidence_kind",
+        "normalized_evidence_sha256",
+        "normalized_verifier_kind",
+        "normalized_verifier_sha256",
+        "tree_sha256",
+    }
+    assert before_commit["inventory_file_count"] == 2
+    _git(tmp_path, "add", "tracked.txt", "added.txt")
+    _git(tmp_path, "commit", "--quiet", "-m", "update")
+    assert (
+        _VERIFIER._current_tree_binding(
+            tmp_path,
+            ("preserved/",),
+            evidence,
+        )
+        == before_commit
+    )
+
+    for protected in (evidence_path, verifier):
+        original_mode = protected.stat().st_mode
+        protected.chmod(original_mode | 0o100)
+        assert (
+            _VERIFIER._current_tree_binding(
+                tmp_path,
+                ("preserved/",),
+                evidence,
+            )
+            != before_commit
+        )
+        protected.chmod(original_mode)
+        assert (
+            _VERIFIER._current_tree_binding(
+                tmp_path,
+                ("preserved/",),
+                evidence,
+            )
+            == before_commit
+        )
+
+    _git(tmp_path, "update-index", "--chmod=+x", "added.txt")
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="staged and unstaged changes|modes differ",
+    ):
+        _VERIFIER._current_tree_binding(
+            tmp_path,
+            ("preserved/",),
+            evidence,
+        )
+    _git(tmp_path, "update-index", "--chmod=-x", "added.txt")
+
+    added.write_text("staged\n", encoding="utf-8")
+    _git(tmp_path, "add", "added.txt")
+    added.write_text("unstaged\n", encoding="utf-8")
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="staged and unstaged changes",
+    ):
+        _VERIFIER._current_tree_binding(
+            tmp_path,
+            ("preserved/",),
+            evidence,
+        )
+    added.write_text("new\n", encoding="utf-8")
+    _git(tmp_path, "add", "added.txt")
+
+    tracked.unlink()
+    before_deletion_commit = _VERIFIER._current_tree_binding(
+        tmp_path,
+        ("preserved/",),
+        evidence,
+    )
+    _git(tmp_path, "add", "--update", "tracked.txt")
+    _git(tmp_path, "commit", "--quiet", "-m", "delete")
+    assert (
+        _VERIFIER._current_tree_binding(
+            tmp_path,
+            ("preserved/",),
+            evidence,
+        )
+        == before_deletion_commit
+    )
+
+    added.write_text("changed\n", encoding="utf-8")
+    assert (
+        _VERIFIER._current_tree_binding(
+            tmp_path,
+            ("preserved/",),
+            evidence,
+        )
+        != before_deletion_commit
+    )
+    unsafe = tmp_path / "unsafe-link"
+    unsafe.symlink_to(added)
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="entry is a symlink",
+    ):
+        _VERIFIER._current_tree_binding(
+            tmp_path,
+            ("preserved/",),
+            evidence,
+        )
+
+
 def test_evidence_state_and_review_history_fail_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -804,9 +963,9 @@ def test_evidence_state_and_review_history_fail_closed(
     complete_fixture = deepcopy(evidence["quality_gate"])
     _VERIFIER._validate_quality_gate_evidence(
         complete_fixture,
-        active_acceptance_nodes=79,
-        active_pytest_instances=118,
-        active_type_fixtures=6,
+        active_acceptance_nodes=86,
+        active_pytest_instances=125,
+        active_type_fixtures=14,
         root=_ROOT,
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
@@ -824,9 +983,9 @@ def test_evidence_state_and_review_history_fail_closed(
     }
     _VERIFIER._validate_quality_gate_evidence(
         pending,
-        active_acceptance_nodes=79,
-        active_pytest_instances=118,
-        active_type_fixtures=6,
+        active_acceptance_nodes=86,
+        active_pytest_instances=125,
+        active_type_fixtures=14,
         root=_ROOT,
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
@@ -839,9 +998,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             premature,
-            active_acceptance_nodes=79,
-            active_pytest_instances=118,
-            active_type_fixtures=6,
+            active_acceptance_nodes=86,
+            active_pytest_instances=125,
+            active_type_fixtures=14,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -882,10 +1041,10 @@ def test_evidence_state_and_review_history_fail_closed(
         {
             "command": commands[3],
             "exit_code": 0,
-            "active_nodes": 79,
-            "active_instances": 118,
+            "active_nodes": 86,
+            "active_instances": 125,
         },
-        {"command": commands[4], "exit_code": 0, "active_fixtures": 6},
+        {"command": commands[4], "exit_code": 0, "active_fixtures": 14},
         {
             "command": commands[5],
             "exit_code": 0,
@@ -962,9 +1121,9 @@ def test_evidence_state_and_review_history_fail_closed(
     )
     _VERIFIER._validate_quality_gate_evidence(
         complete,
-        active_acceptance_nodes=79,
-        active_pytest_instances=118,
-        active_type_fixtures=6,
+        active_acceptance_nodes=86,
+        active_pytest_instances=125,
+        active_type_fixtures=14,
         root=_ROOT,
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
@@ -1016,9 +1175,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             complete,
-            active_acceptance_nodes=79,
-            active_pytest_instances=118,
-            active_type_fixtures=6,
+            active_acceptance_nodes=86,
+            active_pytest_instances=125,
+            active_type_fixtures=14,
             root=tmp_path,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1036,9 +1195,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_tree,
-            active_acceptance_nodes=79,
-            active_pytest_instances=118,
-            active_type_fixtures=6,
+            active_acceptance_nodes=86,
+            active_pytest_instances=125,
+            active_type_fixtures=14,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1051,9 +1210,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_report,
-            active_acceptance_nodes=79,
-            active_pytest_instances=118,
-            active_type_fixtures=6,
+            active_acceptance_nodes=86,
+            active_pytest_instances=125,
+            active_type_fixtures=14,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1066,9 +1225,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_coverage,
-            active_acceptance_nodes=79,
-            active_pytest_instances=118,
-            active_type_fixtures=6,
+            active_acceptance_nodes=86,
+            active_pytest_instances=125,
+            active_type_fixtures=14,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1079,11 +1238,36 @@ def test_evidence_state_and_review_history_fail_closed(
         history,
         evidence["review_history_sha256"],
         evidence["review_history_phase0_sha256"],
-        1,
+        evidence["review_history_phase1_sha256"],
+        2,
         "/root",
     )
-    pending_history = history[:3]
-    pending_digest = _canonical_digest(pending_history)
+    quality_history = deepcopy(evidence["quality_history"])
+    _VERIFIER._validate_quality_history(
+        quality_history,
+        evidence["quality_history_sha256"],
+        2,
+    )
+    rewritten_quality = deepcopy(quality_history)
+    rewritten_quality[0]["quality_gate_sha256"] = "0" * 64
+    rewritten_quality_digest = _canonical_digest(rewritten_quality)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_QUALITY_HISTORY_SHA256",
+        rewritten_quality_digest,
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="lost its phase-1 record",
+    ):
+        _VERIFIER._validate_quality_history(
+            rewritten_quality,
+            rewritten_quality_digest,
+            2,
+        )
+
+    pending = deepcopy(history[:7])
+    pending_digest = _canonical_digest(pending)
     monkeypatch.setattr(
         _VERIFIER,
         "_EXPECTED_CURRENT_REVIEW_STATUS",
@@ -1095,14 +1279,13 @@ def test_evidence_state_and_review_history_fail_closed(
         pending_digest,
     )
     _VERIFIER._validate_review_history(
-        pending_history,
+        pending,
         pending_digest,
         evidence["review_history_phase0_sha256"],
-        1,
+        evidence["review_history_phase1_sha256"],
+        2,
         "/root",
     )
-    approved = deepcopy(history)
-    approved_digest = _canonical_digest(approved)
     monkeypatch.setattr(
         _VERIFIER,
         "_EXPECTED_CURRENT_REVIEW_STATUS",
@@ -1111,18 +1294,44 @@ def test_evidence_state_and_review_history_fail_closed(
     monkeypatch.setattr(
         _VERIFIER,
         "_EXPECTED_REVIEW_HISTORY_SHA256",
-        approved_digest,
+        evidence["review_history_sha256"],
     )
     _VERIFIER._validate_review_history(
-        approved,
-        approved_digest,
+        history,
+        evidence["review_history_sha256"],
         evidence["review_history_phase0_sha256"],
-        1,
+        evidence["review_history_phase1_sha256"],
+        2,
         "/root",
     )
-    for field in ("recorded_at", "evidence"):
-        rewritten = deepcopy(approved)
-        rewritten[0][field] += " rewritten"
+
+    wrong_terminal_reviewer = deepcopy(history)
+    wrong_terminal_reviewer[7]["reviewer"] = "/root/broker_review"
+    wrong_terminal_reviewer_digest = _canonical_digest(wrong_terminal_reviewer)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_REVIEW_HISTORY_SHA256",
+        wrong_terminal_reviewer_digest,
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="occurrence identity or status changed",
+    ):
+        _VERIFIER._validate_review_history(
+            wrong_terminal_reviewer,
+            wrong_terminal_reviewer_digest,
+            evidence["review_history_phase0_sha256"],
+            evidence["review_history_phase1_sha256"],
+            2,
+            "/root",
+        )
+    for index, message in (
+        (0, "phase-0 review prefix digest mismatch"),
+        (3, "phase-1 review prefix digest mismatch"),
+        (5, "phase-2 pending review prefix digest mismatch"),
+    ):
+        rewritten = deepcopy(history)
+        rewritten[index]["evidence"] += " rewritten"
         rewritten_digest = _canonical_digest(rewritten)
         monkeypatch.setattr(
             _VERIFIER,
@@ -1131,13 +1340,14 @@ def test_evidence_state_and_review_history_fail_closed(
         )
         with pytest.raises(
             _VERIFIER.AcceptanceVerificationError,
-            match="phase-0 review prefix digest mismatch",
+            match=message,
         ):
             _VERIFIER._validate_review_history(
                 rewritten,
                 rewritten_digest,
                 evidence["review_history_phase0_sha256"],
-                1,
+                evidence["review_history_phase1_sha256"],
+                2,
                 "/root",
             )
 

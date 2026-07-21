@@ -1116,15 +1116,36 @@ def decode_continuation_snapshot(
 
 
 def canonical_resolution_digest(resolution: InputResolution) -> str:
-    """Return the canonical semantic digest of a typed resolution."""
+    """Return the canonical semantic digest of a typed resolution.
+
+    Exclude the trusted commit timestamp so transport retries can compare the
+    submitted meaning without treating a new observation time as new content.
+    """
+    payload = encode_input_resolution(resolution)
+    del payload["resolved_at"]
+    if type(resolution) is AnsweredResolution:
+        encoded_answers = payload["answers"]
+        assert isinstance(encoded_answers, list)
+        payload["answers"] = sorted(
+            encoded_answers,
+            key=_encoded_answer_question_id,
+        )
     encoded = dumps(
-        encode_input_resolution(resolution),
+        payload,
         allow_nan=False,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
     return sha256(encoded).hexdigest()
+
+
+def _encoded_answer_question_id(value: MutableJsonValue) -> str:
+    """Return one encoded answer identifier for semantic ordering."""
+    assert isinstance(value, dict)
+    question_id = value["question_id"]
+    assert isinstance(question_id, str)
+    return question_id
 
 
 def semantic_request_fingerprint(request: InputRequest) -> str:

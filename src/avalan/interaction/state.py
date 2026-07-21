@@ -221,9 +221,8 @@ def mark_request_pending(
     request: InputRequest,
     *,
     expected_state_revision: StateRevision,
-    presented_at: datetime | None = None,
 ) -> InputTransitionResult:
-    """Apply the sole legal nonterminal request transition."""
+    """Admit one created request into the authoritative queued state."""
     if type(request) is not InputRequest:
         raise InputValidationError(
             InputErrorCode.INVALID_TYPE,
@@ -237,23 +236,11 @@ def mark_request_pending(
     )
     if error is not None:
         return InputTransitionRejected(previous=request, error=error)
-    try:
-        advisory_deadline = _pending_advisory_deadline(request, presented_at)
-    except InputValidationError as exc:
-        return InputTransitionRejected(
-            previous=request,
-            error=InputTransitionError(
-                code=exc.code,
-                path=exc.path,
-                message=exc.safe_message,
-            ),
-        )
     next_revision = _next_revision(request)
     if isinstance(next_revision, InputTransitionError):
         return InputTransitionRejected(previous=request, error=next_revision)
     updated = replace(
         request,
-        advisory_deadline=advisory_deadline,
         state=RequestState.PENDING,
         state_revision=next_revision,
     )
@@ -452,23 +439,22 @@ def _next_revision(
     return StateRevision(request.state_revision + 1)
 
 
-def _pending_advisory_deadline(
+def _anchor_request_presentation(
     request: InputRequest,
-    presented_at: datetime | None,
-) -> datetime | None:
-    if request.mode is RequirementMode.REQUIRED:
-        if presented_at is not None:
-            raise InputValidationError(
-                InputErrorCode.INVALID_FORMAT,
-                "presented_at",
-                "required requests do not accept advisory presentation timing",
-            )
-        return None
-    if presented_at is None:
+    presented_at: datetime,
+) -> InputRequest:
+    """Anchor advisory timing without changing lifecycle state or revision."""
+    if type(request) is not InputRequest:
         raise InputValidationError(
-            InputErrorCode.INVALID_FORMAT,
-            "presented_at",
-            "advisory requests require a trusted presentation timestamp",
+            InputErrorCode.INVALID_TYPE,
+            "request",
+            "value must be an input request",
+        )
+    if request.state is not RequestState.PENDING:
+        raise InputValidationError(
+            InputErrorCode.ILLEGAL_TRANSITION,
+            "request.state",
+            "only pending requests can record presentation",
         )
     presented = validate_aware_datetime(
         presented_at,
@@ -480,15 +466,24 @@ def _pending_advisory_deadline(
             "presented_at",
             "presentation timestamp predates request creation",
         )
+    if request.mode is RequirementMode.REQUIRED:
+        return request
+    if request.advisory_deadline is not None:
+        raise InputValidationError(
+            InputErrorCode.ILLEGAL_TRANSITION,
+            "request.advisory_deadline",
+            "advisory presentation is already anchored",
+        )
     assert request.advisory_wait_seconds is not None
     try:
-        return presented + timedelta(seconds=request.advisory_wait_seconds)
+        deadline = presented + timedelta(seconds=request.advisory_wait_seconds)
     except OverflowError as exc:
         raise InputValidationError(
             InputErrorCode.OUT_OF_BOUNDS,
             "presented_at",
             "presentation timestamp cannot represent the advisory deadline",
         ) from exc
+    return replace(request, advisory_deadline=deadline)
 
 
 def _model_result(resolution: InputResolution) -> InputModelResult:

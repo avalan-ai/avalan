@@ -35,6 +35,21 @@ class InputErrorCode(StrEnum):
         "input.continuation_snapshot_secret_prohibited"
     )
     PROHIBITED_INPUT = "input.secret_prohibited"
+    SECRET_CLASSIFICATION_UNAVAILABLE = (
+        "input.secret_classification_unavailable"
+    )
+    AUTHENTICATION_REQUIRED = "input.authentication_required"
+    FORBIDDEN = "input.forbidden"
+    NOT_FOUND = "input.not_found"
+    ALREADY_RESOLVED = "input.already_resolved"
+    EXPIRED = "input.expired"
+    SUPERSEDED = "input.superseded"
+    UNAVAILABLE = "input.unavailable"
+    CAPACITY_EXCEEDED = "input.capacity_exceeded"
+    INTERACTION_LOOP_LIMIT = "input.interaction_loop_limit"
+    IDEMPOTENCY_CONFLICT = "input.idempotency_conflict"
+    IDEMPOTENCY_LEDGER_FULL = "input.idempotency_ledger_full"
+    STORE_CLOSED = "input.store_closed"
 
 
 class InputContractError(ValueError):
@@ -65,3 +80,25 @@ class InputCodecError(InputValidationError):
 
 class InputSnapshotError(InputCodecError):
     """Report an invalid or unsupported interaction snapshot."""
+
+
+class InteractionStoreClosedError(InputContractError):
+    """Report access through one closed interaction-store handle."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            InputErrorCode.STORE_CLOSED,
+            "store.handle",
+            "interaction store handle is closed",
+        )
+
+
+class InteractionNotFoundError(InputContractError):
+    """Report indistinguishable missing or unauthorized interaction access."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            InputErrorCode.NOT_FOUND,
+            "interaction",
+            "interaction was not found",
+        )

@@ -26,13 +26,20 @@ _PYTEST_COVERAGE_OPTION_PATTERN = compile_regex(
 _EXPECTED_EXCLUSION_BASELINE_SHA256 = (
     "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c"
 )
-_EXPECTED_EXCLUSION_CURRENT_SHA256 = (
+_EXPECTED_EXCLUSION_PHASE1_SHA256 = (
     "4b480b52db122eee22a7139ce5a3eaa7d8e436e0cef1122fe84af00bf0b90575"
 )
-_EXPECTED_EXCLUSION_RELOCATION_SHA256 = (
+_EXPECTED_EXCLUSION_PHASE1_RELOCATION_SHA256 = (
     "efdc3890ced956313276da34397c282390f7955b98f3ddc801271a6cd10ad134"
 )
-_EXPECTED_EXCLUSION_REVIEWER = "/root/interaction_round4_gates"
+_EXPECTED_EXCLUSION_CURRENT_SHA256 = (
+    "226f1035786d8328f0e1fdea6070507b5d11a267f63910cd6c9fef3db8d2f63c"
+)
+_EXPECTED_EXCLUSION_RELOCATION_SHA256 = (
+    "9c621baca6bb91d6fc18f82f4d0765e3f48f7881f1e63e668e56d16b0ebd129c"
+)
+_EXPECTED_EXCLUSION_PHASE1_REVIEWER = "/root/interaction_round4_gates"
+_EXPECTED_EXCLUSION_REVIEWER = "/root/phase2_coverage_metadata"
 
 
 class CoverageVerificationError(RuntimeError):
@@ -105,12 +112,34 @@ def default_exclusion_current_path() -> Path:
         / "tests"
         / "fixtures"
         / "input"
-        / "coverage_exclusions_phase1.json"
+        / "coverage_exclusions_phase2.json"
     )
 
 
 def default_exclusion_relocation_path() -> Path:
     """Return the tracked source-exclusion relocation ledger path."""
+    return (
+        repository_root()
+        / "tests"
+        / "fixtures"
+        / "input"
+        / "coverage_exclusion_relocations_phase2.json"
+    )
+
+
+def default_exclusion_prior_path() -> Path:
+    """Return the preceding source-exclusion snapshot path."""
+    return (
+        repository_root()
+        / "tests"
+        / "fixtures"
+        / "input"
+        / "coverage_exclusions_phase1.json"
+    )
+
+
+def default_exclusion_prior_relocation_path() -> Path:
+    """Return the preceding source-exclusion relocation ledger path."""
     return (
         repository_root()
         / "tests"
@@ -125,6 +154,8 @@ def verify_src_coverage(
     *,
     repo_root: Path | None = None,
     exclusion_baseline_path: Path | None = None,
+    exclusion_prior_path: Path | None = None,
+    exclusion_prior_relocation_path: Path | None = None,
     exclusion_current_path: Path | None = None,
     exclusion_relocation_path: Path | None = None,
 ) -> CoverageVerification:
@@ -154,24 +185,58 @@ def verify_src_coverage(
         root,
         source_root,
     )
-    expected_excluded_lines = _verify_exclusion_history(
-        exclusion_baseline_path
-        or root / "tests" / "fixtures" / "input" / "coverage_exclusions.json",
-        exclusion_current_path
-        or root
-        / "tests"
-        / "fixtures"
-        / "input"
-        / "coverage_exclusions_phase1.json",
-        exclusion_relocation_path
-        or root
-        / "tests"
-        / "fixtures"
-        / "input"
-        / "coverage_exclusion_relocations_phase1.json",
-        root,
-        source_root,
+    fixtures = root / "tests" / "fixtures" / "input"
+    baseline_path = (
+        exclusion_baseline_path or fixtures / "coverage_exclusions.json"
     )
+    current_path = (
+        exclusion_current_path or fixtures / "coverage_exclusions_phase2.json"
+    )
+    relocation_path = (
+        exclusion_relocation_path
+        or fixtures / "coverage_exclusion_relocations_phase2.json"
+    )
+    if (exclusion_prior_path is None) != (
+        exclusion_prior_relocation_path is None
+    ):
+        raise CoverageVerificationError(
+            "coverage exclusion prior snapshot and ledger must be paired"
+        )
+    if (
+        exclusion_prior_path is not None
+        and exclusion_prior_relocation_path is not None
+    ):
+        expected_excluded_lines = _verify_exclusion_history_chain(
+            baseline_path,
+            exclusion_prior_path,
+            exclusion_prior_relocation_path,
+            current_path,
+            relocation_path,
+            root,
+            source_root,
+        )
+    elif (
+        exclusion_baseline_path is None
+        and exclusion_current_path is None
+        and exclusion_relocation_path is None
+    ):
+        expected_excluded_lines = _verify_exclusion_history_chain(
+            baseline_path,
+            fixtures / "coverage_exclusions_phase1.json",
+            fixtures / "coverage_exclusion_relocations_phase1.json",
+            current_path,
+            relocation_path,
+            root,
+            source_root,
+        )
+    else:
+        expected_excluded_lines = _verify_exclusion_history(
+            baseline_path,
+            current_path,
+            relocation_path,
+            root,
+            source_root,
+        )
     source_analyzer = Coverage(config_file=False, data_file=None)
     measured: dict[str, CoverageSummary] = {}
     for raw_name, raw_file in raw_files.items():
@@ -381,7 +446,78 @@ def _verify_exclusion_history(
         current,
         root,
         source_root,
+        expected_digest=_EXPECTED_EXCLUSION_RELOCATION_SHA256,
+        expected_reviewer=_EXPECTED_EXCLUSION_REVIEWER,
+        allow_report_additions=False,
     )
+    _verify_observed_exclusions(current, root, source_root)
+    return current.report_lines
+
+
+def _verify_exclusion_history_chain(
+    baseline_path: Path,
+    prior_path: Path,
+    prior_relocation_path: Path,
+    current_path: Path,
+    relocation_path: Path,
+    root: Path,
+    source_root: Path,
+) -> dict[str, tuple[int, ...]]:
+    """Verify the immutable exclusion history and return current evidence."""
+    baseline = _read_exclusion_snapshot(
+        baseline_path,
+        root,
+        source_root,
+        digest_field="baseline_sha256",
+        expected_digest=_EXPECTED_EXCLUSION_BASELINE_SHA256,
+        label="baseline",
+    )
+    prior = _read_exclusion_snapshot(
+        prior_path,
+        root,
+        source_root,
+        digest_field="snapshot_sha256",
+        expected_digest=_EXPECTED_EXCLUSION_PHASE1_SHA256,
+        label="prior",
+    )
+    _verify_exclusion_relocations(
+        prior_relocation_path,
+        baseline,
+        prior,
+        root,
+        source_root,
+        expected_digest=_EXPECTED_EXCLUSION_PHASE1_RELOCATION_SHA256,
+        expected_reviewer=_EXPECTED_EXCLUSION_PHASE1_REVIEWER,
+        allow_report_additions=False,
+    )
+    current = _read_exclusion_snapshot(
+        current_path,
+        root,
+        source_root,
+        digest_field="snapshot_sha256",
+        expected_digest=_EXPECTED_EXCLUSION_CURRENT_SHA256,
+        label="current",
+    )
+    _verify_exclusion_relocations(
+        relocation_path,
+        prior,
+        current,
+        root,
+        source_root,
+        expected_digest=_EXPECTED_EXCLUSION_RELOCATION_SHA256,
+        expected_reviewer=_EXPECTED_EXCLUSION_REVIEWER,
+        allow_report_additions=True,
+    )
+    _verify_observed_exclusions(current, root, source_root)
+    return current.report_lines
+
+
+def _verify_observed_exclusions(
+    current: _ExclusionSnapshot,
+    root: Path,
+    source_root: Path,
+) -> None:
+    """Verify source directives and configuration against a snapshot."""
     observed: list[tuple[str, int, str]] = []
     for source_path in sorted(source_root.rglob("*.py")):
         normalized = source_path.resolve().relative_to(root).as_posix()
@@ -401,7 +537,6 @@ def _verify_exclusion_history(
             " snapshot"
         )
     _verify_coverage_configuration(root)
-    return current.report_lines
 
 
 def _read_exclusion_snapshot(
@@ -557,12 +692,16 @@ def _verify_exclusion_relocations(
     current: _ExclusionSnapshot,
     root: Path,
     source_root: Path,
+    *,
+    expected_digest: str,
+    expected_reviewer: str,
+    allow_report_additions: bool,
 ) -> None:
     try:
         raw = strict_json_path(path)
     except StrictJsonError as exc:
         raise CoverageVerificationError(str(exc)) from exc
-    expected_keys = {
+    base_keys = {
         "schema_version",
         "baseline_snapshot_sha256",
         "current_snapshot_sha256",
@@ -574,17 +713,29 @@ def _verify_exclusion_relocations(
         "report_exclusion_relocations",
         "ledger_sha256",
     }
+    if not isinstance(raw, dict):
+        raise CoverageVerificationError(
+            "coverage exclusion relocation ledger has invalid shape"
+        )
+    schema_version = raw.get("schema_version")
+    if type(schema_version) is not int or schema_version not in {1, 2}:
+        raise CoverageVerificationError(
+            "coverage exclusion relocation schema_version must be the"
+            " integer 1 or 2"
+        )
+    expected_keys = (
+        base_keys | {"report_exclusion_additions"}
+        if schema_version == 2
+        else base_keys
+    )
     if not isinstance(raw, dict) or set(raw) != expected_keys:
         raise CoverageVerificationError(
             "coverage exclusion relocation ledger has invalid shape"
         )
-    if (
-        type(raw.get("schema_version")) is not int
-        or raw.get("schema_version") != 1
-    ):
+    if schema_version == 2 and not allow_report_additions:
         raise CoverageVerificationError(
-            "coverage exclusion relocation schema_version must be the"
-            " integer 1"
+            "coverage exclusion report additions are prohibited for this"
+            " history link"
         )
     if (
         raw.get("baseline_snapshot_sha256") != baseline.digest
@@ -593,17 +744,25 @@ def _verify_exclusion_relocations(
         raise CoverageVerificationError(
             "coverage exclusion relocation snapshot references changed"
         )
-    _verify_exclusion_counts(raw, baseline, current)
     directive_relocations = _directive_relocations(
         raw.get("directive_relocations"),
         root,
         source_root,
+        expected_reviewer,
     )
     report_relocations = _report_exclusion_relocations(
         raw.get("report_exclusion_relocations"),
         root,
         source_root,
+        expected_reviewer,
     )
+    report_additions = _report_exclusion_additions(
+        raw.get("report_exclusion_additions", []),
+        root,
+        source_root,
+        expected_reviewer,
+    )
+    _verify_exclusion_counts(raw, baseline, current, report_additions)
     _verify_directive_relocations(
         baseline.directives,
         current.directives,
@@ -613,6 +772,7 @@ def _verify_exclusion_relocations(
         baseline.report_lines,
         current.report_lines,
         report_relocations,
+        report_additions,
     )
     digest_payload = {
         key: raw[key] for key in expected_keys if key != "ledger_sha256"
@@ -627,7 +787,7 @@ def _verify_exclusion_relocations(
     ).hexdigest()
     if (
         raw.get("ledger_sha256") != calculated_digest
-        or calculated_digest != _EXPECTED_EXCLUSION_RELOCATION_SHA256
+        or calculated_digest != expected_digest
     ):
         raise CoverageVerificationError(
             "coverage exclusion relocation ledger digest changed without"
@@ -639,6 +799,7 @@ def _verify_exclusion_counts(
     raw: dict[str, object],
     baseline: _ExclusionSnapshot,
     current: _ExclusionSnapshot,
+    report_additions: dict[str, tuple[int, ...]],
 ) -> None:
     counts = {
         "directive_count_before": len(baseline.directives),
@@ -656,10 +817,16 @@ def _verify_exclusion_counts(
             raise CoverageVerificationError(
                 f"coverage exclusion relocation {field} is inconsistent"
             )
-    if (
-        counts["directive_count_before"] != counts["directive_count_after"]
-        or counts["report_excluded_line_count_before"]
-        != counts["report_excluded_line_count_after"]
+    if counts["directive_count_before"] != counts["directive_count_after"]:
+        raise CoverageVerificationError(
+            "coverage exclusion relocation changed exclusion counts"
+        )
+    report_line_delta = (
+        counts["report_excluded_line_count_after"]
+        - counts["report_excluded_line_count_before"]
+    )
+    if report_line_delta != sum(
+        len(lines) for lines in report_additions.values()
     ):
         raise CoverageVerificationError(
             "coverage exclusion relocation changed exclusion counts"
@@ -670,6 +837,7 @@ def _directive_relocations(
     raw: object,
     root: Path,
     source_root: Path,
+    expected_reviewer: str,
 ) -> dict[str, tuple[str, str, int, int, int]]:
     if not isinstance(raw, list):
         raise CoverageVerificationError(
@@ -713,7 +881,7 @@ def _directive_relocations(
             raise CoverageVerificationError(
                 "coverage directive relocation has invalid fields"
             )
-        _verify_relocation_review(entry)
+        _verify_relocation_review(entry, expected_reviewer)
         normalized = _normalize_source_path(raw_path, root, source_root)
         if identity != _directive_identity(normalized, text, occurrence):
             raise CoverageVerificationError(
@@ -737,6 +905,7 @@ def _report_exclusion_relocations(
     raw: object,
     root: Path,
     source_root: Path,
+    expected_reviewer: str,
 ) -> dict[str, tuple[tuple[int, ...], tuple[int, ...]]]:
     if not isinstance(raw, list):
         raise CoverageVerificationError(
@@ -766,7 +935,7 @@ def _report_exclusion_relocations(
             raise CoverageVerificationError(
                 "coverage report exclusion relocation has invalid fields"
             )
-        _verify_relocation_review(entry)
+        _verify_relocation_review(entry, expected_reviewer)
         normalized = _normalize_source_path(raw_path, root, source_root)
         from_lines = _line_numbers(
             from_raw,
@@ -794,10 +963,66 @@ def _report_exclusion_relocations(
     return relocations
 
 
-def _verify_relocation_review(entry: dict[str, object]) -> None:
+def _report_exclusion_additions(
+    raw: object,
+    root: Path,
+    source_root: Path,
+    expected_reviewer: str,
+) -> dict[str, tuple[int, ...]]:
+    if not isinstance(raw, list):
+        raise CoverageVerificationError(
+            "coverage report exclusion additions must be a list"
+        )
+    additions: dict[str, tuple[int, ...]] = {}
+    expected_keys = {
+        "path",
+        "lines",
+        "reviewed_by",
+        "reason",
+    }
+    for entry in raw:
+        if not isinstance(entry, dict) or set(entry) != expected_keys:
+            raise CoverageVerificationError(
+                "coverage report exclusion addition has invalid shape"
+            )
+        raw_path = entry.get("path")
+        raw_lines = entry.get("lines")
+        if not isinstance(raw_path, str) or not isinstance(raw_lines, list):
+            raise CoverageVerificationError(
+                "coverage report exclusion addition has invalid fields"
+            )
+        _verify_relocation_review(entry, expected_reviewer)
+        normalized = _normalize_source_path(raw_path, root, source_root)
+        if not normalized.endswith(".py") or not (root / normalized).is_file():
+            raise CoverageVerificationError(
+                "coverage report exclusion addition path does not exist:"
+                f" {normalized}"
+            )
+        lines = _line_numbers(
+            raw_lines,
+            normalized,
+            label="added excluded",
+        )
+        if not lines:
+            raise CoverageVerificationError(
+                "empty coverage report exclusion addition is prohibited:"
+                f" {normalized}"
+            )
+        if normalized in additions:
+            raise CoverageVerificationError(
+                "coverage report exclusion addition is duplicated"
+            )
+        additions[normalized] = lines
+    return additions
+
+
+def _verify_relocation_review(
+    entry: dict[str, object],
+    expected_reviewer: str,
+) -> None:
     reviewer = entry.get("reviewed_by")
     reason = entry.get("reason")
-    if reviewer != _EXPECTED_EXCLUSION_REVIEWER:
+    if reviewer != expected_reviewer:
         raise CoverageVerificationError(
             "coverage exclusion relocation is unreviewed"
         )
@@ -855,13 +1080,23 @@ def _verify_report_relocations(
     baseline: dict[str, tuple[int, ...]],
     current: dict[str, tuple[int, ...]],
     relocations: dict[str, tuple[tuple[int, ...], tuple[int, ...]]],
+    additions: dict[str, tuple[int, ...]],
 ) -> None:
-    if set(baseline) != set(current):
+    removed = set(baseline) - set(current)
+    added = set(current) - set(baseline)
+    if removed:
         raise CoverageVerificationError(
-            "coverage report exclusion path inventory changed"
+            "coverage report exclusion path inventory removed entries"
+        )
+    if set(additions) != added:
+        raise CoverageVerificationError(
+            "coverage report exclusion addition is missing, extra, or"
+            " unreviewed"
         )
     changed = {
-        path for path, lines in baseline.items() if lines != current[path]
+        path
+        for path, lines in baseline.items()
+        if path in current and lines != current[path]
     }
     if set(relocations) != changed:
         raise CoverageVerificationError(
@@ -872,6 +1107,11 @@ def _verify_report_relocations(
         if relocations[path] != (baseline[path], current[path]):
             raise CoverageVerificationError(
                 "coverage report exclusion relocation differs from snapshots"
+            )
+    for path in added:
+        if additions[path] != current[path]:
+            raise CoverageVerificationError(
+                "coverage report exclusion addition differs from snapshots"
             )
 
 
@@ -1018,6 +1258,16 @@ def _parse_args() -> Namespace:
         default=default_exclusion_relocation_path(),
     )
     parser.add_argument(
+        "--exclusion-prior",
+        type=Path,
+        default=default_exclusion_prior_path(),
+    )
+    parser.add_argument(
+        "--exclusion-prior-relocations",
+        type=Path,
+        default=default_exclusion_prior_relocation_path(),
+    )
+    parser.add_argument(
         "--repo-root",
         type=Path,
         default=repository_root(),
@@ -1033,6 +1283,8 @@ def main() -> int:
             args.report,
             repo_root=args.repo_root,
             exclusion_baseline_path=args.exclusion_baseline,
+            exclusion_prior_path=args.exclusion_prior,
+            exclusion_prior_relocation_path=args.exclusion_prior_relocations,
             exclusion_current_path=args.exclusion_current,
             exclusion_relocation_path=args.exclusion_relocations,
         )

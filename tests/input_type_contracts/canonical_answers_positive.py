@@ -1,6 +1,6 @@
 """Lock public canonical interaction types and result discrimination."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Literal, assert_never, assert_type
 
 from avalan.interaction import (
@@ -256,27 +256,11 @@ assert_type(superseded, SupersededResolution)
 advisory_transition = mark_request_pending(
     advisory_request,
     expected_state_revision=revision,
-    presented_at=now,
 )
 assert_type(advisory_transition, InputTransitionResult)
 if isinstance(advisory_transition, InputTransitionApplied):
     assert_type(advisory_transition.request, InputRequest)
-    advisory_deadline = advisory_transition.request.advisory_deadline
-    assert advisory_deadline is not None
-    assert advisory_deadline == now + timedelta(seconds=60)
-    advisory_timeout = TimedOutResolution(
-        request_id=request_id,
-        provenance=AnswerProvenance.POLICY,
-        resolved_at=advisory_deadline,
-    )
-    assert_type(
-        resolve_request(
-            advisory_transition.request,
-            advisory_timeout,
-            expected_state_revision=StateRevision(1),
-        ),
-        InputTransitionResult,
-    )
+    assert advisory_transition.request.advisory_deadline is None
 
 transition = mark_request_pending(
     request,

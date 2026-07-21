@@ -59,6 +59,7 @@ from os import environ
 from pathlib import Path, PurePosixPath
 from re import IGNORECASE
 from re import compile as compile_regex
+from stat import S_IXGRP, S_IXOTH, S_IXUSR
 from subprocess import CompletedProcess, TimeoutExpired, run
 from sys import executable, stderr
 from typing import Protocol, cast
@@ -231,33 +232,57 @@ _EXPECTED_NO_BC_IDS = frozenset(
     }
 )
 _EXPECTED_REQUIREMENTS_SHA256 = (
-    "948782fec655e9368e8c17461218134ea9aedc3c6061cf268de86f5d8c6da8c5"
+    "0d2ede16f94cb1094cd455a585b00293bb11ca32178de65c37a81999b91013b4"
 )
 _EXPECTED_FAILURE_MATRIX_SHA256 = (
     "e5ce3aac0d441897b80a09d6a693853c65d4a446ed7e4c0184b3e3bc0b212c08"
 )
 _EXPECTED_DECISIONS_SHA256 = (
-    "ef8702b71d737e16a72d182169b1d23cfefe995f8450f79c4a7bee906ddd649a"
+    "c13bcff64c0b28905c64c8e92b040d56e2312a99b45303b4e3a5d4d4490c882d"
 )
 _EXPECTED_NO_BC_SHA256 = (
     "4a0140865a8ba58d2590fbc75245326c3d791f3dc541c52e8d3657b987d563b6"
 )
 _EXPECTED_ACCEPTANCE_LEDGER_SHA256 = (
-    "73c30d481aa80453769bcda4dbfe8e88a670bddfdee486c62788de16222a6629"
+    "0ec05ee0d57be61783c5de772821a609a9501df896f2d3515f868c1ac622ea67"
 )
 _EXPECTED_EVIDENCE_SHA256 = (
-    "a4c16a90cf2d451b423da22ba763b50742e47f583230ded87c9997d77e1b93b8"
+    "d0e276493609d2e7254c576bf50552a933e4e54cb67c9ec6e6a71f94a17f0302"
 )
 _EXPECTED_REVIEW_HISTORY_SHA256 = (
-    "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85"
+    "7c94eb4806501ecb3ae82f1447fd94ed95e31d185d41e9fbcba2f31ce448a408"
 )
 _EXPECTED_PHASE0_REVIEW_SHA256 = (
     "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b"
 )
+_EXPECTED_PHASE1_REVIEW_SHA256 = (
+    "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85"
+)
+_EXPECTED_PHASE2_PENDING_REVIEW_SHA256 = (
+    "a83a4e9545ac72c99c23d6fd316c7661f5a6bfef86c8c39a5c209ee6185a852a"
+)
+_EXPECTED_PHASE1_QUALITY_SHA256 = (
+    "f58bd16d9bf57bb3f2972982ff8bcf19a6125715a40194effecb8141c8ebd5ea"
+)
+_EXPECTED_PHASE1_EVIDENCE_SHA256 = (
+    "a4c16a90cf2d451b423da22ba763b50742e47f583230ded87c9997d77e1b93b8"
+)
+_EXPECTED_QUALITY_HISTORY_SHA256 = (
+    "d8e18473bd808cdb7610f06c2f6bd875573b89cfffd78210fca8fbe1fff69880"
+)
 _EXPECTED_IMPLEMENTATION_OWNER = "/root"
 _EXPECTED_INDEPENDENT_REVIEWER = "/root/input_contract_audit"
-_EXPECTED_SEMANTIC_REVIEWER = "/root/interaction_round4_semantic"
-_EXPECTED_GATE_REVIEWER = "/root/interaction_round4_gates"
+_EXPECTED_REVIEW_OCCURRENCES = (
+    (0, "baseline", "/root/input_contract_audit", "approved"),
+    (1, "semantic", "/root/interaction_round4_semantic", "pending"),
+    (1, "gate", "/root/interaction_round4_gates", "pending"),
+    (1, "semantic", "/root/interaction_round4_semantic", "approved"),
+    (1, "gate", "/root/interaction_round4_gates", "approved"),
+    (2, "semantic", "/root/broker_review", "pending"),
+    (2, "gate", "/root/phase2_acceptance_review", "pending"),
+    (2, "semantic", "/root/phase2_acceptance_review", "approved"),
+    (2, "gate", "/root/phase2_metadata_review", "approved"),
+)
 _EXPECTED_CURRENT_REVIEW_STATUS = "approved"
 _EXPECTED_BASELINE_HEAD = "609aa091c17756ab952cf5fe668ca3d867f0e311"
 _EXPECTED_BASELINE_SUBJECT = "Bump version to v1.5.8 (#1067)"
@@ -298,6 +323,7 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "tests/input_type_contract_test.py",
         "tests/input_type_contracts/",
         "tests/interaction/",
+        "tests/interaction_type_contracts/",
         "tests/model/full_coverage_gap_model_test.py",
         "tests/model/model_stream_contract_test.py",
         "tests/model/model_stream_interaction_test.py",
@@ -336,9 +362,9 @@ _EXPECTED_ORDERED_COMMON_GATE_COMMANDS = (
     "make test-coverage-exact no-install",
     (
         "poetry run python scripts/verify_input_acceptance.py"
-        + " --through-phase 1"
+        + " --through-phase 2"
     ),
-    "make typecheck-input-contract INPUT_PHASE=1",
+    "make typecheck-input-contract INPUT_PHASE=2",
     "make lint",
     "git diff --check",
 )
@@ -2824,7 +2850,10 @@ def _validate_evidence(
             "independent_reviewer",
             "review_history_sha256",
             "review_history_phase0_sha256",
+            "review_history_phase1_sha256",
             "review_history",
+            "quality_history_sha256",
+            "quality_history",
             "active_test_node_ids",
             "git",
             "baseline",
@@ -2856,8 +2885,14 @@ def _validate_evidence(
         payload.get("review_history"),
         payload.get("review_history_sha256"),
         payload.get("review_history_phase0_sha256"),
+        payload.get("review_history_phase1_sha256"),
         manifest.current_phase,
         implementation_owner,
+    )
+    _validate_quality_history(
+        payload.get("quality_history"),
+        payload.get("quality_history_sha256"),
+        manifest.current_phase,
     )
     active_test_node_ids = _string_list(
         payload.get("active_test_node_ids"), "active_test_node_ids"
@@ -3308,6 +3343,7 @@ def _validate_review_history(
     raw: object,
     raw_digest: object,
     raw_phase0_digest: object,
+    raw_phase1_digest: object,
     current_phase: int,
     implementation_owner: str,
 ) -> None:
@@ -3320,6 +3356,26 @@ def _validate_review_history(
         raw_phase0_digest,
         _EXPECTED_PHASE0_REVIEW_SHA256,
         "phase-0 review prefix",
+    )
+    if len(raw) < 5:
+        raise AcceptanceVerificationError(
+            "review history lost its phase-1 prefix"
+        )
+    _verify_digest(
+        raw[:5],
+        raw_phase1_digest,
+        _EXPECTED_PHASE1_REVIEW_SHA256,
+        "phase-1 review prefix",
+    )
+    if len(raw) < 7:
+        raise AcceptanceVerificationError(
+            "review history lost its phase-2 pending prefix"
+        )
+    _verify_digest(
+        raw[:7],
+        _EXPECTED_PHASE2_PENDING_REVIEW_SHA256,
+        _EXPECTED_PHASE2_PENDING_REVIEW_SHA256,
+        "phase-2 pending review prefix",
     )
     latest_status: dict[tuple[int, str], str] = {}
     recorded_times: list[str] = []
@@ -3366,27 +3422,14 @@ def _validate_review_history(
             raise AcceptanceVerificationError(
                 "implementation owner cannot review its own evidence"
             )
-        if phase == 0:
-            if (
-                role != "baseline"
-                or reviewer != _EXPECTED_INDEPENDENT_REVIEWER
-            ):
-                raise AcceptanceVerificationError(
-                    "phase-0 review identity changed"
-                )
-        elif role == "semantic":
-            if reviewer != _EXPECTED_SEMANTIC_REVIEWER:
-                raise AcceptanceVerificationError(
-                    "semantic review identity changed"
-                )
-        elif role == "gate":
-            if reviewer != _EXPECTED_GATE_REVIEWER:
-                raise AcceptanceVerificationError(
-                    "gate review identity changed"
-                )
-        else:
+        if expected_sequence >= len(_EXPECTED_REVIEW_OCCURRENCES):
             raise AcceptanceVerificationError(
-                f"invalid review role for phase {phase}: {role}"
+                "review history contains an unexpected occurrence"
+            )
+        expected_occurrence = _EXPECTED_REVIEW_OCCURRENCES[expected_sequence]
+        if (phase, role, reviewer, status) != expected_occurrence:
+            raise AcceptanceVerificationError(
+                "review history occurrence identity or status changed"
             )
         if status not in {"pending", "approved", "rejected"}:
             raise AcceptanceVerificationError(
@@ -3429,6 +3472,60 @@ def _validate_review_history(
         raw_digest,
         _EXPECTED_REVIEW_HISTORY_SHA256,
         "review history",
+    )
+
+
+def _validate_quality_history(
+    raw: object,
+    raw_digest: object,
+    current_phase: int,
+) -> None:
+    """Validate append-only digests for prior completed quality records."""
+    if not isinstance(raw, list) or len(raw) != max(0, current_phase - 1):
+        raise AcceptanceVerificationError(
+            "quality history must preserve every prior completed gate"
+        )
+    for expected_phase, value in enumerate(raw, start=1):
+        record = _evidence_mapping(value, "quality history record")
+        _exact_keys(
+            record,
+            {
+                "phase",
+                "state",
+                "quality_gate_sha256",
+                "evidence_sha256",
+            },
+            "quality history record",
+        )
+        phase = _phase(record.get("phase"), "quality history phase")
+        if phase != expected_phase or record.get("state") != "complete":
+            raise AcceptanceVerificationError(
+                "quality history phases must be contiguous completed gates"
+            )
+        quality_digest = _sha256_string(
+            record.get("quality_gate_sha256"),
+            "historical quality gate SHA-256",
+        )
+        evidence_digest = _sha256_string(
+            record.get("evidence_sha256"),
+            "historical evidence SHA-256",
+        )
+        if quality_digest == evidence_digest:
+            raise AcceptanceVerificationError(
+                "quality history cannot reuse its evidence digest"
+            )
+        if phase == 1 and (
+            quality_digest != _EXPECTED_PHASE1_QUALITY_SHA256
+            or evidence_digest != _EXPECTED_PHASE1_EVIDENCE_SHA256
+        ):
+            raise AcceptanceVerificationError(
+                "quality history lost its phase-1 record"
+            )
+    _verify_digest(
+        raw,
+        raw_digest,
+        _EXPECTED_QUALITY_HISTORY_SHA256,
+        "quality history",
     )
 
 
@@ -3674,7 +3771,7 @@ def _validate_quality_gate_evidence(
         )
     acceptance = results[
         "poetry run python scripts/verify_input_acceptance.py"
-        " --through-phase 1"
+        " --through-phase 2"
     ]
     _exact_keys(
         acceptance,
@@ -3688,7 +3785,7 @@ def _validate_quality_gate_evidence(
         raise AcceptanceVerificationError(
             "acceptance gate evidence has stale node or instance counts"
         )
-    type_result = results["make typecheck-input-contract INPUT_PHASE=1"]
+    type_result = results["make typecheck-input-contract INPUT_PHASE=2"]
     _exact_keys(
         type_result,
         {"command", "exit_code", "active_fixtures"},
@@ -3808,45 +3905,93 @@ def _current_tree_binding(
 ) -> dict[str, object]:
     evidence_path = "tests/fixtures/input/baseline_evidence.json"
     verifier_path = "scripts/verify_input_acceptance.py"
-    diff = _git_bytes(
-        root,
-        "diff",
-        "--binary",
-        "--no-ext-diff",
-        "HEAD",
-        "--",
-        ".",
-        f":(exclude){evidence_path}",
-        f":(exclude){verifier_path}",
-    )
-    untracked = _git_lines(
+    ignored_paths = frozenset((evidence_path, verifier_path))
+    tracked_modes = _git_stage_modes(root)
+    untracked = _git_null_paths(
         root,
         "ls-files",
         "--others",
         "--exclude-standard",
+        "-z",
         "--",
     )
-    ignored_paths = {evidence_path, verifier_path}
-    untracked_inventory: list[dict[str, str]] = []
-    for relative in sorted(untracked):
-        if relative in ignored_paths or any(
+    tracked_paths = set(tracked_modes)
+    untracked_paths = set(untracked)
+    if tracked_paths & untracked_paths:
+        raise AcceptanceVerificationError(
+            "git tree inventory classifies one path twice"
+        )
+    included_untracked = {
+        relative
+        for relative in untracked_paths
+        if not any(
             relative.startswith(prefix) for prefix in preserved_untracked
+        )
+    }
+    staged_changed = set(
+        _git_null_paths(
+            root,
+            "diff",
+            "--cached",
+            "--name-only",
+            "-z",
+            "--",
+        )
+    )
+    worktree_changed = set(
+        _git_null_paths(
+            root,
+            "diff",
+            "--name-only",
+            "-z",
+            "--",
+        )
+    )
+    ambiguous_paths = staged_changed & worktree_changed
+    if ambiguous_paths:
+        raise AcceptanceVerificationError(
+            "git tree inventory has staged and unstaged changes for: "
+            + ", ".join(sorted(ambiguous_paths))
+        )
+    inventory: list[dict[str, object]] = []
+    resolved_root = root.resolve()
+    for relative in sorted(
+        (tracked_paths | included_untracked) - ignored_paths
+    ):
+        pure_path = PurePosixPath(relative)
+        if (
+            not relative
+            or pure_path.is_absolute()
+            or "." in pure_path.parts
+            or ".." in pure_path.parts
         ):
-            continue
-        path = (root / relative).resolve()
-        try:
-            path.relative_to(root)
-        except ValueError as exc:
             raise AcceptanceVerificationError(
-                f"untracked tree path escapes repository: {relative}"
-            ) from exc
-        if not path.is_file():
-            raise AcceptanceVerificationError(
-                f"untracked tree entry is not a file: {relative}"
+                f"unsafe git tree inventory path: {relative}"
             )
-        untracked_inventory.append(
+        path = resolved_root.joinpath(*pure_path.parts)
+        if path.is_symlink():
+            raise AcceptanceVerificationError(
+                f"git tree inventory entry is a symlink: {relative}"
+            )
+        if not path.exists():
+            if relative in tracked_paths:
+                continue
+            raise AcceptanceVerificationError(
+                f"untracked git tree entry disappeared: {relative}"
+            )
+        kind = _tree_entry_kind(path, resolved_root, relative)
+        if (
+            relative in tracked_modes
+            and kind != tracked_modes[relative]
+            and relative not in worktree_changed
+        ):
+            raise AcceptanceVerificationError(
+                f"git index and working-tree modes differ for: {relative}"
+            )
+        inventory.append(
             {
                 "path": relative,
+                "kind": kind,
                 "sha256": sha256(path.read_bytes()).hexdigest(),
             }
         )
@@ -3857,6 +4002,13 @@ def _current_tree_binding(
             "cannot normalize quality evidence tree binding"
         )
     cast(dict[str, object], normalized_quality)["tree_binding"] = {}
+    normalized_evidence_kind = _bound_tree_entry_kind(
+        resolved_root / evidence_path,
+        resolved_root,
+        evidence_path,
+        tracked_modes,
+        worktree_changed,
+    )
     evidence_digest = sha256(
         dumps(
             normalized_evidence,
@@ -3865,25 +4017,35 @@ def _current_tree_binding(
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
-    verifier_source = (root / verifier_path).read_text(encoding="utf-8")
+    verifier_file = resolved_root / verifier_path
+    normalized_verifier_kind = _bound_tree_entry_kind(
+        verifier_file,
+        resolved_root,
+        verifier_path,
+        tracked_modes,
+        worktree_changed,
+    )
+    verifier_source = verifier_file.read_text(encoding="utf-8")
     normalized_verifier = verifier_source.replace(
         _EXPECTED_EVIDENCE_SHA256,
         "0" * 64,
     )
     verifier_digest = sha256(normalized_verifier.encode("utf-8")).hexdigest()
-    untracked_digest = sha256(
+    inventory_digest = sha256(
         dumps(
-            untracked_inventory,
+            inventory,
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
     values: dict[str, object] = {
-        "head": _git_output(root, "rev-parse", "HEAD"),
-        "diff_sha256": sha256(diff).hexdigest(),
-        "untracked_inventory_sha256": untracked_digest,
+        "baseline_head": _EXPECTED_BASELINE_HEAD,
+        "inventory_file_count": len(inventory),
+        "inventory_sha256": inventory_digest,
+        "normalized_evidence_kind": normalized_evidence_kind,
         "normalized_evidence_sha256": evidence_digest,
+        "normalized_verifier_kind": normalized_verifier_kind,
         "normalized_verifier_sha256": verifier_digest,
     }
     values["tree_sha256"] = sha256(
@@ -3894,6 +4056,118 @@ def _current_tree_binding(
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
+    return values
+
+
+def _tree_entry_kind(path: Path, root: Path, relative: str) -> str:
+    if path.is_symlink():
+        raise AcceptanceVerificationError(
+            f"git tree inventory entry is a symlink: {relative}"
+        )
+    if not path.exists():
+        raise AcceptanceVerificationError(
+            f"git tree inventory entry is missing: {relative}"
+        )
+    resolved_path = path.resolve()
+    try:
+        resolved_path.relative_to(root)
+    except ValueError as exc:
+        raise AcceptanceVerificationError(
+            f"git tree inventory path escapes repository: {relative}"
+        ) from exc
+    if resolved_path != path or not path.is_file():
+        raise AcceptanceVerificationError(
+            f"git tree inventory entry is not a regular file: {relative}"
+        )
+    mode = path.stat().st_mode
+    if mode & (S_IXUSR | S_IXGRP | S_IXOTH):
+        return "executable"
+    return "regular"
+
+
+def _bound_tree_entry_kind(
+    path: Path,
+    root: Path,
+    relative: str,
+    tracked_modes: dict[str, str],
+    worktree_changed: set[str],
+) -> str:
+    kind = _tree_entry_kind(path, root, relative)
+    if (
+        relative in tracked_modes
+        and kind != tracked_modes[relative]
+        and relative not in worktree_changed
+    ):
+        raise AcceptanceVerificationError(
+            f"git index and working-tree modes differ for: {relative}"
+        )
+    return kind
+
+
+def _git_stage_modes(root: Path) -> dict[str, str]:
+    raw = _git_bytes(root, "ls-files", "--stage", "-z", "--")
+    if not raw:
+        return {}
+    if not raw.endswith(b"\0"):
+        raise AcceptanceVerificationError(
+            "git index inventory is not NUL terminated"
+        )
+    values: dict[str, str] = {}
+    for raw_entry in raw.removesuffix(b"\0").split(b"\0"):
+        try:
+            metadata, raw_path = raw_entry.split(b"\t", 1)
+            mode, object_id, stage = metadata.split(b" ")
+            relative = raw_path.decode("utf-8")
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise AcceptanceVerificationError(
+                "git index inventory contains an invalid entry"
+            ) from exc
+        if (
+            stage != b"0"
+            or len(object_id) not in {40, 64}
+            or any(value not in b"0123456789abcdef" for value in object_id)
+        ):
+            raise AcceptanceVerificationError(
+                f"git index inventory contains an unresolved entry: {relative}"
+            )
+        match mode:
+            case b"100644":
+                kind = "regular"
+            case b"100755":
+                kind = "executable"
+            case _:
+                raise AcceptanceVerificationError(
+                    f"git index inventory contains an unsafe mode: {relative}"
+                )
+        if relative in values:
+            raise AcceptanceVerificationError(
+                f"git index inventory contains a duplicate path: {relative}"
+            )
+        values[relative] = kind
+    return values
+
+
+def _git_null_paths(root: Path, *arguments: str) -> tuple[str, ...]:
+    raw = _git_bytes(root, *arguments)
+    if not raw:
+        return ()
+    if not raw.endswith(b"\0"):
+        raise AcceptanceVerificationError(
+            "git tree inventory is not NUL terminated"
+        )
+    try:
+        values = tuple(
+            value.decode("utf-8")
+            for value in raw.removesuffix(b"\0").split(b"\0")
+        )
+    except UnicodeDecodeError as exc:
+        raise AcceptanceVerificationError(
+            "git tree inventory contains a non-UTF-8 path"
+        ) from exc
+    if len(set(values)) != len(values):
+        raise AcceptanceVerificationError(
+            "git tree inventory contains a duplicate path"
+        )
     return values
 
 

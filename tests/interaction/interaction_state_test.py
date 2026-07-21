@@ -76,7 +76,10 @@ from avalan.interaction.entities import (
     _validate_selection_value,
     _validate_trusted_default,
 )
-from avalan.interaction.state import _model_result
+from avalan.interaction.state import (
+    _anchor_request_presentation,
+    _model_result,
+)
 
 _NOW = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
 
@@ -165,11 +168,6 @@ def _pending(request: InputRequest) -> InputRequest:
     transition = mark_request_pending(
         request,
         expected_state_revision=request.state_revision,
-        presented_at=(
-            request.created_at
-            if request.mode is RequirementMode.ADVISORY
-            else None
-        ),
     )
     assert isinstance(transition, InputTransitionApplied)
     return transition.request
@@ -265,7 +263,10 @@ def test_transition_result_enforces_revision_semantics() -> None:
             error=cast(InputTransitionError, object()),
         )
 
-    advisory_pending = _pending(_request(mode=RequirementMode.ADVISORY))
+    advisory_pending = _anchor_request_presentation(
+        _pending(_request(mode=RequirementMode.ADVISORY)),
+        _NOW,
+    )
     advisory_terminal = _apply(
         advisory_pending,
         DeclinedResolution(
@@ -482,58 +483,73 @@ def test_resolution_transition_rejects_revision_and_resolution_errors() -> (
 
 
 def test_advisory_timing_is_derived_once_from_trusted_presentation() -> None:
-    """Persist the wait and reject caller-controlled timeout timing."""
+    """Admit queued first, then anchor trusted presentation exactly once."""
     created = _request(mode=RequirementMode.ADVISORY)
-    missing = mark_request_pending(
+    admission = mark_request_pending(
         created,
         expected_state_revision=created.state_revision,
     )
-    predating = mark_request_pending(
-        created,
-        expected_state_revision=created.state_revision,
-        presented_at=_NOW - timedelta(microseconds=1),
+    assert isinstance(admission, InputTransitionApplied)
+    queued = admission.request
+    assert queued.advisory_deadline is None
+
+    with pytest.raises(InputValidationError) as predating:
+        _anchor_request_presentation(
+            queued,
+            _NOW - timedelta(microseconds=1),
+        )
+    with pytest.raises(InputValidationError) as naive:
+        _anchor_request_presentation(queued, _NOW.replace(tzinfo=None))
+    exact = _anchor_request_presentation(queued, _NOW)
+    late = _anchor_request_presentation(
+        queued,
+        _NOW + timedelta(seconds=1),
     )
-    naive = mark_request_pending(
-        created,
-        expected_state_revision=created.state_revision,
-        presented_at=_NOW.replace(tzinfo=None),
-    )
-    exact = mark_request_pending(
-        created,
-        expected_state_revision=created.state_revision,
-        presented_at=_NOW,
-    )
-    late = mark_request_pending(
-        created,
-        expected_state_revision=created.state_revision,
-        presented_at=_NOW + timedelta(seconds=1),
-    )
-    required_timing = mark_request_pending(
+    required_admission = mark_request_pending(
         _request(),
         expected_state_revision=StateRevision(0),
-        presented_at=_NOW,
+    )
+    assert isinstance(required_admission, InputTransitionApplied)
+    with pytest.raises(InputValidationError) as required_predating:
+        _anchor_request_presentation(
+            required_admission.request,
+            _NOW - timedelta(microseconds=1),
+        )
+    with pytest.raises(InputValidationError) as required_naive:
+        _anchor_request_presentation(
+            required_admission.request,
+            _NOW.replace(tzinfo=None),
+        )
+    required_timing = _anchor_request_presentation(
+        required_admission.request,
+        _NOW,
     )
     overflow_request = replace(
         created,
         created_at=datetime.max.replace(tzinfo=UTC),
     )
-    overflow = mark_request_pending(
+    overflow_admission = mark_request_pending(
         overflow_request,
         expected_state_revision=overflow_request.state_revision,
-        presented_at=overflow_request.created_at,
     )
+    assert isinstance(overflow_admission, InputTransitionApplied)
+    with pytest.raises(InputValidationError) as overflow:
+        _anchor_request_presentation(
+            overflow_admission.request,
+            overflow_request.created_at,
+        )
 
-    assert _rejected_code(missing) is InputErrorCode.INVALID_FORMAT
-    assert _rejected_code(predating) is InputErrorCode.INVALID_FORMAT
-    assert _rejected_code(naive) is InputErrorCode.NAIVE_TIMESTAMP
-    assert _rejected_code(required_timing) is InputErrorCode.INVALID_FORMAT
-    assert _rejected_code(overflow) is InputErrorCode.OUT_OF_BOUNDS
-    assert isinstance(exact, InputTransitionApplied)
-    assert exact.request.advisory_deadline == _NOW + timedelta(seconds=60)
-    assert isinstance(late, InputTransitionApplied)
-    assert late.request.advisory_deadline == _NOW + timedelta(seconds=61)
+    assert predating.value.code is InputErrorCode.INVALID_FORMAT
+    assert naive.value.code is InputErrorCode.NAIVE_TIMESTAMP
+    assert required_predating.value.code is InputErrorCode.INVALID_FORMAT
+    assert required_naive.value.code is InputErrorCode.NAIVE_TIMESTAMP
+    assert overflow.value.code is InputErrorCode.OUT_OF_BOUNDS
+    assert required_timing is required_admission.request
+    assert exact.advisory_deadline == _NOW + timedelta(seconds=60)
+    assert late.advisory_deadline == _NOW + timedelta(seconds=61)
+    assert exact.state_revision == queued.state_revision
 
-    pending = exact.request
+    pending = exact
     assert pending.advisory_deadline is not None
 
     def transition_at(resolved_at: datetime) -> object:
@@ -558,6 +574,73 @@ def test_advisory_timing_is_derived_once_from_trusted_presentation() -> None:
     assert _rejected_code(early_timeout) is InputErrorCode.INVALID_FORMAT
     assert isinstance(exact_timeout, InputTransitionApplied)
     assert isinstance(late_timeout, InputTransitionApplied)
+
+
+def test_queued_advisory_can_resolve_before_presentation() -> None:
+    """Allow every non-timeout terminal outcome before presentation."""
+    created = _request(mode=RequirementMode.ADVISORY)
+    resolutions: tuple[InputResolution, ...] = (
+        AnsweredResolution(
+            request_id=created.request_id,
+            provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+            resolved_at=_NOW,
+            answers=(
+                ConfirmationAnswer(
+                    question_id=QuestionId("confirm"),
+                    provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+                    value=True,
+                ),
+            ),
+        ),
+        DeclinedResolution(
+            request_id=created.request_id,
+            provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+            resolved_at=_NOW,
+        ),
+        UnavailableResolution(
+            request_id=created.request_id,
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=_NOW,
+        ),
+        CancelledResolution(
+            request_id=created.request_id,
+            provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+            resolved_at=_NOW,
+            scope=CancellationScope.REQUEST,
+        ),
+        SupersededResolution(
+            request_id=created.request_id,
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=_NOW,
+        ),
+        ExpiredResolution(
+            request_id=created.request_id,
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=_NOW + timedelta(days=1),
+        ),
+    )
+
+    for resolution in resolutions:
+        pending = _pending(created)
+        result = resolve_request(
+            pending,
+            resolution,
+            expected_state_revision=pending.state_revision,
+        )
+        assert isinstance(result, InputTransitionApplied)
+        assert result.request.advisory_deadline is None
+
+    pending = _pending(created)
+    timeout = resolve_request(
+        pending,
+        TimedOutResolution(
+            request_id=pending.request_id,
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=_NOW + timedelta(seconds=60),
+        ),
+        expected_state_revision=pending.state_revision,
+    )
+    assert _rejected_code(timeout) is InputErrorCode.INVALID_FORMAT
 
 
 @pytest.mark.parametrize(
@@ -1010,6 +1093,7 @@ def test_outcome_projection_covers_resume_and_termination_matrix() -> None:
         )
         pending = _pending(_request(mode=mode))
         if isinstance(resolution, TimedOutResolution):
+            pending = _anchor_request_presentation(pending, _NOW)
             assert pending.advisory_deadline is not None
             resolution = replace(
                 resolution,
@@ -1108,7 +1192,7 @@ def test_state_boundaries_reject_unchecked_union_subclasses() -> None:
     assert private_value not in str(captured.value)
 
     rogue_request_type = type("RogueInputRequest", (InputRequest,), {})
-    rogue_request = object.__new__(rogue_request_type)
+    rogue_request: InputRequest = object.__new__(rogue_request_type)
     with pytest.raises(InputValidationError) as captured:
         project_resolution_to_model(
             rogue_request,
