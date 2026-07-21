@@ -1,7 +1,9 @@
-REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage version release
-TEST_ARGS := $(filter-out test tests test-pgsql tests-pgsql,$(MAKECMDGOALS))
+REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage test-coverage-exact test-pgsql-exact typecheck-input-contract version release
+TEST_ARGS := $(filter-out $(REAL_TARGETS),$(MAKECMDGOALS))
 PYTEST_ARGS := --verbose
 TASK_PGSQL_TEST_DEPS := "alembic>=1.17.2,<2.0.0"
+INPUT_CONTRACT_SCRIPTS := scripts/input_contract_json.py scripts/run_input_contract_gate.py scripts/task_pgsql_test_database.py scripts/verify_input_acceptance.py scripts/verify_input_types.py scripts/verify_src_coverage.py
+LINT_PATHS := src/ tests/ $(INPUT_CONTRACT_SCRIPTS)
 
 ifneq ($(filter coverage coverage-report,$(TEST_ARGS)),)
 PYTEST_ARGS += --cov=src/ --cov-report=xml
@@ -22,10 +24,11 @@ install:
 	poetry sync --all-extras
 
 lint:
-	poetry run ruff format --preview src/ tests/
-	poetry run black --preview --enable-unstable-feature=string_processing src/ tests/
-	poetry run ruff check --fix src/ tests/
+	poetry run ruff format --preview $(LINT_PATHS)
+	poetry run black --preview --enable-unstable-feature=string_processing $(LINT_PATHS)
+	poetry run ruff check --fix $(LINT_PATHS)
 	poetry run mypy
+	poetry run mypy $(INPUT_CONTRACT_SCRIPTS)
 
 test:
 ifeq ($(filter no-install,$(TEST_ARGS)),)
@@ -41,7 +44,7 @@ else
 	poetry run pytest $(PYTEST_ARGS)
 endif
 
-.PHONY: test tests test-pgsql tests-pgsql
+.PHONY: test tests test-pgsql tests-pgsql test-coverage-exact test-pgsql-exact typecheck-input-contract
 tests: test
 
 test-pgsql:
@@ -52,6 +55,24 @@ endif
 	poetry run -- python scripts/task_pgsql_test_database.py --docker -- $(PYTEST_ARGS)
 
 tests-pgsql: test-pgsql
+
+test-coverage-exact:
+ifeq ($(filter no-install,$(TEST_ARGS)),)
+	poetry sync --all-extras --with test
+endif
+	poetry run python scripts/run_input_contract_gate.py --coverage-only
+
+test-pgsql-exact:
+	@test -n "$(INPUT_PHASE)" || (echo "INPUT_PHASE is required" >&2; exit 2)
+ifeq ($(filter no-install,$(TEST_ARGS)),)
+	poetry sync --all-extras --with test
+endif
+	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
+	poetry run -- python scripts/task_pgsql_test_database.py --docker --runner-script scripts/run_input_contract_gate.py -- --through-phase $(INPUT_PHASE)
+
+typecheck-input-contract:
+	@test -n "$(INPUT_PHASE)" || (echo "INPUT_PHASE is required" >&2; exit 2)
+	poetry run python scripts/verify_input_types.py --through-phase $(INPUT_PHASE)
 
 test-coverage:
 	$(eval ARGS := $(filter-out $@,$(MAKECMDGOALS)))

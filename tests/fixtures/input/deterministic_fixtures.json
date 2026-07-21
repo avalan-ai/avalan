@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "feature": "structured_task_input",
+  "clock": {
+    "initial": 1000,
+    "advances": [
+      0.25,
+      1.75,
+      3
+    ],
+    "expected": [
+      1000,
+      1000.25,
+      1002,
+      1005
+    ]
+  },
+  "id_factory": {
+    "prefix": "input",
+    "expected": [
+      "input-run-0001",
+      "input-turn-0002",
+      "input-task-0003",
+      "input-agent-0004",
+      "input-branch-0005",
+      "input-model-call-0006",
+      "input-request-0007",
+      "input-continuation-0008",
+      "input-stream-session-0009",
+      "input-user-0010",
+      "input-tenant-0011",
+      "input-participant-0012",
+      "input-session-0013"
+    ],
+    "state_revision": 14
+  },
+  "principal": {
+    "user_id": "user-1",
+    "tenant_id": "tenant-1",
+    "participant_id": "participant-1",
+    "session_id": "session-1"
+  },
+  "provider_calls": [
+    {
+      "request": "first",
+      "response": "one"
+    },
+    {
+      "request": "second",
+      "response": "two"
+    }
+  ],
+  "barrier": {
+    "parties": 3
+  },
+  "local_peer": {
+    "to_runtime": [
+      "resolution"
+    ],
+    "to_client": [
+      "input_required"
+    ]
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "feature": "structured_task_input",
+  "recorded_at": "2026-07-20T23:33:53-03:00",
+  "implementation_owner": "/root",
+  "independent_reviewer": "/root/input_contract_audit",
+  "active_test_node_ids": [
+    "tests/input_contract_test.py::test_requirement_catalog_is_complete",
+    "tests/input_contract_test.py::test_acceptance_manifest_lifecycle_is_monotonic",
+    "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory",
+    "tests/input_contract_test.py::test_failure_matrix_is_complete",
+    "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_na_reason_without_exact_ids",
+    "tests/input_acceptance_verifier_test.py::test_acceptance_cli_executes_exact_synthetic_node",
+    "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_pytest_non_evidence",
+    "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_placeholder_and_execution_tricks",
+    "tests/src_coverage_verifier_test.py::test_exact_coverage_accepts_empty_module_variants",
+    "tests/src_coverage_verifier_test.py::test_exact_coverage_rejects_invalid_reports",
+    "tests/input_contract_metadata_test.py::test_exact_make_target_fails_closed_on_pytest_failure",
+    "tests/input_contract_metadata_test.py::test_project_metadata_pins_complete_common_gate",
+    "tests/project_metadata_test.py::test_workflow_exact_gate_detection_rejects_partial_coverage",
+    "tests/input_contract_harness_test.py::test_admin_dsn_runner_script_uses_ephemeral_database",
+    "tests/input_contract_harness_test.py::test_main_selects_admin_dsn_and_runner_script",
+    "tests/input_contract_harness_test.py::test_docker_forwards_runner_and_always_stops",
+    "tests/input_contract_harness_test.py::test_common_gate_cleans_partial_coverage",
+    "tests/input_contract_harness_test.py::test_common_gate_skips_acceptance_after_coverage_failure",
+    "tests/input_type_contract_test.py::test_type_contract_manifest_and_runner_are_strict",
+    "tests/input_contract_test.py::test_deterministic_fixtures_are_reproducible",
+    "tests/input_contract_test.py::test_contract_decisions_are_frozen",
+    "tests/input_contract_test.py::test_no_bc_removal_inventory_is_frozen",
+    "tests/input_contract_test.py::test_baseline_evidence_is_complete",
+    "tests/input_contract_test.py::test_capability_remains_absent"
+  ],
+  "git": {
+    "branch": "input",
+    "head": "609aa091c17756ab952cf5fe668ca3d867f0e311",
+    "head_subject": "Bump version to v1.5.8 (#1067)",
+    "production_changes_before_baseline": [],
+    "preserved_untracked": [
+      "docs/examples/skills/code/"
+    ]
+  },
+  "baseline": {
+    "command": "poetry run pytest --verbose -s",
+    "exit_code": 0,
+    "collected": 10071,
+    "passed": 10005,
+    "skipped": 66,
+    "subtests_passed": 7733,
+    "seconds": 159.84
+  },
+  "boundary": {
+    "production_capability": "absent",
+    "production_source_changes": [],
+    "changed_paths": [
+      ".github/workflows/test.yml",
+      "Makefile",
+      "scripts/input_contract_json.py",
+      "scripts/run_input_contract_gate.py",
+      "scripts/task_pgsql_test_database.py",
+      "scripts/verify_input_acceptance.py",
+      "scripts/verify_input_types.py",
+      "scripts/verify_src_coverage.py",
+      "tests/fixtures/input/",
+      "tests/input_acceptance_verifier_test.py",
+      "tests/input_contract_fixtures.py",
+      "tests/input_contract_harness_test.py",
+      "tests/input_contract_metadata_test.py",
+      "tests/input_contract_test.py",
+      "tests/input_type_contract_test.py",
+      "tests/input_type_contracts/",
+      "tests/model/full_coverage_gap_model_test.py",
+      "tests/project_metadata_test.py",
+      "tests/reasoning_summary_phase1_test.py",
+      "tests/src_coverage_verifier_test.py"
+    ]
+  },
+  "inventory": {
+    "behavior_requirements": 107,
+    "public_scenarios": 12,
+    "delivery_requirements": 12,
+    "active_acceptance_nodes": 24,
+    "planned_acceptance_nodes": 217,
+    "failure_conditions": 15,
+    "failure_surfaces": 84,
+    "failure_cells": 1260,
+    "applicable_failure_cells": 564,
+    "non_applicable_failure_cells": 696
+  },
+  "quality_gate": [
+    {
+      "command": "poetry run pytest --verbose -s",
+      "exit_code": 0,
+      "passed": 10029,
+      "skipped": 66,
+      "deselected": 0,
+      "xfail": 0,
+      "xpass": 0
+    },
+    {
+      "command": "make test-coverage -- -100 src/",
+      "exit_code": 0,
+      "output_lines": []
+    },
+    {
+      "command": "make test-coverage-exact no-install",
+      "exit_code": 0,
+      "covered_statements": 99647,
+      "total_statements": 99647,
+      "missing_lines": 0,
+      "missing_files": 0
+    },
+    {
+      "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 0",
+      "exit_code": 0,
+      "active_nodes": 24
+    },
+    {
+      "command": "make typecheck-input-contract INPUT_PHASE=0",
+      "exit_code": 0,
+      "active_fixtures": 1
+    },
+    {
+      "command": "make lint",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py",
+      "exit_code": 0,
+      "passed": 53,
+      "skipped": 0,
+      "deselected": 0,
+      "xfail": 0,
+      "xpass": 0
+    }
+  ],
+  "typing_async_audit": {
+    "strict_type_fixture_count": 1,
+    "negative_type_fixtures_planned": 4,
+    "effect_interfaces_async": [
+      "scripted provider",
+      "async barrier",
+      "local protocol peer"
+    ],
+    "blocking_waits": 0,
+    "timing_sleeps": 0,
+    "network_dependencies": 0
+  },
+  "unresolved_risks": [
+    "Database-backed exact target requires Docker or an admin DSN when exercised outside CI.",
+    "Public interaction behavior remains deliberately unimplemented and unadvertised."
+  ]
+}

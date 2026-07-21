@@ -1,0 +1,2489 @@
+{
+  "schema_version": 1,
+  "feature": "structured_task_input",
+  "current_phase": 0,
+  "categories": [
+    "unit",
+    "integration",
+    "negative",
+    "race",
+    "security",
+    "public_e2e"
+  ],
+  "activation_history": [
+    {
+      "phase": 0,
+      "node_ids": [
+        "gate-001-test_requirement_catalog_is_complete",
+        "gate-002-test_acceptance_manifest_lifecycle_is_monotonic",
+        "gate-002-test_acceptance_rejects_invalid_inventory",
+        "gate-003-test_failure_matrix_is_complete",
+        "gate-003-test_acceptance_rejects_na_reason_without_exact_ids",
+        "gate-004-test_acceptance_cli_executes_exact_synthetic_node",
+        "gate-004-test_acceptance_rejects_pytest_non_evidence",
+        "gate-004-test_acceptance_rejects_placeholder_and_execution_tricks",
+        "gate-005-test_exact_coverage_accepts_empty_module_variants",
+        "gate-005-test_exact_coverage_rejects_invalid_reports",
+        "gate-006-test_exact_make_target_fails_closed_on_pytest_failure",
+        "gate-006-test_project_metadata_pins_complete_common_gate",
+        "gate-006-test_workflow_exact_gate_detection_rejects_partial_coverage",
+        "gate-006-test_admin_dsn_runner_script_uses_ephemeral_database",
+        "gate-006-test_main_selects_admin_dsn_and_runner_script",
+        "gate-006-test_docker_forwards_runner_and_always_stops",
+        "gate-006-test_common_gate_cleans_partial_coverage",
+        "gate-006-test_common_gate_skips_acceptance_after_coverage_failure",
+        "gate-007-test_type_contract_manifest_and_runner_are_strict",
+        "gate-008-test_deterministic_fixtures_are_reproducible",
+        "gate-009-test_contract_decisions_are_frozen",
+        "gate-010-test_no_bc_removal_inventory_is_frozen",
+        "gate-011-test_baseline_evidence_is_complete",
+        "gate-012-test_capability_remains_absent"
+      ]
+    }
+  ],
+  "activation_snapshots": [
+    {
+      "phase": 0,
+      "node_ids": [
+        "tests/input_contract_test.py::test_requirement_catalog_is_complete",
+        "tests/input_contract_test.py::test_acceptance_manifest_lifecycle_is_monotonic",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory",
+        "tests/input_contract_test.py::test_failure_matrix_is_complete",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_na_reason_without_exact_ids",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_cli_executes_exact_synthetic_node",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_pytest_non_evidence",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_placeholder_and_execution_tricks",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_accepts_empty_module_variants",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_rejects_invalid_reports",
+        "tests/input_contract_metadata_test.py::test_exact_make_target_fails_closed_on_pytest_failure",
+        "tests/input_contract_metadata_test.py::test_project_metadata_pins_complete_common_gate",
+        "tests/project_metadata_test.py::test_workflow_exact_gate_detection_rejects_partial_coverage",
+        "tests/input_contract_harness_test.py::test_admin_dsn_runner_script_uses_ephemeral_database",
+        "tests/input_contract_harness_test.py::test_main_selects_admin_dsn_and_runner_script",
+        "tests/input_contract_harness_test.py::test_docker_forwards_runner_and_always_stops",
+        "tests/input_contract_harness_test.py::test_common_gate_cleans_partial_coverage",
+        "tests/input_contract_harness_test.py::test_common_gate_skips_acceptance_after_coverage_failure",
+        "tests/input_type_contract_test.py::test_type_contract_manifest_and_runner_are_strict",
+        "tests/input_contract_test.py::test_deterministic_fixtures_are_reproducible",
+        "tests/input_contract_test.py::test_contract_decisions_are_frozen",
+        "tests/input_contract_test.py::test_no_bc_removal_inventory_is_frozen",
+        "tests/input_contract_test.py::test_baseline_evidence_is_complete",
+        "tests/input_contract_test.py::test_capability_remains_absent"
+      ],
+      "sha256": "21740a6bd434fe96aab92f4c7b73ab68714bbc7e96ef74a79a7bd47c920f101c"
+    }
+  ],
+  "replacements": [],
+  "nodes": [
+    {
+      "id": "behavior-001",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-001"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_001"
+    },
+    {
+      "id": "behavior-002",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-002"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_002"
+    },
+    {
+      "id": "behavior-003",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-003"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_003"
+    },
+    {
+      "id": "behavior-004",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-004"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_004"
+    },
+    {
+      "id": "behavior-005",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-005"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_005"
+    },
+    {
+      "id": "behavior-006",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-006"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_006"
+    },
+    {
+      "id": "behavior-007",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-007"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_007"
+    },
+    {
+      "id": "behavior-008",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-008"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_008"
+    },
+    {
+      "id": "behavior-009",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-009"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_009"
+    },
+    {
+      "id": "behavior-010",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-010"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_010"
+    },
+    {
+      "id": "behavior-011",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-011"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_011"
+    },
+    {
+      "id": "behavior-012",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-012"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_012"
+    },
+    {
+      "id": "behavior-013",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-013"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_013"
+    },
+    {
+      "id": "behavior-014",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-014"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_014"
+    },
+    {
+      "id": "behavior-015",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-015"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_015"
+    },
+    {
+      "id": "behavior-016",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-016"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_016"
+    },
+    {
+      "id": "behavior-017",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-017"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_017"
+    },
+    {
+      "id": "behavior-018",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-018"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_018"
+    },
+    {
+      "id": "behavior-019",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "INPUT-N-019"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_019"
+    },
+    {
+      "id": "behavior-020",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "INPUT-N-020"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_020"
+    },
+    {
+      "id": "behavior-021",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "INPUT-N-021"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_021"
+    },
+    {
+      "id": "behavior-022",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-022"
+      ],
+      "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_022"
+    },
+    {
+      "id": "behavior-023",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-023"
+      ],
+      "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_023"
+    },
+    {
+      "id": "behavior-024",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-024"
+      ],
+      "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_024"
+    },
+    {
+      "id": "behavior-025",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-025"
+      ],
+      "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_025"
+    },
+    {
+      "id": "behavior-026",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-026"
+      ],
+      "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_026"
+    },
+    {
+      "id": "behavior-027",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-027"
+      ],
+      "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_027"
+    },
+    {
+      "id": "behavior-028",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-028"
+      ],
+      "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_028"
+    },
+    {
+      "id": "behavior-029",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-029"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_029"
+    },
+    {
+      "id": "behavior-030",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-030"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_030"
+    },
+    {
+      "id": "behavior-031",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-031"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_031"
+    },
+    {
+      "id": "behavior-032",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-032"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_032"
+    },
+    {
+      "id": "behavior-033",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-033"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_033"
+    },
+    {
+      "id": "behavior-034",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-034"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_034"
+    },
+    {
+      "id": "behavior-035",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-035"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_035"
+    },
+    {
+      "id": "behavior-036",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-036"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_036"
+    },
+    {
+      "id": "behavior-037",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-037"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_037"
+    },
+    {
+      "id": "behavior-038",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-038"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_038"
+    },
+    {
+      "id": "behavior-039",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-039"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_039"
+    },
+    {
+      "id": "behavior-040",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-040"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_040"
+    },
+    {
+      "id": "behavior-041",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-041"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_041"
+    },
+    {
+      "id": "behavior-042",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-042"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_042"
+    },
+    {
+      "id": "behavior-043",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "INPUT-N-043"
+      ],
+      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_043"
+    },
+    {
+      "id": "behavior-044",
+      "category": "race",
+      "lifecycle": "planned",
+      "active_from_phase": 4,
+      "requirement_ids": [
+        "INPUT-N-044"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_044"
+    },
+    {
+      "id": "behavior-045",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 4,
+      "requirement_ids": [
+        "INPUT-N-045"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_045"
+    },
+    {
+      "id": "behavior-046",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 4,
+      "requirement_ids": [
+        "INPUT-N-046"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_046"
+    },
+    {
+      "id": "behavior-047",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 4,
+      "requirement_ids": [
+        "INPUT-N-047"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_047"
+    },
+    {
+      "id": "behavior-048",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-048"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_048"
+    },
+    {
+      "id": "behavior-049",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-049"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_049"
+    },
+    {
+      "id": "behavior-050",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-050"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_050"
+    },
+    {
+      "id": "behavior-051",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-051"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_051"
+    },
+    {
+      "id": "behavior-052",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-052"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_052"
+    },
+    {
+      "id": "behavior-053",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-053"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_053"
+    },
+    {
+      "id": "behavior-054",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-054"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_054"
+    },
+    {
+      "id": "behavior-055",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-055"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_055"
+    },
+    {
+      "id": "behavior-056",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-056"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_056"
+    },
+    {
+      "id": "behavior-057",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-057"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_057"
+    },
+    {
+      "id": "behavior-058",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-058"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_058"
+    },
+    {
+      "id": "behavior-059",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-059"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_059"
+    },
+    {
+      "id": "behavior-060",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-060"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_060"
+    },
+    {
+      "id": "behavior-061",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-061"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_061"
+    },
+    {
+      "id": "behavior-062",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-062"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_062"
+    },
+    {
+      "id": "behavior-063",
+      "category": "unit",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-063"
+      ],
+      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_063"
+    },
+    {
+      "id": "behavior-064",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-064"
+      ],
+      "node_id": "tests/input/sdk_contract_test.py::test_requirement_input_n_064"
+    },
+    {
+      "id": "behavior-065",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-065"
+      ],
+      "node_id": "tests/input/sdk_contract_test.py::test_requirement_input_n_065"
+    },
+    {
+      "id": "behavior-066",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-066"
+      ],
+      "node_id": "tests/input/sdk_contract_test.py::test_requirement_input_n_066"
+    },
+    {
+      "id": "behavior-067",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-067"
+      ],
+      "node_id": "tests/input/sdk_contract_test.py::test_requirement_input_n_067"
+    },
+    {
+      "id": "behavior-068",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-068"
+      ],
+      "node_id": "tests/input/headless_contract_test.py::test_requirement_input_n_068"
+    },
+    {
+      "id": "behavior-069",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-069"
+      ],
+      "node_id": "tests/input/headless_contract_test.py::test_requirement_input_n_069"
+    },
+    {
+      "id": "behavior-070",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-070"
+      ],
+      "node_id": "tests/input/headless_contract_test.py::test_requirement_input_n_070"
+    },
+    {
+      "id": "behavior-071",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-071"
+      ],
+      "node_id": "tests/input/server_contract_test.py::test_requirement_input_n_071"
+    },
+    {
+      "id": "behavior-072",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-072"
+      ],
+      "node_id": "tests/input/server_contract_test.py::test_requirement_input_n_072"
+    },
+    {
+      "id": "behavior-073",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-073"
+      ],
+      "node_id": "tests/input/server_contract_test.py::test_requirement_input_n_073"
+    },
+    {
+      "id": "behavior-074",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-074"
+      ],
+      "node_id": "tests/input/server_contract_test.py::test_requirement_input_n_074"
+    },
+    {
+      "id": "behavior-075",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-075"
+      ],
+      "node_id": "tests/input/mcp_contract_test.py::test_requirement_input_n_075"
+    },
+    {
+      "id": "behavior-076",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-076"
+      ],
+      "node_id": "tests/input/mcp_contract_test.py::test_requirement_input_n_076"
+    },
+    {
+      "id": "behavior-077",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-077"
+      ],
+      "node_id": "tests/input/mcp_contract_test.py::test_requirement_input_n_077"
+    },
+    {
+      "id": "behavior-078",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-078"
+      ],
+      "node_id": "tests/input/mcp_contract_test.py::test_requirement_input_n_078"
+    },
+    {
+      "id": "behavior-079",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-079"
+      ],
+      "node_id": "tests/input/mcp_contract_test.py::test_requirement_input_n_079"
+    },
+    {
+      "id": "behavior-080",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-080"
+      ],
+      "node_id": "tests/input/mcp_contract_test.py::test_requirement_input_n_080"
+    },
+    {
+      "id": "behavior-081",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-081"
+      ],
+      "node_id": "tests/input/a2a_contract_test.py::test_requirement_input_n_081"
+    },
+    {
+      "id": "behavior-082",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-082"
+      ],
+      "node_id": "tests/input/a2a_contract_test.py::test_requirement_input_n_082"
+    },
+    {
+      "id": "behavior-083",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-083"
+      ],
+      "node_id": "tests/input/a2a_contract_test.py::test_requirement_input_n_083"
+    },
+    {
+      "id": "behavior-084",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-084"
+      ],
+      "node_id": "tests/input/a2a_contract_test.py::test_requirement_input_n_084"
+    },
+    {
+      "id": "behavior-085",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-085"
+      ],
+      "node_id": "tests/input/orchestration_contract_test.py::test_requirement_input_n_085"
+    },
+    {
+      "id": "behavior-086",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-086"
+      ],
+      "node_id": "tests/input/orchestration_contract_test.py::test_requirement_input_n_086"
+    },
+    {
+      "id": "behavior-087",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-087"
+      ],
+      "node_id": "tests/input/orchestration_contract_test.py::test_requirement_input_n_087"
+    },
+    {
+      "id": "behavior-088",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-088"
+      ],
+      "node_id": "tests/input/orchestration_contract_test.py::test_requirement_input_n_088"
+    },
+    {
+      "id": "behavior-089",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-089"
+      ],
+      "node_id": "tests/input/orchestration_contract_test.py::test_requirement_input_n_089"
+    },
+    {
+      "id": "behavior-090",
+      "category": "race",
+      "lifecycle": "planned",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "INPUT-N-090"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_090"
+    },
+    {
+      "id": "behavior-091",
+      "category": "race",
+      "lifecycle": "planned",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "INPUT-N-091"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_091"
+    },
+    {
+      "id": "behavior-092",
+      "category": "race",
+      "lifecycle": "planned",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "INPUT-N-092"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_092"
+    },
+    {
+      "id": "behavior-093",
+      "category": "race",
+      "lifecycle": "planned",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "INPUT-N-093"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_093"
+    },
+    {
+      "id": "behavior-094",
+      "category": "race",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-094"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_094"
+    },
+    {
+      "id": "behavior-095",
+      "category": "race",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-095"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_095"
+    },
+    {
+      "id": "behavior-096",
+      "category": "race",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-096"
+      ],
+      "node_id": "tests/input/broker_contract_test.py::test_requirement_input_n_096"
+    },
+    {
+      "id": "behavior-097",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-097"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_097"
+    },
+    {
+      "id": "behavior-098",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-098"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_098"
+    },
+    {
+      "id": "behavior-099",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-099"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_099"
+    },
+    {
+      "id": "behavior-100",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-100"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_100"
+    },
+    {
+      "id": "behavior-101",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-101"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_101"
+    },
+    {
+      "id": "behavior-102",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-102"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_102"
+    },
+    {
+      "id": "behavior-103",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-103"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_103"
+    },
+    {
+      "id": "behavior-104",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-104"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_104"
+    },
+    {
+      "id": "behavior-105",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-105"
+      ],
+      "node_id": "tests/input/security_contract_test.py::test_requirement_input_n_105"
+    },
+    {
+      "id": "behavior-106",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_contract_test.py::test_requirement_input_n_106"
+    },
+    {
+      "id": "behavior-107",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-107"
+      ],
+      "node_id": "tests/input/failure_contract_test.py::test_requirement_input_n_107"
+    },
+    {
+      "id": "scenario-26-1",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-26.1"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_attached_cli_clarification"
+    },
+    {
+      "id": "scenario-26-2",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-26.2"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_text_and_multiple_selection"
+    },
+    {
+      "id": "scenario-26-3",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-26.3"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_piped_prompt_with_tty"
+    },
+    {
+      "id": "scenario-26-4",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-26.4"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_fully_headless_run"
+    },
+    {
+      "id": "scenario-26-5",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-26.5"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_required_versus_advisory"
+    },
+    {
+      "id": "scenario-26-6",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-26.6"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_decline_cancel_and_steering"
+    },
+    {
+      "id": "scenario-26-7",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-26.7"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_approval_isolation"
+    },
+    {
+      "id": "scenario-26-8",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-26.8"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_mcp_projection"
+    },
+    {
+      "id": "scenario-26-9",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-26.9"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_a2a_projection"
+    },
+    {
+      "id": "scenario-26-10",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-26.10"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_multi_agent_origin"
+    },
+    {
+      "id": "scenario-26-11",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-26.11"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_idempotency_and_staleness"
+    },
+    {
+      "id": "scenario-26-12",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-26.12"
+      ],
+      "node_id": "tests/input/public_interaction_e2e_test.py::test_privacy"
+    },
+    {
+      "id": "gate-001-test_requirement_catalog_is_complete",
+      "category": "unit",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-001"
+      ],
+      "node_id": "tests/input_contract_test.py::test_requirement_catalog_is_complete"
+    },
+    {
+      "id": "gate-002-test_acceptance_manifest_lifecycle_is_monotonic",
+      "category": "unit",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-002"
+      ],
+      "node_id": "tests/input_contract_test.py::test_acceptance_manifest_lifecycle_is_monotonic"
+    },
+    {
+      "id": "gate-002-test_acceptance_rejects_invalid_inventory",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-002"
+      ],
+      "node_id": "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory"
+    },
+    {
+      "id": "gate-003-test_failure_matrix_is_complete",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-003"
+      ],
+      "node_id": "tests/input_contract_test.py::test_failure_matrix_is_complete"
+    },
+    {
+      "id": "gate-003-test_acceptance_rejects_na_reason_without_exact_ids",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-003"
+      ],
+      "node_id": "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_na_reason_without_exact_ids"
+    },
+    {
+      "id": "gate-004-test_acceptance_cli_executes_exact_synthetic_node",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-004"
+      ],
+      "node_id": "tests/input_acceptance_verifier_test.py::test_acceptance_cli_executes_exact_synthetic_node"
+    },
+    {
+      "id": "gate-004-test_acceptance_rejects_pytest_non_evidence",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-004"
+      ],
+      "node_id": "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_pytest_non_evidence"
+    },
+    {
+      "id": "gate-004-test_acceptance_rejects_placeholder_and_execution_tricks",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-004"
+      ],
+      "node_id": "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_placeholder_and_execution_tricks"
+    },
+    {
+      "id": "gate-005-test_exact_coverage_accepts_empty_module_variants",
+      "category": "unit",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-005"
+      ],
+      "node_id": "tests/src_coverage_verifier_test.py::test_exact_coverage_accepts_empty_module_variants"
+    },
+    {
+      "id": "gate-005-test_exact_coverage_rejects_invalid_reports",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-005"
+      ],
+      "node_id": "tests/src_coverage_verifier_test.py::test_exact_coverage_rejects_invalid_reports"
+    },
+    {
+      "id": "gate-006-test_exact_make_target_fails_closed_on_pytest_failure",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-006"
+      ],
+      "node_id": "tests/input_contract_metadata_test.py::test_exact_make_target_fails_closed_on_pytest_failure"
+    },
+    {
+      "id": "gate-006-test_project_metadata_pins_complete_common_gate",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-006"
+      ],
+      "node_id": "tests/input_contract_metadata_test.py::test_project_metadata_pins_complete_common_gate"
+    },
+    {
+      "id": "gate-006-test_workflow_exact_gate_detection_rejects_partial_coverage",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-006"
+      ],
+      "node_id": "tests/project_metadata_test.py::test_workflow_exact_gate_detection_rejects_partial_coverage"
+    },
+    {
+      "id": "gate-006-test_admin_dsn_runner_script_uses_ephemeral_database",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-006"
+      ],
+      "node_id": "tests/input_contract_harness_test.py::test_admin_dsn_runner_script_uses_ephemeral_database"
+    },
+    {
+      "id": "gate-006-test_main_selects_admin_dsn_and_runner_script",
+      "category": "unit",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-006"
+      ],
+      "node_id": "tests/input_contract_harness_test.py::test_main_selects_admin_dsn_and_runner_script"
+    },
+    {
+      "id": "gate-006-test_docker_forwards_runner_and_always_stops",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-006"
+      ],
+      "node_id": "tests/input_contract_harness_test.py::test_docker_forwards_runner_and_always_stops"
+    },
+    {
+      "id": "gate-006-test_common_gate_cleans_partial_coverage",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-006"
+      ],
+      "node_id": "tests/input_contract_harness_test.py::test_common_gate_cleans_partial_coverage"
+    },
+    {
+      "id": "gate-006-test_common_gate_skips_acceptance_after_coverage_failure",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-006"
+      ],
+      "node_id": "tests/input_contract_harness_test.py::test_common_gate_skips_acceptance_after_coverage_failure"
+    },
+    {
+      "id": "gate-007-test_type_contract_manifest_and_runner_are_strict",
+      "category": "unit",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-007"
+      ],
+      "node_id": "tests/input_type_contract_test.py::test_type_contract_manifest_and_runner_are_strict"
+    },
+    {
+      "id": "gate-008-test_deterministic_fixtures_are_reproducible",
+      "category": "race",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-008"
+      ],
+      "node_id": "tests/input_contract_test.py::test_deterministic_fixtures_are_reproducible"
+    },
+    {
+      "id": "gate-009-test_contract_decisions_are_frozen",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-009"
+      ],
+      "node_id": "tests/input_contract_test.py::test_contract_decisions_are_frozen"
+    },
+    {
+      "id": "gate-010-test_no_bc_removal_inventory_is_frozen",
+      "category": "unit",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-010"
+      ],
+      "node_id": "tests/input_contract_test.py::test_no_bc_removal_inventory_is_frozen"
+    },
+    {
+      "id": "gate-011-test_baseline_evidence_is_complete",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-011"
+      ],
+      "node_id": "tests/input_contract_test.py::test_baseline_evidence_is_complete"
+    },
+    {
+      "id": "gate-012-test_capability_remains_absent",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "INPUT-GATE-012"
+      ],
+      "node_id": "tests/input_contract_test.py::test_capability_remains_absent"
+    },
+    {
+      "id": "failure-input-f-01-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-input-f-01-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-input-f-01-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-input-f-01-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-input-f-01-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-input-f-01-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-input-f-01-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-input-f-01-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-input-f-02-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_02"
+    },
+    {
+      "id": "failure-input-f-03-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_03"
+    },
+    {
+      "id": "failure-input-f-04-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-input-f-04-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-input-f-04-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-input-f-04-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-input-f-04-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-input-f-04-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-input-f-04-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-input-f-04-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-input-f-05-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-input-f-05-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-input-f-05-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-input-f-05-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-input-f-05-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-input-f-05-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-input-f-05-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-input-f-05-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-input-f-06-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-input-f-06-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-input-f-06-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-input-f-06-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-input-f-06-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-input-f-06-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-input-f-06-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-input-f-06-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-input-f-07-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-input-f-07-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-input-f-07-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-input-f-07-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-input-f-07-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-input-f-07-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-input-f-07-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-input-f-07-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-input-f-08-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-input-f-08-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-input-f-08-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-input-f-08-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-input-f-08-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-input-f-08-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-input-f-08-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-input-f-08-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-input-f-09-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-input-f-09-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-input-f-09-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-input-f-09-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-input-f-09-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-input-f-09-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-input-f-09-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-input-f-09-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-input-f-10-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-input-f-10-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-input-f-10-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-input-f-10-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-input-f-10-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-input-f-10-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-input-f-10-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-input-f-10-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-input-f-11-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-input-f-11-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-input-f-11-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-input-f-11-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-input-f-11-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-input-f-11-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-input-f-11-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-input-f-11-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-input-f-12-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-input-f-12-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-input-f-12-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-input-f-12-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-input-f-12-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-input-f-12-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-input-f-12-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-input-f-12-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-input-f-13-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-input-f-13-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-input-f-13-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-input-f-13-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-input-f-13-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-input-f-13-task",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-input-f-13-flow",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-input-f-13-nested_agent",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-input-f-14-cli",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_14"
+    },
+    {
+      "id": "failure-input-f-14-sdk",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_14"
+    },
+    {
+      "id": "failure-input-f-14-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_14"
+    },
+    {
+      "id": "failure-input-f-14-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_14"
+    },
+    {
+      "id": "failure-input-f-14-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_14"
+    },
+    {
+      "id": "failure-input-f-15-server",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_15"
+    },
+    {
+      "id": "failure-input-f-15-mcp",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_15"
+    },
+    {
+      "id": "failure-input-f-15-a2a",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15"
+    }
+  ]
+}

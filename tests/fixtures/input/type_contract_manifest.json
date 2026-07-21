@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "feature": "structured_task_input",
+  "current_phase": 0,
+  "activation_history": [
+    {
+      "phase": 0,
+      "fixture_ids": [
+        "deterministic-fixtures-positive"
+      ]
+    }
+  ],
+  "activation_snapshots": [
+    {
+      "phase": 0,
+      "fixture_ids": [
+        "deterministic-fixtures-positive"
+      ],
+      "sha256": "e72e5294c5f6e93166f11535b6c1bfe5dfcf5690611363fd6f890a6de73515b7"
+    }
+  ],
+  "replacements": [],
+  "fixtures": [
+    {
+      "id": "deterministic-fixtures-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/input_type_contracts/deterministic_positive.py",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "canonical-answers-positive",
+      "kind": "positive",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "path": "tests/input_type_contracts/canonical_answers_positive.py",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "wrong-answer-variants-negative",
+      "kind": "negative",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "path": "tests/input_type_contracts/wrong_answer_variants_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/wrong_answer_variants_negative.py:12: error: Argument 1 to \"resolve_input\" has incompatible type \"str\"; expected \"InputResolution\"  [arg-type]",
+        "tests/input_type_contracts/wrong_answer_variants_negative.py:16: error: Argument 1 to \"resolve_input\" has incompatible type \"int\"; expected \"InputResolution\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "untyped-payload-negative",
+      "kind": "negative",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "path": "tests/input_type_contracts/untyped_payload_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/untyped_payload_negative.py:12: error: Argument 1 to \"resolve_input\" has incompatible type \"dict[str, object]\"; expected \"InputResolution\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "mixed-identity-token-negative",
+      "kind": "negative",
+      "lifecycle": "planned",
+      "active_from_phase": 1,
+      "path": "tests/input_type_contracts/mixed_identity_token_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/mixed_identity_token_negative.py:12: error: Argument \"request_id\" to \"resolve_input\" has incompatible type \"RunId\"; expected \"InputRequestId\"  [arg-type]",
+        "tests/input_type_contracts/mixed_identity_token_negative.py:13: error: Argument \"continuation_id\" to \"resolve_input\" has incompatible type \"InputRequestId\"; expected \"ContinuationId\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "async-handler-positive",
+      "kind": "positive",
+      "lifecycle": "planned",
+      "active_from_phase": 2,
+      "path": "tests/input_type_contracts/async_handler_positive.py",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "synchronous-handler-negative",
+      "kind": "negative",
+      "lifecycle": "planned",
+      "active_from_phase": 2,
+      "path": "tests/input_type_contracts/synchronous_handler_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/synchronous_handler_negative.py:12: error: Argument \"handler\" to \"InteractionRuntime\" has incompatible type \"Callable[[InputRequest], InputResolution]\"; expected \"InputHandler\"  [arg-type]"
+      ]
+    }
+  ]
+}

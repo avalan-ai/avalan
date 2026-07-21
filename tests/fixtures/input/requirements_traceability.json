@@ -1,0 +1,1949 @@
+{
+  "schema_version": 1,
+  "feature": "structured_task_input",
+  "source_sections": [
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "15",
+    "16",
+    "17",
+    "18",
+    "19",
+    "20",
+    "21",
+    "22",
+    "23",
+    "24",
+    "25",
+    "26"
+  ],
+  "catalog_sha256": "4871c2cee6bab371387d03dcfac8f81c5d4a3583bd6d6c510e0314a37468f06a",
+  "requirements": [
+    {
+      "id": "INPUT-N-001",
+      "source_section": "7.1",
+      "normative_level": "MUST",
+      "paraphrase": "Give the model a structured task-input capability in the same conceptual manner as a tool.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_001"
+      ]
+    },
+    {
+      "id": "INPUT-N-002",
+      "source_section": "7.1",
+      "normative_level": "MUST",
+      "paraphrase": "Convert every invocation of the reserved capability into a runtime input_required interaction.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_002"
+      ]
+    },
+    {
+      "id": "INPUT-N-003",
+      "source_section": "7.1",
+      "normative_level": "MUST",
+      "paraphrase": "Keep the model-facing capability from reading standard input, accessing a terminal, rendering widgets, or owning persistence.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_003"
+      ]
+    },
+    {
+      "id": "INPUT-N-004",
+      "source_section": "7.2",
+      "normative_level": "MUST",
+      "paraphrase": "Describe semantic input types in each request.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_004"
+      ]
+    },
+    {
+      "id": "INPUT-N-005",
+      "source_section": "7.2",
+      "normative_level": "MUST",
+      "paraphrase": "Avoid prescribing a widget and preserve stable choices and values across semantically equivalent native presentations.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_005"
+      ]
+    },
+    {
+      "id": "INPUT-N-006",
+      "source_section": "7.3",
+      "normative_level": "MUST",
+      "paraphrase": "Resolve the pending model request and continue the same logical run after an answered resolution.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_006"
+      ]
+    },
+    {
+      "id": "INPUT-N-007",
+      "source_section": "7.4",
+      "normative_level": "MUST",
+      "paraphrase": "Keep the canonical lifecycle independent of provider tool-call syntax and treat plain prose questions only as degraded fallback.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_007"
+      ]
+    },
+    {
+      "id": "INPUT-N-008",
+      "source_section": "7.5",
+      "normative_level": "MUST",
+      "paraphrase": "Advertise the capability only when the host can resolve it while attached or persist both request and continuation for later resolution.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_008"
+      ]
+    },
+    {
+      "id": "INPUT-N-009",
+      "source_section": "7.5",
+      "normative_level": "SHOULD",
+      "paraphrase": "Govern availability by host interaction capability rather than ordinary domain-tool permissions.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_009"
+      ]
+    },
+    {
+      "id": "INPUT-N-010",
+      "source_section": "7.6",
+      "normative_level": "MUST",
+      "paraphrase": "Represent decline, cancellation, timeout, unavailability, and expiry explicitly.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_010"
+      ]
+    },
+    {
+      "id": "INPUT-N-011",
+      "source_section": "7.6",
+      "normative_level": "MUST",
+      "paraphrase": "Never manufacture a human answer when no human supplied one.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_011"
+      ]
+    },
+    {
+      "id": "INPUT-N-012",
+      "source_section": "7.7",
+      "normative_level": "MUST",
+      "paraphrase": "Keep clarification, approval, steering, and authentication as distinct interaction classes.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_012"
+      ]
+    },
+    {
+      "id": "INPUT-N-013",
+      "source_section": "7.8",
+      "normative_level": "SHOULD",
+      "paraphrase": "Request input only when it materially affects the result and cannot be recovered safely from context.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_013"
+      ]
+    },
+    {
+      "id": "INPUT-N-014",
+      "source_section": "7.8",
+      "normative_level": "SHOULD",
+      "paraphrase": "Inspect context, prefer one focused question, offer concrete consequential choices, and continue on a safe reversible assumption when possible.",
+      "owner": "interaction domain and capability catalog",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_014"
+      ]
+    },
+    {
+      "id": "INPUT-N-015",
+      "source_section": "8",
+      "normative_level": "MUST",
+      "paraphrase": "Distinguish task input, action approval, steering, and authentication by origin, meaning, and resolution effect.",
+      "owner": "interaction security boundary",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_015"
+      ]
+    },
+    {
+      "id": "INPUT-N-016",
+      "source_section": "8",
+      "normative_level": "MUST",
+      "paraphrase": "Never let a task-input answer grant action approval.",
+      "owner": "interaction security boundary",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_016"
+      ]
+    },
+    {
+      "id": "INPUT-N-017",
+      "source_section": "8",
+      "normative_level": "MUST",
+      "paraphrase": "Never deliver an approval response as ordinary task content unless a separate policy exposes a safe summary.",
+      "owner": "interaction security boundary",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_017"
+      ]
+    },
+    {
+      "id": "INPUT-N-018",
+      "source_section": "8",
+      "normative_level": "MUST",
+      "paraphrase": "Never collect authentication material through the normal task-input contract.",
+      "owner": "interaction security boundary",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_018"
+      ]
+    },
+    {
+      "id": "INPUT-N-019",
+      "source_section": "9",
+      "normative_level": "MUST",
+      "paraphrase": "Make the interaction broker own identity, correlation, origin, capability negotiation, delivery, persistence, validation, idempotency, cancellation, timeout, expiry, and privacy-aware observability.",
+      "owner": "interaction broker",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_019"
+      ]
+    },
+    {
+      "id": "INPUT-N-020",
+      "source_section": "9",
+      "normative_level": "MUST",
+      "paraphrase": "Limit renderers to presentation ownership.",
+      "owner": "interaction broker",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_020"
+      ]
+    },
+    {
+      "id": "INPUT-N-021",
+      "source_section": "9",
+      "normative_level": "MUST",
+      "paraphrase": "Prevent renderers from redefining request meaning or execution state.",
+      "owner": "interaction broker",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_021"
+      ]
+    },
+    {
+      "id": "INPUT-N-022",
+      "source_section": "10",
+      "normative_level": "SHOULD",
+      "paraphrase": "Expose one reserved provider-neutral model capability meaning request task input from the user.",
+      "owner": "model capability composition",
+      "implementation_artifacts": [
+        "planned:tests/input/model_capability_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022"
+      ]
+    },
+    {
+      "id": "INPUT-N-023",
+      "source_section": "10",
+      "normative_level": "MUST",
+      "paraphrase": "Bound typed questions, declare required or advisory intent, await a defined resolution, return it to the pending model request, preserve human provenance, and remain unavailable to incapable hosts.",
+      "owner": "model capability composition",
+      "implementation_artifacts": [
+        "planned:tests/input/model_capability_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_023"
+      ]
+    },
+    {
+      "id": "INPUT-N-024",
+      "source_section": "10",
+      "normative_level": "SHOULD",
+      "paraphrase": "Normally contain one question per request.",
+      "owner": "model capability composition",
+      "implementation_artifacts": [
+        "planned:tests/input/model_capability_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_024"
+      ]
+    },
+    {
+      "id": "INPUT-N-025",
+      "source_section": "10",
+      "normative_level": "MAY",
+      "paraphrase": "Allow a small host-rendered bundle for closely related decisions.",
+      "owner": "model capability composition",
+      "implementation_artifacts": [
+        "planned:tests/input/model_capability_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_025"
+      ]
+    },
+    {
+      "id": "INPUT-N-026",
+      "source_section": "10",
+      "normative_level": "SHOULD",
+      "paraphrase": "Limit the initial request contract to at most three questions.",
+      "owner": "model capability composition",
+      "implementation_artifacts": [
+        "planned:tests/input/model_capability_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_026"
+      ]
+    },
+    {
+      "id": "INPUT-N-027",
+      "source_section": "10",
+      "normative_level": "MUST",
+      "paraphrase": "Never execute a domain action, read process input directly, ask for secrets, approve an operation, assume a renderer, or label a timeout/default as human.",
+      "owner": "model capability composition",
+      "implementation_artifacts": [
+        "planned:tests/input/model_capability_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_027"
+      ]
+    },
+    {
+      "id": "INPUT-N-028",
+      "source_section": "10",
+      "normative_level": "SHOULD",
+      "paraphrase": "Account for input requests separately from domain tool execution.",
+      "owner": "model capability composition",
+      "implementation_artifacts": [
+        "planned:tests/input/model_capability_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_028"
+      ]
+    },
+    {
+      "id": "INPUT-N-029",
+      "source_section": "11",
+      "normative_level": "MUST",
+      "paraphrase": "Include opaque request identity, full execution correlation, typed stable question IDs, required/advisory intent, a reason, creation time, and lifecycle state.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_029"
+      ]
+    },
+    {
+      "id": "INPUT-N-030",
+      "source_section": "11",
+      "normative_level": "MUST",
+      "paraphrase": "Give each question a stable ID, concise prompt, semantic type, and accepted-response requirement.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_030"
+      ]
+    },
+    {
+      "id": "INPUT-N-031",
+      "source_section": "11",
+      "normative_level": "MAY",
+      "paraphrase": "Allow bounded headers, help, choices, recommendations, defaults, Other permission, validation constraints, and advisory presentation hints.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_031"
+      ]
+    },
+    {
+      "id": "INPUT-N-032",
+      "source_section": "11",
+      "normative_level": "MUST",
+      "paraphrase": "Key answers by stable question ID rather than displayed text.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_032"
+      ]
+    },
+    {
+      "id": "INPUT-N-033",
+      "source_section": "11.1",
+      "normative_level": "SHOULD",
+      "paraphrase": "Support confirmation, text, multiline text, single selection, and multiple selection while excluding nested forms, conditional subforms, uploads, and executable UI.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_033"
+      ]
+    },
+    {
+      "id": "INPUT-N-034",
+      "source_section": "11.2",
+      "normative_level": "MUST",
+      "paraphrase": "Give every choice a stable machine value and human-readable label.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_034"
+      ]
+    },
+    {
+      "id": "INPUT-N-035",
+      "source_section": "11.2",
+      "normative_level": "SHOULD",
+      "paraphrase": "Describe non-obvious choice consequences while allowing labels to change without changing stored or returned values.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_035"
+      ]
+    },
+    {
+      "id": "INPUT-N-036",
+      "source_section": "11.3",
+      "normative_level": "MAY",
+      "paraphrase": "Allow a tagged free-form Other alternative instead of a literal choice value.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_036"
+      ]
+    },
+    {
+      "id": "INPUT-N-037",
+      "source_section": "11.3",
+      "normative_level": "SHOULD",
+      "paraphrase": "Present structured choices first and open text entry only after the free-form alternative is selected.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_037"
+      ]
+    },
+    {
+      "id": "INPUT-N-038",
+      "source_section": "11.4",
+      "normative_level": "MAY",
+      "paraphrase": "Express compactness and native-control presentation preferences as hints.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_038"
+      ]
+    },
+    {
+      "id": "INPUT-N-039",
+      "source_section": "11.4",
+      "normative_level": "MUST",
+      "paraphrase": "Keep presentation hints advisory so hosts may choose semantically equivalent accessible controls.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_039"
+      ]
+    },
+    {
+      "id": "INPUT-N-040",
+      "source_section": "12",
+      "normative_level": "MUST",
+      "paraphrase": "Resolve a request exactly once as answered, declined, cancelled, timed_out, unavailable, expired, or superseded.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_040"
+      ]
+    },
+    {
+      "id": "INPUT-N-041",
+      "source_section": "12",
+      "normative_level": "MUST",
+      "paraphrase": "Identify the request, keyed answers, per-answer provenance, and resolution time in an answered resolution.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_041"
+      ]
+    },
+    {
+      "id": "INPUT-N-042",
+      "source_section": "12",
+      "normative_level": "MUST",
+      "paraphrase": "Distinguish human, explicit host/caller default, and policy provenance, and describe only explicit human input as human-selected or entered.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_042"
+      ]
+    },
+    {
+      "id": "INPUT-N-043",
+      "source_section": "12",
+      "normative_level": "MUST",
+      "paraphrase": "Validate response types, choice values, required fields, and current request state before continuation.",
+      "owner": "canonical interaction domain",
+      "implementation_artifacts": [
+        "planned:tests/input/canonical_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_043"
+      ]
+    },
+    {
+      "id": "INPUT-N-044",
+      "source_section": "13",
+      "normative_level": "MUST",
+      "paraphrase": "Stop consuming model tokens and executing dependent tools while a required request is unresolved, following the attached or detached continuation lifecycle.",
+      "owner": "execution and continuation runtime",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_044"
+      ]
+    },
+    {
+      "id": "INPUT-N-045",
+      "source_section": "14.1",
+      "normative_level": "MUST",
+      "paraphrase": "Keep required input unresolved until an explicit terminal resolution category occurs.",
+      "owner": "execution and continuation runtime",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_045"
+      ]
+    },
+    {
+      "id": "INPUT-N-046",
+      "source_section": "14.1",
+      "normative_level": "MUST",
+      "paraphrase": "Never silently select a required default because a timer elapsed.",
+      "owner": "execution and continuation runtime",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_046"
+      ]
+    },
+    {
+      "id": "INPUT-N-047",
+      "source_section": "14.1",
+      "normative_level": "MUST",
+      "paraphrase": "Return an explicit non-answer outcome to the model when required input cannot be presented or resumed.",
+      "owner": "execution and continuation runtime",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_047"
+      ]
+    },
+    {
+      "id": "INPUT-N-048",
+      "source_section": "14.2",
+      "normative_level": "MAY",
+      "paraphrase": "Apply a host-controlled waiting budget to advisory input.",
+      "owner": "execution and continuation runtime",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_048"
+      ]
+    },
+    {
+      "id": "INPUT-N-049",
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "Preserve an advisory budget expiry as timed_out provenance.",
+      "owner": "execution and continuation runtime",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_049"
+      ]
+    },
+    {
+      "id": "INPUT-N-050",
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "Mark a subsequently applied advisory default as default rather than human provenance.",
+      "owner": "execution and continuation runtime",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_050"
+      ]
+    },
+    {
+      "id": "INPUT-N-051",
+      "source_section": "14.2",
+      "normative_level": "SHOULD",
+      "paraphrase": "Pause inactivity-based timeout accounting while the human is actively using the control.",
+      "owner": "execution and continuation runtime",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_051"
+      ]
+    },
+    {
+      "id": "INPUT-N-052",
+      "source_section": "15.1",
+      "normative_level": "SHOULD",
+      "paraphrase": "Render confirmation, selections, text, multiline text, and related bundles through appropriate native terminal controls.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_052"
+      ]
+    },
+    {
+      "id": "INPUT-N-053",
+      "source_section": "15.1",
+      "normative_level": "SHOULD",
+      "paraphrase": "Provide navigation, shortcuts, visible recommendations, Other entry, distinct cancel/decline actions, and accessible text fallbacks.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_053"
+      ]
+    },
+    {
+      "id": "INPUT-N-054",
+      "source_section": "15.2",
+      "normative_level": "MUST",
+      "paraphrase": "Never collect later clarification from an exhausted piped initial-input stream.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_054"
+      ]
+    },
+    {
+      "id": "INPUT-N-055",
+      "source_section": "15.2",
+      "normative_level": "MAY",
+      "paraphrase": "Use a controlling terminal as a separate interactive control channel while keeping prompt and control input separate.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_055"
+      ]
+    },
+    {
+      "id": "INPUT-N-056",
+      "source_section": "15.2",
+      "normative_level": "MUST",
+      "paraphrase": "Return machine-readable input_required or explicit unavailable when no interactive control channel exists.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_056"
+      ]
+    },
+    {
+      "id": "INPUT-N-057",
+      "source_section": "15.2",
+      "normative_level": "MUST",
+      "paraphrase": "Never hang reading an input stream that cannot produce an answer.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_057"
+      ]
+    },
+    {
+      "id": "INPUT-N-058",
+      "source_section": "15.3",
+      "normative_level": "MUST",
+      "paraphrase": "Keep human interaction UI out of answer-only output, structured model output, and machine event streams.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_058"
+      ]
+    },
+    {
+      "id": "INPUT-N-059",
+      "source_section": "15.3",
+      "normative_level": "SHOULD",
+      "paraphrase": "Use the terminal presentation channel for interactive controls.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_059"
+      ]
+    },
+    {
+      "id": "INPUT-N-060",
+      "source_section": "15.3",
+      "normative_level": "SHOULD",
+      "paraphrase": "Emit a structured request event with stable correlation for machine-oriented CLI control.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_060"
+      ]
+    },
+    {
+      "id": "INPUT-N-061",
+      "source_section": "15.4",
+      "normative_level": "MUST",
+      "paraphrase": "Never imply detached resumability for a sessionless run after its continuation is discarded.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_061"
+      ]
+    },
+    {
+      "id": "INPUT-N-062",
+      "source_section": "15.5",
+      "normative_level": "MUST",
+      "paraphrase": "Distinguish input-control cancellation, decline, containing-run cancellation, and unsolicited steering.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_062"
+      ]
+    },
+    {
+      "id": "INPUT-N-063",
+      "source_section": "15.5",
+      "normative_level": "SHOULD",
+      "paraphrase": "Make keyboard interruption behavior predictable and explicit before destructive run cancellation.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/cli_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/cli_contract_test.py::test_requirement_input_n_063"
+      ]
+    },
+    {
+      "id": "INPUT-N-064",
+      "source_section": "16",
+      "normative_level": "SHOULD",
+      "paraphrase": "Allow embedded hosts to register a complete semantic async handler that resolves, waits, detaches, and receives cancellation.",
+      "owner": "public async SDK",
+      "implementation_artifacts": [
+        "planned:tests/input/sdk_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_064"
+      ]
+    },
+    {
+      "id": "INPUT-N-065",
+      "source_section": "16",
+      "normative_level": "MUST",
+      "paraphrase": "Permit an SDK handler to remain pending without blocking unrelated application work.",
+      "owner": "public async SDK",
+      "implementation_artifacts": [
+        "planned:tests/input/sdk_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_065"
+      ]
+    },
+    {
+      "id": "INPUT-N-066",
+      "source_section": "16",
+      "normative_level": "MUST",
+      "paraphrase": "Give detached hosts sufficient opaque correlation without provider-specific reconstruction.",
+      "owner": "public async SDK",
+      "implementation_artifacts": [
+        "planned:tests/input/sdk_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_066"
+      ]
+    },
+    {
+      "id": "INPUT-N-067",
+      "source_section": "16",
+      "normative_level": "MUST",
+      "paraphrase": "Allow applications to reject or decline requests they cannot safely render.",
+      "owner": "public async SDK",
+      "implementation_artifacts": [
+        "planned:tests/input/sdk_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_067"
+      ]
+    },
+    {
+      "id": "INPUT-N-068",
+      "source_section": "17",
+      "normative_level": "MUST",
+      "paraphrase": "Require an explicit headless policy covering predeclared values, controllers, persistence, defaults with non-human provenance, or unavailability.",
+      "owner": "headless interaction policy",
+      "implementation_artifacts": [
+        "planned:tests/input/headless_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/headless_contract_test.py::test_requirement_input_n_068"
+      ]
+    },
+    {
+      "id": "INPUT-N-069",
+      "source_section": "17",
+      "normative_level": "MUST",
+      "paraphrase": "Never let headless execution block indefinitely, consume arbitrary stdin, silently answer required input, or turn clarification into approval.",
+      "owner": "headless interaction policy",
+      "implementation_artifacts": [
+        "planned:tests/input/headless_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/headless_contract_test.py::test_requirement_input_n_069"
+      ]
+    },
+    {
+      "id": "INPUT-N-070",
+      "source_section": "17",
+      "normative_level": "SHOULD",
+      "paraphrase": "Emit machine-readable pauses that external orchestrators can display and resolve with correlation.",
+      "owner": "headless interaction policy",
+      "implementation_artifacts": [
+        "planned:tests/input/headless_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/headless_contract_test.py::test_requirement_input_n_070"
+      ]
+    },
+    {
+      "id": "INPUT-N-071",
+      "source_section": "18",
+      "normative_level": "SHOULD",
+      "paraphrase": "Publish server interaction lifecycle events separately from answer text and model reasoning, including create, delivery, resolution, terminal outcomes, and resume.",
+      "owner": "authenticated server interaction surface",
+      "implementation_artifacts": [
+        "planned:tests/input/server_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/server_contract_test.py::test_requirement_input_n_071"
+      ]
+    },
+    {
+      "id": "INPUT-N-072",
+      "source_section": "18",
+      "normative_level": "MUST",
+      "paraphrase": "Authenticate, authorize, correlate, and idempotently process remote resolution submission.",
+      "owner": "authenticated server interaction surface",
+      "implementation_artifacts": [
+        "planned:tests/input/server_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/server_contract_test.py::test_requirement_input_n_072"
+      ]
+    },
+    {
+      "id": "INPUT-N-073",
+      "source_section": "18",
+      "normative_level": "SHOULD",
+      "paraphrase": "Use a documented Avalan interaction envelope on transports without native user input.",
+      "owner": "authenticated server interaction surface",
+      "implementation_artifacts": [
+        "planned:tests/input/server_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/server_contract_test.py::test_requirement_input_n_073"
+      ]
+    },
+    {
+      "id": "INPUT-N-074",
+      "source_section": "18",
+      "normative_level": "MAY",
+      "paraphrase": "Accompany structured requests with readable text for clients unable to render forms.",
+      "owner": "authenticated server interaction surface",
+      "implementation_artifacts": [
+        "planned:tests/input/server_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/server_contract_test.py::test_requirement_input_n_074"
+      ]
+    },
+    {
+      "id": "INPUT-N-075",
+      "source_section": "19",
+      "normative_level": "SHOULD",
+      "paraphrase": "Project ordinary Avalan task input to negotiated MCP elicitation.",
+      "owner": "MCP projection",
+      "implementation_artifacts": [
+        "planned:tests/input/mcp_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/mcp_contract_test.py::test_requirement_input_n_075"
+      ]
+    },
+    {
+      "id": "INPUT-N-076",
+      "source_section": "19",
+      "normative_level": "MUST",
+      "paraphrase": "Preserve negotiated semantic types and accept, decline, cancel separation while keeping authentication outside form elicitation and returning data to the origin.",
+      "owner": "MCP projection",
+      "implementation_artifacts": [
+        "planned:tests/input/mcp_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/mcp_contract_test.py::test_requirement_input_n_076"
+      ]
+    },
+    {
+      "id": "INPUT-N-077",
+      "source_section": "19",
+      "normative_level": "SHOULD",
+      "paraphrase": "Project durable suspended execution as an MCP task in input_required when task semantics are available.",
+      "owner": "MCP projection",
+      "implementation_artifacts": [
+        "planned:tests/input/mcp_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/mcp_contract_test.py::test_requirement_input_n_077"
+      ]
+    },
+    {
+      "id": "INPUT-N-078",
+      "source_section": "19",
+      "normative_level": "MUST",
+      "paraphrase": "Use an explicitly supported structured fallback or resolve unavailable when the MCP client lacks required capability.",
+      "owner": "MCP projection",
+      "implementation_artifacts": [
+        "planned:tests/input/mcp_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/mcp_contract_test.py::test_requirement_input_n_078"
+      ]
+    },
+    {
+      "id": "INPUT-N-079",
+      "source_section": "19",
+      "normative_level": "MUST",
+      "paraphrase": "Never wait indefinitely for an elicitation response the MCP client cannot send.",
+      "owner": "MCP projection",
+      "implementation_artifacts": [
+        "planned:tests/input/mcp_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/mcp_contract_test.py::test_requirement_input_n_079"
+      ]
+    },
+    {
+      "id": "INPUT-N-080",
+      "source_section": "19",
+      "normative_level": "SHOULD",
+      "paraphrase": "Route downstream MCP-server elicitation through the same broker while preserving downstream origin.",
+      "owner": "MCP projection",
+      "implementation_artifacts": [
+        "planned:tests/input/mcp_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/mcp_contract_test.py::test_requirement_input_n_080"
+      ]
+    },
+    {
+      "id": "INPUT-N-081",
+      "source_section": "20",
+      "normative_level": "SHOULD",
+      "paraphrase": "Project required Avalan input as an A2A task in INPUT_REQUIRED state.",
+      "owner": "A2A projection",
+      "implementation_artifacts": [
+        "planned:tests/input/a2a_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/a2a_contract_test.py::test_requirement_input_n_081"
+      ]
+    },
+    {
+      "id": "INPUT-N-082",
+      "source_section": "20",
+      "normative_level": "MUST",
+      "paraphrase": "Preserve task, context, request identity, readable content, structured validation data, and same-task follow-up correlation.",
+      "owner": "A2A projection",
+      "implementation_artifacts": [
+        "planned:tests/input/a2a_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/a2a_contract_test.py::test_requirement_input_n_082"
+      ]
+    },
+    {
+      "id": "INPUT-N-083",
+      "source_section": "20",
+      "normative_level": "SHOULD",
+      "paraphrase": "Carry rich form semantics in a negotiated extension or structured data part with readable fallback.",
+      "owner": "A2A projection",
+      "implementation_artifacts": [
+        "planned:tests/input/a2a_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/a2a_contract_test.py::test_requirement_input_n_083"
+      ]
+    },
+    {
+      "id": "INPUT-N-084",
+      "source_section": "20",
+      "normative_level": "MUST",
+      "paraphrase": "Never use ambiguous plain text to resolve an arbitrary pending request.",
+      "owner": "A2A projection",
+      "implementation_artifacts": [
+        "planned:tests/input/a2a_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/a2a_contract_test.py::test_requirement_input_n_084"
+      ]
+    },
+    {
+      "id": "INPUT-N-085",
+      "source_section": "21",
+      "normative_level": "MUST",
+      "paraphrase": "Preserve the originating agent and execution branch on every request.",
+      "owner": "flow and nested orchestration",
+      "implementation_artifacts": [
+        "planned:tests/input/orchestration_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_085"
+      ]
+    },
+    {
+      "id": "INPUT-N-086",
+      "source_section": "21",
+      "normative_level": "MAY",
+      "paraphrase": "Allow nested agents to request input only when the containing orchestration and host can route and resume it.",
+      "owner": "flow and nested orchestration",
+      "implementation_artifacts": [
+        "planned:tests/input/orchestration_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_086"
+      ]
+    },
+    {
+      "id": "INPUT-N-087",
+      "source_section": "21",
+      "normative_level": "SHOULD",
+      "paraphrase": "Surface safe origin context, route only to the origin branch, serialize confusing prompts, queue independently, and cancel child requests with parent cancellation.",
+      "owner": "flow and nested orchestration",
+      "implementation_artifacts": [
+        "planned:tests/input/orchestration_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_087"
+      ]
+    },
+    {
+      "id": "INPUT-N-088",
+      "source_section": "21",
+      "normative_level": "SHOULD",
+      "paraphrase": "Permit at most one unresolved required request per execution branch.",
+      "owner": "flow and nested orchestration",
+      "implementation_artifacts": [
+        "planned:tests/input/orchestration_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_088"
+      ]
+    },
+    {
+      "id": "INPUT-N-089",
+      "source_section": "21",
+      "normative_level": "SHOULD",
+      "paraphrase": "Detect or bound materially equivalent repeated requests to prevent clarification loops.",
+      "owner": "flow and nested orchestration",
+      "implementation_artifacts": [
+        "planned:tests/input/orchestration_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_089"
+      ]
+    },
+    {
+      "id": "INPUT-N-090",
+      "source_section": "22",
+      "normative_level": "MUST",
+      "paraphrase": "Scope each request to the trusted user, tenant, session, task, turn, and execution branch and apply first-valid-resolution-wins.",
+      "owner": "interaction broker and durable store",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_090"
+      ]
+    },
+    {
+      "id": "INPUT-N-091",
+      "source_section": "22",
+      "normative_level": "SHOULD",
+      "paraphrase": "Treat an authorized semantically identical resolution as idempotent.",
+      "owner": "interaction broker and durable store",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_091"
+      ]
+    },
+    {
+      "id": "INPUT-N-092",
+      "source_section": "22",
+      "normative_level": "MUST",
+      "paraphrase": "Prevent a conflicting later resolution from resuming execution again.",
+      "owner": "interaction broker and durable store",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_092"
+      ]
+    },
+    {
+      "id": "INPUT-N-093",
+      "source_section": "22",
+      "normative_level": "MUST",
+      "paraphrase": "Reject responses to expired, cancelled, or superseded requests as stale.",
+      "owner": "interaction broker and durable store",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_093"
+      ]
+    },
+    {
+      "id": "INPUT-N-094",
+      "source_section": "22",
+      "normative_level": "MUST",
+      "paraphrase": "Reject resolutions from unauthorized principals.",
+      "owner": "interaction broker and durable store",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_094"
+      ]
+    },
+    {
+      "id": "INPUT-N-095",
+      "source_section": "22",
+      "normative_level": "MUST",
+      "paraphrase": "Expose only opaque continuation references outside the runtime.",
+      "owner": "interaction broker and durable store",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_095"
+      ]
+    },
+    {
+      "id": "INPUT-N-096",
+      "source_section": "22",
+      "normative_level": "MUST",
+      "paraphrase": "Never interpret client disconnection as decline; apply the declared pending, unavailable, timeout, or cancellation policy.",
+      "owner": "interaction broker and durable store",
+      "implementation_artifacts": [
+        "planned:tests/input/broker_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/broker_contract_test.py::test_requirement_input_n_096"
+      ]
+    },
+    {
+      "id": "INPUT-N-097",
+      "source_section": "23",
+      "normative_level": "MUST",
+      "paraphrase": "Never treat clarification text such as yes or continue as protected-action authorization without a separate approval resolution.",
+      "owner": "interaction security policy",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_097"
+      ]
+    },
+    {
+      "id": "INPUT-N-098",
+      "source_section": "23",
+      "normative_level": "MUST",
+      "paraphrase": "Never request passwords, keys, tokens, private keys, financial credentials, or authentication challenges through normal task input.",
+      "owner": "interaction security policy",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_098"
+      ]
+    },
+    {
+      "id": "INPUT-N-099",
+      "source_section": "23",
+      "normative_level": "MUST",
+      "paraphrase": "Treat model-authored prompts and choice descriptions as untrusted presentation data.",
+      "owner": "interaction security policy",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_099"
+      ]
+    },
+    {
+      "id": "INPUT-N-100",
+      "source_section": "23",
+      "normative_level": "MUST",
+      "paraphrase": "Never execute markup, links, terminal escapes, or embedded instructions from model-authored presentation data.",
+      "owner": "interaction security policy",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_100"
+      ]
+    },
+    {
+      "id": "INPUT-N-101",
+      "source_section": "24",
+      "normative_level": "SHOULD",
+      "paraphrase": "Expose content-safe telemetry for lifecycle, wait time, category, surface, validation, duplicates, staleness, cancellation, timeout, expiry, and resume.",
+      "owner": "privacy and observability",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_101"
+      ]
+    },
+    {
+      "id": "INPUT-N-102",
+      "source_section": "24",
+      "normative_level": "MUST",
+      "paraphrase": "Preserve correlation in telemetry without logging raw answers by default.",
+      "owner": "privacy and observability",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_102"
+      ]
+    },
+    {
+      "id": "INPUT-N-103",
+      "source_section": "24",
+      "normative_level": "MUST",
+      "paraphrase": "Apply conversation-data retention, access, redaction, and deletion policy to prompts, choices, answers, and multiline content.",
+      "owner": "privacy and observability",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_103"
+      ]
+    },
+    {
+      "id": "INPUT-N-104",
+      "source_section": "24",
+      "normative_level": "SHOULD",
+      "paraphrase": "Redact accidentally entered secret-like values from logs and diagnostics without treating the channel as credential-safe.",
+      "owner": "privacy and observability",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_104"
+      ]
+    },
+    {
+      "id": "INPUT-N-105",
+      "source_section": "24",
+      "normative_level": "MUST",
+      "paraphrase": "Keep human, default, and policy provenance distinct in traces and audit records.",
+      "owner": "privacy and observability",
+      "implementation_artifacts": [
+        "planned:tests/input/security_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/security_contract_test.py::test_requirement_input_n_105"
+      ]
+    },
+    {
+      "id": "INPUT-N-106",
+      "source_section": "25",
+      "normative_level": "MUST",
+      "paraphrase": "Define deterministic behavior for all fifteen frozen failure conditions across every applicable public surface.",
+      "owner": "cross-surface failure contract",
+      "implementation_artifacts": [
+        "planned:tests/input/failure_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/failure_contract_test.py::test_requirement_input_n_106",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_02",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_03",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_14",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_14",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_14",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_14",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_14",
+        "tests/input/failure_matrix_server_e2e_test.py::test_input_f_15",
+        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_15",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15"
+      ]
+    },
+    {
+      "id": "INPUT-N-107",
+      "source_section": "25",
+      "normative_level": "MUST",
+      "paraphrase": "Prevent interactive-presentation failures from corrupting transcript, answer stream, or persisted execution state.",
+      "owner": "cross-surface failure contract",
+      "implementation_artifacts": [
+        "planned:tests/input/failure_contract_test.py",
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input/failure_contract_test.py::test_requirement_input_n_107"
+      ]
+    },
+    {
+      "id": "INPUT-26.1",
+      "source_section": "26.1",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public attached cli clarification behavior through a supported product boundary.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_attached_cli_clarification"
+      ]
+    },
+    {
+      "id": "INPUT-26.2",
+      "source_section": "26.2",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public text and multiple selection behavior through a supported product boundary.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_text_and_multiple_selection"
+      ]
+    },
+    {
+      "id": "INPUT-26.3",
+      "source_section": "26.3",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public piped prompt with tty behavior through a supported product boundary.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_piped_prompt_with_tty"
+      ]
+    },
+    {
+      "id": "INPUT-26.4",
+      "source_section": "26.4",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public fully headless run behavior through a supported product boundary.",
+      "owner": "headless and durable hosts",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_fully_headless_run"
+      ]
+    },
+    {
+      "id": "INPUT-26.5",
+      "source_section": "26.5",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public required versus advisory behavior through a supported product boundary.",
+      "owner": "public async SDK",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_required_versus_advisory"
+      ]
+    },
+    {
+      "id": "INPUT-26.6",
+      "source_section": "26.6",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public decline cancel and steering behavior through a supported product boundary.",
+      "owner": "CLI interaction host",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_decline_cancel_and_steering"
+      ]
+    },
+    {
+      "id": "INPUT-26.7",
+      "source_section": "26.7",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public approval isolation behavior through a supported product boundary.",
+      "owner": "interaction security policy",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_approval_isolation"
+      ]
+    },
+    {
+      "id": "INPUT-26.8",
+      "source_section": "26.8",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public mcp projection behavior through a supported product boundary.",
+      "owner": "MCP projection",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_mcp_projection"
+      ]
+    },
+    {
+      "id": "INPUT-26.9",
+      "source_section": "26.9",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public a2a projection behavior through a supported product boundary.",
+      "owner": "A2A projection",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_a2a_projection"
+      ]
+    },
+    {
+      "id": "INPUT-26.10",
+      "source_section": "26.10",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public multi agent origin behavior through a supported product boundary.",
+      "owner": "nested orchestration",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_multi_agent_origin"
+      ]
+    },
+    {
+      "id": "INPUT-26.11",
+      "source_section": "26.11",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public idempotency and staleness behavior through a supported product boundary.",
+      "owner": "durable interaction store",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_idempotency_and_staleness"
+      ]
+    },
+    {
+      "id": "INPUT-26.12",
+      "source_section": "26.12",
+      "normative_level": "SCENARIO",
+      "paraphrase": "Prove the complete public privacy behavior through a supported product boundary.",
+      "owner": "privacy and observability",
+      "implementation_artifacts": [
+        "planned:tests/input/public_interaction_e2e_test.py"
+      ],
+      "test_node_ids": [
+        "tests/input/public_interaction_e2e_test.py::test_privacy"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-001",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Freeze complete behavioral and public-scenario traceability.",
+      "owner": "requirements traceability",
+      "implementation_artifacts": [
+        "tests/fixtures/input/requirements_traceability.json"
+      ],
+      "test_node_ids": [
+        "tests/input_contract_test.py::test_requirement_catalog_is_complete"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-002",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Enforce planned versus active acceptance lifecycle and append-only activation.",
+      "owner": "acceptance inventory",
+      "implementation_artifacts": [
+        "tests/fixtures/input/acceptance_manifest.json"
+      ],
+      "test_node_ids": [
+        "tests/input_contract_test.py::test_acceptance_manifest_lifecycle_is_monotonic",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-003",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Freeze and exhaustively verify every failure-condition and surface cell.",
+      "owner": "failure inventory",
+      "implementation_artifacts": [
+        "tests/fixtures/input/failure_matrix.json"
+      ],
+      "test_node_ids": [
+        "tests/input_contract_test.py::test_failure_matrix_is_complete",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_na_reason_without_exact_ids"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-004",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Collect and execute exact acceptance nodes while rejecting non-evidence outcomes.",
+      "owner": "acceptance runner",
+      "implementation_artifacts": [
+        "scripts/verify_input_acceptance.py"
+      ],
+      "test_node_ids": [
+        "tests/input_acceptance_verifier_test.py::test_acceptance_cli_executes_exact_synthetic_node",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_pytest_non_evidence",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_placeholder_and_execution_tricks"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-005",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Enforce exact total, per-file, source-inventory, evidence-line, and exclusion-baseline coverage.",
+      "owner": "coverage gate",
+      "implementation_artifacts": [
+        "scripts/verify_src_coverage.py"
+      ],
+      "test_node_ids": [
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_accepts_empty_module_variants",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_rejects_invalid_reports"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-006",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Provide fail-fast exact Make and database-backed quality targets with CI metadata locks.",
+      "owner": "project quality gate",
+      "implementation_artifacts": [
+        "Makefile"
+      ],
+      "test_node_ids": [
+        "tests/input_contract_metadata_test.py::test_exact_make_target_fails_closed_on_pytest_failure",
+        "tests/input_contract_metadata_test.py::test_project_metadata_pins_complete_common_gate",
+        "tests/project_metadata_test.py::test_workflow_exact_gate_detection_rejects_partial_coverage",
+        "tests/input_contract_harness_test.py::test_admin_dsn_runner_script_uses_ephemeral_database",
+        "tests/input_contract_harness_test.py::test_main_selects_admin_dsn_and_runner_script",
+        "tests/input_contract_harness_test.py::test_docker_forwards_runner_and_always_stops",
+        "tests/input_contract_harness_test.py::test_common_gate_cleans_partial_coverage",
+        "tests/input_contract_harness_test.py::test_common_gate_skips_acceptance_after_coverage_failure"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-007",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Track and execute lifecycle-aware positive and negative static type contracts.",
+      "owner": "type contract gate",
+      "implementation_artifacts": [
+        "scripts/verify_input_types.py"
+      ],
+      "test_node_ids": [
+        "tests/input_type_contract_test.py::test_type_contract_manifest_and_runner_are_strict"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-008",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Provide typed deterministic clocks, IDs, providers, barriers, principals, correlations, and local peers.",
+      "owner": "deterministic test infrastructure",
+      "implementation_artifacts": [
+        "tests/input_contract_fixtures.py"
+      ],
+      "test_node_ids": [
+        "tests/input_contract_test.py::test_deterministic_fixtures_are_reproducible"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-009",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Freeze every identity, state, outcome, capability, protocol, privacy, error, bound, replay, and activation decision.",
+      "owner": "contract decision inventory",
+      "implementation_artifacts": [
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input_contract_test.py::test_contract_decisions_are_frozen"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-010",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Inventory every obsolete coupling, result shape, correlation, mutable field, and assertion for atomic removal.",
+      "owner": "replacement inventory",
+      "implementation_artifacts": [
+        "tests/fixtures/input/no_bc_removals.json"
+      ],
+      "test_node_ids": [
+        "tests/input_contract_test.py::test_no_bc_removal_inventory_is_frozen"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-011",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Record passing baseline and implementation evidence with exact commands and counts.",
+      "owner": "implementation evidence",
+      "implementation_artifacts": [
+        "tests/fixtures/input/baseline_evidence.json"
+      ],
+      "test_node_ids": [
+        "tests/input_contract_test.py::test_baseline_evidence_is_complete"
+      ]
+    },
+    {
+      "id": "INPUT-GATE-012",
+      "source_section": "delivery_gate",
+      "normative_level": "MUST",
+      "paraphrase": "Keep the reserved capability absent from every production model and host registry.",
+      "owner": "activation guard",
+      "implementation_artifacts": [
+        "tests/fixtures/input/contract_decisions.json"
+      ],
+      "test_node_ids": [
+        "tests/input_contract_test.py::test_capability_remains_absent"
+      ]
+    }
+  ]
+}

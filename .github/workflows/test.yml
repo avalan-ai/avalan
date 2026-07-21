@@ -122,21 +122,23 @@ jobs:
         if: matrix.target.os == 'ubuntu-latest'
         run: poetry run pip install "mlx-lm[cpu]==0.31.3"
 
-      - name: Run tests with PostgreSQL e2e coverage analysis
-        if: matrix.target.os == 'ubuntu-latest' && matrix.python != '3.14'
-        run: make test-pgsql coverage no-install
+      - name: Verify structured-input type contracts
+        run: |
+          make lint
+          make typecheck-input-contract INPUT_PHASE=0
 
-      - name: Run tests with PostgreSQL e2e coverage report
-        if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.14'
-        run: make test-pgsql coverage-report no-install
+      - name: Run exact tests with PostgreSQL
+        if: matrix.target.os == 'ubuntu-latest'
+        run: make test-pgsql-exact no-install INPUT_PHASE=0
 
-      - name: Run tests with coverage analysis
-        if: matrix.target.os != 'ubuntu-latest' && matrix.python != '3.14'
-        run: make test coverage no-install
+      - name: Run exact tests
+        if: matrix.target.os != 'ubuntu-latest'
+        run: |
+          make test-coverage-exact no-install
+          poetry run python scripts/verify_input_acceptance.py --through-phase 0
 
-      - name: Run tests with coverage report
-        if: matrix.target.os != 'ubuntu-latest' && matrix.python == '3.14'
-        run: make test coverage-report no-install
+      - name: Verify clean generated metadata
+        run: git diff --check
 
       - name: Upload coverage to Coveralls
         continue-on-error: true
