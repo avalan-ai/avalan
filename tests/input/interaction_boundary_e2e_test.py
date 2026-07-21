@@ -19,6 +19,7 @@ from avalan.interaction import (
     ExpiredResolution,
     InputRequest,
     InputRequestId,
+    InputResolution,
     InputTransitionApplied,
     InputTransitionRejected,
     InteractionSnapshot,
@@ -50,6 +51,7 @@ from avalan.interaction import (
     project_resolution_to_model,
     resolve_request,
 )
+from avalan.interaction.state import _anchor_request_presentation
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -104,13 +106,13 @@ def _pending(request: InputRequest) -> InputRequest:
     transition = mark_request_pending(
         request,
         expected_state_revision=StateRevision(0),
-        presented_at=(
-            request.created_at
-            if request.mode is RequirementMode.ADVISORY
-            else None
-        ),
     )
     assert isinstance(transition, InputTransitionApplied)
+    if request.mode is RequirementMode.ADVISORY:
+        return _anchor_request_presentation(
+            transition.request,
+            request.created_at,
+        )
     return transition.request
 
 
@@ -348,7 +350,7 @@ _TERMINAL_NONANSWER_CASES = (
 
 
 def _assert_terminal_nonanswer_outcome(
-    resolution: object,
+    resolution: InputResolution,
     mode: RequirementMode,
     resumes: bool,
 ) -> None:
@@ -381,7 +383,7 @@ def _assert_terminal_nonanswer_outcome(
     _TERMINAL_NONANSWER_CASES,
 )
 def test_terminal_nonanswer_outcome_matrix(
-    resolution: object,
+    resolution: InputResolution,
     mode: RequirementMode,
     resumes: bool,
 ) -> None:

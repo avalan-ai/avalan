@@ -1,11 +1,12 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "recorded_at": "2026-07-21T04:48:36-03:00",
+  "recorded_at": "2026-07-21T17:29:45-03:00",
   "implementation_owner": "/root",
   "independent_reviewer": "/root/input_contract_audit",
-  "review_history_sha256": "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85",
+  "review_history_sha256": "7c94eb4806501ecb3ae82f1447fd94ed95e31d185d41e9fbcba2f31ce448a408",
   "review_history_phase0_sha256": "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b",
+  "review_history_phase1_sha256": "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85",
   "review_history": [
     {
       "sequence": 0,
@@ -51,6 +52,51 @@
       "status": "approved",
       "recorded_at": "2026-07-21T04:48:36-03:00",
       "evidence": "Independent Phase-1 gate and evidence review completed with zero P1, P2, or P3 findings against the fresh authoritative results and frozen tree."
+    },
+    {
+      "sequence": 5,
+      "phase": 2,
+      "role": "semantic",
+      "reviewer": "/root/broker_review",
+      "status": "pending",
+      "recorded_at": "2026-07-21T14:06:16-03:00",
+      "evidence": "Independent broker lifecycle review is in progress against the current implementation and its focused tests."
+    },
+    {
+      "sequence": 6,
+      "phase": 2,
+      "role": "gate",
+      "reviewer": "/root/phase2_acceptance_review",
+      "status": "pending",
+      "recorded_at": "2026-07-21T14:06:16-03:00",
+      "evidence": "Independent acceptance and evidence review remains pending until the mixed-lifecycle ownership slice and live quality results are finalized."
+    },
+    {
+      "sequence": 7,
+      "phase": 2,
+      "role": "semantic",
+      "reviewer": "/root/phase2_acceptance_review",
+      "status": "approved",
+      "recorded_at": "2026-07-21T17:29:44-03:00",
+      "evidence": "Independent broker lifecycle and liveness review completed without unresolved findings."
+    },
+    {
+      "sequence": 8,
+      "phase": 2,
+      "role": "gate",
+      "reviewer": "/root/phase2_metadata_review",
+      "status": "approved",
+      "recorded_at": "2026-07-21T17:29:45-03:00",
+      "evidence": "Independent terminal acceptance, coverage, and evidence review completed without unresolved findings."
+    }
+  ],
+  "quality_history_sha256": "d8e18473bd808cdb7610f06c2f6bd875573b89cfffd78210fca8fbe1fff69880",
+  "quality_history": [
+    {
+      "phase": 1,
+      "state": "complete",
+      "quality_gate_sha256": "f58bd16d9bf57bb3f2972982ff8bcf19a6125715a40194effecb8141c8ebd5ea",
+      "evidence_sha256": "a4c16a90cf2d451b423da22ba763b50742e47f583230ded87c9997d77e1b93b8"
     }
   ],
   "active_test_node_ids": [
@@ -66,6 +112,9 @@
     "tests/input/canonical_contract_test.py::test_requirement_input_n_013",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_014",
     "tests/input/security_contract_test.py::test_requirement_input_n_015",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_019",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_020",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_021",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_029",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_030",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_031",
@@ -81,6 +130,10 @@
     "tests/input/canonical_contract_test.py::test_requirement_input_n_041",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_042",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_043",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_090",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_091",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_092",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_093",
     "tests/input_contract_test.py::test_requirement_catalog_is_complete",
     "tests/input_contract_test.py::test_acceptance_manifest_lifecycle_is_monotonic",
     "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory",
@@ -162,6 +215,10 @@
       {
         "phase": 1,
         "state": "dormant_unadvertised"
+      },
+      {
+        "phase": 2,
+        "state": "dormant_unadvertised"
       }
     ],
     "production_source_changes": [
@@ -214,6 +271,7 @@
       "tests/input_type_contract_test.py",
       "tests/input_type_contracts/",
       "tests/interaction/",
+      "tests/interaction_type_contracts/",
       "tests/model/full_coverage_gap_model_test.py",
       "tests/model/model_stream_contract_test.py",
       "tests/model/model_stream_interaction_test.py",
@@ -234,9 +292,9 @@
     "behavior_requirements": 107,
     "public_scenarios": 12,
     "delivery_requirements": 12,
-    "active_acceptance_nodes": 79,
-    "active_pytest_instances": 118,
-    "planned_acceptance_nodes": 190,
+    "active_acceptance_nodes": 86,
+    "active_pytest_instances": 125,
+    "planned_acceptance_nodes": 183,
     "failure_conditions": 15,
     "failure_surfaces": 84,
     "failure_cells": 1260,
@@ -249,24 +307,24 @@
       "poetry run pytest --verbose -s",
       "make test-coverage -- -100 src/",
       "make test-coverage-exact no-install",
-      "poetry run python scripts/verify_input_acceptance.py --through-phase 1",
-      "make typecheck-input-contract INPUT_PHASE=1",
+      "poetry run python scripts/verify_input_acceptance.py --through-phase 2",
+      "make typecheck-input-contract INPUT_PHASE=2",
       "make lint",
       "git diff --check",
-      "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py tests/interaction tests/input tests/event/interaction_lifecycle_test.py tests/model/model_stream_contract_test.py tests/model/model_stream_interaction_test.py tests/task/interaction_event_sanitization_test.py tests/agent/orchestrator_response_additional_test.py tests/cli/display_reducer_test.py tests/cli/model_test.py tests/cli/stream_presenter_test.py tests/model/text_generation_response_more_test.py tests/server/a2a_v1_router_test.py tests/server/chat_router_unit_test.py tests/server/mcp_reasoning_summary_test.py tests/server/responses_phase7_contract_test.py tests/server/responses_utils_test.py tests/server/router_streaming_test.py"
+      "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py tests/interaction tests/interaction_type_contracts tests/input tests/event/interaction_lifecycle_test.py tests/model/model_stream_contract_test.py tests/model/model_stream_interaction_test.py tests/task/interaction_event_sanitization_test.py tests/agent/orchestrator_response_additional_test.py tests/cli/display_reducer_test.py tests/cli/model_test.py tests/cli/stream_presenter_test.py tests/model/text_generation_response_more_test.py tests/server/a2a_v1_router_test.py tests/server/chat_router_unit_test.py tests/server/mcp_reasoning_summary_test.py tests/server/responses_phase7_contract_test.py tests/server/responses_utils_test.py tests/server/router_streaming_test.py"
     ],
     "state_details": {
-      "completed_at": "2026-07-21T04:48:36-03:00",
-      "gate_run_id": "phase-1-bd778836b645098f"
+      "completed_at": "2026-07-21T17:14:59-03:00",
+      "gate_run_id": "input-broker-authoritative-20260721T171459-0300"
     },
     "results": [
       {
         "command": "poetry run pytest --verbose -s",
         "exit_code": 0,
-        "passed": 10287,
+        "passed": 10687,
         "skipped": 66,
-        "subtests_passed": 7949,
-        "seconds": 160.06,
+        "subtests_passed": 7955,
+        "seconds": 164.06,
         "deselected": 0,
         "xfail": 0,
         "xpass": 0
@@ -279,31 +337,31 @@
       {
         "command": "make test-coverage-exact no-install",
         "exit_code": 0,
-        "passed": 10287,
-        "skipped": 66,
-        "subtests_passed": 7949,
-        "seconds": 261.2,
-        "source_files": 416,
-        "covered_statements": 102059,
-        "total_statements": 102059,
+        "covered_statements": 106507,
+        "total_statements": 106507,
+        "source_files": 422,
         "missing_lines": 0,
-        "missing_files": 0
+        "missing_files": 0,
+        "passed": 10687,
+        "skipped": 66,
+        "subtests_passed": 7955,
+        "seconds": 253.58
       },
       {
-        "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 1",
+        "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 2",
         "exit_code": 0,
-        "active_nodes": 79,
-        "active_instances": 118
+        "active_nodes": 86,
+        "active_instances": 125
       },
       {
-        "command": "make typecheck-input-contract INPUT_PHASE=1",
+        "command": "make typecheck-input-contract INPUT_PHASE=2",
         "exit_code": 0,
-        "active_fixtures": 6
+        "active_fixtures": 14
       },
       {
         "command": "make lint",
         "exit_code": 0,
-        "source_files_typechecked": 416,
+        "source_files_typechecked": 422,
         "script_files_typechecked": 6
       },
       {
@@ -311,36 +369,38 @@
         "exit_code": 0
       },
       {
-        "command": "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py tests/interaction tests/input tests/event/interaction_lifecycle_test.py tests/model/model_stream_contract_test.py tests/model/model_stream_interaction_test.py tests/task/interaction_event_sanitization_test.py tests/agent/orchestrator_response_additional_test.py tests/cli/display_reducer_test.py tests/cli/model_test.py tests/cli/stream_presenter_test.py tests/model/text_generation_response_more_test.py tests/server/a2a_v1_router_test.py tests/server/chat_router_unit_test.py tests/server/mcp_reasoning_summary_test.py tests/server/responses_phase7_contract_test.py tests/server/responses_utils_test.py tests/server/router_streaming_test.py",
+        "command": "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py tests/interaction tests/interaction_type_contracts tests/input tests/event/interaction_lifecycle_test.py tests/model/model_stream_contract_test.py tests/model/model_stream_interaction_test.py tests/task/interaction_event_sanitization_test.py tests/agent/orchestrator_response_additional_test.py tests/cli/display_reducer_test.py tests/cli/model_test.py tests/cli/stream_presenter_test.py tests/model/text_generation_response_more_test.py tests/server/a2a_v1_router_test.py tests/server/chat_router_unit_test.py tests/server/mcp_reasoning_summary_test.py tests/server/responses_phase7_contract_test.py tests/server/responses_utils_test.py tests/server/router_streaming_test.py",
         "exit_code": 0,
-        "passed": 1209,
+        "passed": 1609,
         "skipped": 0,
-        "subtests_passed": 1135,
-        "seconds": 33.0,
+        "subtests_passed": 1141,
+        "seconds": 30.39,
         "deselected": 0,
         "xfail": 0,
         "xpass": 0
       }
     ],
     "tree_binding": {
-      "head": "c1fabe0c0fc1d60e58d11f5c40e4a2456a8e7a33",
-      "diff_sha256": "a90c2f85924eee788704aa87a85248bee8c45b7810f403f61afc73baac0e9653",
-      "untracked_inventory_sha256": "473513f0441b9bddc221638aa34b4d8bdf8026c0d31f6aad9b2afd2ad4f8d9c6",
-      "normalized_evidence_sha256": "dbb6164795131f906ab8e48c0f193e2aaf371351cdf551a91580f5044e3a80bf",
-      "normalized_verifier_sha256": "61e3a49642f0935b2d0e7b79a8ff3c152b4a3eb08646063128df288504e8055a",
-      "tree_sha256": "5eb5d878b0a1fbd8cce9a490750b4eaa64c3c890e36411a162682565864c3ae4"
+      "baseline_head": "609aa091c17756ab952cf5fe668ca3d867f0e311",
+      "inventory_file_count": 1252,
+      "inventory_sha256": "d41562558f6402dbde1e567202432d4e9d7e63753797b1304e2be4a2fa2d18f5",
+      "normalized_evidence_kind": "regular",
+      "normalized_evidence_sha256": "df1be3c6bb991efbc096ec71ddcec5e2b6a81d04ebb4275838edbd9e2c2e219f",
+      "normalized_verifier_kind": "regular",
+      "normalized_verifier_sha256": "2de8a9c386015997c1d84067861e31f23cb0a946e2b73b072db21b2ffae72ae9",
+      "tree_sha256": "58db8927265130796d869daf113b4cbee4830101095b08bb3f2e898dfa00bb7a"
     },
     "coverage_binding": {
-      "report_sha256": "d3328a8612d3ff3086e9e2ebfdabde4f28819f0e48912a8d372fe7abfe963359",
-      "source_inventory_sha256": "fa8e8a13abd57a51b413208e76c538bd2526f598cbe0ad8822cfb7a97408b9b3",
-      "source_file_count": 416,
-      "statement_count": 102059,
-      "excluded_line_count": 1225
+      "report_sha256": "e90daa0b99479d4311f7114ff05af5ff73c76dc853ca3f7362d5c644cec30311",
+      "source_inventory_sha256": "2870de9f550c5fc3e6f12ad4a8676d52c70fe1c2df3c01081e50c970401f8fe5",
+      "source_file_count": 422,
+      "statement_count": 106507,
+      "excluded_line_count": 1329
     }
   },
   "typing_async_audit": {
-    "strict_type_fixture_count": 6,
-    "negative_type_fixtures_planned": 1,
+    "strict_type_fixture_count": 14,
+    "negative_type_fixtures_planned": 0,
     "effect_interfaces_async": [
       "scripted provider",
       "async barrier",

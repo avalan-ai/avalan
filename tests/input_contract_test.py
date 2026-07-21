@@ -765,6 +765,7 @@ def test_baseline_evidence_is_complete() -> None:
     assert evidence["implementation_owner"] == "/root"
     assert evidence["independent_reviewer"] == "/root/input_contract_audit"
     assert evidence["implementation_owner"] != evidence["independent_reviewer"]
+    assert evidence["recorded_at"] == "2026-07-21T17:29:45-03:00"
     assert evidence["review_history"][0] == {
         "sequence": 0,
         "phase": 0,
@@ -777,7 +778,7 @@ def test_baseline_evidence_is_complete() -> None:
             " without rewriting historical approval."
         ),
     }
-    assert [record["role"] for record in evidence["review_history"][1:]] == [
+    assert [record["role"] for record in evidence["review_history"][1:5]] == [
         "semantic",
         "gate",
         "semantic",
@@ -789,20 +790,91 @@ def test_baseline_evidence_is_complete() -> None:
     )
     assert all(
         record["status"] == "approved"
-        for record in evidence["review_history"][3:]
+        for record in evidence["review_history"][3:5]
     )
+    assert evidence["review_history"][5:7] == [
+        {
+            "sequence": 5,
+            "phase": 2,
+            "role": "semantic",
+            "reviewer": "/root/broker_review",
+            "status": "pending",
+            "recorded_at": "2026-07-21T14:06:16-03:00",
+            "evidence": (
+                "Independent broker lifecycle review is in progress against"
+                " the current implementation and its focused tests."
+            ),
+        },
+        {
+            "sequence": 6,
+            "phase": 2,
+            "role": "gate",
+            "reviewer": "/root/phase2_acceptance_review",
+            "status": "pending",
+            "recorded_at": "2026-07-21T14:06:16-03:00",
+            "evidence": (
+                "Independent acceptance and evidence review remains pending"
+                " until the mixed-lifecycle ownership slice and live quality"
+                " results are finalized."
+            ),
+        },
+    ]
+    assert evidence["review_history"][7:] == [
+        {
+            "sequence": 7,
+            "phase": 2,
+            "role": "semantic",
+            "reviewer": "/root/phase2_acceptance_review",
+            "status": "approved",
+            "recorded_at": "2026-07-21T17:29:44-03:00",
+            "evidence": (
+                "Independent broker lifecycle and liveness review completed"
+                " without unresolved findings."
+            ),
+        },
+        {
+            "sequence": 8,
+            "phase": 2,
+            "role": "gate",
+            "reviewer": "/root/phase2_metadata_review",
+            "status": "approved",
+            "recorded_at": "2026-07-21T17:29:45-03:00",
+            "evidence": (
+                "Independent terminal acceptance, coverage, and evidence"
+                " review completed without unresolved findings."
+            ),
+        },
+    ]
     assert evidence["review_history_sha256"] == _digest(
         evidence["review_history"]
     )
     assert evidence["review_history_phase0_sha256"] == _digest(
         evidence["review_history"][:1]
     )
+    assert evidence["review_history_phase1_sha256"] == _digest(
+        evidence["review_history"][:5]
+    )
+    assert (
+        _digest(evidence["review_history"][:7])
+        == "a83a4e9545ac72c99c23d6fd316c7661f5a6bfef86c8c39a5c209ee6185a852a"
+    )
+    assert evidence["quality_history"] == [
+        {
+            "phase": 1,
+            "state": "complete",
+            "quality_gate_sha256": (
+                "f58bd16d9bf57bb3f2972982ff8bcf19a6125715a40194effecb8141c8ebd5ea"
+            ),
+            "evidence_sha256": (
+                "a4c16a90cf2d451b423da22ba763b50742e47f583230ded87c9997d77e1b93b8"
+            ),
+        }
+    ]
+    assert evidence["quality_history_sha256"] == _digest(
+        evidence["quality_history"]
+    )
     assert evidence["active_test_node_ids"] == active_test_node_ids
     quality_gate = evidence["quality_gate"]
-    assert quality_gate["state"] == "complete"
-    assert quality_gate["results"]
-    assert quality_gate["tree_binding"]
-    assert quality_gate["coverage_binding"]
     commands = quality_gate["required_commands"]
     assert len(commands) == 8
     assert commands[:2] == [
@@ -813,16 +885,120 @@ def test_baseline_evidence_is_complete() -> None:
         "make test-coverage-exact no-install",
         (
             "poetry run python scripts/verify_input_acceptance.py"
-            " --through-phase 1"
+            " --through-phase 2"
         ),
-        "make typecheck-input-contract INPUT_PHASE=1",
+        "make typecheck-input-contract INPUT_PHASE=2",
         "make lint",
         "git diff --check",
         commands[7],
     ]
     assert commands[7].startswith("poetry run pytest --verbose -s tests/")
-    assert len(quality_gate["state_details"]["gate_run_id"]) >= 12
-    assert evidence["inventory"]["active_pytest_instances"] == 118
+    assert quality_gate["state"] == "complete"
+    assert quality_gate["state_details"] == {
+        "completed_at": "2026-07-21T17:14:59-03:00",
+        "gate_run_id": "input-broker-authoritative-20260721T171459-0300",
+    }
+    assert quality_gate["results"] == [
+        {
+            "command": commands[0],
+            "exit_code": 0,
+            "passed": 10687,
+            "skipped": 66,
+            "subtests_passed": 7955,
+            "seconds": 164.06,
+            "deselected": 0,
+            "xfail": 0,
+            "xpass": 0,
+        },
+        {
+            "command": commands[1],
+            "exit_code": 0,
+            "output_lines": [],
+        },
+        {
+            "command": commands[2],
+            "exit_code": 0,
+            "covered_statements": 106507,
+            "total_statements": 106507,
+            "source_files": 422,
+            "missing_lines": 0,
+            "missing_files": 0,
+            "passed": 10687,
+            "skipped": 66,
+            "subtests_passed": 7955,
+            "seconds": 253.58,
+        },
+        {
+            "command": commands[3],
+            "exit_code": 0,
+            "active_nodes": 86,
+            "active_instances": 125,
+        },
+        {
+            "command": commands[4],
+            "exit_code": 0,
+            "active_fixtures": 14,
+        },
+        {
+            "command": commands[5],
+            "exit_code": 0,
+            "source_files_typechecked": 422,
+            "script_files_typechecked": 6,
+        },
+        {
+            "command": commands[6],
+            "exit_code": 0,
+        },
+        {
+            "command": commands[7],
+            "exit_code": 0,
+            "passed": 1609,
+            "skipped": 0,
+            "subtests_passed": 1141,
+            "seconds": 30.39,
+            "deselected": 0,
+            "xfail": 0,
+            "xpass": 0,
+        },
+    ]
+    tree_binding = quality_gate["tree_binding"]
+    assert set(tree_binding) == {
+        "baseline_head",
+        "inventory_file_count",
+        "inventory_sha256",
+        "normalized_evidence_kind",
+        "normalized_evidence_sha256",
+        "normalized_verifier_kind",
+        "normalized_verifier_sha256",
+        "tree_sha256",
+    }
+    assert tree_binding["baseline_head"] == evidence["git"]["head"]
+    assert tree_binding["inventory_file_count"] > 0
+    assert tree_binding["normalized_evidence_kind"] == "regular"
+    assert tree_binding["normalized_verifier_kind"] == "regular"
+    for key in (
+        "inventory_sha256",
+        "normalized_evidence_sha256",
+        "normalized_verifier_sha256",
+        "tree_sha256",
+    ):
+        assert fullmatch(r"[0-9a-f]{64}", tree_binding[key])
+    coverage_binding = quality_gate["coverage_binding"]
+    assert set(coverage_binding) == {
+        "report_sha256",
+        "source_inventory_sha256",
+        "source_file_count",
+        "statement_count",
+        "excluded_line_count",
+    }
+    assert coverage_binding["source_file_count"] == 422
+    assert coverage_binding["statement_count"] == 106507
+    assert coverage_binding["excluded_line_count"] == 1329
+    assert fullmatch(r"[0-9a-f]{64}", coverage_binding["report_sha256"])
+    assert fullmatch(
+        r"[0-9a-f]{64}", coverage_binding["source_inventory_sha256"]
+    )
+    assert evidence["inventory"]["active_pytest_instances"] == 125
     assert evidence["inventory"]["failure_surfaces"] == 84
     assert evidence["inventory"]["failure_cells"] == 1260
 
@@ -838,6 +1014,7 @@ def test_capability_remains_dormant() -> None:
     assert evidence["boundary"]["production_capability_history"] == [
         {"phase": 0, "state": "absent"},
         {"phase": 1, "state": "dormant_unadvertised"},
+        {"phase": 2, "state": "dormant_unadvertised"},
     ]
     assert evidence["boundary"]["production_source_changes"]
     assert all(

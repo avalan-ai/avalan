@@ -43,6 +43,7 @@ from avalan.interaction import (
     RequestState,
     RequirementMode,
     ResolutionStatus,
+    ResumeInputContinuation,
     RunId,
     SelectedChoice,
     SelectionValidationConstraints,
@@ -67,6 +68,7 @@ from avalan.interaction import (
     resolve_request,
     semantic_request_fingerprint,
 )
+from avalan.interaction.state import _anchor_request_presentation
 
 _CREATED_AT = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
 
@@ -169,14 +171,14 @@ def _pending(request: InputRequest) -> InputRequest:
     result = mark_request_pending(
         request,
         expected_state_revision=StateRevision(0),
-        presented_at=(
-            request.created_at
-            if request.mode is RequirementMode.ADVISORY
-            else None
-        ),
     )
     assert isinstance(result, InputTransitionApplied)
     assert result.mutation_applied
+    if request.mode is RequirementMode.ADVISORY:
+        return _anchor_request_presentation(
+            result.request,
+            request.created_at,
+        )
     return result.request
 
 
@@ -272,6 +274,7 @@ def test_requirement_input_n_006() -> None:
         transition.request,
         containing_run_exists=True,
     )
+    assert isinstance(outcome, ResumeInputContinuation)
     assert isinstance(outcome.result, InputAnsweredResult)
     assert transition.request.origin == pending.origin
 
@@ -329,6 +332,7 @@ def test_requirement_input_n_011() -> None:
         transition.request,
         containing_run_exists=True,
     )
+    assert isinstance(outcome, ResumeInputContinuation)
     assert isinstance(outcome.result, InputTimedOutResult)
     assert outcome.result.provenance is AnswerProvenance.POLICY
     assert not hasattr(outcome.result, "answers")
@@ -395,10 +399,10 @@ def test_requirement_input_n_031() -> None:
 def test_requirement_input_n_032() -> None:
     """Key answers by stable IDs rather than displayed wording."""
     answer = _answered(_request()).answers[1]
+    reason = encode_input_request(_request())["reason"]
     assert answer.question_id == QuestionId("strategy")
-    assert (
-        "Choose a strategy." not in encode_input_request(_request())["reason"]
-    )
+    assert isinstance(reason, str)
+    assert "Choose a strategy." not in reason
 
 
 def test_requirement_input_n_033() -> None:

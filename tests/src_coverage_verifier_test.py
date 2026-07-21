@@ -583,3 +583,169 @@ def test_exact_coverage_allows_only_reviewed_exclusion_relocations(
             match=message,
         ):
             verify_case(candidate_current, candidate_ledger)
+
+    added_source = sample.parent / "protocol.py"
+    added_source.write_text(
+        "from typing import Protocol\n"
+        "\n"
+        "class AddedProtocol(Protocol):\n"
+        "    def call(self) -> None:\n"
+        "        ...\n",
+        encoding="utf-8",
+    )
+    _, _, added_excluded, _, _ = analyzer.analysis2(str(added_source))
+    added_normalized = "src/package/protocol.py"
+    next_current = deepcopy(valid_current)
+    next_current["report_excluded_lines"][added_normalized] = added_excluded
+    _set_snapshot_digest(next_current, "snapshot_sha256")
+    next_ledger = {
+        "schema_version": 2,
+        "baseline_snapshot_sha256": valid_current["snapshot_sha256"],
+        "current_snapshot_sha256": next_current["snapshot_sha256"],
+        "directive_count_before": len(valid_current["exclusions"]),
+        "directive_count_after": len(next_current["exclusions"]),
+        "report_excluded_line_count_before": sum(
+            len(lines)
+            for lines in valid_current["report_excluded_lines"].values()
+        ),
+        "report_excluded_line_count_after": sum(
+            len(lines)
+            for lines in next_current["report_excluded_lines"].values()
+        ),
+        "directive_relocations": [],
+        "report_exclusion_relocations": [],
+        "report_exclusion_additions": [
+            {
+                "path": added_normalized,
+                "lines": added_excluded,
+                "reviewed_by": _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+                "reason": (
+                    "A synthetic protocol adds reviewed parser exclusion"
+                    " evidence."
+                ),
+            }
+        ],
+    }
+    _set_ledger_digest(next_ledger)
+    next_current_path = tmp_path / "coverage_exclusions_phase2.json"
+    next_ledger_path = tmp_path / "coverage_exclusion_relocations_phase2.json"
+
+    def verify_addition(
+        candidate_current: dict[str, Any],
+        candidate_ledger: dict[str, Any],
+    ) -> dict[str, tuple[int, ...]]:
+        _set_snapshot_digest(candidate_current, "snapshot_sha256")
+        candidate_ledger["current_snapshot_sha256"] = candidate_current[
+            "snapshot_sha256"
+        ]
+        candidate_ledger["directive_count_after"] = len(
+            candidate_current["exclusions"]
+        )
+        candidate_ledger["report_excluded_line_count_after"] = sum(
+            len(lines)
+            for lines in candidate_current["report_excluded_lines"].values()
+        )
+        _set_ledger_digest(candidate_ledger)
+        _write_json(current_path, valid_current)
+        _write_json(relocation_path, valid_ledger)
+        _write_json(next_current_path, candidate_current)
+        _write_json(next_ledger_path, candidate_ledger)
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_EXCLUSION_BASELINE_SHA256",
+            baseline["baseline_sha256"],
+        )
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_EXCLUSION_PHASE1_SHA256",
+            valid_current["snapshot_sha256"],
+        )
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_EXCLUSION_PHASE1_RELOCATION_SHA256",
+            valid_ledger["ledger_sha256"],
+        )
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_EXCLUSION_PHASE1_REVIEWER",
+            _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+        )
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_EXCLUSION_CURRENT_SHA256",
+            candidate_current["snapshot_sha256"],
+        )
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_EXCLUSION_RELOCATION_SHA256",
+            candidate_ledger["ledger_sha256"],
+        )
+        return cast(
+            dict[str, tuple[int, ...]],
+            _VERIFIER._verify_exclusion_history_chain(
+                baseline_path,
+                current_path,
+                relocation_path,
+                next_current_path,
+                next_ledger_path,
+                tmp_path,
+                tmp_path / "src",
+            ),
+        )
+
+    assert verify_addition(
+        deepcopy(next_current),
+        deepcopy(next_ledger),
+    )[
+        added_normalized
+    ] == tuple(added_excluded)
+
+    for mutation, message in (
+        ("unledgered", "changed exclusion counts"),
+        ("unreviewed", "relocation is unreviewed"),
+        ("duplicated", "addition is duplicated"),
+        ("existing_path", "missing, extra, or unreviewed"),
+        ("removed_path", "changed exclusion counts"),
+    ):
+        candidate_current = deepcopy(next_current)
+        candidate_ledger = deepcopy(next_ledger)
+        if mutation == "unledgered":
+            candidate_ledger["report_exclusion_additions"] = []
+        elif mutation == "unreviewed":
+            candidate_ledger["report_exclusion_additions"][0][
+                "reviewed_by"
+            ] = "pending"
+        elif mutation == "duplicated":
+            candidate_ledger["report_exclusion_additions"].append(
+                deepcopy(candidate_ledger["report_exclusion_additions"][0])
+            )
+        elif mutation == "existing_path":
+            candidate_ledger["report_exclusion_additions"][0][
+                "path"
+            ] = normalized
+        else:
+            del candidate_current["report_excluded_lines"][normalized]
+        with pytest.raises(
+            _VERIFIER.CoverageVerificationError,
+            match=message,
+        ):
+            verify_addition(candidate_current, candidate_ledger)
+
+    verify_addition(deepcopy(next_current), deepcopy(next_ledger))
+    rewritten_prior = deepcopy(valid_current)
+    rewritten_prior["exclusions"][0]["line"] += 1
+    _set_snapshot_digest(rewritten_prior, "snapshot_sha256")
+    _write_json(current_path, rewritten_prior)
+    with pytest.raises(
+        _VERIFIER.CoverageVerificationError,
+        match="prior snapshot digest changed",
+    ):
+        _VERIFIER._verify_exclusion_history_chain(
+            baseline_path,
+            current_path,
+            relocation_path,
+            next_current_path,
+            next_ledger_path,
+            tmp_path,
+            tmp_path / "src",
+        )

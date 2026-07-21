@@ -465,6 +465,44 @@ def test_all_answer_and_resolution_variants_round_trip() -> None:
         ) == canonical_resolution_digest(resolution)
 
 
+def test_resolution_digest_normalizes_only_outer_answer_order() -> None:
+    """Ignore answer collection order but preserve ordered selection values."""
+    answers = _answers()
+    forward = AnsweredResolution(
+        request_id=InputRequestId("request-1"),
+        provenance=AnswerProvenance.HUMAN,
+        resolved_at=_NOW,
+        answers=answers,
+    )
+    reordered = AnsweredResolution(
+        request_id=InputRequestId("request-1"),
+        provenance=AnswerProvenance.HUMAN,
+        resolved_at=_NOW + timedelta(seconds=10),
+        answers=tuple(reversed(answers)),
+    )
+    reversed_values = MultipleSelectionAnswer(
+        question_id=QuestionId("multiple"),
+        provenance=AnswerProvenance.HUMAN,
+        values=(
+            FreeFormOther(text="custom"),
+            SelectedChoice(value=ChoiceValue("one")),
+        ),
+    )
+    different_inner_order = AnsweredResolution(
+        request_id=InputRequestId("request-1"),
+        provenance=AnswerProvenance.HUMAN,
+        resolved_at=_NOW,
+        answers=answers[:-1] + (reversed_values,),
+    )
+
+    assert canonical_resolution_digest(forward) == canonical_resolution_digest(
+        reordered
+    )
+    assert canonical_resolution_digest(forward) != canonical_resolution_digest(
+        different_inner_order
+    )
+
+
 def test_request_segment_and_model_results_round_trip() -> None:
     """Round-trip requests and explicit transport/model results."""
     advisory = _request(mode=RequirementMode.ADVISORY)
@@ -971,11 +1009,6 @@ def test_request_decoder_revalidates_terminal_aggregate_invariants() -> None:
         )
     )
     invalid_advisory_requests = (
-        {
-            **advisory_wire,
-            "state": "pending",
-            "state_revision": 1,
-        },
         {**advisory_wire, "advisory_deadline": deadline},
         {**wire, "advisory_deadline": deadline},
         {**advisory_wire, "advisory_deadline": None},
@@ -1002,7 +1035,6 @@ def test_request_decoder_revalidates_terminal_aggregate_invariants() -> None:
             **advisory_wire,
             "state": "pending",
             "state_revision": 1,
-            "advisory_deadline": deadline,
         }
     )
     terminal_advisory = decode_input_request(
@@ -1015,7 +1047,7 @@ def test_request_decoder_revalidates_terminal_aggregate_invariants() -> None:
         }
     )
 
-    assert pending_advisory.advisory_deadline == _NOW + timedelta(seconds=60)
+    assert pending_advisory.advisory_deadline is None
     assert (
         encode_input_request(terminal_advisory)["advisory_deadline"]
         == deadline

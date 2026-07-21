@@ -1267,8 +1267,8 @@ def test_request_enforces_lifecycle_and_aggregate_invariants() -> None:
         )
 
 
-def test_advisory_hydration_requires_request_owned_deadline() -> None:
-    """Reject missing, forged, or unreached advisory lifecycle timing."""
+def test_advisory_hydration_anchors_deadline_to_presentation() -> None:
+    """Allow queued pending state and reject forged lifecycle timing."""
     created = _request(mode=RequirementMode.ADVISORY)
     deadline = _NOW + timedelta(seconds=60)
     base: dict[str, object] = {
@@ -1284,10 +1284,6 @@ def test_advisory_hydration_requires_request_owned_deadline() -> None:
 
     invalid_requests: tuple[dict[str, object], ...] = (
         {"advisory_deadline": deadline},
-        {
-            "state": RequestState.PENDING,
-            "state_revision": StateRevision(1),
-        },
         {
             "state": RequestState.PENDING,
             "state_revision": StateRevision(1),
@@ -1326,7 +1322,6 @@ def test_advisory_hydration_requires_request_owned_deadline() -> None:
         **cast(dict[str, object], base),
         state=RequestState.PENDING,
         state_revision=StateRevision(1),
-        advisory_deadline=deadline,
     )
     terminal = InputRequest(
         **cast(dict[str, object], base),
@@ -1340,7 +1335,7 @@ def test_advisory_hydration_requires_request_owned_deadline() -> None:
         ),
     )
 
-    assert pending.advisory_deadline == deadline
+    assert pending.advisory_deadline is None
     assert terminal.resolution is not None
 
 

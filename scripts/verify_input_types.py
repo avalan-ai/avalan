@@ -17,7 +17,7 @@ from input_contract_json import StrictJsonError, strict_json_path
 _FEATURE = "structured_task_input"
 _MAX_PHASE = 12
 _EXPECTED_TYPE_LEDGER_SHA256 = (
-    "e39ca984f8c8a63e77659622afff4152c71bd7ea5b9ce807428bca2146e0ff3c"
+    "e98df23a96037e7d36d3d58d02c33a494bd6053cc6c1008506dcb1d33ba57dfc"
 )
 
 

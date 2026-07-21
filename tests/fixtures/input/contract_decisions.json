@@ -74,10 +74,16 @@
       "origin": "assigned only by the authoritative interaction store",
       "initial": 0,
       "increment": "exactly once for every successful lifecycle mutation, including created-to-pending and each terminal transition; never for reads, rejected validation, authorization failures, or idempotent replay",
-      "compare_and_swap": "every remote mutation supplies expected_state_revision; mismatch rejects with input.stale_revision and performs zero writes, continuations, provider calls, or domain effects",
-      "ordering": "authenticate and authorize the principal before reading or comparing the revision",
+      "compare_and_swap": "every remote lifecycle mutation supplies expected_state_revision; mismatch rejects with input.stale_revision and performs zero writes, continuations, provider calls, or domain effects; an authorized identical terminal replay bypasses this mutation-only check",
+      "ordering": "authenticate, scope-authorize, and correlate first; settle equal deadlines; evaluate same-key and semantic terminal replay; compare expected_state_revision only when a new lifecycle mutation remains",
       "overflow": "reject further mutation as input.state_revision_exhausted without wrapping",
       "response": "return the resulting revision on every authorized mutation and observation"
+    },
+    "store_revision": {
+      "static_type": "InteractionStoreRevision distinct from StateRevision and every opaque identifier type",
+      "increment": "once for every persisted lifecycle or operational metadata mutation, including presentation, controller activity, and a semantic replay that appends a new transport key",
+      "wait_rule": "wait_for_change compares store_revision so presentation, activity, ledger, deadline, and lifecycle changes are observable without polling",
+      "deadline_schedule": "a distinct DeadlineScheduleRevision generation changes whenever the earliest-deadline schedule can change; wait_for_deadline_change wakes a waiter when an earlier deadline is inserted"
     },
     "boundary_propagation": {
       "provider": [
@@ -289,6 +295,15 @@
       "default": 60,
       "maximum": 3600
     },
+    "resolution_idempotency_key": {
+      "characters": {
+        "minimum": 1,
+        "maximum": 256
+      },
+      "utf8_bytes": 1024,
+      "ledger_entries_per_request": 32,
+      "overflow": "reject the new transport-key binding as input.idempotency_ledger_full; never truncate or evict an accepted binding"
+    },
     "required_wait_seconds": {
       "default": null,
       "maximum": null,
@@ -413,7 +428,7 @@
       "superseded"
     ],
     "illegal_behavior": "leave pending, record validation failure, invoke zero continuations",
-    "delivery_presentation": "timestamped events, never semantic states",
+    "delivery_presentation": "timestamped operational metadata, never semantic states; an advisory request may be pending while queued with no advisory_deadline, and actual presentation atomically anchors advisory_deadline and starts the inactivity countdown without changing state_revision",
     "alternate_principal_observation": "resolved category and timestamp only; answer content withheld"
   },
   "outcome_to_model": {
@@ -561,8 +576,31 @@
       "choice values and constraints"
     ],
     "interaction_loop_counter": "separate from ordinary tool-cycle accounting",
-    "resolution_digest": "canonical typed resolution plus provenance; semantic replay idempotent across transport keys",
-    "transport_idempotency_conflict": "same key with different content conflicts",
+    "resolution_digest": "canonical status, request identity, provenance, and typed answer or cancellation content; exclude caller resolved_at and transport idempotency key; sort the outer answers collection by stable question_id while preserving the ordered MultipleSelectionAnswer.values tuple",
+    "resolution_decision_precedence": [
+      "authenticate",
+      "scope-authorize",
+      "correlate",
+      "settle due deadlines with deadline-first equality",
+      "same-key identical replay or same-key different-digest conflict",
+      "new-key semantic terminal replay with atomic bounded-ledger append",
+      "mutation-only expected_state_revision compare",
+      "validate and commit a new terminal outcome"
+    ],
+    "transport_idempotency_conflict": "same key with different semantic digest conflicts; an identical new-key terminal replay persists its binding without changing lifecycle state_revision, and a full 32-entry ledger rejects explicitly",
+    "trusted_resolution_time": "ignore caller resolved_at for authority; stamp every newly committed resolution from one injected trusted wall-clock and monotonic-clock observation",
+    "handler_contract": {
+      "effect": "strict async InputHandler returning only the tagged resolution, detached, or disconnected outcome union",
+      "disconnect": "never reinterpret channel loss as decline",
+      "resumer": "an InputResumer callback may be registered only in process and must never be serialized or persisted",
+      "loss_with_resumer": "remain pending and detach",
+      "loss_without_resumer": "resolve unavailable"
+    },
+    "store_contract": {
+      "branch_registration": "persist an explicit authenticated run, child branch, and parent branch edge before a child creates requests; reject self-parent, cycles, and ownership drift",
+      "reopen": "independently opened in-memory store handles share one explicit backing-state object while handle-local waits and close state remain isolated",
+      "deadline_resolver": "due settlement records a typed trusted system resolver rather than fabricating a user principal"
+    },
     "continuation_claim_states": [
       "unclaimed",
       "claimed_pre_dispatch",
@@ -4390,7 +4428,10 @@
         "resolve trusted principal and tenant scope",
         "perform scope-filtered lookup that treats absent and out-of-scope identically",
         "authorize the requested operation",
-        "read state and compare state_revision",
+        "verify complete request and execution correlation",
+        "settle due deadlines before accepting an answer at equality",
+        "evaluate same-key conflict or replay and new-key semantic terminal replay",
+        "compare state_revision only for a remaining lifecycle mutation",
         "validate payload and mutate"
       ],
       "authentication_failure": {
@@ -8696,5 +8737,5 @@
     },
     "measurement": "barriers, queues, local peers, call_soon callbacks, and real monotonic loop time; no timing sleeps or network"
   },
-  "contract_sha256": "ef8702b71d737e16a72d182169b1d23cfefe995f8450f79c4a7bee906ddd649a"
+  "contract_sha256": "c13bcff64c0b28905c64c8e92b040d56e2312a99b45303b4e3a5d4d4490c882d"
 }

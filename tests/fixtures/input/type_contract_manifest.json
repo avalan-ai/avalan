@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "current_phase": 1,
+  "current_phase": 2,
   "activation_history": [
     {
       "phase": 0,
@@ -17,6 +17,19 @@
         "typed-resolution-payload-negative",
         "input-required-identity-negative",
         "unchecked-any-leak-negative"
+      ]
+    },
+    {
+      "phase": 2,
+      "fixture_ids": [
+        "async-handler-positive",
+        "synchronous-handler-negative",
+        "untyped-handler-result-negative",
+        "broker-identity-interchange-negative",
+        "store-revision-interchange-negative",
+        "controller-identity-interchange-negative",
+        "synchronous-resumer-negative",
+        "candidate-resolution-variants-negative"
       ]
     }
   ],
@@ -39,6 +52,26 @@
         "unchecked-any-leak-negative"
       ],
       "sha256": "693f47a2c1ab40660685e23f80929d00f6c1fe5b7dc94dd7e4558e5e9dd932b4"
+    },
+    {
+      "phase": 2,
+      "fixture_ids": [
+        "deterministic-fixtures-positive",
+        "canonical-answers-positive",
+        "async-handler-positive",
+        "synchronous-handler-negative",
+        "untyped-handler-result-negative",
+        "broker-identity-interchange-negative",
+        "store-revision-interchange-negative",
+        "controller-identity-interchange-negative",
+        "synchronous-resumer-negative",
+        "candidate-resolution-variants-negative",
+        "strict-resolution-variants-negative",
+        "typed-resolution-payload-negative",
+        "input-required-identity-negative",
+        "unchecked-any-leak-negative"
+      ],
+      "sha256": "924f97d61b1e5d4b2f65788e16512a584a5b7e193279beb3757d382d4b59feec"
     }
   ],
   "planned_replacements": [
@@ -126,7 +159,7 @@
     {
       "id": "async-handler-positive",
       "kind": "positive",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 2,
       "path": "tests/input_type_contracts/async_handler_positive.py",
       "expected_diagnostics": []
@@ -134,11 +167,81 @@
     {
       "id": "synchronous-handler-negative",
       "kind": "negative",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 2,
       "path": "tests/input_type_contracts/synchronous_handler_negative.py",
       "expected_diagnostics": [
-        "tests/input_type_contracts/synchronous_handler_negative.py:12: error: Argument \"handler\" to \"InteractionRuntime\" has incompatible type \"Callable[[InputRequest], InputResolution]\"; expected \"InputHandler\"  [arg-type]"
+        "tests/input_type_contracts/synchronous_handler_negative.py:15:25: error: Incompatible types in assignment (expression has type \"Callable[[InputHandlerContext], InputHandlerResolution | InputHandlerDetached | InputHandlerDisconnected]\", variable has type \"InputHandler\")  [assignment]"
+      ]
+    },
+    {
+      "id": "untyped-handler-result-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/input_type_contracts/untyped_handler_result_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/untyped_handler_result_negative.py:6:1: error: Function is missing a type annotation  [no-untyped-def]"
+      ]
+    },
+    {
+      "id": "broker-identity-interchange-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/input_type_contracts/broker_identity_interchange_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/broker_identity_interchange_negative.py:19:16: error: Argument \"request_id\" to \"InteractionCorrelation\" has incompatible type \"RunId\"; expected \"InputRequestId\"  [arg-type]",
+        "tests/input_type_contracts/broker_identity_interchange_negative.py:20:21: error: Argument \"continuation_id\" to \"InteractionCorrelation\" has incompatible type \"InputRequestId\"; expected \"ContinuationId\"  [arg-type]",
+        "tests/input_type_contracts/broker_identity_interchange_negative.py:21:12: error: Argument \"run_id\" to \"InteractionCorrelation\" has incompatible type \"ContinuationId\"; expected \"RunId\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "store-revision-interchange-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/input_type_contracts/store_revision_interchange_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/store_revision_interchange_negative.py:13:32: error: Incompatible types in assignment (expression has type \"InteractionStoreRevision\", variable has type \"StateRevision\")  [assignment]",
+        "tests/input_type_contracts/store_revision_interchange_negative.py:14:43: error: Incompatible types in assignment (expression has type \"DeadlineScheduleRevision\", variable has type \"InteractionStoreRevision\")  [assignment]",
+        "tests/input_type_contracts/store_revision_interchange_negative.py:15:46: error: Incompatible types in assignment (expression has type \"StateRevision\", variable has type \"DeadlineScheduleRevision\")  [assignment]"
+      ]
+    },
+    {
+      "id": "controller-identity-interchange-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/input_type_contracts/controller_identity_interchange_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/controller_identity_interchange_negative.py:13:36: error: Incompatible types in assignment (expression has type \"ActiveControlLeaseNonce\", variable has type \"ControllerId\")  [assignment]",
+        "tests/input_type_contracts/controller_identity_interchange_negative.py:14:42: error: Incompatible types in assignment (expression has type \"ResolutionIdempotencyKey\", variable has type \"ActiveControlLeaseNonce\")  [assignment]",
+        "tests/input_type_contracts/controller_identity_interchange_negative.py:15:41: error: Incompatible types in assignment (expression has type \"ControllerId\", variable has type \"ResolutionIdempotencyKey\")  [assignment]"
+      ]
+    },
+    {
+      "id": "synchronous-resumer-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/input_type_contracts/synchronous_resumer_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/synchronous_resumer_negative.py:10:25: error: Incompatible types in assignment (expression has type \"Callable[[InputResumptionNotification], None]\", variable has type \"InputResumer\")  [assignment]"
+      ]
+    },
+    {
+      "id": "candidate-resolution-variants-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/input_type_contracts/candidate_resolution_variants_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/candidate_resolution_variants_negative.py:20:39: error: Incompatible types in assignment (expression has type \"CancelledResolution\", variable has type \"AnsweredResolution | DeclinedResolution\")  [assignment]",
+        "tests/input_type_contracts/candidate_resolution_variants_negative.py:26:39: error: Incompatible types in assignment (expression has type \"TimedOutResolution\", variable has type \"AnsweredResolution | DeclinedResolution\")  [assignment]",
+        "tests/input_type_contracts/candidate_resolution_variants_negative.py:31:41: error: Incompatible types in assignment (expression has type \"UnavailableResolution\", variable has type \"AnsweredResolution | DeclinedResolution\")  [assignment]",
+        "tests/input_type_contracts/candidate_resolution_variants_negative.py:36:37: error: Incompatible types in assignment (expression has type \"ExpiredResolution\", variable has type \"AnsweredResolution | DeclinedResolution\")  [assignment]",
+        "tests/input_type_contracts/candidate_resolution_variants_negative.py:41:40: error: Incompatible types in assignment (expression has type \"SupersededResolution\", variable has type \"AnsweredResolution | DeclinedResolution\")  [assignment]"
       ]
     },
     {
