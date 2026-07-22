@@ -21,6 +21,7 @@ from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.manager import ModelManager
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -69,6 +70,9 @@ class EngineAgentPropertyTestCase(IsolatedAsyncioTestCase):
         self.memory = MagicMock()
         self.engine = DummyEngine()
         self.tool = MagicMock(spec=ToolManager)
+        self.tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         self.event_manager = MagicMock(spec=EventManager)
         self.event_manager.trigger = AsyncMock()
         self.model_manager = AsyncMock(spec=ModelManager)
@@ -123,6 +127,9 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         memory = FakeMemory()
         engine = DummyEngine()
         tool = MagicMock(spec=ToolManager)
+        tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
         model_manager = AsyncMock(spec=ModelManager)
@@ -191,7 +198,8 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
             task.operation.generation_settings,
             replace(settings, top_p=0.7),
         )
-        self.assertIs(task.context, context)
+        self.assertEqual(replace(task.context, capability=None), context)
+        self.assertIs(task.context.capability, task.capability)
         self.assertEqual(agent._last_output, "out")
 
     async def test_run_with_settings_no_previous_response(self):
@@ -215,7 +223,26 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             task.operation.generation_settings, replace(settings, top_p=0.7)
         )
+        self.assertEqual(replace(task.context, capability=None), context)
+        self.assertIs(task.context.capability, task.capability)
+
+    async def test_run_preserves_context_capability_identity(self) -> None:
+        agent, _engine, _memory, manager = self._make_agent()
+        capability = ModelCapabilityCatalog.create()
+        message = Message(role=MessageRole.USER, content="hi")
+        context = ModelCallContext(
+            specification=Specification(role=None, goal=None),
+            input=message,
+            capability=capability,
+        )
+        agent._tool.export_model_capability_seed.reset_mock()
+
+        await agent._run(context, message)
+
+        task = manager.await_args.args[0]
         self.assertIs(task.context, context)
+        self.assertIs(task.capability, capability)
+        agent._tool.export_model_capability_seed.assert_not_called()
 
     async def test_run_keeps_instructions_distinct_from_messages(self):
         agent, _engine, _memory, manager = self._make_agent()
@@ -259,7 +286,8 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         task = manager.await_args.args[0]
         self.assertEqual(task.operation.generation_settings.temperature, 0.4)
         self.assertFalse(task.operation.generation_settings.do_sample)
-        self.assertIs(task.context, context)
+        self.assertEqual(replace(task.context, capability=None), context)
+        self.assertIs(task.context.capability, task.capability)
 
     async def test_run_kwargs_only_no_previous_response(self):
         agent, engine, memory, manager = self._make_agent()
@@ -275,7 +303,8 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         task = manager.await_args.args[0]
         self.assertEqual(task.operation.generation_settings.temperature, 0.4)
         self.assertFalse(task.operation.generation_settings.do_sample)
-        self.assertIs(task.context, context)
+        self.assertEqual(replace(task.context, capability=None), context)
+        self.assertIs(task.context.capability, task.capability)
 
     async def test_run_defaults_from_uri(self):
         agent, engine, _, manager = self._make_agent(
@@ -355,12 +384,17 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         )
         agent, _, memory, manager = self._make_agent(last_response)
         message = Message(role=MessageRole.USER, content="hi")
-        parent_context = self._make_context(message)
+        capability = ModelCapabilityCatalog.create()
+        parent_context = replace(
+            self._make_context(message), capability=capability
+        )
         child_context = ModelCallContext(
             specification=parent_context.specification,
             input=[message],
+            capability=capability,
             parent=parent_context,
         )
+        agent._tool.export_model_capability_seed.reset_mock()
 
         await agent._run(child_context, [message])
 
@@ -368,6 +402,8 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         task = manager.await_args.args[0]
         self.assertEqual(task.operation.input, [message])
         self.assertIs(task.context, child_context)
+        self.assertIs(task.capability, capability)
+        agent._tool.export_model_capability_seed.assert_not_called()
         self.assertEqual(agent.last_prompt, ([message], None, None, None))
         self.assertEqual(agent._last_output, "out")
 
@@ -521,6 +557,9 @@ class EngineAgentCallTestCase(IsolatedAsyncioTestCase):
         self.memory = MagicMock()
         self.engine = DummyEngine()
         self.tool = MagicMock(spec=ToolManager)
+        self.tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         self.event_manager = MagicMock(spec=EventManager)
         self.event_manager.trigger = AsyncMock()
         self.model_manager = AsyncMock(spec=ModelManager)
@@ -574,6 +613,8 @@ class EngineAgentCallTestCase(IsolatedAsyncioTestCase):
         run_context = self.agent._run.await_args.args[0]
         self.assertIs(run_context.root_parent, root_parent)
         self.assertIs(run_context.parent, parent_context)
+        self.assertIsNotNone(run_context.capability)
+        self.assertIs(prepared_context.capability, run_context.capability)
         self.assertEqual(self.agent._run.await_args.kwargs, run_args)
         self.assertIsNone(child_context.root_parent)
         self.assertEqual(self.event_manager.trigger.await_count, 4)

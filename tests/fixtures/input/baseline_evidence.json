@@ -1,12 +1,13 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "recorded_at": "2026-07-21T17:29:45-03:00",
+  "recorded_at": "2026-07-22T09:37:14Z",
   "implementation_owner": "/root",
   "independent_reviewer": "/root/input_contract_audit",
-  "review_history_sha256": "7c94eb4806501ecb3ae82f1447fd94ed95e31d185d41e9fbcba2f31ce448a408",
+  "review_history_sha256": "f59a5cb66ee765407b15134bfe8e2a2c19600b807dcca550a89ef68b2caaee1c",
   "review_history_phase0_sha256": "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b",
   "review_history_phase1_sha256": "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85",
+  "review_history_phase2_sha256": "7c94eb4806501ecb3ae82f1447fd94ed95e31d185d41e9fbcba2f31ce448a408",
   "review_history": [
     {
       "sequence": 0,
@@ -88,18 +89,89 @@
       "status": "approved",
       "recorded_at": "2026-07-21T17:29:45-03:00",
       "evidence": "Independent terminal acceptance, coverage, and evidence review completed without unresolved findings."
+    },
+    {
+      "sequence": 9,
+      "phase": 3,
+      "role": "gate",
+      "reviewer": "/root/terminal_review",
+      "status": "pending",
+      "recorded_at": "2026-07-22T00:01:07Z",
+      "evidence": "Independent terminal metadata review remains pending: phase-3 workflow pins and exact metadata assertions were stale at phase 2 and require correction and validation."
+    },
+    {
+      "sequence": 10,
+      "phase": 3,
+      "role": "semantic",
+      "reviewer": "/root/acceptance_review",
+      "status": "approved",
+      "recorded_at": "2026-07-22T00:03:18Z",
+      "evidence": "Independent phase-3 catalog, acceptance turn-3, and batch-boundary reviews by /root/catalog_review_retry, /root/acceptance_review, and /root/batch_review_final completed with zero unresolved P1, P2, or P3 findings."
+    },
+    {
+      "sequence": 11,
+      "phase": 3,
+      "role": "closure",
+      "reviewer": "/root/phase3_closure_audit",
+      "status": "pending",
+      "recorded_at": "2026-07-22T07:43:00Z",
+      "evidence": "Closure review turns four and five recorded the remaining async shutdown and ToolManager identity, inventory, and rollback findings; the bounded correction lanes completed and final independent verification began."
+    },
+    {
+      "sequence": 12,
+      "phase": 3,
+      "role": "closure",
+      "reviewer": "/root/phase3_closure_audit",
+      "status": "approved",
+      "recorded_at": "2026-07-22T07:44:17Z",
+      "evidence": "Independent turn-six async approval and independent turn-six ToolManager approval closed both stable correction lanes with zero P1, P2, or P3 findings across exact regressions, focused suites, full relevant test trees, and scoped static checks."
+    },
+    {
+      "sequence": 13,
+      "phase": 3,
+      "role": "coverage-closure",
+      "reviewer": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "status": "pending",
+      "recorded_at": "2026-07-22T08:33:02Z",
+      "evidence": "Independent coverage-closure review began after the stream dead-code/no-backward-compatibility cleanup, redundant ToolManager guard removal, and model test-only coverage lanes completed."
+    },
+    {
+      "sequence": 14,
+      "phase": 3,
+      "role": "coverage-closure",
+      "reviewer": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "status": "approved",
+      "recorded_at": "2026-07-22T08:33:12Z",
+      "evidence": "Independent coverage approvals by /root/phase3_closure_audit/turn3_toolmanager_identity_fix and /root/phase3_closure_audit/turn3_toolmanager_readonly completed with zero P1, P2, or P3 findings; they validated the stream dead-code/no-backward-compatibility removal, redundant ToolManager guard removal, and model test-only coverage additions without coverage tricks."
+    },
+    {
+      "sequence": 15,
+      "phase": 3,
+      "role": "gate",
+      "reviewer": "/root/terminal_review",
+      "status": "approved",
+      "recorded_at": "2026-07-22T09:37:14Z",
+      "evidence": "Independent terminal review approved the first frozen Phase 3 evidence with zero P1, P2, or P3 findings after validating the authoritative full, exact-coverage, acceptance, type, lint, diff, and focused results together with the live coverage-report and normalized-tree bindings."
     }
   ],
-  "quality_history_sha256": "d8e18473bd808cdb7610f06c2f6bd875573b89cfffd78210fca8fbe1fff69880",
+  "quality_history_sha256": "0bc69e337549c1308468fd095e26a5a680440e8d60181527469b52b13497710f",
   "quality_history": [
     {
       "phase": 1,
       "state": "complete",
       "quality_gate_sha256": "f58bd16d9bf57bb3f2972982ff8bcf19a6125715a40194effecb8141c8ebd5ea",
       "evidence_sha256": "a4c16a90cf2d451b423da22ba763b50742e47f583230ded87c9997d77e1b93b8"
+    },
+    {
+      "phase": 2,
+      "state": "complete",
+      "quality_gate_sha256": "d004e9f765e9167d31debb7642883e774e42a03503f32f8869eb6b4e084e3953",
+      "evidence_sha256": "d0e276493609d2e7254c576bf50552a933e4e54cb67c9ec6e6a71f94a17f0302"
     }
   ],
   "active_test_node_ids": [
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_001",
+    "tests/input/canonical_contract_test.py::test_requirement_input_n_003",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_004",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_005",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_006",
@@ -115,6 +187,17 @@
     "tests/input/broker_contract_test.py::test_requirement_input_n_019",
     "tests/input/broker_contract_test.py::test_requirement_input_n_020",
     "tests/input/broker_contract_test.py::test_requirement_input_n_021",
+    "tests/input/model_capability_contract_test.py::test_requirement_input_n_022",
+    "tests/input/model_capability_contract_test.py::test_requirement_input_n_023",
+    "tests/input/model_capability_contract_test.py::test_requirement_input_n_024",
+    "tests/input/model_capability_contract_test.py::test_requirement_input_n_025",
+    "tests/input/model_capability_contract_test.py::test_requirement_input_n_026",
+    "tests/input/model_capability_contract_test.py::test_requirement_input_n_027",
+    "tests/input/model_capability_contract_test.py::test_requirement_input_n_028",
+    "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix",
+    "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection",
+    "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_rejected_structured_batches_have_zero_domain_side_effects",
+    "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_valid_reserved_call_preserves_exact_provider_id",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_029",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_030",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_031",
@@ -219,21 +302,26 @@
       {
         "phase": 2,
         "state": "dormant_unadvertised"
+      },
+      {
+        "phase": 3,
+        "state": "dormant_unadvertised"
       }
     ],
     "production_source_changes": [
-      "src/avalan/agent/orchestrator/response/orchestrator_response.py",
-      "src/avalan/cli/commands/model.py",
-      "src/avalan/cli/display_reducer.py",
+      "src/avalan/agent/",
+      "src/avalan/cli/",
       "src/avalan/event/__init__.py",
       "src/avalan/event/manager.py",
+      "src/avalan/flow/registry.py",
       "src/avalan/interaction/",
-      "src/avalan/model/stream.py",
+      "src/avalan/model/",
       "src/avalan/server/a2a/router.py",
       "src/avalan/server/routers/chat.py",
       "src/avalan/server/routers/mcp.py",
       "src/avalan/server/routers/responses.py",
-      "src/avalan/task/event.py"
+      "src/avalan/task/event.py",
+      "src/avalan/tool/"
     ],
     "changed_paths": [
       ".github/workflows/test.yml",
@@ -244,24 +332,24 @@
       "scripts/verify_input_acceptance.py",
       "scripts/verify_input_types.py",
       "scripts/verify_src_coverage.py",
-      "src/avalan/agent/orchestrator/response/orchestrator_response.py",
-      "src/avalan/cli/commands/model.py",
-      "src/avalan/cli/display_reducer.py",
+      "src/avalan/agent/",
+      "src/avalan/cli/",
       "src/avalan/event/__init__.py",
       "src/avalan/event/manager.py",
+      "src/avalan/flow/registry.py",
       "src/avalan/interaction/",
-      "src/avalan/model/stream.py",
+      "src/avalan/model/",
       "src/avalan/server/a2a/router.py",
       "src/avalan/server/routers/chat.py",
       "src/avalan/server/routers/mcp.py",
       "src/avalan/server/routers/responses.py",
       "src/avalan/task/event.py",
-      "tests/agent/orchestrator_response_additional_test.py",
-      "tests/cli/display_reducer_test.py",
-      "tests/cli/model_test.py",
-      "tests/cli/stream_presenter_test.py",
+      "src/avalan/tool/",
+      "tests/agent/",
+      "tests/cli/",
       "tests/event/interaction_lifecycle_test.py",
       "tests/fixtures/input/",
+      "tests/flow/",
       "tests/input/",
       "tests/input_acceptance_verifier_test.py",
       "tests/input_contract_fixtures.py",
@@ -272,29 +360,28 @@
       "tests/input_type_contracts/",
       "tests/interaction/",
       "tests/interaction_type_contracts/",
-      "tests/model/full_coverage_gap_model_test.py",
-      "tests/model/model_stream_contract_test.py",
-      "tests/model/model_stream_interaction_test.py",
-      "tests/model/text_generation_response_more_test.py",
+      "tests/model/",
       "tests/project_metadata_test.py",
       "tests/reasoning_summary_phase1_test.py",
-      "tests/server/a2a_v1_router_test.py",
-      "tests/server/chat_router_unit_test.py",
-      "tests/server/mcp_reasoning_summary_test.py",
-      "tests/server/responses_phase7_contract_test.py",
-      "tests/server/responses_utils_test.py",
-      "tests/server/router_streaming_test.py",
+      "tests/server/",
       "tests/src_coverage_verifier_test.py",
-      "tests/task/interaction_event_sanitization_test.py"
+      "tests/task/",
+      "tests/tool/"
     ]
+  },
+  "pending_structural_inventory": {
+    "source_inventory_sha256": "32cd39d8285af3b782ca095bda1a80de5e991e98e4baf1ba1cf003c5d02a80ba",
+    "source_file_count": 424,
+    "statement_count": 108402,
+    "excluded_line_count": 1327
   },
   "inventory": {
     "behavior_requirements": 107,
     "public_scenarios": 12,
     "delivery_requirements": 12,
-    "active_acceptance_nodes": 86,
-    "active_pytest_instances": 125,
-    "planned_acceptance_nodes": 183,
+    "active_acceptance_nodes": 99,
+    "active_pytest_instances": 187,
+    "planned_acceptance_nodes": 174,
     "failure_conditions": 15,
     "failure_surfaces": 84,
     "failure_cells": 1260,
@@ -307,24 +394,24 @@
       "poetry run pytest --verbose -s",
       "make test-coverage -- -100 src/",
       "make test-coverage-exact no-install",
-      "poetry run python scripts/verify_input_acceptance.py --through-phase 2",
-      "make typecheck-input-contract INPUT_PHASE=2",
+      "poetry run python scripts/verify_input_acceptance.py --through-phase 3",
+      "make typecheck-input-contract INPUT_PHASE=3",
       "make lint",
       "git diff --check",
-      "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py tests/interaction tests/interaction_type_contracts tests/input tests/event/interaction_lifecycle_test.py tests/model/model_stream_contract_test.py tests/model/model_stream_interaction_test.py tests/task/interaction_event_sanitization_test.py tests/agent/orchestrator_response_additional_test.py tests/cli/display_reducer_test.py tests/cli/model_test.py tests/cli/stream_presenter_test.py tests/model/text_generation_response_more_test.py tests/server/a2a_v1_router_test.py tests/server/chat_router_unit_test.py tests/server/mcp_reasoning_summary_test.py tests/server/responses_phase7_contract_test.py tests/server/responses_utils_test.py tests/server/router_streaming_test.py"
+      "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/input_type_contract_test.py tests/input/canonical_contract_test.py tests/input/model_capability_contract_test.py tests/agent/orchestrator_response_capability_test.py tests/model/model_call_test.py tests/model/model_capability_test.py tests/model/nlp/vendor_google_capability_test.py tests/tool/tool_manager_test.py"
     ],
     "state_details": {
-      "completed_at": "2026-07-21T17:14:59-03:00",
-      "gate_run_id": "input-broker-authoritative-20260721T171459-0300"
+      "completed_at": "2026-07-22T09:25:17Z",
+      "gate_run_id": "input-capability-authoritative-ecdd67ebe387"
     },
     "results": [
       {
         "command": "poetry run pytest --verbose -s",
         "exit_code": 0,
-        "passed": 10687,
+        "passed": 11013,
         "skipped": 66,
-        "subtests_passed": 7955,
-        "seconds": 164.06,
+        "subtests_passed": 8129,
+        "seconds": 172.6,
         "deselected": 0,
         "xfail": 0,
         "xpass": 0
@@ -337,31 +424,31 @@
       {
         "command": "make test-coverage-exact no-install",
         "exit_code": 0,
-        "covered_statements": 106507,
-        "total_statements": 106507,
-        "source_files": 422,
+        "covered_statements": 108402,
+        "total_statements": 108402,
+        "source_files": 424,
         "missing_lines": 0,
         "missing_files": 0,
-        "passed": 10687,
+        "passed": 11013,
         "skipped": 66,
-        "subtests_passed": 7955,
-        "seconds": 253.58
+        "subtests_passed": 8129,
+        "seconds": 273.96
       },
       {
-        "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 2",
+        "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 3",
         "exit_code": 0,
-        "active_nodes": 86,
-        "active_instances": 125
+        "active_nodes": 99,
+        "active_instances": 187
       },
       {
-        "command": "make typecheck-input-contract INPUT_PHASE=2",
+        "command": "make typecheck-input-contract INPUT_PHASE=3",
         "exit_code": 0,
-        "active_fixtures": 14
+        "active_fixtures": 18
       },
       {
         "command": "make lint",
         "exit_code": 0,
-        "source_files_typechecked": 422,
+        "source_files_typechecked": 424,
         "script_files_typechecked": 6
       },
       {
@@ -369,12 +456,12 @@
         "exit_code": 0
       },
       {
-        "command": "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/src_coverage_verifier_test.py tests/input_contract_metadata_test.py tests/input_type_contract_test.py tests/input_contract_harness_test.py tests/project_metadata_test.py tests/interaction tests/interaction_type_contracts tests/input tests/event/interaction_lifecycle_test.py tests/model/model_stream_contract_test.py tests/model/model_stream_interaction_test.py tests/task/interaction_event_sanitization_test.py tests/agent/orchestrator_response_additional_test.py tests/cli/display_reducer_test.py tests/cli/model_test.py tests/cli/stream_presenter_test.py tests/model/text_generation_response_more_test.py tests/server/a2a_v1_router_test.py tests/server/chat_router_unit_test.py tests/server/mcp_reasoning_summary_test.py tests/server/responses_phase7_contract_test.py tests/server/responses_utils_test.py tests/server/router_streaming_test.py",
+        "command": "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/input_type_contract_test.py tests/input/canonical_contract_test.py tests/input/model_capability_contract_test.py tests/agent/orchestrator_response_capability_test.py tests/model/model_call_test.py tests/model/model_capability_test.py tests/model/nlp/vendor_google_capability_test.py tests/tool/tool_manager_test.py",
         "exit_code": 0,
-        "passed": 1609,
+        "passed": 488,
         "skipped": 0,
-        "subtests_passed": 1141,
-        "seconds": 30.39,
+        "subtests_passed": 82,
+        "seconds": 12.83,
         "deselected": 0,
         "xfail": 0,
         "xpass": 0
@@ -382,24 +469,24 @@
     ],
     "tree_binding": {
       "baseline_head": "609aa091c17756ab952cf5fe668ca3d867f0e311",
-      "inventory_file_count": 1252,
-      "inventory_sha256": "d41562558f6402dbde1e567202432d4e9d7e63753797b1304e2be4a2fa2d18f5",
+      "inventory_file_count": 1270,
+      "inventory_sha256": "59171e64a5f20f150114cd835e64faafe1b67a5430657a2889c92b1ed8a7ee81",
       "normalized_evidence_kind": "regular",
-      "normalized_evidence_sha256": "df1be3c6bb991efbc096ec71ddcec5e2b6a81d04ebb4275838edbd9e2c2e219f",
+      "normalized_evidence_sha256": "bd2369062e3ecd457051a462f9d4ecc27f74bb3934c335c98f37f984019b712e",
       "normalized_verifier_kind": "regular",
-      "normalized_verifier_sha256": "2de8a9c386015997c1d84067861e31f23cb0a946e2b73b072db21b2ffae72ae9",
-      "tree_sha256": "58db8927265130796d869daf113b4cbee4830101095b08bb3f2e898dfa00bb7a"
+      "normalized_verifier_sha256": "4f276c3f122571a73714a2c8c8b7149c83c0497a19ade038b56d56908a7afce0",
+      "tree_sha256": "60eb9628f98003ad6407e2506555db23c901be60082a5a45cc67c13becbc7baf"
     },
     "coverage_binding": {
-      "report_sha256": "e90daa0b99479d4311f7114ff05af5ff73c76dc853ca3f7362d5c644cec30311",
-      "source_inventory_sha256": "2870de9f550c5fc3e6f12ad4a8676d52c70fe1c2df3c01081e50c970401f8fe5",
-      "source_file_count": 422,
-      "statement_count": 106507,
-      "excluded_line_count": 1329
+      "report_sha256": "ecdd67ebe3878439b41b9f9f04b9154f0772f6c3b5621d599ea18fc4d912a5e6",
+      "source_inventory_sha256": "32cd39d8285af3b782ca095bda1a80de5e991e98e4baf1ba1cf003c5d02a80ba",
+      "source_file_count": 424,
+      "statement_count": 108402,
+      "excluded_line_count": 1327
     }
   },
   "typing_async_audit": {
-    "strict_type_fixture_count": 14,
+    "strict_type_fixture_count": 18,
     "negative_type_fixtures_planned": 0,
     "effect_interfaces_async": [
       "scripted provider",

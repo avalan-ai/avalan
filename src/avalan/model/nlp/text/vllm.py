@@ -3,9 +3,11 @@ from ....entities import (
     Input,
     TransformerEngineSettings,
 )
+from ....model.capability import ModelCapabilityCatalog
 from ....model.nlp.text.generation import TextGenerationModel
 from ....model.provider import provider_family_value
 from ....model.reasoning import validate_reasoning_summary_request
+from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
     CanonicalStreamItem,
     LocalTextStreamEventParser,
@@ -13,14 +15,19 @@ from ....model.stream import (
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    TextGenerationNonStreamResult,
+    TextGenerationSingleStream,
     _reject_legacy_token_stream_chunk,
     stream_token_metadata,
 )
 from ....model.vendor import TextGenerationVendorStream
-from ....tool.manager import ToolManager
 from ....types import LooseJsonValue
+from .local_protocol import (
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL,
+    LocalStructuredOutputProtocol,
+)
 
-from asyncio import to_thread
+from asyncio import CancelledError, to_thread
 from dataclasses import asdict, replace
 from importlib import import_module
 from logging import Logger, getLogger
@@ -69,14 +76,19 @@ class VllmStream(TextGenerationVendorStream):
 
     _cumulative_text: bool
     _iterator: Iterator[Any] | None
+    _local_structured_output_protocol: LocalStructuredOutputProtocol | None
     _stream: AsyncIterator[Any]
     _supports_cancellation: bool
+    _supports_tool_calls: bool
 
     def __init__(
         self,
         generator: Iterator[Any] | AsyncIterator[Any],
         *,
         cumulative_text: bool = False,
+        local_structured_output_protocol: (
+            LocalStructuredOutputProtocol | None
+        ) = None,
         provider_family: str = "vllm",
     ) -> None:
         async def empty_generator() -> (
@@ -86,6 +98,16 @@ class VllmStream(TextGenerationVendorStream):
                 yield cast(CanonicalStreamItem, None)
 
         self._cumulative_text = cumulative_text
+        assert local_structured_output_protocol is None or (
+            local_structured_output_protocol
+            is LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+        )
+        self._local_structured_output_protocol = (
+            local_structured_output_protocol
+        )
+        self._supports_tool_calls = (
+            local_structured_output_protocol is not None
+        )
         if hasattr(generator, "__anext__"):
             self._supports_cancellation = True
             self._iterator = None
@@ -130,6 +152,7 @@ class VllmStream(TextGenerationVendorStream):
                 backend=StreamProducerBackend.LOCAL,
                 provider_family=self._provider_family,
                 supports_reasoning=True,
+                supports_tool_calls=self._supports_tool_calls,
                 supports_cancellation=self._supports_cancellation,
             ),
             close_after_terminal=close_after_terminal,
@@ -138,31 +161,48 @@ class VllmStream(TextGenerationVendorStream):
     async def _provider_events(
         self,
     ) -> AsyncGenerator[StreamProviderEvent, None]:
-        parser = LocalTextStreamEventParser()
+        parser = (
+            self._local_structured_output_protocol.parser()
+            if self._local_structured_output_protocol is not None
+            else LocalTextStreamEventParser(parse_tool_calls=False)
+        )
         previous_text = ""
-        async for chunk in self._stream:
-            if isinstance(chunk, BaseException):
-                raise chunk
-            text, metadata = self._chunk_text_and_metadata(chunk)
-            if text is None:
-                continue
-            if self._cumulative_text:
-                if text.startswith(previous_text):
-                    delta = text[len(previous_text) :]
-                else:
-                    delta = text
-                previous_text = text
-                text = delta
-            if not text:
-                continue
-            for event in parser.push(text):
+        try:
+            async for chunk in self._stream:
+                if isinstance(chunk, BaseException):
+                    raise chunk
+                text, metadata = self._chunk_text_and_metadata(chunk)
+                if text is None:
+                    continue
+                if self._cumulative_text:
+                    if text.startswith(previous_text):
+                        delta = text[len(previous_text) :]
+                    else:
+                        delta = text
+                    previous_text = text
+                    text = delta
+                if not text:
+                    continue
+                for event in parser.push(text, metadata):
+                    yield self._event_with_metadata(
+                        event,
+                        metadata,
+                        provider_event_type="vllm.delta",
+                    )
+        except (CancelledError, Exception):
+            for event in parser.flush(completed=False):
                 yield self._event_with_metadata(
                     event,
-                    metadata,
+                    {},
                     provider_event_type="vllm.delta",
                 )
+            raise
         for event in parser.flush():
-            yield event
+            yield self._event_with_metadata(
+                event,
+                {},
+                provider_event_type="vllm.delta",
+            )
 
     @staticmethod
     def _event_with_metadata(
@@ -175,7 +215,7 @@ class VllmStream(TextGenerationVendorStream):
             StreamItemKind.ANSWER_DELTA,
             StreamItemKind.REASONING_DELTA,
         ):
-            event_metadata = {**event.metadata, **metadata}
+            event_metadata = {**metadata, **event.metadata}
         else:
             event_metadata = event.metadata
         return replace(
@@ -335,7 +375,7 @@ class VllmModel(TextGenerationModel):
         input: Input,
         system_prompt: str | None,
         developer_prompt: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         chat_template_settings: dict[str, object] | None = None,
         *,
         instructions: str | None = None,
@@ -346,7 +386,7 @@ class VllmModel(TextGenerationModel):
             developer_prompt=developer_prompt,
             context=None,
             tensor_format="pt",
-            tool=tool,
+            capability=capability,
             chat_template_settings=chat_template_settings,
             instructions=instructions,
         )
@@ -362,21 +402,44 @@ class VllmModel(TextGenerationModel):
         self,
         prompt: str,
         settings: GenerationSettings,
+        local_structured_output_protocol: (
+            LocalStructuredOutputProtocol | None
+        ) = None,
     ) -> TextGenerationVendorStream:
         params = self._build_sampling_params(settings)
         model = cast(Any, self._model)
         iterator = iter(model.generate([prompt], params, stream=True))
-        return VllmStream(iterator, cumulative_text=True)
+        return VllmStream(
+            iterator,
+            cumulative_text=True,
+            local_structured_output_protocol=(
+                local_structured_output_protocol
+            ),
+        )
 
     def _string_output(
         self,
         prompt: str,
         settings: GenerationSettings,
-    ) -> str:
+        local_structured_output_protocol: (
+            LocalStructuredOutputProtocol | None
+        ) = None,
+    ) -> str | TextGenerationNonStreamResult:
         params = self._build_sampling_params(settings)
         model = cast(Any, self._model)
         results = list(model.generate([prompt], params))
-        return results[0].outputs[0].text if results else ""
+        text = results[0].outputs[0].text if results else ""
+        if local_structured_output_protocol is None:
+            return text
+        assert (
+            local_structured_output_protocol
+            is LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+        )
+        return local_structured_output_protocol.non_stream_result(
+            text,
+            provider_family="vllm",
+            provider_event_type="vllm.generate",
+        )
 
     async def __call__(
         self,
@@ -386,19 +449,49 @@ class VllmModel(TextGenerationModel):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        tool: ToolManager | None = None,
-    ) -> TextGenerationVendorStream | str:
+        capability: ModelCapabilityCatalog | None = None,
+    ) -> TextGenerationVendorStream | TextGenerationResponse:
         settings = settings or GenerationSettings()
         validate_reasoning_summary_request(self, settings)
+        effective_capability = self._effective_local_capability(capability)
+        structured_output_protocol = (
+            LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+            if effective_capability is not None
+            else None
+        )
         prompt = self._prompt(
             input,
             system_prompt,
             developer_prompt,
-            tool,
+            effective_capability,
             asdict(settings.chat_settings),
             instructions=instructions,
         )
         generation_settings = replace(settings, do_sample=False)
         if settings.use_async_generator:
-            return self._stream_generator(prompt, generation_settings)
-        return self._string_output(prompt, generation_settings)
+            return self._stream_generator(
+                prompt,
+                generation_settings,
+                local_structured_output_protocol=structured_output_protocol,
+            )
+        result = self._string_output(
+            prompt,
+            generation_settings,
+            local_structured_output_protocol=structured_output_protocol,
+        )
+        output = (
+            result
+            if isinstance(result, TextGenerationNonStreamResult)
+            else TextGenerationSingleStream(
+                result,
+                provider_family="vllm",
+            )
+        )
+        return TextGenerationResponse(
+            output,
+            logger=self._logger,
+            generation_settings=generation_settings,
+            settings=generation_settings,
+            use_async_generator=False,
+            provider_family="vllm",
+        )

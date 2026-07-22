@@ -57,12 +57,14 @@ from avalan.entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallParseOutcome,
     ToolCallToken,
     TransformerEngineSettings,
 )
 from avalan.event import Event, EventObservabilityPayload, EventType
 from avalan.event.manager import EventManager
 from avalan.model.call import ModelCallContext
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.manager import ModelManager as RealModelManager
 from avalan.model.nlp.text.generation import TextGenerationModel
 from avalan.model.response.parsers.reasoning import ReasoningParser
@@ -14570,9 +14572,11 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = MagicMock()
         input_message = Message(role=MessageRole.USER, content="hi")
+        capability = ModelCapabilityCatalog.create()
         context = ModelCallContext(
             specification=operation.specification,
             input=input_message,
+            capability=capability,
             engine_args={},
         )
         orch_response = OrchestratorResponse(
@@ -14582,6 +14586,7 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             context,
+            capability=capability,
         )
 
         orchestrator = SimpleNamespace(event_manager=None, input_token_count=1)
@@ -15208,12 +15213,15 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
                 reasoning_settings=ReasoningSettings(),
                 logger=getLogger(),
             )
-            tm = MagicMock()
-            tm.is_potential_tool_call.return_value = True
-            tm.get_calls.return_value = None
+            capability = MagicMock(spec=ModelCapabilityCatalog)
+            capability.is_potential_tool_call.return_value = True
+            capability.parse_calls.return_value = ToolCallParseOutcome()
+            capability.stream_buffer_diagnostics.return_value = []
             base_parser = ToolCallParser()
-            tm.tool_call_status.side_effect = base_parser.tool_call_status
-            tp = ToolCallResponseParser(tm, None)
+            capability.tool_call_status.side_effect = (
+                base_parser.tool_call_status
+            )
+            tp = ToolCallResponseParser(capability, None)
             sequence = [
                 "X",
                 "<think>",

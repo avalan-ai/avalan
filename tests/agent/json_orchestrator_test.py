@@ -270,6 +270,9 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         memory.has_recent_message = False
         memory.__exit__ = MagicMock()
         tool = MagicMock(spec=ToolManager)
+        tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         tool.is_empty = True
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
@@ -347,6 +350,9 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         memory.has_recent_message = False
         memory.__exit__ = MagicMock()
         tool = MagicMock(spec=ToolManager)
+        tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         tool.is_empty = True
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
@@ -432,6 +438,9 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         memory.has_recent_message = False
         memory.__exit__ = MagicMock()
         tool = MagicMock(spec=ToolManager)
+        tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         tool.is_empty = True
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()

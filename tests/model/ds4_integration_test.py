@@ -21,6 +21,7 @@ from avalan.backends.ds4_native.errors import (
     Ds4InvalidModel,
 )
 from avalan.entities import Message, MessageRole, MessageToolCall
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.nlp.text.ds4 import _CPU_WARNING, Ds4Model
 from avalan.tool.dsml import DsmlTools
 from avalan.tool.manager import ToolManager
@@ -29,6 +30,12 @@ from avalan.tool.math import MathToolSet
 _LABEL = "DS4 real integration tests"
 _REUSE_PROMPT = "Name one primary color."
 _SHORT_PROMPT = "Answer with one short word."
+
+
+def _model_capability(manager: ToolManager) -> ModelCapabilityCatalog:
+    return ModelCapabilityCatalog.create(
+        manager.export_model_capability_seed()
+    )
 
 
 def _require_real_model_path() -> Path:
@@ -112,7 +119,7 @@ def test_ds4_real_model_second_call_syncs_prompt_prefix(
                 None,
                 None,
                 settings,
-                tool=None,
+                capability=None,
             )
             session_before = model._ds4_worker()._require_session()
 
@@ -201,7 +208,7 @@ def test_ds4_real_model_tokenizes_exact_dsml_replay(
                 None,
                 None,
                 greedy_settings(max_new_tokens=1),
-                tool=manager,
+                capability=_model_capability(manager),
             )
             return captured[-1], tokens
 

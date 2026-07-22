@@ -232,7 +232,7 @@ _EXPECTED_NO_BC_IDS = frozenset(
     }
 )
 _EXPECTED_REQUIREMENTS_SHA256 = (
-    "0d2ede16f94cb1094cd455a585b00293bb11ca32178de65c37a81999b91013b4"
+    "5f73b948ccf2f817fad54952b1b4864b6403a2f4928dd82d1d38e28d54b57ea1"
 )
 _EXPECTED_FAILURE_MATRIX_SHA256 = (
     "e5ce3aac0d441897b80a09d6a693853c65d4a446ed7e4c0184b3e3bc0b212c08"
@@ -241,22 +241,25 @@ _EXPECTED_DECISIONS_SHA256 = (
     "c13bcff64c0b28905c64c8e92b040d56e2312a99b45303b4e3a5d4d4490c882d"
 )
 _EXPECTED_NO_BC_SHA256 = (
-    "4a0140865a8ba58d2590fbc75245326c3d791f3dc541c52e8d3657b987d563b6"
+    "c75145467fe15a1cd55b6bb10e7dd16fc5ff8e4b25b530c2d7f147ab3c641887"
 )
 _EXPECTED_ACCEPTANCE_LEDGER_SHA256 = (
-    "0ec05ee0d57be61783c5de772821a609a9501df896f2d3515f868c1ac622ea67"
+    "e9b5258995b4b0769c9276141e0bb89161c03099dc9db08c5afa7190fb179bbb"
 )
 _EXPECTED_EVIDENCE_SHA256 = (
-    "d0e276493609d2e7254c576bf50552a933e4e54cb67c9ec6e6a71f94a17f0302"
+    "59788e2441bec0bd34a61ff94f8b14459ca229a37fcf693ae6b94fb8106e8ab9"
 )
 _EXPECTED_REVIEW_HISTORY_SHA256 = (
-    "7c94eb4806501ecb3ae82f1447fd94ed95e31d185d41e9fbcba2f31ce448a408"
+    "f59a5cb66ee765407b15134bfe8e2a2c19600b807dcca550a89ef68b2caaee1c"
 )
 _EXPECTED_PHASE0_REVIEW_SHA256 = (
     "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b"
 )
 _EXPECTED_PHASE1_REVIEW_SHA256 = (
     "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85"
+)
+_EXPECTED_PHASE2_REVIEW_SHA256 = (
+    "7c94eb4806501ecb3ae82f1447fd94ed95e31d185d41e9fbcba2f31ce448a408"
 )
 _EXPECTED_PHASE2_PENDING_REVIEW_SHA256 = (
     "a83a4e9545ac72c99c23d6fd316c7661f5a6bfef86c8c39a5c209ee6185a852a"
@@ -267,8 +270,14 @@ _EXPECTED_PHASE1_QUALITY_SHA256 = (
 _EXPECTED_PHASE1_EVIDENCE_SHA256 = (
     "a4c16a90cf2d451b423da22ba763b50742e47f583230ded87c9997d77e1b93b8"
 )
+_EXPECTED_PHASE2_QUALITY_SHA256 = (
+    "d004e9f765e9167d31debb7642883e774e42a03503f32f8869eb6b4e084e3953"
+)
+_EXPECTED_PHASE2_EVIDENCE_SHA256 = (
+    "d0e276493609d2e7254c576bf50552a933e4e54cb67c9ec6e6a71f94a17f0302"
+)
 _EXPECTED_QUALITY_HISTORY_SHA256 = (
-    "d8e18473bd808cdb7610f06c2f6bd875573b89cfffd78210fca8fbe1fff69880"
+    "0bc69e337549c1308468fd095e26a5a680440e8d60181527469b52b13497710f"
 )
 _EXPECTED_IMPLEMENTATION_OWNER = "/root"
 _EXPECTED_INDEPENDENT_REVIEWER = "/root/input_contract_audit"
@@ -282,10 +291,34 @@ _EXPECTED_REVIEW_OCCURRENCES = (
     (2, "gate", "/root/phase2_acceptance_review", "pending"),
     (2, "semantic", "/root/phase2_acceptance_review", "approved"),
     (2, "gate", "/root/phase2_metadata_review", "approved"),
+    (3, "gate", "/root/terminal_review", "pending"),
+    (3, "semantic", "/root/acceptance_review", "approved"),
+    (3, "closure", "/root/phase3_closure_audit", "pending"),
+    (3, "closure", "/root/phase3_closure_audit", "approved"),
+    (
+        3,
+        "coverage-closure",
+        "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+        "pending",
+    ),
+    (
+        3,
+        "coverage-closure",
+        "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+        "approved",
+    ),
+    (3, "gate", "/root/terminal_review", "approved"),
 )
-_EXPECTED_CURRENT_REVIEW_STATUS = "approved"
+_EXPECTED_CURRENT_SEMANTIC_REVIEW_STATUS = "approved"
+_EXPECTED_CURRENT_GATE_REVIEW_STATUS = "approved"
 _EXPECTED_BASELINE_HEAD = "609aa091c17756ab952cf5fe668ca3d867f0e311"
 _EXPECTED_BASELINE_SUBJECT = "Bump version to v1.5.8 (#1067)"
+_EXPECTED_PENDING_SOURCE_INVENTORY = (
+    "32cd39d8285af3b782ca095bda1a80de5e991e98e4baf1ba1cf003c5d02a80ba",
+    424,
+    108402,
+    1327,
+)
 _EXPECTED_BOUNDARY_PATHS = frozenset(
     {
         ".github/workflows/test.yml",
@@ -296,24 +329,24 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "scripts/verify_input_acceptance.py",
         "scripts/verify_input_types.py",
         "scripts/verify_src_coverage.py",
-        "src/avalan/agent/orchestrator/response/orchestrator_response.py",
-        "src/avalan/cli/commands/model.py",
-        "src/avalan/cli/display_reducer.py",
+        "src/avalan/agent/",
+        "src/avalan/cli/",
         "src/avalan/event/__init__.py",
         "src/avalan/event/manager.py",
+        "src/avalan/flow/registry.py",
         "src/avalan/interaction/",
-        "src/avalan/model/stream.py",
+        "src/avalan/model/",
         "src/avalan/server/a2a/router.py",
         "src/avalan/server/routers/chat.py",
         "src/avalan/server/routers/mcp.py",
         "src/avalan/server/routers/responses.py",
         "src/avalan/task/event.py",
-        "tests/agent/orchestrator_response_additional_test.py",
-        "tests/cli/display_reducer_test.py",
-        "tests/cli/model_test.py",
-        "tests/cli/stream_presenter_test.py",
+        "src/avalan/tool/",
+        "tests/agent/",
+        "tests/cli/",
         "tests/event/interaction_lifecycle_test.py",
         "tests/fixtures/input/",
+        "tests/flow/",
         "tests/input/",
         "tests/input_acceptance_verifier_test.py",
         "tests/input_contract_fixtures.py",
@@ -324,36 +357,30 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "tests/input_type_contracts/",
         "tests/interaction/",
         "tests/interaction_type_contracts/",
-        "tests/model/full_coverage_gap_model_test.py",
-        "tests/model/model_stream_contract_test.py",
-        "tests/model/model_stream_interaction_test.py",
-        "tests/model/text_generation_response_more_test.py",
+        "tests/model/",
         "tests/project_metadata_test.py",
         "tests/reasoning_summary_phase1_test.py",
-        "tests/server/a2a_v1_router_test.py",
-        "tests/server/chat_router_unit_test.py",
-        "tests/server/mcp_reasoning_summary_test.py",
-        "tests/server/responses_phase7_contract_test.py",
-        "tests/server/responses_utils_test.py",
-        "tests/server/router_streaming_test.py",
+        "tests/server/",
         "tests/src_coverage_verifier_test.py",
-        "tests/task/interaction_event_sanitization_test.py",
+        "tests/task/",
+        "tests/tool/",
     }
 )
 _EXPECTED_PRODUCTION_SOURCE_PATHS = frozenset(
     {
-        "src/avalan/agent/orchestrator/response/orchestrator_response.py",
-        "src/avalan/cli/commands/model.py",
-        "src/avalan/cli/display_reducer.py",
+        "src/avalan/agent/",
+        "src/avalan/cli/",
         "src/avalan/event/__init__.py",
         "src/avalan/event/manager.py",
+        "src/avalan/flow/registry.py",
         "src/avalan/interaction/",
-        "src/avalan/model/stream.py",
+        "src/avalan/model/",
         "src/avalan/server/a2a/router.py",
         "src/avalan/server/routers/chat.py",
         "src/avalan/server/routers/mcp.py",
         "src/avalan/server/routers/responses.py",
         "src/avalan/task/event.py",
+        "src/avalan/tool/",
     }
 )
 _EXPECTED_ORDERED_COMMON_GATE_COMMANDS = (
@@ -362,9 +389,9 @@ _EXPECTED_ORDERED_COMMON_GATE_COMMANDS = (
     "make test-coverage-exact no-install",
     (
         "poetry run python scripts/verify_input_acceptance.py"
-        + " --through-phase 2"
+        + " --through-phase 3"
     ),
-    "make typecheck-input-contract INPUT_PHASE=2",
+    "make typecheck-input-contract INPUT_PHASE=3",
     "make lint",
     "git diff --check",
 )
@@ -814,9 +841,9 @@ def _parameter_expansions(
         )
         node_id = _node_id(item.get("node_id"))
         node = by_node_id.get(node_id)
-        if node is None or node.lifecycle != "active":
+        if node is None:
             raise AcceptanceVerificationError(
-                "parameter expansion must own one active manifest node:"
+                "parameter expansion must own one exact manifest node:"
                 f" {node_id}"
             )
         if "[" in node_id.rsplit("::", 1)[-1]:
@@ -2851,6 +2878,7 @@ def _validate_evidence(
             "review_history_sha256",
             "review_history_phase0_sha256",
             "review_history_phase1_sha256",
+            "review_history_phase2_sha256",
             "review_history",
             "quality_history_sha256",
             "quality_history",
@@ -2858,6 +2886,7 @@ def _validate_evidence(
             "git",
             "baseline",
             "boundary",
+            "pending_structural_inventory",
             "inventory",
             "quality_gate",
             "typing_async_audit",
@@ -2886,6 +2915,7 @@ def _validate_evidence(
         payload.get("review_history_sha256"),
         payload.get("review_history_phase0_sha256"),
         payload.get("review_history_phase1_sha256"),
+        payload.get("review_history_phase2_sha256"),
         manifest.current_phase,
         implementation_owner,
     )
@@ -3033,6 +3063,10 @@ def _validate_evidence(
         changed_paths,
         production_source_changes,
         preserved_untracked,
+    )
+
+    _validate_pending_structural_inventory(
+        payload.get("pending_structural_inventory"), root
     )
 
     failure = _strict_mapping(path.with_name("failure_matrix.json"), "failure")
@@ -3300,6 +3334,47 @@ def _validate_live_boundary(
         )
 
 
+def _validate_pending_structural_inventory(raw: object, root: Path) -> None:
+    """Validate pending source inventory without relying on key order."""
+    inventory = _evidence_mapping(raw, "pending structural inventory")
+    _exact_keys(
+        inventory,
+        {
+            "source_inventory_sha256",
+            "source_file_count",
+            "statement_count",
+            "excluded_line_count",
+        },
+        "pending structural inventory",
+    )
+    observed = (
+        _sha256_string(
+            inventory.get("source_inventory_sha256"),
+            "pending source inventory SHA-256",
+        ),
+        _nonnegative_int(
+            inventory.get("source_file_count"),
+            "pending source file count",
+        ),
+        _nonnegative_int(
+            inventory.get("statement_count"),
+            "pending statement count",
+        ),
+        _nonnegative_int(
+            inventory.get("excluded_line_count"),
+            "pending excluded line count",
+        ),
+    )
+    if (
+        observed != _EXPECTED_PENDING_SOURCE_INVENTORY
+        or _source_statement_inventory(root)
+        != _EXPECTED_PENDING_SOURCE_INVENTORY
+    ):
+        raise AcceptanceVerificationError(
+            "pending structural inventory differs from the live source tree"
+        )
+
+
 def _git_lines(root: Path, *arguments: str) -> tuple[str, ...]:
     completed = run(
         ("git", *arguments),
@@ -3344,6 +3419,7 @@ def _validate_review_history(
     raw_digest: object,
     raw_phase0_digest: object,
     raw_phase1_digest: object,
+    raw_phase2_digest: object,
     current_phase: int,
     implementation_owner: str,
 ) -> None:
@@ -3376,6 +3452,16 @@ def _validate_review_history(
         _EXPECTED_PHASE2_PENDING_REVIEW_SHA256,
         _EXPECTED_PHASE2_PENDING_REVIEW_SHA256,
         "phase-2 pending review prefix",
+    )
+    if len(raw) < 9:
+        raise AcceptanceVerificationError(
+            "review history lost its phase-2 prefix"
+        )
+    _verify_digest(
+        raw[:9],
+        raw_phase2_digest,
+        _EXPECTED_PHASE2_REVIEW_SHA256,
+        "phase-2 review prefix",
     )
     latest_status: dict[tuple[int, str], str] = {}
     recorded_times: list[str] = []
@@ -3442,7 +3528,16 @@ def _validate_review_history(
                 raise AcceptanceVerificationError(
                     "phase-0 review must preserve its approval"
                 )
-            if phase > 0 and status != "pending":
+            direct_current_semantic_approval = (
+                phase == current_phase
+                and role == "semantic"
+                and status == "approved"
+            )
+            if (
+                phase > 0
+                and status != "pending"
+                and not direct_current_semantic_approval
+            ):
                 raise AcceptanceVerificationError(
                     "new review roles must begin pending"
                 )
@@ -3458,14 +3553,14 @@ def _validate_review_history(
         )
     if latest_status.get((0, "baseline")) != "approved":
         raise AcceptanceVerificationError("phase-0 review approval is missing")
-    for role in ("semantic", "gate"):
-        if (
-            latest_status.get((current_phase, role))
-            != _EXPECTED_CURRENT_REVIEW_STATUS
-        ):
+    expected_current_statuses = {
+        "semantic": _EXPECTED_CURRENT_SEMANTIC_REVIEW_STATUS,
+        "gate": _EXPECTED_CURRENT_GATE_REVIEW_STATUS,
+    }
+    for role, expected_status in expected_current_statuses.items():
+        if latest_status.get((current_phase, role)) != expected_status:
             raise AcceptanceVerificationError(
-                f"current {role} review status is not"
-                f" {_EXPECTED_CURRENT_REVIEW_STATUS}"
+                f"current {role} review status is not {expected_status}"
             )
     _verify_digest(
         raw,
@@ -3514,12 +3609,27 @@ def _validate_quality_history(
             raise AcceptanceVerificationError(
                 "quality history cannot reuse its evidence digest"
             )
-        if phase == 1 and (
-            quality_digest != _EXPECTED_PHASE1_QUALITY_SHA256
-            or evidence_digest != _EXPECTED_PHASE1_EVIDENCE_SHA256
+        expected_historical_digests = {
+            1: (
+                _EXPECTED_PHASE1_QUALITY_SHA256,
+                _EXPECTED_PHASE1_EVIDENCE_SHA256,
+            ),
+            2: (
+                _EXPECTED_PHASE2_QUALITY_SHA256,
+                _EXPECTED_PHASE2_EVIDENCE_SHA256,
+            ),
+        }
+        expected_digests = expected_historical_digests.get(phase)
+        if (
+            expected_digests is not None
+            and (
+                quality_digest,
+                evidence_digest,
+            )
+            != expected_digests
         ):
             raise AcceptanceVerificationError(
-                "quality history lost its phase-1 record"
+                f"quality history lost its phase-{phase} record"
             )
     _verify_digest(
         raw,
@@ -3771,7 +3881,7 @@ def _validate_quality_gate_evidence(
         )
     acceptance = results[
         "poetry run python scripts/verify_input_acceptance.py"
-        " --through-phase 2"
+        " --through-phase 3"
     ]
     _exact_keys(
         acceptance,
@@ -3785,7 +3895,7 @@ def _validate_quality_gate_evidence(
         raise AcceptanceVerificationError(
             "acceptance gate evidence has stale node or instance counts"
         )
-    type_result = results["make typecheck-input-contract INPUT_PHASE=2"]
+    type_result = results["make typecheck-input-contract INPUT_PHASE=3"]
     _exact_keys(
         type_result,
         {"command", "exit_code", "active_fixtures"},

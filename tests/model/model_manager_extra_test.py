@@ -46,6 +46,7 @@ from avalan.event.manager import EventManager
 from avalan.model import manager as model_manager
 from avalan.model import runtime as model_runtime
 from avalan.model.call import ModelCall, ModelCallContext
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.model.manager import (
     ModelManager,
@@ -1328,14 +1329,15 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
             engine_uri_arg: EngineUri,
             model_arg: object,
             operation_arg: Operation,
-            tool_arg: object,
+            capability_arg: object,
         ) -> object:
             self.assertIs(engine_uri_arg, engine_uri)
             self.assertIs(operation_arg, operation)
-            self.assertIsNone(tool_arg)
+            self.assertIs(capability_arg, capability)
             return expected
 
         model = object()
+        capability = MagicMock(spec=ModelCapabilityCatalog)
         context = ModelCallContext(
             specification=Specification(role=None, goal=None),
             input=operation.input,
@@ -1344,7 +1346,7 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
             engine_uri=engine_uri,
             model=model,
             operation=operation,
-            tool=None,
+            capability=capability,
             context=context,
         )
         with patch(
@@ -1363,12 +1365,13 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
             before_event.payload["modality"], Modality.TEXT_GENERATION
         )
         self.assertIs(before_event.payload["task"], task)
-        self.assertIs(before_event.payload["context"], context)
+        self.assertIs(before_event.payload["context"], task.context)
+        self.assertIs(task.context.capability, capability)
         after_event = event_manager.trigger.await_args_list[1].args[0]
         self.assertEqual(after_event.type, EventType.MODEL_MANAGER_CALL_AFTER)
         self.assertIs(after_event.payload["result"], expected)
         self.assertIs(after_event.payload["task"], task)
-        self.assertIs(after_event.payload["context"], context)
+        self.assertIs(after_event.payload["context"], task.context)
         self.assertIsNotNone(after_event.started)
         self.assertIsNotNone(after_event.finished)
         self.assertIsNotNone(after_event.elapsed)
@@ -1376,6 +1379,49 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
         manager.__exit__(None, None, None)
         await asyncio.sleep(0)
         manager._stack.aclose.assert_awaited_once()
+
+    async def test_omits_capability_for_incapable_modality(self) -> None:
+        manager = ModelManager(MagicMock(spec=HuggingfaceHub), MagicMock())
+        operation = Operation(
+            generation_settings=GenerationSettings(),
+            input=None,
+            modality=Modality.AUDIO_CLASSIFICATION,
+            parameters=OperationParameters(),
+        )
+        capability = MagicMock(spec=ModelCapabilityCatalog)
+        handler = AsyncMock(return_value="result")
+        task = ModelCall(
+            engine_uri=EngineUri(
+                host=None,
+                port=None,
+                user=None,
+                password=None,
+                vendor=None,
+                model_id="model",
+                params={},
+            ),
+            model=object(),
+            operation=operation,
+            capability=capability,
+            context=ModelCallContext(
+                specification=Specification(role=None, goal=None),
+                input=None,
+            ),
+        )
+
+        with patch(
+            "avalan.model.manager.ModalityRegistry.get",
+            return_value=handler,
+        ):
+            result = await manager(task)
+
+        self.assertEqual(result, "result")
+        handler.assert_awaited_once_with(
+            task.engine_uri,
+            task.model,
+            operation,
+            None,
+        )
 
     async def test_exit_with_running_loop_closes_on_interrupt(self):
         hub = MagicMock(spec=HuggingfaceHub)

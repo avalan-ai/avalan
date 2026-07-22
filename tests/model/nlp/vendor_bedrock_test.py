@@ -28,6 +28,7 @@ from avalan.entities import (
     ToolNamePolicySettings,
     TransformerEngineSettings,
 )
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamItemKind,
@@ -67,8 +68,8 @@ class PolicyAdder:
         return a + b
 
 
-def _sanitized_policy_manager() -> ToolManager:
-    return ToolManager.create_instance(
+def _sanitized_policy_catalog() -> ModelCapabilityCatalog:
+    manager = ToolManager.create_instance(
         enable_tools=["math.adder"],
         available_toolsets=[ToolSet(namespace="math", tools=[PolicyAdder()])],
         settings=ToolManagerSettings(
@@ -76,6 +77,9 @@ def _sanitized_policy_manager() -> ToolManager:
                 mode=ToolNamePolicyMode.SANITIZED
             )
         ),
+    )
+    return ModelCapabilityCatalog.create(
+        manager.export_model_capability_seed()
     )
 
 
@@ -285,7 +289,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             {
                 "contentBlockDelta": {
                     "contentBlockIndex": 0,
-                    "delta": {"toolUse": {"input": '{"a":1}'}},
+                    "delta": {"toolUse": {"input": '{"a":1,"b":2}'}},
                 }
             },
             {"contentBlockStop": {"contentBlockIndex": 0}},
@@ -293,7 +297,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         ]
         stream = self.mod.BedrockStream(
             AsyncIter(events),
-            tool=_sanitized_policy_manager(),
+            capability=_sanitized_policy_catalog(),
         )
 
         items = [item async for item in stream]
@@ -306,7 +310,65 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(ready.data, {"name": "math.adder"})
         self.assertEqual(
             accumulate_canonical_stream_items(items).tool_call_arguments,
-            {"id1": '{"a":1}'},
+            {"id1": '{"a":1,"b":2}'},
+        )
+
+    async def test_stream_preserves_malformed_native_tool_name(self):
+        stop_frame = {"contentBlockStop": {"contentBlockIndex": 0}}
+        frames = [
+            {
+                "contentBlockStart": {
+                    "contentBlockIndex": 0,
+                    "contentBlock": {
+                        "toolUse": {
+                            "toolUseId": "call-native",
+                            "name": "avl_!",
+                        }
+                    },
+                }
+            },
+            stop_frame,
+            {"messageStop": {"stopReason": "tool_use"}},
+        ]
+        stream = self.mod.BedrockStream(AsyncIter(frames))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="bedrock-native",
+                run_id="run-native",
+                turn_id="turn-native",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        ready, done = items[1:3]
+        self.assertEqual(ready.data, {"name": "avl_!"})
+        self.assertEqual(
+            ready.correlation.tool_call_id,
+            "call-native",
+        )
+        self.assertEqual(done.correlation.tool_call_id, "call-native")
+        self.assertEqual(ready.provider_payload, stop_frame)
+        self.assertEqual(done.provider_payload, stop_frame)
+        self.assertEqual(ready.provider_event_type, "contentBlockStop")
+        self.assertEqual(done.provider_event_type, "contentBlockStop")
+        self.assertEqual(
+            items[0].metadata["capabilities"]["backend"],
+            "hosted",
+        )
+        self.assertEqual(
+            {item.provider_family for item in items},
+            {"bedrock"},
         )
 
     async def test_stream_public_iterator_yields_canonical_items(self):
@@ -979,10 +1041,13 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             [StreamItemKind.TOOL_CALL_READY, StreamItemKind.TOOL_CALL_DONE],
         )
         self.assertEqual(
-            stream._mark_tool_ready("call-2", "lookup", None)[0].kind,
+            stream._mark_tool_ready("call-2", "lookup", "", None)[0].kind,
             StreamItemKind.TOOL_CALL_READY,
         )
-        self.assertEqual(stream._mark_tool_ready("call-2", "lookup", None), ())
+        self.assertEqual(
+            stream._mark_tool_ready("call-2", "lookup", "", None),
+            (),
+        )
 
         invalid_events = [
             {"contentBlockStart": {"contentBlockIndex": "bad"}},
@@ -1090,19 +1155,25 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertIs(result, StreamMock.return_value)
         await exit_stack.aclose()
 
-    async def test_client_stream_passes_tool_manager_to_stream(self):
+    async def test_client_stream_passes_capability_catalog_to_stream(self):
         self.client.converse_stream.return_value = {"stream": AsyncIter([])}
         exit_stack = AsyncExitStack()
         client = self.mod.BedrockClient(exit_stack=exit_stack)
-        manager = _sanitized_policy_manager()
+        capability = _sanitized_policy_catalog()
 
         with patch.object(self.mod, "BedrockStream") as StreamMock:
             result = await client(
-                "model", [], GenerationSettings(), tool=manager
+                "model",
+                [],
+                GenerationSettings(),
+                capability=capability,
             )
 
         self.assertIs(result, StreamMock.return_value)
-        self.assertIs(StreamMock.call_args.kwargs["tool"], manager)
+        self.assertIs(
+            StreamMock.call_args.kwargs["capability"],
+            capability,
+        )
         await exit_stack.aclose()
 
     async def test_provider_instructions_are_rejected_before_api_call(self):
@@ -1460,11 +1531,29 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
 
         text = client._response_text(
             response,
-            tool=_sanitized_policy_manager(),
+            capability=_sanitized_policy_catalog(),
         )
 
         self.assertIn("before", text)
         self.assertIn('"name": "math.adder"', text)
+
+        response["output"]["message"]["content"] = [
+            {
+                "toolUse": {
+                    "toolUseId": "call-2",
+                    "name": None,
+                    "input": {},
+                }
+            }
+        ]
+        with self.assertRaisesRegex(
+            ValueError,
+            "provider tool call name must be a non-empty string",
+        ):
+            client._response_text(
+                response,
+                capability=_sanitized_policy_catalog(),
+            )
 
     def test_template_messages_excludes_roles_and_tool_calls(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
@@ -1626,14 +1715,18 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
 
     def test_tool_schemas_ignore_non_function(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
-        tool = MagicMock()
-        tool.json_schemas.return_value = [{"type": "noop"}]
-        self.assertIsNone(client._tool_schemas(tool))
+        capability = MagicMock(spec=ModelCapabilityCatalog)
+        capability.project.return_value.schemas = (
+            {"type": "noop"},
+            {"type": "function", "function": "invalid"},
+        )
+
+        self.assertIsNone(client._tool_schemas(capability))
 
     def test_tool_schemas_use_tool_manager_name_policy(self):
         client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
 
-        schemas = client._tool_schemas(_sanitized_policy_manager())
+        schemas = client._tool_schemas(_sanitized_policy_catalog())
 
         self.assertIsNotNone(schemas)
         assert schemas is not None
@@ -1707,21 +1800,21 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             '"bad"',
         )
 
-        tool_manager = MagicMock()
-        tool_manager.json_schemas.return_value = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "pkg.tool",
-                    "description": "desc",
-                    "parameters": {"type": "object"},
-                },
-            }
-        ]
-        config = client._tool_config(tool_manager)
+        config = client._tool_config(_sanitized_policy_catalog())
+        assert config is not None
         self.assertEqual(
             config["tools"][0]["toolSpec"]["name"],
-            "avl_cGtnLnRvb2w",
+            "math_adder",
+        )
+
+        explicit_config = client._tool_config(
+            _sanitized_policy_catalog(),
+            settings=GenerationSettings(tool_choice="math.adder"),
+        )
+        assert explicit_config is not None
+        self.assertEqual(
+            explicit_config["toolChoice"],
+            {"tool": {"name": "math_adder"}},
         )
 
         policy_templated = client._template_messages(
@@ -1737,7 +1830,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
                     ],
                 )
             ],
-            tool=_sanitized_policy_manager(),
+            capability=_sanitized_policy_catalog(),
         )
         self.assertEqual(
             policy_templated[0]["content"][0]["toolUse"]["name"],

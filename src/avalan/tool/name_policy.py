@@ -146,6 +146,12 @@ class ToolNamePolicy:
             return mapped_name
 
         if self.settings.mode is ToolNamePolicyMode.ENCODED:
+            if (
+                self._provider_family_value() in _LOCAL_PROVIDER_FAMILIES
+                and _LOCAL_SAFE_PATTERN.fullmatch(canonical_name)
+                and not canonical_name.startswith(self.settings.prefix)
+            ):
+                return canonical_name
             return self.encode_encoded(
                 canonical_name,
                 prefix=self.settings.prefix,

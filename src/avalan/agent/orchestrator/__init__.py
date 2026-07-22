@@ -17,6 +17,7 @@ from ...event import Event, EventType
 from ...event.manager import EventManager
 from ...memory.manager import MemoryManager
 from ...model.call import ModelCallContext
+from ...model.capability import ModelCapabilityCatalog
 from ...model.engine import Engine
 from ...model.manager import ModelManager
 from ...model.response.text import TextGenerationResponse
@@ -300,9 +301,13 @@ class Orchestrator:
         self._logger.info(
             "Orchestrator calling engine agent %s", str(engine_agent)
         )
+        capability = ModelCapabilityCatalog.create(
+            self._tool.export_model_capability_seed()
+        )
         context = ModelCallContext(
             specification=operation.specification,
             input=messages,
+            capability=capability,
             engine_args=dict(engine_args),
             agent_id=self._id,
             participant_id=participant_id,
@@ -342,6 +347,7 @@ class Orchestrator:
             operation,
             engine_args,
             context,
+            capability=context.capability,
             event_manager=self._event_manager,
             tool=self._tool,
             tool_confirm=tool_confirm,

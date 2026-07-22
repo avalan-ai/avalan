@@ -15,12 +15,13 @@ from abc import ABC, abstractmethod
 from asyncio import CancelledError
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 from inspect import isawaitable
-from json import JSONDecodeError, loads
+from json import dumps, loads
+from re import Pattern, compile
 from types import MappingProxyType
 from typing import Any, AsyncIterator, cast
 
@@ -3789,12 +3790,110 @@ class _LocalTextSourceFragment:
             _assert_non_negative_int(self.source_index, "source_index")
 
 
+LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID = "avalan.local_tool_call.v1"
+LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY = "structured_output.protocol"
+NATIVE_STRUCTURED_OUTPUT_METADATA_KEY = "structured_output.native"
+
+_LOCAL_TOOL_CALL_FRAME_PATTERN: Pattern[str] = compile(
+    r'^<tool_call id=(?P<call_id>"(?:[^"\\]|\\.)*") '
+    r'name=(?P<name>"(?:[^"\\]|\\.)*")>'
+    r"(?P<arguments>[\s\S]*)</tool_call>$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _LocalToolCallFrame:
+    call_id: str
+    name: str
+    arguments: dict[str, object]
+    arguments_start: int
+    arguments_end: int
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.call_id, "call_id")
+        _assert_non_empty_string(self.name, "name")
+        assert isinstance(self.arguments, dict)
+        _assert_non_negative_int(self.arguments_start, "arguments_start")
+        _assert_non_negative_int(self.arguments_end, "arguments_end")
+        assert self.arguments_end >= self.arguments_start
+
+
+def _reject_local_json_constant(value: str) -> object:
+    raise ValueError(f"non-JSON constant: {value}")
+
+
+def _local_json_object(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _local_tool_call_frame(text: str) -> _LocalToolCallFrame | None:
+    """Return one trusted frame only when it occupies the whole response."""
+    match = _LOCAL_TOOL_CALL_FRAME_PATTERN.fullmatch(text)
+    if match is None:
+        return None
+    try:
+        call_id = loads(match.group("call_id"))
+        name = loads(match.group("name"))
+        arguments = loads(
+            match.group("arguments"),
+            object_pairs_hook=_local_json_object,
+            parse_constant=_reject_local_json_constant,
+        )
+    except (UnicodeError, ValueError):
+        return None
+    if (
+        not isinstance(call_id, str)
+        or not call_id.strip()
+        or not isinstance(name, str)
+        or not name.strip()
+        or not isinstance(arguments, dict)
+    ):
+        return None
+    return _LocalToolCallFrame(
+        call_id=call_id,
+        name=name,
+        arguments=arguments,
+        arguments_start=match.start("arguments"),
+        arguments_end=match.end("arguments"),
+    )
+
+
+def local_tool_call_control_frame(
+    call_id: str,
+    name: str,
+    arguments: Mapping[str, object],
+) -> str:
+    """Return one canonical local structured tool-call frame."""
+    _assert_non_empty_string(call_id, "call_id")
+    _assert_non_empty_string(name, "name")
+    assert isinstance(arguments, Mapping)
+    call_id_json = dumps(call_id, ensure_ascii=False)
+    name_json = dumps(name, ensure_ascii=False)
+    arguments_json = dumps(
+        dict(arguments),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return (
+        f"<tool_call id={call_id_json} name={name_json}>"
+        f"{arguments_json}</tool_call>"
+    )
+
+
 @dataclass(slots=True)
 class _LocalTextStreamParser:
+    parse_tool_calls: bool = True
     _reasoning_start_tag: str = "<think>"
     _reasoning_end_tag: str = "</think>"
-    _tool_start_tag: str = "<tool_call"
-    _tool_end_tag: str = "</tool_call>"
     _reasoning_buffer: str = ""
     _reasoning_fragments: deque[_LocalTextSourceFragment] = field(
         default_factory=deque
@@ -3804,15 +3903,9 @@ class _LocalTextStreamParser:
     _reasoning_segments: StreamReasoningSegmentState = field(
         default_factory=StreamReasoningSegmentState
     )
-    _tool_buffer: str = ""
-    _tool_fragments: deque[_LocalTextSourceFragment] = field(
+    _exact_response_fragments: deque[_LocalTextSourceFragment] = field(
         default_factory=deque
     )
-    _tool_state: str = "outside"
-    _tool_call_id: str | None = None
-    _tool_call_index: int = 0
-    _tool_name: str | None = None
-    _tool_argument_deltas: list[str] = field(default_factory=list)
     _next_source_index: int = 0
 
     def push(
@@ -3833,9 +3926,17 @@ class _LocalTextStreamParser:
             metadata=dict(metadata or {}),
             source_index=source_index,
         )
+        if self.parse_tool_calls:
+            self._exact_response_fragments.append(fragment)
+            return ()
         return self._push_reasoning(fragment)
 
-    def flush(self) -> tuple[StreamProviderEvent, ...]:
+    def flush(
+        self, *, completed: bool = True
+    ) -> tuple[StreamProviderEvent, ...]:
+        assert isinstance(completed, bool)
+        if self.parse_tool_calls:
+            return self._flush_exact_response(completed=completed)
         events: list[StreamProviderEvent] = []
         if self._reasoning_buffer:
             fragments = self._take_reasoning_fragments(
@@ -3851,8 +3952,103 @@ class _LocalTextStreamParser:
             self._reasoning_active = False
             self._append_reasoning_done(events)
         self._append_pending_reasoning_done(events)
-        events.extend(self._flush_tool())
         return tuple(events)
+
+    def _flush_exact_response(
+        self, *, completed: bool
+    ) -> tuple[StreamProviderEvent, ...]:
+        fragments = tuple(self._exact_response_fragments)
+        self._exact_response_fragments.clear()
+        if not fragments:
+            return ()
+        text = "".join(fragment.text for fragment in fragments)
+        frame = _local_tool_call_frame(text) if completed else None
+        if frame is None:
+            return tuple(
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=fragment.text,
+                    metadata=self._exact_protocol_metadata(fragment.metadata),
+                )
+                for fragment in fragments
+            )
+
+        correlation = StreamItemCorrelation(tool_call_id=frame.call_id)
+        argument_fragments = self._source_fragment_slice(
+            fragments,
+            frame.arguments_start,
+            frame.arguments_end,
+        )
+        events = [
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                text_delta=fragment.text,
+                correlation=correlation,
+                metadata=self._exact_protocol_metadata(fragment.metadata),
+            )
+            for fragment in argument_fragments
+        ]
+        control_metadata = self._exact_protocol_metadata({})
+        events.extend(
+            (
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_READY,
+                    data={
+                        "name": frame.name,
+                        "arguments": frame.arguments,
+                    },
+                    correlation=correlation,
+                    metadata=control_metadata,
+                ),
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_DONE,
+                    correlation=correlation,
+                    metadata=control_metadata,
+                ),
+            )
+        )
+        return tuple(events)
+
+    @staticmethod
+    def _exact_protocol_metadata(
+        metadata: Mapping[str, LooseJsonValue],
+    ) -> dict[str, LooseJsonValue]:
+        return {
+            **metadata,
+            LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY: (
+                LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID
+            ),
+        }
+
+    @staticmethod
+    def _source_fragment_slice(
+        fragments: Iterable[_LocalTextSourceFragment],
+        start: int,
+        end: int,
+    ) -> tuple[_LocalTextSourceFragment, ...]:
+        _assert_non_negative_int(start, "start")
+        _assert_non_negative_int(end, "end")
+        assert end >= start
+        position = 0
+        selected: list[_LocalTextSourceFragment] = []
+        for fragment in fragments:
+            fragment_end = position + len(fragment.text)
+            overlap_start = max(start, position)
+            overlap_end = min(end, fragment_end)
+            if overlap_start < overlap_end:
+                selected.append(
+                    _LocalTextSourceFragment(
+                        text=fragment.text[
+                            overlap_start - position : overlap_end - position
+                        ],
+                        metadata=dict(fragment.metadata),
+                        source_index=fragment.source_index,
+                    )
+                )
+            position = fragment_end
+        assert position >= end
+        assert "".join(fragment.text for fragment in selected)
+        return tuple(selected)
 
     def _push_reasoning(
         self, fragment: _LocalTextSourceFragment
@@ -3942,147 +4138,10 @@ class _LocalTextStreamParser:
         fragments = tuple(fragments)
         if not fragments:
             return ()
-        self._tool_buffer += "".join(fragment.text for fragment in fragments)
-        for fragment in fragments:
-            self._append_source_fragment(self._tool_fragments, fragment)
-        events: list[StreamProviderEvent] = []
-        while self._tool_buffer:
-            if self._tool_state == "outside":
-                start_index = self._tool_start_index()
-                if start_index is not None:
-                    self._append_answer_fragments(
-                        events,
-                        self._take_tool_fragments(start_index),
-                    )
-                    self._tool_buffer = self._tool_buffer[start_index:]
-                    self._tool_state = "opening"
-                    self._tool_call_id = self._next_tool_call_id()
-                    continue
-                flush_length = self._tool_flushable_prefix_length()
-                if not flush_length:
-                    break
-                self._append_answer_fragments(
-                    events,
-                    self._take_tool_fragments(flush_length),
-                )
-                self._tool_buffer = self._tool_buffer[flush_length:]
-                continue
-
-            if self._tool_state == "opening":
-                tag_end = self._tool_buffer.find(">")
-                if tag_end == -1:
-                    break
-                opening_tag = self._tool_buffer[: tag_end + 1]
-                self._tool_name = self._tool_name_from_opening_tag(opening_tag)
-                self._discard_tool_fragments(tag_end + 1)
-                self._tool_buffer = self._tool_buffer[tag_end + 1 :]
-                self._tool_state = "body"
-                continue
-
-            end_index = self._tool_buffer.find(self._tool_end_tag)
-            if end_index != -1:
-                self._append_tool_argument_fragments(
-                    events,
-                    self._take_tool_fragments(end_index),
-                )
-                self._discard_tool_fragments(len(self._tool_end_tag))
-                self._tool_buffer = self._tool_buffer[
-                    end_index + len(self._tool_end_tag) :
-                ]
-                events.extend(self._tool_call_boundary_events())
-                self._clear_tool_call()
-                continue
-            flush_length = self._flushable_prefix_length(
-                self._tool_buffer,
-                self._tool_end_tag,
-            )
-            if not flush_length:
-                break
-            self._append_tool_argument_fragments(
-                events,
-                self._take_tool_fragments(flush_length),
-            )
-            self._tool_buffer = self._tool_buffer[flush_length:]
-        return tuple(events)
-
-    def _flush_tool(self) -> tuple[StreamProviderEvent, ...]:
-        events: list[StreamProviderEvent] = []
-        fragments = self._take_tool_fragments(len(self._tool_buffer))
-        if self._tool_state == "outside":
-            self._append_answer_fragments(events, fragments)
-            self._tool_buffer = ""
-            return tuple(events)
-
-        self._append_tool_argument_fragments(events, fragments)
-        self._tool_buffer = ""
-        assert self._tool_call_id is not None
-        events.append(
-            StreamProviderEvent(
-                kind=StreamItemKind.STREAM_DIAGNOSTIC,
-                data={
-                    "code": "tool_call.malformed",
-                    "message": "unterminated tool call",
-                    "tool_call_id": self._tool_call_id,
-                },
-                correlation=StreamItemCorrelation(
-                    tool_call_id=self._tool_call_id
-                ),
-                visibility=StreamVisibility.DIAGNOSTIC,
-            )
-        )
-        self._clear_tool_call()
-        return tuple(events)
-
-    def _tool_call_boundary_events(self) -> tuple[StreamProviderEvent, ...]:
-        assert self._tool_call_id is not None
-        arguments, valid_arguments = self._tool_buffer_arguments()
-        if not valid_arguments:
-            return (
-                StreamProviderEvent(
-                    kind=StreamItemKind.STREAM_DIAGNOSTIC,
-                    data={
-                        "code": "tool_call.malformed",
-                        "message": "malformed tool call arguments",
-                        "tool_call_id": self._tool_call_id,
-                    },
-                    correlation=StreamItemCorrelation(
-                        tool_call_id=self._tool_call_id
-                    ),
-                    visibility=StreamVisibility.DIAGNOSTIC,
-                ),
-            )
-
-        data: dict[str, object] = {
-            "name": self._tool_name,
-            "arguments": arguments,
-        }
-        return (
-            StreamProviderEvent(
-                kind=StreamItemKind.TOOL_CALL_READY,
-                data=data,
-                correlation=StreamItemCorrelation(
-                    tool_call_id=self._tool_call_id
-                ),
-            ),
-            StreamProviderEvent(
-                kind=StreamItemKind.TOOL_CALL_DONE,
-                correlation=StreamItemCorrelation(
-                    tool_call_id=self._tool_call_id
-                ),
-            ),
-        )
-
-    def _tool_buffer_arguments(self) -> tuple[object, bool]:
-        text = "".join(self._tool_argument_deltas)
-        if not text.strip():
-            return {}, True
-        try:
-            parsed = loads(text)
-        except JSONDecodeError:
-            return None, False
-        if not isinstance(parsed, dict):
-            return None, False
-        return parsed, True
+        assert not self.parse_tool_calls
+        answer_events: list[StreamProviderEvent] = []
+        self._append_answer_fragments(answer_events, fragments)
+        return tuple(answer_events)
 
     def _append_answer_fragments(
         self,
@@ -4150,26 +4209,6 @@ class _LocalTextStreamParser:
             metadata=event_metadata,
         )
 
-    def _append_tool_argument_fragments(
-        self,
-        events: list[StreamProviderEvent],
-        fragments: Iterable[_LocalTextSourceFragment],
-    ) -> None:
-        for fragment in fragments:
-            self._reasoning_segments.complete_segment()
-            assert self._tool_call_id is not None
-            self._tool_argument_deltas.append(fragment.text)
-            events.append(
-                StreamProviderEvent(
-                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                    text_delta=fragment.text,
-                    correlation=StreamItemCorrelation(
-                        tool_call_id=self._tool_call_id
-                    ),
-                    metadata=dict(fragment.metadata),
-                )
-            )
-
     def _take_reasoning_fragments(
         self, length: int
     ) -> tuple[_LocalTextSourceFragment, ...]:
@@ -4177,14 +4216,6 @@ class _LocalTextStreamParser:
 
     def _discard_reasoning_fragments(self, length: int) -> None:
         self._take_reasoning_fragments(length)
-
-    def _take_tool_fragments(
-        self, length: int
-    ) -> tuple[_LocalTextSourceFragment, ...]:
-        return self._take_source_fragments(self._tool_fragments, length)
-
-    def _discard_tool_fragments(self, length: int) -> None:
-        self._take_tool_fragments(length)
 
     @staticmethod
     def _take_source_fragments(
@@ -4237,66 +4268,19 @@ class _LocalTextStreamParser:
             return
         fragments.append(fragment)
 
-    def _next_tool_call_id(self) -> str:
-        self._tool_call_index += 1
-        return f"local-tool-call-{self._tool_call_index}"
-
-    @staticmethod
-    def _tool_name_from_opening_tag(opening_tag: str) -> str | None:
-        for quote in ("'", '"'):
-            marker = f"name={quote}"
-            start = opening_tag.find(marker)
-            if start == -1:
-                continue
-            value_start = start + len(marker)
-            value_end = opening_tag.find(quote, value_start)
-            if value_end != -1:
-                return opening_tag[value_start:value_end]
-        return None
-
-    def _tool_start_index(self) -> int | None:
-        search_from = 0
-        while True:
-            start_index = self._tool_buffer.find(
-                self._tool_start_tag, search_from
-            )
-            if start_index == -1:
-                return None
-
-            boundary_index = start_index + len(self._tool_start_tag)
-            if boundary_index == len(self._tool_buffer):
-                return None
-
-            boundary = self._tool_buffer[boundary_index]
-            if boundary == ">" or boundary.isspace():
-                return start_index
-
-            search_from = start_index + 1
-
     def _awaiting_repeated_reasoning_start(self) -> bool:
         stripped = self._reasoning_buffer.lstrip()
         if not stripped:
             return True
         return self._reasoning_start_tag.startswith(stripped)
 
-    def _tool_flushable_prefix_length(self) -> int:
-        return self._flushable_prefix_length(
-            self._tool_buffer,
-            self._tool_start_tag,
-            keep_full_marker=True,
-        )
-
     @staticmethod
     def _flushable_prefix_length(
         buffer: str,
         marker: str,
-        *,
-        keep_full_marker: bool = False,
     ) -> int:
         keep = 0
-        marker_suffix_length = (
-            len(marker) if keep_full_marker else len(marker) - 1
-        )
+        marker_suffix_length = len(marker) - 1
         max_suffix = min(len(buffer), marker_suffix_length)
         for length in range(max_suffix, 0, -1):
             if marker.startswith(buffer[-length:]):
@@ -4304,18 +4288,17 @@ class _LocalTextStreamParser:
                 break
         return len(buffer) - keep
 
-    def _clear_tool_call(self) -> None:
-        self._tool_state = "outside"
-        self._tool_call_id = None
-        self._tool_name = None
-        self._tool_argument_deltas.clear()
-
 
 @dataclass(slots=True)
 class LocalTextStreamEventParser:
-    _parser: _LocalTextStreamParser = field(
-        default_factory=_LocalTextStreamParser
-    )
+    parse_tool_calls: bool = True
+    _parser: _LocalTextStreamParser = field(init=False)
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.parse_tool_calls, bool)
+        self._parser = _LocalTextStreamParser(
+            parse_tool_calls=self.parse_tool_calls
+        )
 
     def push(
         self,
@@ -4326,8 +4309,10 @@ class LocalTextStreamEventParser:
         assert metadata is None or isinstance(metadata, dict)
         return self._parser.push(text, metadata)
 
-    def flush(self) -> tuple[StreamProviderEvent, ...]:
-        return self._parser.flush()
+    def flush(
+        self, *, completed: bool = True
+    ) -> tuple[StreamProviderEvent, ...]:
+        return self._parser.flush(completed=completed)
 
 
 def stream_token_metadata(
@@ -4998,6 +4983,25 @@ class TextGenerationSingleStream(TextGenerationStream):
         return item
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TextGenerationNonStreamToolCall:
+    """Carry one trusted provider-native non-stream tool call."""
+
+    call_id: str
+    name: str
+    arguments: str
+    provider_event_type: str
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.call_id, "call_id")
+        _assert_non_empty_string(self.name, "name")
+        assert isinstance(self.arguments, str)
+        _assert_non_empty_string(
+            self.provider_event_type,
+            "provider_event_type",
+        )
+
+
 class TextGenerationNonStreamResult(TextGenerationStream):
     """Expose a provider-neutral rich non-stream generation result."""
 
@@ -5034,6 +5038,132 @@ class TextGenerationNonStreamResult(TextGenerationStream):
         self._provider_family = normalized_provider_family
         self._usage = usage
         self._generator = None
+
+    @classmethod
+    def from_events(
+        cls,
+        events: Iterable[StreamProviderEvent],
+        *,
+        provider_family: ProviderFamily | str | None = None,
+        usage: object | None = None,
+        terminal_event_type: str | None = None,
+    ) -> "TextGenerationNonStreamResult":
+        """Build a complete result from trusted provider events."""
+        normalized_events = list(events)
+        if not normalized_events or not is_stream_terminal_kind(
+            normalized_events[-1].kind
+        ):
+            normalized_events.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    provider_event_type=terminal_event_type,
+                )
+            )
+        answer_text = "".join(
+            event.text_delta or ""
+            for event in normalized_events
+            if event.kind is StreamItemKind.ANSWER_DELTA
+        )
+        return cls(
+            normalized_events,
+            answer_text=answer_text,
+            provider_family=provider_family,
+            usage=usage,
+        )
+
+    @classmethod
+    def from_provider_parts(
+        cls,
+        *,
+        answer_text: str,
+        calls: Iterable[TextGenerationNonStreamToolCall],
+        provider_family: ProviderFamily | str,
+        usage: object | None = None,
+        answer_event_type: str,
+        terminal_event_type: str,
+    ) -> "TextGenerationNonStreamResult":
+        """Build a result from native answer and tool-call fields."""
+        assert isinstance(answer_text, str)
+        _assert_non_empty_string(answer_event_type, "answer_event_type")
+        _assert_non_empty_string(terminal_event_type, "terminal_event_type")
+        events: list[StreamProviderEvent] = []
+        if answer_text:
+            events.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=answer_text,
+                    provider_event_type=answer_event_type,
+                )
+            )
+        for call in calls:
+            assert isinstance(call, TextGenerationNonStreamToolCall)
+            correlation = StreamItemCorrelation(tool_call_id=call.call_id)
+            events.extend(
+                (
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        text_delta=call.arguments,
+                        correlation=correlation,
+                        provider_event_type=call.provider_event_type,
+                    ),
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_READY,
+                        data={"name": call.name},
+                        correlation=correlation,
+                        provider_event_type=call.provider_event_type,
+                    ),
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_DONE,
+                        correlation=correlation,
+                        provider_event_type=call.provider_event_type,
+                    ),
+                )
+            )
+        if usage is not None:
+            events.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    usage=cast(LooseJsonValue, usage),
+                    provider_event_type=terminal_event_type,
+                )
+            )
+        return cls.from_events(
+            events,
+            provider_family=provider_family,
+            usage=usage,
+            terminal_event_type=terminal_event_type,
+        )
+
+    @classmethod
+    def from_local_text(
+        cls,
+        text: str,
+        *,
+        provider_family: str,
+        provider_event_type: str,
+        usage: object | None = None,
+    ) -> "TextGenerationNonStreamResult":
+        """Parse exact local control frames at the model boundary."""
+        assert isinstance(text, str)
+        _assert_non_empty_string(provider_family, "provider_family")
+        _assert_non_empty_string(provider_event_type, "provider_event_type")
+        parser = LocalTextStreamEventParser(parse_tool_calls=True)
+        events = [*parser.push(text), *parser.flush()]
+        typed_events = (
+            replace(
+                event,
+                provider_event_type=(
+                    event.provider_event_type or provider_event_type
+                ),
+            )
+            for event in events
+        )
+        return cls.from_events(
+            typed_events,
+            provider_family=provider_family,
+            usage=usage,
+            terminal_event_type=f"{provider_event_type}.completed",
+        )
 
     @property
     def events(self) -> tuple[StreamProviderEvent, ...]:

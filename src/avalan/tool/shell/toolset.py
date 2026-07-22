@@ -118,7 +118,9 @@ from typing import Literal, cast
 
 
 class ShellToolSet(ToolSet):
+    _base_tools: tuple[Callable[..., object] | Tool | ToolSet, ...]
     _pipeline_tool: PipelineTool
+    _git_tools: tuple[Tool, ...]
     _git_executor: CommandExecutor
     _git_policy: GitExecutionPolicy
     _settings: ShellToolSettings
@@ -286,6 +288,13 @@ class ShellToolSet(ToolSet):
             executor=composition_executor,
             formatter=composition_formatter,
         )
+        self._git_tools = tuple(
+            _all_git_tools(
+                self._settings,
+                self._git_policy,
+                self._git_executor,
+            )
+        )
         tools: list[Callable[..., object] | Tool | ToolSet] = [
             RgTool(
                 settings=self._settings,
@@ -426,6 +435,7 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
         ]
+        self._base_tools = tuple(tools)
         super().__init__(namespace=namespace, tools=tools)
 
     @property
@@ -434,28 +444,58 @@ class ShellToolSet(ToolSet):
 
     @property
     def available_tools(self) -> list[Callable[..., object] | Tool | ToolSet]:
-        tools: list[Callable[..., object] | Tool | ToolSet] = list(self.tools)
-        if not _has_pipeline_tool(tools):
+        tools: list[Callable[..., object] | Tool | ToolSet] = list(
+            self._base_tools
+        )
+        if enables_shell_pipeline(
+            [f"{SHELL_TOOL_NAMESPACE}.pipeline"],
+            self._settings,
+        ):
             tools.append(self._pipeline_tool)
+        _append_missing_tools(
+            tools,
+            _authorized_git_tools(self._settings, self._git_tools),
+        )
         return tools
 
     def available_tools_for_enabled_tools(
         self,
         enable_tools: Sequence[str],
     ) -> list[Callable[..., object] | Tool | ToolSet]:
-        tools = self.available_tools
+        return [
+            tool
+            for tool in self.available_tools
+            if any(
+                matches_tool_namespace(
+                    f"{SHELL_TOOL_NAMESPACE}.{getattr(tool, '__name__', '')}",
+                    enabled,
+                )
+                for enabled in enable_tools
+            )
+        ]
+
+    def advertised_tools_for_enabled_tools(
+        self,
+        enable_tools: Sequence[str],
+    ) -> list[Callable[..., object] | Tool | ToolSet]:
+        tools: list[Callable[..., object] | Tool | ToolSet] = []
+        if not enables_shell_pipeline(
+            [f"{SHELL_TOOL_NAMESPACE}.pipeline"],
+            self._settings,
+        ):
+            tools.append(self._pipeline_tool)
         _append_missing_tools(
             tools,
             _available_git_tools_for_selection(
                 self._settings,
                 enable_tools,
-                self._git_policy,
-                self._git_executor,
+                self._git_tools,
             ),
         )
         return tools
 
     def with_enabled_tools(self, enable_tools: list[str]) -> "ShellToolSet":
+        self._tools = list(self._base_tools)
         if enables_shell_pipeline(
             enable_tools, self._settings
         ) and not _has_pipeline_tool(self.tools):
@@ -465,8 +505,7 @@ class ShellToolSet(ToolSet):
                 self.tools,
                 _authorized_git_tools(
                     self._settings,
-                    self._git_policy,
-                    self._git_executor,
+                    self._git_tools,
                 ),
             )
         return cast(ShellToolSet, super().with_enabled_tools(enable_tools))
@@ -527,11 +566,10 @@ def _enables_shell_git_tools(enable_tools: Sequence[str]) -> bool:
 def _available_git_tools_for_selection(
     settings: ShellToolSettings,
     enable_tools: Sequence[str],
-    git_policy: GitExecutionPolicy,
-    executor: CommandExecutor,
+    tools: Sequence[Tool],
 ) -> list[Tool]:
     if _enables_shell_namespace(enable_tools):
-        return _authorized_git_tools(settings, git_policy, executor)
+        return _authorized_git_tools(settings, tools)
 
     explicit_tool_names = {
         enabled
@@ -543,7 +581,7 @@ def _available_git_tools_for_selection(
 
     return [
         tool
-        for tool in _all_git_tools(settings, git_policy, executor)
+        for tool in tools
         if f"{SHELL_TOOL_NAMESPACE}.{getattr(tool, '__name__', '')}"
         in explicit_tool_names
     ]
@@ -558,19 +596,14 @@ def _enables_shell_namespace(enable_tools: Sequence[str]) -> bool:
 
 def _authorized_git_tools(
     settings: ShellToolSettings,
-    git_policy: GitExecutionPolicy,
-    executor: CommandExecutor,
+    tools: Sequence[Tool],
 ) -> list[Tool]:
     git_settings = settings.git
     assert isinstance(
         git_settings,
         ShellGitToolSettings,
     ), "git must be shell Git tool settings"
-    return [
-        tool
-        for tool in _all_git_tools(settings, git_policy, executor)
-        if _git_tool_allowed(tool, git_settings)
-    ]
+    return [tool for tool in tools if _git_tool_allowed(tool, git_settings)]
 
 
 def _git_tool_allowed(

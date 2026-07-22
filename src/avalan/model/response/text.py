@@ -125,6 +125,10 @@ def _is_legacy_sdk_result_type(result_type: type[object]) -> bool:
     )
 
 
+class _TextGenerationWorkerShutdownError(RuntimeError):
+    """Report a worker that outlived bounded stream cleanup."""
+
+
 class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     _json_patterns: list[Pattern[str]] = [
         # Markdown code fence with explicit json tag
@@ -153,6 +157,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     _output_closed: bool = False
     _closed_source_ids: set[int]
     _cancelled_source_ids: set[int]
+    _cleanup_failures: dict[tuple[str, int], Exception]
     _session_state: _StreamSessionState
     _bos_token: str | None = None
     _stream_accumulator: CanonicalStreamAccumulator | None = None
@@ -186,6 +191,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         self._output_closed = False
         self._closed_source_ids = set()
         self._cancelled_source_ids = set()
+        self._cleanup_failures = {}
         self._session_state = _StreamSessionState.NOT_STARTED
         self._manual_thinking = False
         self._reset_iteration_state()
@@ -277,7 +283,17 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         if self._buffer.tell():
             return
 
-        result = self._output_fn(*self._args, **self._kwargs)
+        result = (
+            self._output_fn
+            if isinstance(
+                self._output_fn,
+                (
+                    TextGenerationNonStreamResult,
+                    TextGenerationSingleStream,
+                ),
+            )
+            else self._output_fn(*self._args, **self._kwargs)
+        )
         if isinstance(
             result, (TextGenerationNonStreamResult, TextGenerationSingleStream)
         ):
@@ -761,11 +777,20 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             if source_id in seen or source_id in cleanup_source_ids:
                 continue
             seen.add(source_id)
+            cleanup_key = (method_name, source_id)
+            cleanup_failure = self._cleanup_failures.get(cleanup_key)
+            if cleanup_failure is not None:
+                raise cleanup_failure
             method = getattr(source, method_name, None)
             if method is None:
                 continue
             assert callable(method)
-            await self._close_output(cast(Callable[[], object], method))
+            try:
+                await self._close_output(cast(Callable[[], object], method))
+            except Exception as exc:
+                if isinstance(exc, _TextGenerationWorkerShutdownError):
+                    self._cleanup_failures[cleanup_key] = exc
+                raise
             cleanup_source_ids.add(source_id)
 
     @staticmethod
@@ -778,6 +803,8 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             assert result is None
 
     async def __anext__(self) -> CanonicalStreamItem:
+        if self._is_stream_closed():
+            raise StopAsyncIteration
         assert self._output
         try:
             item = await self._output.__anext__()

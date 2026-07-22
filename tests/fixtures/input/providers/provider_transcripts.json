@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "call_id": "provider-call-001",
+  "request": {
+    "mode": "required",
+    "reason": "Choose the deployment region.",
+    "questions": [
+      {
+        "question_id": "region",
+        "kind": "single_selection",
+        "header": "Region",
+        "prompt": "Which region should be used?",
+        "required": true,
+        "choices": [
+          {
+            "value": "us-east",
+            "label": "US East",
+            "description": "Use the eastern region."
+          },
+          {
+            "value": "eu-west",
+            "label": "EU West",
+            "description": "Use the western Europe region."
+          }
+        ],
+        "allow_other": false,
+        "recommended_choice": "us-east"
+      }
+    ]
+  },
+  "model_result": {
+    "kind": "answered",
+    "request_id": "input-request-001",
+    "provenance": "human",
+    "resolved_at": "2026-07-21T12:00:00.000000Z",
+    "answers": [
+      {
+        "question_id": "region",
+        "kind": "single_selection",
+        "provenance": "human",
+        "value": {
+          "kind": "selected_choice",
+          "value": "us-east"
+        }
+      }
+    ]
+  },
+  "continuations": {
+    "openai": {
+      "type": "function_call_output",
+      "call_id": "provider-call-001",
+      "output": "{\"kind\": \"answered\", \"request_id\": \"input-request-001\", \"provenance\": \"human\", \"resolved_at\": \"2026-07-21T12:00:00.000000Z\", \"answers\": [{\"question_id\": \"region\", \"kind\": \"single_selection\", \"provenance\": \"human\", \"value\": {\"kind\": \"selected_choice\", \"value\": \"us-east\"}}]}"
+    },
+    "anthropic": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "provider-call-001",
+          "content": "{\"kind\": \"answered\", \"request_id\": \"input-request-001\", \"provenance\": \"human\", \"resolved_at\": \"2026-07-21T12:00:00.000000Z\", \"answers\": [{\"question_id\": \"region\", \"kind\": \"single_selection\", \"provenance\": \"human\", \"value\": {\"kind\": \"selected_choice\", \"value\": \"us-east\"}}]}"
+        }
+      ]
+    },
+    "bedrock": {
+      "role": "user",
+      "content": [
+        {
+          "toolResult": {
+            "toolUseId": "provider-call-001",
+            "content": [
+              {
+                "json": {
+                  "kind": "answered",
+                  "request_id": "input-request-001",
+                  "provenance": "human",
+                  "resolved_at": "2026-07-21T12:00:00.000000Z",
+                  "answers": [
+                    {
+                      "question_id": "region",
+                      "kind": "single_selection",
+                      "provenance": "human",
+                      "value": {
+                        "kind": "selected_choice",
+                        "value": "us-east"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "status": "success"
+          }
+        }
+      ]
+    },
+    "google": {
+      "role": "user",
+      "parts": [
+        {
+          "function_response": {
+            "id": "provider-call-001",
+            "name": "request_user_input",
+            "response": {
+              "kind": "answered",
+              "request_id": "input-request-001",
+              "provenance": "human",
+              "resolved_at": "2026-07-21T12:00:00.000000Z",
+              "answers": [
+                {
+                  "question_id": "region",
+                  "kind": "single_selection",
+                  "provenance": "human",
+                  "value": {
+                    "kind": "selected_choice",
+                    "value": "us-east"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "litellm": {
+      "role": "tool",
+      "tool_call_id": "provider-call-001",
+      "name": "request_user_input",
+      "content": "{\"kind\": \"answered\", \"request_id\": \"input-request-001\", \"provenance\": \"human\", \"resolved_at\": \"2026-07-21T12:00:00.000000Z\", \"answers\": [{\"question_id\": \"region\", \"kind\": \"single_selection\", \"provenance\": \"human\", \"value\": {\"kind\": \"selected_choice\", \"value\": \"us-east\"}}]}"
+    },
+    "local": {
+      "role": "tool",
+      "name": "request_user_input",
+      "content": "{\"call_id\":\"provider-call-001\",\"name\":\"request_user_input\",\"result\":{\"answers\":[{\"kind\":\"single_selection\",\"provenance\":\"human\",\"question_id\":\"region\",\"value\":{\"kind\":\"selected_choice\",\"value\":\"us-east\"}}],\"kind\":\"answered\",\"provenance\":\"human\",\"request_id\":\"input-request-001\",\"resolved_at\":\"2026-07-21T12:00:00.000000Z\"}}"
+    }
+  }
+}

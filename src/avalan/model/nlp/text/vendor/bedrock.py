@@ -22,12 +22,19 @@ from .....model.stream import (
     StreamReasoningRepresentation,
     StreamReasoningSegmentState,
     StreamVisibility,
+    TextGenerationNonStreamResult,
+    TextGenerationNonStreamToolCall,
     TextGenerationSingleStream,
     TextGenerationStream,
 )
-from .....tool.manager import ToolManager
 from .....types import LooseJsonValue
 from .....utils import to_json, tool_call_diagnostic_payload
+from ....capability import (
+    CorrelatedCapabilityResult,
+    ModelCapabilityCatalog,
+    ProviderCapabilityCall,
+    TaskInputCapabilityCall,
+)
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
@@ -44,6 +51,16 @@ from re import sub
 from typing import Any, AsyncIterator, Mapping, NoReturn, cast
 
 from aioboto3 import Session as Boto3Session
+
+
+def _mutable_provider_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _mutable_provider_json(item) for key, item in value.items()
+        }
+    if isinstance(value, tuple | list):
+        return [_mutable_provider_json(item) for item in value]
+    return value
 
 
 def _get(event: Any, key: str) -> Any:
@@ -122,20 +139,20 @@ class BedrockStream(TextGenerationVendorStream):
     _canonical_ready_tool_call_ids: set[str]
     _canonical_done_tool_call_ids: set[str]
     _reasoning_segments: StreamReasoningSegmentState
-    _tool_manager: ToolManager | None
+    _capability_catalog: ModelCapabilityCatalog | None
 
     def __init__(
         self,
         events: AsyncIterator[Any],
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ):
         self._events = events
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
         self._reasoning_segments = StreamReasoningSegmentState()
-        self._tool_manager = tool
+        self._capability_catalog = capability
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -308,6 +325,7 @@ class BedrockStream(TextGenerationVendorStream):
             "id": call_id,
             "name": name,
             "arguments_seen": False,
+            "arguments": "",
         }
         initial = tool.get("input")
         if initial in (None, ""):
@@ -397,6 +415,7 @@ class BedrockStream(TextGenerationVendorStream):
                 "id": self._tool_call_id(tool.get("toolUseId")),
                 "name": tool.get("name"),
                 "arguments_seen": False,
+                "arguments": "",
             }
         if tool:
             name = tool.get("name")
@@ -423,6 +442,7 @@ class BedrockStream(TextGenerationVendorStream):
             self._mark_tool_ready(
                 call_id,
                 cached.get("name"),
+                cast(str, cached.get("arguments", "")),
                 provider_payload,
             )
         )
@@ -452,6 +472,9 @@ class BedrockStream(TextGenerationVendorStream):
         call_id = cast(str, tool_block["id"])
         fragment = value if isinstance(value, str) else dumps(value)
         tool_block["arguments_seen"] = True
+        tool_block["arguments"] = (
+            cast(str, tool_block.get("arguments", "")) + fragment
+        )
         return StreamProviderEvent(
             kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
             correlation=StreamItemCorrelation(tool_call_id=call_id),
@@ -464,6 +487,7 @@ class BedrockStream(TextGenerationVendorStream):
         self,
         call_id: str,
         name: object | None,
+        arguments: str,
         provider_payload: LooseJsonValue | None,
     ) -> tuple[StreamProviderEvent, ...]:
         if call_id in self._canonical_done_tool_call_ids:
@@ -471,15 +495,26 @@ class BedrockStream(TextGenerationVendorStream):
         if call_id in self._canonical_ready_tool_call_ids:
             return ()
         self._canonical_ready_tool_call_ids.add(call_id)
-        canonical_name = (
-            TextGenerationVendor.canonical_tool_name(
-                name,
-                tool=self._tool_manager,
+        canonical_name = name
+        if isinstance(name, str) and self._capability_catalog is not None:
+            decoded = self._capability_catalog.decode_call(
+                ProviderCapabilityCall(
+                    call_id=call_id,
+                    provider_name=name,
+                    arguments=arguments or None,
+                ),
                 provider_family=ProviderFamily.BEDROCK,
             )
-            if isinstance(name, str)
-            else name
-        )
+            canonical_name = (
+                decoded.canonical_name
+                if isinstance(decoded, TaskInputCapabilityCall)
+                else decoded.name
+            )
+        elif isinstance(name, str):
+            try:
+                canonical_name = TextGenerationVendor.canonical_tool_name(name)
+            except AssertionError:
+                pass
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_READY,
@@ -560,7 +595,7 @@ class BedrockClient(TextGenerationVendor):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
         self._validate_reasoning_summary_request(settings)
@@ -572,7 +607,7 @@ class BedrockClient(TextGenerationVendor):
         template_messages = self._template_messages(
             messages,
             ["system"],
-            tool=tool,
+            capability=capability,
         )
         payload: dict[str, Any] = {
             "modelId": model_id,
@@ -583,7 +618,7 @@ class BedrockClient(TextGenerationVendor):
         inference = self._inference_config(settings)
         if inference:
             payload["inferenceConfig"] = inference
-        tool_config = self._tool_config(tool)
+        tool_config = self._tool_config(capability, settings=settings)
         if tool_config:
             payload["toolConfig"] = tool_config
 
@@ -604,16 +639,29 @@ class BedrockClient(TextGenerationVendor):
                     else stream
                 )
                 stream_kwargs: dict[str, Any] = {}
-                if isinstance(tool, ToolManager):
-                    stream_kwargs["tool"] = tool
+                if capability is not None:
+                    stream_kwargs["capability"] = capability
                 return BedrockStream(events=events, **stream_kwargs)
 
             response = await client.converse(**payload)
             usage = (
                 response.get("usage") if isinstance(response, dict) else None
             )
+            answer_text, calls = self._response_parts(
+                response,
+                capability=capability,
+            )
+            if calls:
+                return TextGenerationNonStreamResult.from_provider_parts(
+                    answer_text=answer_text,
+                    calls=calls,
+                    provider_family=ProviderFamily.BEDROCK,
+                    usage=usage,
+                    answer_event_type="converse.text",
+                    terminal_event_type="converse.completed",
+                )
             return TextGenerationSingleStream(
-                self._response_text(response, tool=tool),
+                answer_text,
                 provider_family=ProviderFamily.BEDROCK,
                 usage=usage,
             )
@@ -792,24 +840,59 @@ class BedrockClient(TextGenerationVendor):
             config["stopSequences"] = stop
         return config or None
 
-    def _tool_config(self, tool: ToolManager | None) -> dict[str, Any] | None:
-        schemas = self._tool_schemas(tool) if tool else None
+    def _tool_config(
+        self,
+        capability: ModelCapabilityCatalog | None,
+        *,
+        settings: GenerationSettings | None = None,
+    ) -> dict[str, Any] | None:
+        schemas = self._tool_schemas(capability) if capability else None
         if not schemas:
             return None
-        return {"tools": schemas, "toolChoice": {"auto": {}}}
+        tool_choice: dict[str, Any]
+        if settings is None or settings.tool_choice is None:
+            tool_choice = {"auto": {}}
+        else:
+            assert capability is not None
+            provider_name = capability.project(
+                ProviderFamily.BEDROCK
+            ).tool_choice(settings.tool_choice)
+            tool_choice = {"tool": {"name": provider_name}}
+        return {"tools": schemas, "toolChoice": tool_choice}
 
     def _response_text(
         self,
         response: dict[str, Any],
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> str:
+        answer_text, calls = self._response_parts(
+            response,
+            capability=capability,
+        )
+        return answer_text + "".join(
+            TextGenerationVendor.build_tool_call_text(
+                call.call_id,
+                call.name,
+                call.arguments,
+                tool_name_is_canonical=True,
+            )
+            for call in calls
+        )
+
+    def _response_parts(
+        self,
+        response: dict[str, Any],
+        *,
+        capability: ModelCapabilityCatalog | None = None,
+    ) -> tuple[str, tuple[TextGenerationNonStreamToolCall, ...]]:
         output = response.get("output") if isinstance(response, dict) else None
         message = output.get("message") if isinstance(output, dict) else None
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, list):
-            return ""
+            return "", ()
         parts: list[str] = []
+        calls: list[TextGenerationNonStreamToolCall] = []
         for block in content:
             if not isinstance(block, dict):
                 continue
@@ -822,33 +905,26 @@ class BedrockClient(TextGenerationVendor):
             if not isinstance(tool_use, dict):
                 continue
             provider_name = tool_use.get("name")
-            canonical_name = (
-                TextGenerationVendor.canonical_tool_name(
-                    provider_name,
-                    tool=tool,
+            call_id = tool_use.get("toolUseId")
+            arguments = tool_use.get("input")
+            calls.append(
+                TextGenerationVendor.non_stream_tool_call(
+                    call_id=call_id,
+                    provider_name=provider_name,
+                    arguments=arguments,
+                    capability=capability,
                     provider_family=ProviderFamily.BEDROCK,
-                )
-                if isinstance(provider_name, str)
-                and isinstance(tool, ToolManager)
-                else provider_name
-            )
-            parts.append(
-                TextGenerationVendor.build_tool_call_text(
-                    tool_use.get("toolUseId"),
-                    canonical_name,
-                    tool_use.get("input"),
-                    tool_name_is_canonical=isinstance(canonical_name, str)
-                    and isinstance(tool, ToolManager),
+                    provider_event_type="converse.tool_use",
                 )
             )
-        return "".join(parts)
+        return "".join(parts), tuple(calls)
 
     def _template_messages(
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> list[dict[str, Any]]:
         templated: list[dict[str, Any]] = []
         for message in messages:
@@ -880,14 +956,16 @@ class BedrockClient(TextGenerationVendor):
                 if result:
                     templated.append(self._tool_result_message(result))
                 continue
-            templated.append(self._format_message(message, tool=tool))
+            templated.append(
+                self._format_message(message, capability=capability)
+            )
         return templated
 
     def _format_message(
         self,
         message: Message,
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> dict[str, Any]:
         role = str(message.role)
         if role == str(MessageRole.DEVELOPER):
@@ -897,7 +975,7 @@ class BedrockClient(TextGenerationVendor):
             for tool_call in message.tool_calls:
                 provider_name = TextGenerationVendor.provider_tool_name(
                     tool_call.name,
-                    tool=tool,
+                    capability=capability,
                     provider_family=ProviderFamily.BEDROCK,
                 )
                 content_blocks.append(
@@ -1117,32 +1195,46 @@ class BedrockClient(TextGenerationVendor):
         }
 
     @staticmethod
-    def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
-        provider_ready = isinstance(tool, ToolManager)
-        schemas = (
-            tool.provider_json_schemas(
-                provider_family=ProviderFamily.BEDROCK.value
-            )
-            if provider_ready
-            else tool.json_schemas()
-        )
+    def capability_result_message(
+        result: CorrelatedCapabilityResult,
+    ) -> dict[str, Any]:
+        return {
+            "role": str(MessageRole.USER),
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": str(result.call_id),
+                        "content": [{"json": result.provider_payload()}],
+                        "status": "success",
+                    }
+                }
+            ],
+        }
+
+    @staticmethod
+    def _tool_schemas(
+        capability: ModelCapabilityCatalog,
+    ) -> list[dict[str, Any]] | None:
+        schemas = capability.project(ProviderFamily.BEDROCK).schemas
         if not schemas:
             return None
         tools: list[dict[str, Any]] = []
         for schema in schemas:
             if schema.get("type") != "function":
                 continue
-            function = schema.get("function") or {}
+            function = schema.get("function")
+            if not isinstance(function, Mapping):
+                continue
             name = function.get("name", "")
-            if not provider_ready:
-                name = TextGenerationVendor.encode_tool_name(name)
             tools.append(
                 {
                     "toolSpec": {
                         "name": name,
                         "description": function.get("description", ""),
                         "inputSchema": {
-                            "json": function.get("parameters", {})
+                            "json": _mutable_provider_json(
+                                function.get("parameters", {})
+                            )
                         },
                     }
                 }

@@ -23,7 +23,7 @@
     "25",
     "26"
   ],
-  "catalog_sha256": "0d2ede16f94cb1094cd455a585b00293bb11ca32178de65c37a81999b91013b4",
+  "catalog_sha256": "5f73b948ccf2f817fad54952b1b4864b6403a2f4928dd82d1d38e28d54b57ea1",
   "requirements": [
     {
       "id": "INPUT-N-001",
@@ -32,7 +32,7 @@
       "paraphrase": "Give the model a structured task-input capability in the same conceptual manner as a tool.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -44,13 +44,13 @@
       "source_section": "7.1",
       "normative_level": "MUST",
       "paraphrase": "Convert every invocation of the reserved capability into a runtime input_required interaction.",
-      "owner": "interaction domain and capability catalog",
+      "owner": "attached runtime and interaction broker",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "planned:tests/input/attached_runtime_e2e_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_002"
+        "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required"
       ]
     },
     {
@@ -60,7 +60,7 @@
       "paraphrase": "Keep the model-facing capability from reading standard input, accessing a terminal, rendering widgets, or owning persistence.",
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
-        "planned:tests/input/canonical_contract_test.py",
+        "tests/input/canonical_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -302,12 +302,12 @@
       "implementation_artifacts": [
         "src/avalan/interaction/",
         "tests/input/broker_contract_test.py",
-        "planned:tests/input/model_capability_contract_test.py",
+        "planned:tests/input/attached_runtime_e2e_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
         "tests/input/broker_contract_test.py::test_requirement_input_n_019",
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022"
+        "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required"
       ]
     },
     {
@@ -345,11 +345,13 @@
       "paraphrase": "Expose one reserved provider-neutral model capability meaning request task input from the user.",
       "owner": "model capability composition",
       "implementation_artifacts": [
-        "planned:tests/input/model_capability_contract_test.py",
+        "tests/input/model_capability_contract_test.py",
+        "tests/agent/orchestrator_response_capability_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022"
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022",
+        "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_valid_reserved_call_preserves_exact_provider_id"
       ]
     },
     {
@@ -359,13 +361,14 @@
       "paraphrase": "Bound typed questions, declare required or advisory intent, await a defined resolution, return it to the pending model request, preserve human provenance, and remain unavailable to incapable hosts.",
       "owner": "model capability composition",
       "implementation_artifacts": [
-        "planned:tests/input/model_capability_contract_test.py",
+        "tests/input/model_capability_contract_test.py",
         "tests/interaction/interaction_entities_test.py",
         "tests/interaction/interaction_e2e_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
         "tests/input/model_capability_contract_test.py::test_requirement_input_n_023",
+        "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix",
         "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
         "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
       ]
@@ -377,7 +380,7 @@
       "paraphrase": "Normally contain one question per request.",
       "owner": "model capability composition",
       "implementation_artifacts": [
-        "planned:tests/input/model_capability_contract_test.py",
+        "tests/input/model_capability_contract_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
@@ -391,7 +394,7 @@
       "paraphrase": "Allow a small host-rendered bundle for closely related decisions.",
       "owner": "model capability composition",
       "implementation_artifacts": [
-        "planned:tests/input/model_capability_contract_test.py",
+        "tests/input/model_capability_contract_test.py",
         "tests/interaction/interaction_entities_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
@@ -409,7 +412,7 @@
       "paraphrase": "Limit the initial request contract to at most three questions.",
       "owner": "model capability composition",
       "implementation_artifacts": [
-        "planned:tests/input/model_capability_contract_test.py",
+        "tests/input/model_capability_contract_test.py",
         "tests/interaction/interaction_entities_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
@@ -425,12 +428,15 @@
       "paraphrase": "Never execute a domain action, read process input directly, ask for secrets, approve an operation, assume a renderer, or label a timeout/default as human.",
       "owner": "model capability composition",
       "implementation_artifacts": [
-        "planned:tests/input/model_capability_contract_test.py",
+        "tests/input/model_capability_contract_test.py",
+        "tests/agent/orchestrator_response_capability_test.py",
         "tests/interaction/interaction_codec_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
         "tests/input/model_capability_contract_test.py::test_requirement_input_n_027",
+        "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection",
+        "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_rejected_structured_batches_have_zero_domain_side_effects",
         "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json"
       ]
     },
@@ -441,11 +447,14 @@
       "paraphrase": "Account for input requests separately from domain tool execution.",
       "owner": "model capability composition",
       "implementation_artifacts": [
-        "planned:tests/input/model_capability_contract_test.py",
+        "tests/input/model_capability_contract_test.py",
+        "tests/agent/orchestrator_response_capability_test.py",
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_028"
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_028",
+        "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_rejected_structured_batches_have_zero_domain_side_effects",
+        "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_valid_reserved_call_preserves_exact_provider_id"
       ]
     },
     {

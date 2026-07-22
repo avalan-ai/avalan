@@ -60,6 +60,7 @@ from avalan.isolation import (
     SandboxProfileSelection,
     trusted_isolation_source,
 )
+from avalan.model import ModelCapabilityCatalog
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.tool import ToolSet
 from avalan.tool.browser import BrowserToolSettings
@@ -776,9 +777,10 @@ async def _load_shell_agent_tool_result(
                     agent_id=uuid4(),
                 )
 
-                schemas = agent.tool.json_schemas() or []
                 schema_names = [
-                    schema["function"]["name"] for schema in schemas
+                    descriptor.schema["function"]["name"]
+                    for descriptor in agent.tool.list_tools()
+                    if descriptor.schema is not None
                 ]
                 outcome = await agent.tool.execute_call(
                     ToolCall(
@@ -1528,7 +1530,13 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
 
         manager = _shell_only_manager(kwargs)
         self.assertEqual(manager.list_tools(), [])
-        self.assertIsNone(manager.provider_json_schemas())
+        self.assertTrue(
+            ModelCapabilityCatalog.create(
+                manager.export_model_capability_seed()
+            )
+            .project()
+            .is_empty
+        )
         self.assertIsNone(manager.describe_tool("shell.pipeline"))
         resolution = manager.resolve_tool_name("shell.pipeline")
         self.assertIs(resolution.status, ToolNameResolutionStatus.DISABLED)
@@ -2988,10 +2996,10 @@ mode = "sanitized"
             settings=settings,
         )
 
-        provider_schemas = manager.provider_json_schemas(
-            provider_family="openai"
-        )
-        assert provider_schemas is not None
+        projection = ModelCapabilityCatalog.create(
+            manager.export_model_capability_seed()
+        ).project("openai")
+        provider_schemas = projection.schemas
         provider_names = [
             schema["function"]["name"] for schema in provider_schemas
         ]
@@ -3000,12 +3008,10 @@ mode = "sanitized"
             provider_names,
             ["pdfinfo", "shell_pdftoppm", "tesseract"],
         )
-        resolution = manager.resolve_tool_name(
-            "shell_pdftoppm",
-            provider_originated=True,
+        self.assertEqual(
+            projection.canonical_name("shell_pdftoppm"),
+            "shell.pdftoppm",
         )
-        self.assertIs(resolution.status, ToolNameResolutionStatus.EXACT)
-        self.assertEqual(resolution.canonical_name, "shell.pdftoppm")
 
     async def test_from_file_loads_tool_name_policy_empty_prefix(self):
         kwargs = await _from_file_tool_manager_kwargs(

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from io import StringIO
 from json import loads
 from logging import getLogger
+from typing import cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -26,6 +27,11 @@ from avalan.entities import (
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
+from avalan.model.capability import (
+    DomainCapabilitySeed,
+    ModelCapabilityCatalog,
+    ModelCapabilityDescriptor,
+)
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -126,12 +132,16 @@ def _make_response(
     engine_args: dict,
     **kwargs,
 ) -> OrchestratorResponse:
+    kwargs.setdefault(
+        "enable_tool_parsing", kwargs.get("capability") is not None
+    )
     agent_id = kwargs.get("agent_id")
     participant_id = kwargs.get("participant_id")
     session_id = kwargs.get("session_id")
     context = ModelCallContext(
         specification=operation.specification,
         input=input_value,
+        capability=kwargs.get("capability"),
         engine_args=dict(engine_args),
         agent_id=agent_id,
         participant_id=participant_id,
@@ -146,6 +156,36 @@ def _make_response(
         context,
         **kwargs,
     )
+
+
+def _posthoc_capability(
+    calls_by_text: dict[str, list[ToolCall]],
+) -> ModelCapabilityCatalog:
+    names = tuple(
+        sorted(
+            {call.name for calls in calls_by_text.values() for call in calls}
+        )
+    )
+    catalog = ModelCapabilityCatalog.create(
+        DomainCapabilitySeed(
+            descriptors=tuple(
+                ModelCapabilityDescriptor(
+                    canonical_name=name,
+                    description=f"Invoke {name}.",
+                    parameter_schema={
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                )
+                for name in names
+            )
+        )
+    )
+    capability = MagicMock(spec=ModelCapabilityCatalog)
+    capability.get_calls.side_effect = calls_by_text.get
+    capability.project.side_effect = catalog.project
+    capability.classify_batch.side_effect = catalog.classify_batch
+    return cast(ModelCapabilityCatalog, capability)
 
 
 class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
@@ -165,10 +205,16 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         binary_data = b"\x89PDF\x0d\x0a\x1a\x0a\x00\x00\x00\x0d"
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="database.sample", arguments=None)]
-            if text == "query"
-            else None
+        capability = _posthoc_capability(
+            {
+                "query": [
+                    ToolCall(
+                        id=uuid4(),
+                        name="database.sample",
+                        arguments=None,
+                    )
+                ]
+            }
         )
 
         async def tool_exec(call, context: ToolCallContext):
@@ -195,6 +241,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
@@ -234,10 +282,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         bytearray_data = bytearray(b"test bytearray content")
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="read_file", arguments=None)]
-            if text == "fetch"
-            else None
+        capability = _posthoc_capability(
+            {"fetch": [ToolCall(id=uuid4(), name="read_file", arguments=None)]}
         )
 
         async def tool_exec(call, context: ToolCallContext):
@@ -264,6 +310,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
@@ -299,10 +347,12 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         binary2 = b"\xff\xfe\xfd\xfc"
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="complex_query", arguments=None)]
-            if text == "get"
-            else None
+        capability = _posthoc_capability(
+            {
+                "get": [
+                    ToolCall(id=uuid4(), name="complex_query", arguments=None)
+                ]
+            }
         )
 
         async def tool_exec(call, context: ToolCallContext):
@@ -335,6 +385,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
@@ -378,10 +430,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="test", arguments=None)]
-            if text == "x"
-            else None
+        capability = _posthoc_capability(
+            {"x": [ToolCall(id=uuid4(), name="test", arguments=None)]}
         )
 
         async def tool_exec(call, context: ToolCallContext):
@@ -408,6 +458,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
@@ -439,10 +491,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="mixed", arguments=None)]
-            if text == "call"
-            else None
+        capability = _posthoc_capability(
+            {"call": [ToolCall(id=uuid4(), name="mixed", arguments=None)]}
         )
 
         async def tool_exec(call, context: ToolCallContext):
@@ -477,6 +527,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
@@ -519,10 +571,16 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         memview_data = memoryview(b"memoryview content")
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="database.fetch", arguments=None)]
-            if text == "query"
-            else None
+        capability = _posthoc_capability(
+            {
+                "query": [
+                    ToolCall(
+                        id=uuid4(),
+                        name="database.fetch",
+                        arguments=None,
+                    )
+                ]
+            }
         )
 
         async def tool_exec(call, context: ToolCallContext):
@@ -549,6 +607,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
@@ -585,10 +645,12 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         memview2 = memoryview(b"\xaa\xbb\xcc\xdd")
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="complex_fetch", arguments=None)]
-            if text == "fetch"
-            else None
+        capability = _posthoc_capability(
+            {
+                "fetch": [
+                    ToolCall(id=uuid4(), name="complex_fetch", arguments=None)
+                ]
+            }
         )
 
         async def tool_exec(call, context: ToolCallContext):
@@ -620,6 +682,8 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
@@ -673,10 +737,12 @@ class OrchestratorResponseBinaryDataclassTestCase(IsolatedAsyncioTestCase):
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="dataclass_tool", arguments=None)]
-            if text == "dc"
-            else None
+        capability = _posthoc_capability(
+            {
+                "dc": [
+                    ToolCall(id=uuid4(), name="dataclass_tool", arguments=None)
+                ]
+            }
         )
 
         async def tool_exec(call, context: ToolCallContext):
@@ -703,6 +769,8 @@ class OrchestratorResponseBinaryDataclassTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()

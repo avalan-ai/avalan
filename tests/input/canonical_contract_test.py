@@ -1,10 +1,16 @@
 """Exercise the public canonical interaction contract."""
 
+from ast import Attribute, Call, Import, ImportFrom, Name, parse, walk
+from collections.abc import Mapping
 from dataclasses import fields
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import cast
+from unittest.mock import patch
 
 import pytest
 
+import avalan.model.capability as model_capability_module
 from avalan.interaction import (
     RESERVED_INPUT_CAPABILITY_NAME,
     AgentId,
@@ -69,6 +75,14 @@ from avalan.interaction import (
     semantic_request_fingerprint,
 )
 from avalan.interaction.state import _anchor_request_presentation
+from avalan.model import (
+    CapabilityBatchAccepted,
+    ModelCapabilityCatalog,
+    ModelCapabilityKind,
+    ProviderCapabilityCall,
+    ProviderCapabilitySupport,
+    TaskInputCapabilityCall,
+)
 
 _CREATED_AT = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
 
@@ -208,6 +222,191 @@ def _answered(request: InputRequest) -> AnsweredResolution:
             ),
         ),
     )
+
+
+def _attached_model_catalog() -> ModelCapabilityCatalog:
+    return ModelCapabilityCatalog.create(
+        support=ProviderCapabilitySupport(
+            structured_invocation=True,
+            stable_call_ids=True,
+            correlated_results=True,
+            attached_resolution=True,
+        )
+    )
+
+
+def _model_input_arguments() -> dict[str, object]:
+    return {
+        "mode": "required",
+        "reason": "Choose the deployment region.",
+        "questions": [
+            {
+                "question_id": "region",
+                "kind": "single_selection",
+                "header": "Region",
+                "prompt": "Which region should be used?",
+                "required": True,
+                "choices": [
+                    {
+                        "value": "us-east",
+                        "label": "US East",
+                        "description": "Use the eastern region.",
+                    },
+                    {
+                        "value": "eu-west",
+                        "label": "EU West",
+                        "description": "Use the western Europe region.",
+                    },
+                ],
+                "allow_other": False,
+                "recommended_choice": "us-east",
+            }
+        ],
+    }
+
+
+def test_requirement_input_n_001() -> None:
+    """Expose task input as one structured model capability."""
+    catalog = _attached_model_catalog()
+    projection = catalog.project("openai")
+
+    assert len(catalog.descriptors) == 1
+    assert catalog.descriptors[0].kind is ModelCapabilityKind.TASK_INPUT
+    assert catalog.descriptors[0].canonical_name == (
+        RESERVED_INPUT_CAPABILITY_NAME
+    )
+    assert projection.schemas[0]["type"] == "function"
+    function = cast(Mapping[str, object], projection.schemas[0]["function"])
+    assert function["name"] == RESERVED_INPUT_CAPABILITY_NAME
+    parameters = cast(Mapping[str, object], function["parameters"])
+    assert parameters["type"] == "object"
+
+
+def test_requirement_input_n_002() -> None:
+    """Classify a reserved call without publishing or suspending a run."""
+    catalog = _attached_model_catalog()
+    classification = catalog.classify_batch(
+        (
+            ProviderCapabilityCall(
+                call_id="provider-call-001",
+                provider_name=RESERVED_INPUT_CAPABILITY_NAME,
+                arguments=_model_input_arguments(),
+            ),
+        )
+    )
+
+    assert isinstance(classification, CapabilityBatchAccepted)
+    assert classification.domain_calls == ()
+    assert isinstance(classification.task_input, TaskInputCapabilityCall)
+    assert classification.task_input.call_id == "provider-call-001"
+    assert classification.task_input.questions[0].question_id == "region"
+
+
+def test_requirement_input_n_003() -> None:
+    """Allow only pure dependencies and exercise runtime I/O sentinels."""
+    source = Path(model_capability_module.__file__).read_text(encoding="utf-8")
+    tree = parse(source)
+    imported_modules = {
+        name.name
+        for node in walk(tree)
+        if isinstance(node, Import)
+        for name in node.names
+    }
+    imported_modules.update(
+        f"{'.' * node.level}{node.module or ''}"
+        for node in walk(tree)
+        if isinstance(node, ImportFrom)
+    )
+
+    def call_name(call: Call) -> str | None:
+        value = call.func
+        parts: list[str] = []
+        while isinstance(value, Attribute):
+            parts.append(value.attr)
+            value = value.value
+        if isinstance(value, Name):
+            parts.append(value.id)
+            return ".".join(reversed(parts))
+        return None
+
+    called_names = {
+        name
+        for node in walk(tree)
+        if isinstance(node, Call)
+        if (name := call_name(node)) is not None
+    }
+    allowed_internal_dependencies = {
+        "..entities",
+        "..interaction.codec",
+        "..interaction.entities",
+        "..interaction.error",
+        "..interaction.validation",
+        "..tool.name_policy",
+        "..tool.parser",
+        "..types",
+    }
+    internal_dependencies = {
+        module for module in imported_modules if module.startswith(".")
+    }
+    assert internal_dependencies <= allowed_internal_dependencies
+    assert allowed_internal_dependencies - {"..interaction.error"} <= (
+        internal_dependencies
+    )
+    forbidden_dependency_roots = {
+        "curses",
+        "getpass",
+        "rich",
+        "sqlite3",
+        "sys",
+        "termios",
+        "textual",
+        "tty",
+        "..interaction.broker",
+        "..interaction.handler",
+        "..interaction.store",
+        "..interaction.stores",
+    }
+    assert imported_modules.isdisjoint(forbidden_dependency_roots)
+    assert called_names.isdisjoint(
+        {
+            "input",
+            "open",
+            "sys.stdin.read",
+            "sys.stdin.readline",
+        }
+    )
+
+    catalog = _attached_model_catalog()
+    sentinels = {
+        name: patch(name, side_effect=AssertionError(name))
+        for name in (
+            "builtins.input",
+            "getpass.getpass",
+            "pathlib.Path.open",
+            "sqlite3.connect",
+        )
+    }
+    started = [sentinel.start() for sentinel in sentinels.values()]
+    try:
+        projection = catalog.project("openai")
+        classification = catalog.classify_batch(
+            (
+                ProviderCapabilityCall(
+                    call_id="provider-call-io-sentinel",
+                    provider_name=projection.provider_name(
+                        RESERVED_INPUT_CAPABILITY_NAME
+                    ),
+                    arguments=_model_input_arguments(),
+                ),
+            ),
+            provider_family="openai",
+        )
+        assert isinstance(classification, CapabilityBatchAccepted)
+        assert isinstance(classification.task_input, TaskInputCapabilityCall)
+    finally:
+        for sentinel in reversed(tuple(sentinels.values())):
+            sentinel.stop()
+    assert all(not mock.called for mock in started)
 
 
 def test_requirement_input_n_004() -> None:

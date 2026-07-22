@@ -40,6 +40,7 @@ from avalan.entities import (
     ToolNamePolicySettings,
     TransformerEngineSettings,
 )
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
     REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
@@ -59,6 +60,7 @@ from avalan.task.usage import (
 )
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
+from avalan.tool.name_policy import ToolNamePolicy
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tool_parsing"
 
@@ -331,8 +333,8 @@ class PolicyAdder:
         return a + b
 
 
-def _sanitized_policy_manager() -> ToolManager:
-    return ToolManager.create_instance(
+def _sanitized_policy_catalog() -> ModelCapabilityCatalog:
+    manager = ToolManager.create_instance(
         enable_tools=["math.adder"],
         available_toolsets=[ToolSet(namespace="math", tools=[PolicyAdder()])],
         settings=ToolManagerSettings(
@@ -341,6 +343,40 @@ def _sanitized_policy_manager() -> ToolManager:
             )
         ),
     )
+    return ModelCapabilityCatalog.create(
+        manager.export_model_capability_seed()
+    )
+
+
+def _mock_capability(
+    schemas: list[dict[str, object]] | None,
+) -> MagicMock:
+    capability = MagicMock(spec=ModelCapabilityCatalog)
+    projection = capability.project.return_value
+    provider_schemas: list[dict[str, object]] = []
+    for schema in schemas or []:
+        function = schema.get("function")
+        if not isinstance(function, dict):
+            provider_schemas.append(schema)
+            continue
+        canonical_name = function.get("name")
+        provider_schemas.append(
+            {
+                **schema,
+                "function": {
+                    **function,
+                    "name": (
+                        ToolNamePolicy.encode_encoded(canonical_name)
+                        if isinstance(canonical_name, str)
+                        else canonical_name
+                    ),
+                },
+            }
+        )
+    projection.schemas = tuple(provider_schemas)
+    projection.is_empty = not provider_schemas
+    projection.tool_choice.side_effect = ToolNamePolicy.encode_encoded
+    return capability
 
 
 def patch_openai_imports():
@@ -698,10 +734,9 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             create_mock
         )
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
-        tool = MagicMock()
-        tool.json_schemas.return_value = [
-            {"type": "function", "function": {"name": "pkg.lookup"}}
-        ]
+        tool = _mock_capability(
+            [{"type": "function", "function": {"name": "pkg.lookup"}}]
+        )
         messages = [
             Message(role=MessageRole.SYSTEM, content="system path"),
             Message(role=MessageRole.DEVELOPER, content="developer path"),
@@ -741,7 +776,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             messages,
             settings=settings,
             instructions="top-level policy",
-            tool=tool,
+            capability=tool,
             use_async_generator=False,
         )
 
@@ -795,15 +830,14 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             create_mock
         )
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
-        tool = MagicMock()
-        tool.json_schemas.return_value = [
-            {"type": "function", "function": {"name": "pkg.lookup"}}
-        ]
+        tool = _mock_capability(
+            [{"type": "function", "function": {"name": "pkg.lookup"}}]
+        )
 
         await client(
             "gpt-5",
             [Message(role=MessageRole.USER, content="hi")],
-            tool=tool,
+            capability=tool,
             use_async_generator=False,
         )
 
@@ -858,17 +892,16 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             create_mock
         )
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
-        tool = MagicMock()
-        tool.json_schemas.return_value = [
-            {"type": "function", "function": {"name": "pkg.lookup"}}
-        ]
+        tool = _mock_capability(
+            [{"type": "function", "function": {"name": "pkg.lookup"}}]
+        )
 
         with self.assertRaisesRegex(AssertionError, "tool_choice"):
             await client(
                 "gpt-5",
                 [Message(role=MessageRole.USER, content="hi")],
                 settings=GenerationSettings(tool_choice="pkg.other"),
-                tool=tool,
+                capability=tool,
                 use_async_generator=False,
             )
 
@@ -4166,39 +4199,159 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(ready.correlation.tool_call_id, "fc_1")
         self.assertEqual(ready.data, {"name": "math.calculator"})
 
+    async def test_function_call_preserves_malformed_native_tool_name(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    {
+                        "type": "response.output_item.done",
+                        "item": {
+                            "type": "function_call",
+                            "id": "item-native",
+                            "call_id": "call-native",
+                            "name": "avl_!",
+                            "arguments": "{}",
+                        },
+                    }
+                ]
+            )
+        )
+
+        items = await _stream_items(stream)
+
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.data, {"name": "avl_!"})
+        self.assertEqual(ready.correlation.tool_call_id, "call-native")
+
+    async def test_capability_requires_correlated_tool_call_ids(self):
+        capability = _sanitized_policy_catalog()
+        cases = (
+            (
+                {
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {
+                        "type": "function_call",
+                        "id": "unmapped-added-item",
+                        "status": "in_progress",
+                        "name": "math_adder",
+                    },
+                },
+                "unmapped-added-item",
+            ),
+            (
+                {
+                    "type": "response.output_item.done",
+                    "item_id": "unmapped-done-item",
+                    "output_index": 1,
+                    "item": {
+                        "type": "function_call",
+                        "status": "completed",
+                        "name": "math_adder",
+                        "arguments": "{}",
+                    },
+                },
+                "unmapped-done-item",
+            ),
+        )
+
+        for event, provider_item_id in cases:
+            with self.subTest(provider_event_type=event["type"]):
+                stream = self.mod.OpenAIStream(
+                    AsyncIter([event]),
+                    capability=capability,
+                )
+
+                items = await _stream_items(stream)
+
+                self.assertEqual(
+                    [item.kind for item in items],
+                    [
+                        StreamItemKind.STREAM_STARTED,
+                        StreamItemKind.STREAM_ERRORED,
+                        StreamItemKind.STREAM_CLOSED,
+                    ],
+                )
+                error = items[1]
+                self.assertEqual(error.provider_payload, event)
+                self.assertEqual(error.provider_event_type, event["type"])
+                self.assertEqual(
+                    error.correlation,
+                    self.mod.StreamItemCorrelation(),
+                )
+                error_data = error.data
+                assert isinstance(error_data, dict)
+                self.assertEqual(error_data["error_type"], "ValueError")
+                self.assertIn(
+                    "response tool call id is missing",
+                    error_data["message"],
+                )
+                self.assertIn(provider_item_id, str(error.provider_payload))
+                self.assertFalse(
+                    any(
+                        item.kind
+                        in {
+                            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                            StreamItemKind.TOOL_CALL_READY,
+                            StreamItemKind.TOOL_CALL_DONE,
+                        }
+                        for item in items
+                    )
+                )
+                self.assertEqual(
+                    items[0].metadata["capabilities"]["backend"],
+                    "hosted",
+                )
+                self.assertEqual(
+                    {item.provider_family for item in items},
+                    {"openai"},
+                )
+
     async def test_function_call_added_item_uses_tool_name_policy(self):
-        manager = _sanitized_policy_manager()
+        manager = _sanitized_policy_catalog()
         events = [
             SimpleNamespace(
                 type="response.output_item.added",
                 item=SimpleNamespace(
                     type="function_call",
-                    id="fc_1",
+                    id="item_1",
+                    call_id="call_exact",
                     name="math_adder",
                 ),
             ),
             SimpleNamespace(
                 type="response.function_call_arguments.delta",
-                item_id="fc_1",
+                item_id="item_1",
                 delta='{"a":1',
             ),
             SimpleNamespace(
                 type="response.function_call_arguments.delta",
-                item_id="fc_1",
+                item_id="item_1",
                 delta=',"b":2}',
             ),
             SimpleNamespace(
                 type="response.output_item.done",
-                item=SimpleNamespace(type="function_call", id="fc_1"),
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="item_1",
+                    call_id="call_exact",
+                ),
             ),
         ]
-        stream = self.mod.OpenAIStream(AsyncIter(events), tool=manager)
+        stream = self.mod.OpenAIStream(
+            AsyncIter(events),
+            capability=manager,
+        )
 
         items = await _stream_items(stream)
 
         self.assertEqual(
             accumulate_canonical_stream_items(items).tool_call_arguments,
-            {"fc_1": '{"a":1,"b":2}'},
+            {"call_exact": '{"a":1,"b":2}'},
         )
         ready = next(
             item
@@ -4207,47 +4360,55 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(ready.data, {"name": "math.adder"})
 
-    async def test_function_call_name_falls_back_when_policy_rejects(self):
-        manager = _sanitized_policy_manager()
+    async def test_function_call_name_rejects_unadvertised_capability(self):
+        manager = _sanitized_policy_catalog()
         events = [
             SimpleNamespace(
                 type="response.output_item.added",
                 item=SimpleNamespace(
                     type="function_call",
-                    id="fc_1",
+                    id="item_1",
+                    call_id="call_exact",
                     name="bad.name",
                 ),
             ),
             SimpleNamespace(
                 type="response.output_item.done",
-                item=SimpleNamespace(type="function_call", id="fc_1"),
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="item_1",
+                    call_id="call_exact",
+                ),
             ),
         ]
-        stream = self.mod.OpenAIStream(AsyncIter(events), tool=manager)
+        stream = self.mod.OpenAIStream(
+            AsyncIter(events),
+            capability=manager,
+        )
 
         items = await _stream_items(stream)
 
-        ready = next(
-            item
-            for item in items
-            if item.kind is StreamItemKind.TOOL_CALL_READY
+        self.assertFalse(
+            any(item.kind is StreamItemKind.TOOL_CALL_READY for item in items)
         )
-        self.assertEqual(ready.data, {"name": "bad.name"})
+        self.assertTrue(
+            any(item.kind is StreamItemKind.STREAM_ERRORED for item in items)
+        )
 
-    async def test_stream_client_passes_tool_manager_to_stream(self):
+    async def test_stream_client_passes_capability_catalog_to_stream(self):
         stream_instance = AsyncIter([])
         self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
             return_value=stream_instance
         )
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
-        manager = _sanitized_policy_manager()
+        manager = _sanitized_policy_catalog()
 
         with patch.object(self.mod, "OpenAIStream") as StreamMock:
-            result = await client("m", [], tool=manager)
+            result = await client("m", [], capability=manager)
 
         self.assertIs(result, StreamMock.return_value)
         StreamMock.assert_called_once()
-        self.assertIs(StreamMock.call_args.kwargs["tool"], manager)
+        self.assertIs(StreamMock.call_args.kwargs["capability"], manager)
 
     async def test_function_call_events_reject_invalid_delta_id(self):
         stream = self.mod.OpenAIStream(
@@ -4367,10 +4528,9 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         client = self.mod.OpenAIClient(api_key="k", base_url="b")
         client._template_messages = MagicMock(return_value=[{"c": 1}])
-        tool = MagicMock()
-        tool.json_schemas.return_value = [
-            {"type": "function", "function": {"name": "pkg.func"}}
-        ]
+        tool = _mock_capability(
+            [{"type": "function", "function": {"name": "pkg.func"}}]
+        )
         settings = GenerationSettings(
             temperature=0.5,
             top_p=0.8,
@@ -4389,7 +4549,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             "m",
             [],
             settings=settings,
-            tool=tool,
+            capability=tool,
         )
         self.openai_stub.AsyncOpenAI.return_value.responses.create.assert_awaited_once_with(
             extra_headers={
@@ -6664,15 +6824,34 @@ class TemplateAndToolSchemaTestCase(TestCase):
         self.patch.stop()
 
     def test_tool_schemas_none(self):
-        tool = MagicMock()
-        tool.json_schemas.return_value = None
-        self.assertIsNone(self.mod.OpenAIClient._tool_schemas(tool))
-        tool.json_schemas.return_value = [{"type": "x"}]
-        self.assertEqual(self.mod.OpenAIClient._tool_schemas(tool), [])
+        capability = _mock_capability(None)
+        self.assertIsNone(
+            self.mod.OpenAIClient._tool_schemas(
+                capability,
+                provider_family="openai",
+            )
+        )
+        capability = _mock_capability(
+            [{"type": "function", "function": "invalid"}]
+        )
+        self.assertIsNone(
+            self.mod.OpenAIClient._tool_schemas(
+                capability,
+                provider_family="openai",
+            )
+        )
+        capability = _mock_capability([{"type": "x"}])
+        self.assertIsNone(
+            self.mod.OpenAIClient._tool_schemas(
+                capability,
+                provider_family="openai",
+            )
+        )
 
-    def test_tool_schemas_use_tool_manager_name_policy(self):
+    def test_tool_schemas_use_capability_name_policy(self):
         schemas = self.mod.OpenAIClient._tool_schemas(
-            _sanitized_policy_manager()
+            _sanitized_policy_catalog(),
+            provider_family="openai",
         )
 
         self.assertIsNotNone(schemas)
@@ -7004,7 +7183,7 @@ class TemplateAndToolSchemaTestCase(TestCase):
 
         templated = client._template_messages(
             [Message(role=MessageRole.TOOL, tool_call_result=result)],
-            tool=_sanitized_policy_manager(),
+            capability=_sanitized_policy_catalog(),
         )
 
         self.assertEqual(templated[0]["type"], "function_call")
@@ -7254,10 +7433,32 @@ class OpenAIAdditionalCoverageTestCase(TestCase):
 
         text = self.mod.OpenAIClient._non_stream_response_content(
             response,
-            tool=_sanitized_policy_manager(),
+            capability=_sanitized_policy_catalog(),
         )
 
         self.assertIn('"name": "math.adder"', text)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "response tool call name must be a string",
+        ):
+            self.mod.OpenAIClient._non_stream_response_content(
+                {
+                    "output": [
+                        {
+                            "type": "tool_call",
+                            "call": {
+                                "call_id": "call-invalid",
+                                "function": {
+                                    "name": None,
+                                    "arguments": "{}",
+                                },
+                            },
+                        }
+                    ]
+                },
+                capability=_sanitized_policy_catalog(),
+            )
 
     def test_non_streaming_response_str_variants(self):
         settings = GenerationSettings()
