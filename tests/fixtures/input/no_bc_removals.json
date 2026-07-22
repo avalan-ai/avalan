@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "inventory_sha256": "4a0140865a8ba58d2590fbc75245326c3d791f3dc541c52e8d3657b987d563b6",
+  "inventory_sha256": "c75145467fe15a1cd55b6bb10e7dd16fc5ff8e4b25b530c2d7f147ab3c641887",
   "removals": [
     {
       "id": "tool-manager-provider-coupling",
       "current_path": "src/avalan/tool/manager.py",
       "remove_by_phase": 3,
       "replacement": "dedicated model-capability composition outside domain Tool parsing, permissions, confirmation, and execution",
-      "evidence": "ToolManager currently owns model schema composition and execution-side parsing; implementation stage 3 must inventory and remove every provider-layer reference"
+      "evidence": "Provider-facing schema projection and parsing were removed from ToolManager; it now exports one callable-free domain seed while ModelCapabilityCatalog owns model schemas, names, decoding, and validation"
     },
     {
       "id": "completion-only-results",

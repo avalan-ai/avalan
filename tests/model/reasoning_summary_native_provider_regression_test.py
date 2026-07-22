@@ -17,10 +17,15 @@ from avalan.model.nlp.text.ds4 import (
     _Ds4GeneratedChunk,
 )
 from avalan.model.nlp.text.generation import TextGenerationModel
+from avalan.model.nlp.text.local_protocol import (
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL,
+)
 from avalan.model.nlp.text.mlxlm import MlxLmStream
 from avalan.model.nlp.text.vendor.openai import OpenAIStream
 from avalan.model.nlp.text.vllm import VllmStream
 from avalan.model.stream import (
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID,
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY,
     CanonicalStreamItem,
     LocalTextStreamEventParser,
     StreamItemCorrelation,
@@ -92,7 +97,11 @@ _ABNORMAL_FRAGMENT_CASES = {
         ),
     ),
     "tool_end_marker": (
-        ('<tool_call name="lookup">{"q":1}', "<", "/"),
+        (
+            '<tool_call id="lookup-call" name="lookup">{"q":1}',
+            "<",
+            "/",
+        ),
         (
             (StreamItemKind.TOOL_CALL_ARGUMENT_DELTA, '{"q":1}'),
             (StreamItemKind.TOOL_CALL_ARGUMENT_DELTA, "<"),
@@ -419,7 +428,7 @@ def test_native_reasoning_is_not_summary_fallback() -> None:
 
 
 def test_every_native_delta_is_typed() -> None:
-    parser = LocalTextStreamEventParser()
+    parser = LocalTextStreamEventParser(parse_tool_calls=False)
     events = list(parser.push("<think>first</think><think>second</think>"))
     events.extend(parser.flush())
     reasoning = [
@@ -1022,6 +1031,9 @@ async def _transformers_abnormal_items(
             False,
             pick=0,
             probability_distribution="softmax",
+            local_structured_output_protocol=(
+                LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+            ),
         )
         items = await _collect_items(stream)
         pulls = generated.pulls
@@ -1060,6 +1072,9 @@ async def _transformers_stream_abnormal_items(
             GenerationSettings(max_new_tokens=len(chunks)),
             None,
             False,
+            local_structured_output_protocol=(
+                LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+            ),
         )
         items = await _collect_items(stream)
         pulls = streamer.pulls
@@ -1086,7 +1101,11 @@ async def _mlx_abnormal_items(
         ),
         failure_type,
     )
-    mlx_stream = MlxLmStream(generated, use_executor=False)
+    mlx_stream = MlxLmStream(
+        generated,
+        use_executor=False,
+        local_structured_output_protocol=LOCAL_STRUCTURED_OUTPUT_PROTOCOL,
+    )
     stream = mlx_stream.canonical_stream(
         stream_session_id="mlx-abnormal-stream",
         run_id="run-1",
@@ -1414,7 +1433,7 @@ def test_shared_local_reasoning_parser_backend_parity() -> None:
         case_name,
         failure_name,
     ), (items, pulls) in abnormal_outputs.items():
-        chunks, expected_deltas = _ABNORMAL_FRAGMENT_CASES[case_name]
+        chunks, _ = _ABNORMAL_FRAGMENT_CASES[case_name]
         deltas = [
             item
             for item in items
@@ -1425,25 +1444,19 @@ def test_shared_local_reasoning_parser_backend_parity() -> None:
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
             }
         ]
-        expected_abnormal_deltas = list(expected_deltas)
-        if backend == "transformers_stream":
-            buffered_kind = expected_deltas[1][0]
-            assert all(
-                kind is buffered_kind for kind, _ in expected_deltas[1:]
-            )
-            expected_abnormal_deltas = [
-                expected_deltas[0],
-                (
-                    buffered_kind,
-                    "".join(text for _, text in expected_deltas[1:]),
-                ),
-            ]
         assert [(item.kind, item.text_delta) for item in deltas] == list(
-            expected_abnormal_deltas
+            (StreamItemKind.ANSWER_DELTA, chunk) for chunk in chunks
         )
         assert pulls == len(chunks) + 1
         if backend == "transformers_stream":
-            assert [item.metadata for item in deltas] == [{}, {}]
+            assert [item.metadata for item in deltas] == [
+                {
+                    LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY: (
+                        LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID
+                    )
+                }
+                for _ in deltas
+            ]
             assert {item.provider_event_type for item in deltas} == {None}
         else:
             expected_provider_event_type = (
@@ -1474,51 +1487,21 @@ def test_shared_local_reasoning_parser_backend_parity() -> None:
                     }
                     for index in range(1, 4)
                 ]
+            for metadata in expected_metadata:
+                metadata[LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY] = (
+                    LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID
+                )
             assert [item.metadata for item in deltas] == expected_metadata
 
-        if case_name == "reasoning_end_marker":
-            assert all(
-                item.reasoning_representation
-                is StreamReasoningRepresentation.NATIVE_TEXT
-                for item in deltas
-            )
-            assert [item.segment_instance_ordinal for item in deltas] == [
-                0
-            ] * len(deltas)
-            assert all(
-                item.visibility is StreamVisibility.PRIVATE for item in deltas
-            )
-        else:
-            assert all(
-                item.reasoning_representation is None for item in deltas
-            )
-            assert all(
-                item.segment_instance_ordinal is None for item in deltas
-            )
-            assert all(
-                item.visibility is StreamVisibility.PUBLIC for item in deltas
-            )
-
-        if case_name == "tool_end_marker":
-            assert {item.correlation.tool_call_id for item in deltas} == {
-                "local-tool-call-1"
-            }
-            diagnostics = [
-                item
-                for item in items
-                if item.kind is StreamItemKind.STREAM_DIAGNOSTIC
-            ]
-            assert len(diagnostics) == 1
-            assert diagnostics[0].data == {
-                "code": "tool_call.malformed",
-                "message": "unterminated tool call",
-                "tool_call_id": "local-tool-call-1",
-            }
-        else:
-            assert all(
-                item.kind is not StreamItemKind.STREAM_DIAGNOSTIC
-                for item in items
-            )
+        assert all(item.reasoning_representation is None for item in deltas)
+        assert all(item.segment_instance_ordinal is None for item in deltas)
+        assert all(
+            item.visibility is StreamVisibility.PUBLIC for item in deltas
+        )
+        assert all(item.correlation.tool_call_id is None for item in deltas)
+        assert all(
+            item.kind is not StreamItemKind.STREAM_DIAGNOSTIC for item in items
+        )
 
         terminals = [
             item for item in items if item.kind in _CANONICAL_TERMINAL_KINDS

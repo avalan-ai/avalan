@@ -12,7 +12,7 @@ from ...entities import (
     ReasoningTag,
     TransformerEngineSettings,
 )
-from ...tool.manager import ToolManager
+from ..capability import ModelCapabilityCatalog
 
 from argparse import Namespace
 from collections.abc import Callable
@@ -32,7 +32,7 @@ class ModalityHandler(Protocol):
         engine_uri: EngineUri,
         model: Any,
         operation: Operation,
-        tool: ToolManager | None,
+        capability: ModelCapabilityCatalog | None,
     ) -> Any: ...
 
     def load_engine(

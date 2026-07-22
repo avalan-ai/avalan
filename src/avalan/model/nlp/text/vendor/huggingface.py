@@ -12,8 +12,8 @@ from .....model.stream import (
     TextGenerationSingleStream,
     TextGenerationStream,
 )
-from .....tool.manager import ToolManager
 from .....types import LooseJsonValue
+from ....capability import ModelCapabilityCatalog
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
     DiffusionPipeline,
@@ -135,7 +135,7 @@ class HuggingfaceClient(TextGenerationVendor):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
         self._validate_reasoning_summary_request(settings)

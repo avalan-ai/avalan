@@ -11,6 +11,9 @@ from avalan.entities import (
     TransformerEngineSettings,
 )
 from avalan.model.nlp.text.generation import TextGenerationModel
+from avalan.model.nlp.text.local_protocol import (
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL,
+)
 from avalan.model.nlp.text.vllm import (
     VllmModel,
     VllmStream,
@@ -18,7 +21,12 @@ from avalan.model.nlp.text.vllm import (
     _sampling_params_class,
     _vllm_attribute,
 )
-from avalan.model.stream import StreamItemKind
+from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import (
+    StreamItemKind,
+    StreamProviderEvent,
+    accumulate_canonical_stream_items,
+)
 
 
 class VllmStreamTestCase(IsolatedAsyncioTestCase):
@@ -66,6 +74,35 @@ class VllmStreamTestCase(IsolatedAsyncioTestCase):
         capabilities = started.metadata["capabilities"]
         assert isinstance(capabilities, dict)
         self.assertTrue(capabilities["supports_cancellation"])
+
+    async def test_disabled_tool_parser_preserves_literal_output(self):
+        text = '<tool_call name="lookup">{"q":"v"}</tool_call>'
+        stream = VllmStream(iter([text]))
+
+        items = [item async for item in stream]
+
+        started_capabilities = items[0].metadata["capabilities"]
+        assert isinstance(started_capabilities, dict)
+        self.assertFalse(started_capabilities["supports_tool_calls"])
+        self.assertEqual(
+            "".join(
+                item.text_delta or ""
+                for item in items
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ),
+            text,
+        )
+        self.assertFalse(
+            any(
+                item.kind
+                in {
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    StreamItemKind.TOOL_CALL_READY,
+                    StreamItemKind.TOOL_CALL_DONE,
+                }
+                for item in items
+            )
+        )
 
     async def test_placeholder_generator_is_empty(self):
         stream = VllmStream(iter([]))
@@ -197,10 +234,13 @@ class VllmStreamTestCase(IsolatedAsyncioTestCase):
             iter(
                 [
                     "a<think>r",
-                    '</think><tool_call name="lookup">{}',
+                    '</think><tool_call id="lookup-call" name="lookup">{}',
                     "</tool_call>b",
                 ]
-            )
+            ),
+            local_structured_output_protocol=(
+                LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+            ),
         )
         items = [item async for item in stream]
 
@@ -209,16 +249,17 @@ class VllmStreamTestCase(IsolatedAsyncioTestCase):
             [
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.ANSWER_DELTA,
-                StreamItemKind.REASONING_DELTA,
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.ANSWER_DONE,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            'a<think>r</think><tool_call id="lookup-call" '
+            'name="lookup">{}</tool_call>b',
         )
 
     async def test_stream_preserves_token_metadata(self):
@@ -293,6 +334,36 @@ class VllmStreamTestCase(IsolatedAsyncioTestCase):
         self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
         assert isinstance(errored.data, dict)
         self.assertEqual(errored.data["message"], "bad vllm chunk")
+
+    async def test_stream_flushes_buffered_text_before_iterator_failure(
+        self,
+    ) -> None:
+        stream = VllmStream(iter(["<", RuntimeError("bad vllm chunk")]))
+
+        items = [item async for item in stream]
+
+        self.assertEqual(items[1].kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(items[1].text_delta, "<")
+        self.assertEqual(items[-2].kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(items[-2].data, dict)
+        self.assertEqual(items[-2].data["message"], "bad vllm chunk")
+
+    def test_non_delta_event_preserves_its_own_metadata(self) -> None:
+        event = StreamProviderEvent(
+            kind=StreamItemKind.USAGE_COMPLETED,
+            usage={"output_tokens": 1},
+            metadata={"source": "event"},
+            provider_event_type="native.usage",
+        )
+
+        result = VllmStream._event_with_metadata(
+            event,
+            {"source": "chunk", "token_id": 7},
+            provider_event_type="vllm.delta",
+        )
+
+        self.assertEqual(result.metadata, {"source": "event"})
+        self.assertEqual(result.provider_event_type, "native.usage")
 
 
 class VllmModelTestCase(IsolatedAsyncioTestCase):
@@ -410,7 +481,7 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
             developer_prompt=None,
             context=None,
             tensor_format="pt",
-            tool=None,
+            capability=None,
             chat_template_settings=None,
             instructions=None,
         )
@@ -539,7 +610,8 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
         result = await model("input", settings=settings)
         model._stream_generator.assert_not_called()
         model._string_output.assert_called_once()
-        self.assertEqual(result, "string")
+        self.assertIsInstance(result, TextGenerationResponse)
+        self.assertEqual(await result.to_str(), "string")
 
 
 if __name__ == "__main__":

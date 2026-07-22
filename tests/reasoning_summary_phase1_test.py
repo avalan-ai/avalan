@@ -617,7 +617,7 @@ for compatible in old_compatible_instances + new_compatible_instances:
 
 
 def test_hosted_provider_omission_keeps_exact_dispatch_shape() -> None:
-    base_kwargs = {"tool": None, "use_async_generator": True}
+    base_kwargs = {"capability": None, "use_async_generator": True}
     openai_kwargs = {"instructions": None, **base_kwargs}
     with _anthropic_model_type() as anthropic_model:
         providers = (
@@ -686,8 +686,6 @@ def test_raw_vendor_omission_keeps_exact_provider_payloads() -> None:
             "system": None,
             "messages": [],
             "max_tokens": None,
-            "tools": [],
-            "tool_choice": {"type": "auto"},
             "temperature": 1.0,
         }
         assert [
@@ -970,18 +968,36 @@ def test_local_provider_omissions_reach_unchanged_dispatch_shapes() -> None:
     cast(Any, ds4)._logger = getLogger("ds4-omission")
     cast(Any, ds4)._uses_dsml_tools = MagicMock(return_value=False)
     cast(Any, ds4)._render_prompt_tokens_async = AsyncMock(return_value=[1])
-    cast(Any, ds4)._generation_plan = MagicMock(
-        return_value=SimpleNamespace(use_sampling=False)
+    ds4_plan = SimpleNamespace(
+        use_sampling=False,
+        parse_dsml_tools=False,
     )
+    cast(Any, ds4)._generation_plan = MagicMock(return_value=ds4_plan)
 
     ds4_response = run(ds4("hello", settings=ds4_settings))
 
     ds4_model.assert_not_called()
-    cast(Any, ds4)._render_prompt_tokens_async.assert_awaited_once()
+    cast(Any, ds4)._uses_dsml_tools.assert_called_once_with("hello", None)
+    cast(Any, ds4)._render_prompt_tokens_async.assert_awaited_once_with(
+        "hello",
+        None,
+        None,
+        ds4_settings,
+        capability=None,
+    )
+    cast(Any, ds4)._generation_plan.assert_called_once_with(
+        ds4_settings,
+        1,
+        manual_sampling=False,
+        parse_dsml_tools=False,
+        pick=None,
+    )
     dispatched_ds4_settings = cast(
         GenerationSettings,
         cast(Any, ds4)._render_prompt_tokens_async.await_args.args[3],
     )
+    assert ds4_plan.parse_dsml_tools is False
+    assert ds4_response._kwargs["generation_plan"] is ds4_plan
     assert dispatched_ds4_settings.reasoning.summary is None
     assert ds4_response._kwargs["settings"].reasoning.summary is None
 
@@ -1164,7 +1180,7 @@ def test_openai_model_forwards_without_fallback_retry() -> None:
         [],
         settings,
         instructions=None,
-        tool=None,
+        capability=None,
         use_async_generator=True,
     )
 

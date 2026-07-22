@@ -3,7 +3,7 @@ import json
 import os
 import threading
 from asyncio import run
-from collections.abc import Callable, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
@@ -58,6 +58,12 @@ from avalan.entities import (
     ToolManagerSettings,
     TransformerEngineSettings,
 )
+from avalan.model.capability import (
+    DomainCapabilitySeed,
+    ModelCapabilityCatalog,
+    ModelCapabilityDescriptor,
+    ProviderCapabilityCall,
+)
 from avalan.model.nlp.text.ds4 import (
     _CPU_WARNING,
     Ds4Model,
@@ -66,6 +72,7 @@ from avalan.model.nlp.text.ds4 import (
     _Ds4DiskKvCache,
     _Ds4GenerationPlan,
 )
+from avalan.model.provider import ProviderFamily
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -73,13 +80,36 @@ from avalan.model.stream import (
     StreamProviderEvent,
     StreamTerminalOutcome,
 )
-from avalan.tool.dsml import DsmlParseResult, DsmlPromptMessage
+from avalan.tool.dsml import DsmlParseResult, DsmlPromptMessage, DsmlTools
 from avalan.tool.manager import ToolManager
 from avalan.tool.math import MathToolSet
 
 _PYDS4_SKIP_REASON = (
     "pyds4 is not installed; install the test group to run DS4 bridge tests."
 )
+
+
+def _model_capability(manager: ToolManager) -> ModelCapabilityCatalog:
+    return ModelCapabilityCatalog.create(
+        manager.export_model_capability_seed()
+    )
+
+
+def _prefix_named_capability() -> ModelCapabilityCatalog:
+    return ModelCapabilityCatalog.create(
+        DomainCapabilitySeed(
+            descriptors=(
+                ModelCapabilityDescriptor(
+                    canonical_name="avl_notbase64",
+                    description="Exercise exact provider name handling.",
+                    parameter_schema={
+                        "type": "object",
+                        "additionalProperties": False,
+                    },
+                ),
+            )
+        )
+    )
 
 
 class NativeBackend(StrEnum):
@@ -1435,7 +1465,7 @@ def test_ds4_tool_manager_renders_native_dsml_tool_prompt(
     response = run(
         model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(max_new_tokens=0),
         )
     )
@@ -1963,7 +1993,7 @@ def test_ds4_generation_stream_parses_dsml_tool_call_tokens(
         )
         response = await model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=1,
                 reasoning=ReasoningSettings(enabled=False),
@@ -2035,7 +2065,7 @@ def test_ds4_generation_stream_correlates_multi_call_dsml_arguments(
         )
         response = await model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=1,
                 reasoning=ReasoningSettings(enabled=False),
@@ -2103,7 +2133,7 @@ def test_ds4_generation_stream_correlates_split_multi_call_dsml(
         )
         response = await model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=4,
                 reasoning=ReasoningSettings(enabled=False),
@@ -2160,7 +2190,7 @@ def test_ds4_generation_stream_emits_split_dsml_argument_deltas(
         )
         response = await model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=5,
                 reasoning=ReasoningSettings(enabled=False),
@@ -2202,7 +2232,7 @@ def test_ds4_tool_mode_streams_plain_content_incrementally(
         )
         response = await model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=3,
                 reasoning=ReasoningSettings(enabled=False),
@@ -2246,7 +2276,7 @@ def test_ds4_tool_mode_holds_only_potential_dsml_start_suffix(
         )
         response = await model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=4,
                 reasoning=ReasoningSettings(enabled=False),
@@ -2288,7 +2318,7 @@ def test_ds4_tool_mode_flushes_pending_reasoning_before_dsml(
         )
         response = await model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=1,
                 reasoning=ReasoningSettings(enabled=False),
@@ -2331,7 +2361,7 @@ def test_ds4_generated_tool_call_round_trips_through_tool_manager(
         )
         response = await model(
             "calculate",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=1,
                 reasoning=ReasoningSettings(enabled=False),
@@ -2367,7 +2397,7 @@ def test_ds4_tool_prompt_keeps_dsml_when_manager_uses_other_tool_format(
     response = run(
         model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(max_new_tokens=0),
         )
     )
@@ -2409,7 +2439,7 @@ def test_ds4_tool_history_replays_exact_sampled_dsml(
 
         first = await model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=1,
                 reasoning=ReasoningSettings(enabled=False),
@@ -2437,7 +2467,7 @@ def test_ds4_tool_history_replays_exact_sampled_dsml(
                 ),
                 Message(role=MessageRole.TOOL, content="4"),
             ],
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(max_new_tokens=0),
         )
         rendered = fake.tokenize_rendered_chat_calls[-1]
@@ -2477,7 +2507,7 @@ def test_ds4_tool_history_unknown_replay_id_uses_canonical_dsml(
                 ),
                 Message(role=MessageRole.TOOL, content="4"),
             ],
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(max_new_tokens=0),
         )
     )
@@ -2505,7 +2535,7 @@ def test_ds4_generation_stream_rejects_malformed_dsml(
         )
         response = await model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=1,
                 reasoning=ReasoningSettings(enabled=False),
@@ -4538,7 +4568,7 @@ def test_ds4_model_unloaded_worker_and_sync_tool_errors(
             None,
             None,
             GenerationSettings(),
-            tool=MagicMock(spec=ToolManager),
+            capability=MagicMock(spec=ModelCapabilityCatalog),
         )
 
 
@@ -4773,7 +4803,7 @@ def test_ds4_worker_render_prompt_and_plain_dsml_content_edges(
         )
         response = await plain_model(
             "hello",
-            tool=manager,
+            capability=_model_capability(manager),
             settings=GenerationSettings(
                 max_new_tokens=1,
                 reasoning=ReasoningSettings(enabled=False),
@@ -5233,11 +5263,126 @@ def test_ds4_model_sync_dsml_render_and_validation_edges(
         None,
         None,
         GenerationSettings(max_new_tokens=0),
-        tool=manager,
+        capability=_model_capability(manager),
     )
 
     assert tokens[0] == 40
     loaded_model.close()
+
+
+def test_ds4_capability_requires_a_live_worker(tmp_path: Path) -> None:
+    model = Ds4Model(
+        str(tmp_path / "not-loaded.gguf"),
+        TransformerEngineSettings(auto_load_model=False),
+    )
+    capability = _prefix_named_capability()
+    worker = object.__new__(Ds4Worker)
+    worker._closed = True
+    worker._engine = None
+
+    assert model._effective_ds4_capability(capability) is None
+    model._model = worker
+    assert model._effective_ds4_capability(capability) is None
+
+    worker._closed = False
+    worker._engine = object()
+    assert model._effective_ds4_capability(capability) is capability
+
+
+def test_ds4_schema_and_decoded_call_share_exact_provider_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capability = _prefix_named_capability()
+    projection = capability.project(ProviderFamily.LOCAL)
+    provider_name = projection.provider_name("avl_notbase64")
+    render = MagicMock(return_value="rendered")
+    monkeypatch.setattr(
+        DsmlTools,
+        "render_tool_schemas",
+        render,
+    )
+
+    rendered = Ds4Model._tool_schemas(capability)
+    decoded = capability.decode_call(
+        ProviderCapabilityCall(
+            call_id="ds4-call-1",
+            provider_name=provider_name,
+            arguments={},
+        ),
+        provider_family=ProviderFamily.LOCAL,
+    )
+
+    assert rendered == "rendered"
+    schemas = render.call_args.args[0]
+    assert schemas[0]["function"]["name"] == provider_name
+    assert provider_name != "avl_notbase64"
+    assert isinstance(decoded, ToolCall)
+    assert decoded.id == "ds4-call-1"
+    assert decoded.name == "avl_notbase64"
+    assert decoded.provider_name == provider_name
+
+
+def test_ds4_omits_schemas_for_empty_local_projection() -> None:
+    capability = MagicMock(spec=ModelCapabilityCatalog)
+    capability.structured_parser_enabled = True
+    capability.project.return_value.is_empty = True
+
+    assert Ds4Model._tool_schemas(cast(Any, capability)) is None
+    capability.project.assert_called_once_with(ProviderFamily.LOCAL.value)
+
+
+def test_ds4_worker_builds_non_stream_result_from_native_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = object.__new__(Ds4Worker)
+    plan = _Ds4GenerationPlan(
+        max_new_tokens=1,
+        sampling_options=SamplingOptions(),
+        stop_strings=(),
+        use_sampling=False,
+    )
+    final_usage = {"input_tokens": 2, "output_tokens": 1}
+
+    async def stream_events(
+        self: Ds4Worker,
+        prompt_tokens: list[int],
+        generation_plan: _Ds4GenerationPlan,
+    ) -> AsyncIterator[StreamProviderEvent]:
+        assert self is worker
+        assert prompt_tokens == [1, 2]
+        assert generation_plan is plan
+        yield StreamProviderEvent(
+            kind=StreamItemKind.ANSWER_DELTA,
+            text_delta="answer",
+        )
+        yield StreamProviderEvent(
+            kind=StreamItemKind.USAGE_COMPLETED,
+            usage={"input_tokens": 1},
+        )
+        yield StreamProviderEvent(
+            kind=StreamItemKind.USAGE_COMPLETED,
+            usage=final_usage,
+        )
+
+    monkeypatch.setattr(Ds4Worker, "_stream_events", stream_events)
+
+    result = run(worker.generate_non_stream_result_async([1, 2], plan))
+
+    assert result.answer_text == "answer"
+    assert result.usage == final_usage
+    assert result.provider_family == "ds4"
+    assert result.events[-1].kind is StreamItemKind.STREAM_COMPLETED
+    assert result.events[-1].provider_event_type == "ds4.completed"
+
+
+def test_ds4_event_metadata_returns_unchanged_non_answer_event() -> None:
+    event = StreamProviderEvent(
+        kind=StreamItemKind.USAGE_COMPLETED,
+        usage={"output_tokens": 1},
+        metadata={"source": "native"},
+    )
+
+    assert Ds4Worker._event_with_metadata(event, {}) is event
 
 
 def test_ds4_model_top_logprobs_manual_sampling_edges() -> None:

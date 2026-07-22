@@ -6,8 +6,8 @@ from avalan.entities import (
     ToolManagerSettings,
     ToolNamePolicyMode,
     ToolNamePolicySettings,
-    ToolNameResolutionStatus,
 )
+from avalan.model import ModelCapabilityCatalog
 from avalan.model.provider import ProviderFamily
 from avalan.skill import (
     SkillConfiguredSource,
@@ -38,9 +38,10 @@ class SkillsProviderNameTestCase(IsolatedAsyncioTestCase):
                 ),
             )
 
-        provider_schemas = manager.provider_json_schemas(
-            provider_family=ProviderFamily.OPENAI.value
-        )
+        projection = ModelCapabilityCatalog.create(
+            manager.export_model_capability_seed()
+        ).project(ProviderFamily.OPENAI)
+        provider_schemas = projection.schemas
         assert provider_schemas is not None
         self.assertEqual(
             [schema["function"]["name"] for schema in provider_schemas],
@@ -60,28 +61,13 @@ class SkillsProviderNameTestCase(IsolatedAsyncioTestCase):
         ):
             with self.subTest(canonical_name=canonical_name):
                 self.assertEqual(
-                    manager.provider_tool_name(
-                        canonical_name,
-                        provider_family=ProviderFamily.OPENAI.value,
-                    ),
+                    projection.provider_name(canonical_name),
                     provider_name,
                 )
                 self.assertEqual(
-                    manager.canonical_tool_name(
-                        provider_name,
-                        provider_family=ProviderFamily.OPENAI.value,
-                    ),
+                    projection.canonical_name(provider_name),
                     canonical_name,
                 )
-                resolution = manager.resolve_tool_name(
-                    provider_name,
-                    provider_originated=True,
-                )
-                self.assertIs(
-                    resolution.status,
-                    ToolNameResolutionStatus.EXACT,
-                )
-                self.assertEqual(resolution.canonical_name, canonical_name)
 
 
 async def _registry(root: Path) -> SkillRegistry:

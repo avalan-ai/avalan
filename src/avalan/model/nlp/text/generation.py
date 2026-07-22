@@ -11,6 +11,7 @@ from ....entities import (
     TextGenerationLoaderClass,
     TransformerEngineSettings,
 )
+from ....model.capability import ModelCapabilityCatalog
 from ....model.engine import Engine
 from ....model.nlp import BaseNLPModel
 from ....model.provider import ProviderFamily
@@ -18,19 +19,26 @@ from ....model.reasoning import (
     ReasoningSummaryRequestCapability,
     validate_reasoning_summary_request,
 )
-from ....model.response.text import TextGenerationResponse
+from ....model.response.text import (
+    TextGenerationResponse,
+    _TextGenerationWorkerShutdownError,
+)
 from ....model.stream import (
     CanonicalStreamItem,
     LocalTextStreamEventParser,
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    TextGenerationNonStreamResult,
     normalize_provider_stream,
     stream_token_metadata,
 )
 from ....model.vendor import TextGenerationVendor
-from ....tool.manager import ToolManager
 from ....tool.parser import ToolCallParser
+from .local_protocol import (
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL,
+    LocalStructuredOutputProtocol,
+)
 
 from asyncio import CancelledError, Queue, run_coroutine_threadsafe, sleep
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -190,16 +198,26 @@ def _configure_lossless_streamer_handoff(
     return max_queue_size
 
 
+def _streamer_has_pending_items(streamer: object) -> bool:
+    for attribute in ("text_queue", "queue"):
+        queue = getattr(streamer, attribute, None)
+        empty = getattr(queue, "empty", None)
+        if callable(empty):
+            return not bool(empty())
+    return False
+
+
 def _local_stream_capabilities(
     provider_family: str,
     *,
     max_queue_depth: int | None = None,
+    supports_tool_calls: bool = True,
 ) -> StreamProviderCapabilities:
     return StreamProviderCapabilities(
         backend=StreamProducerBackend.LOCAL,
         provider_family=provider_family,
         supports_reasoning=True,
-        supports_tool_calls=True,
+        supports_tool_calls=supports_tool_calls,
         supports_cancellation=True,
         max_queue_depth=max_queue_depth,
     )
@@ -209,6 +227,7 @@ async def _canonical_transformers_stream(
     events: AsyncIterable[StreamProviderEvent],
     *,
     max_queue_depth: int | None = None,
+    supports_tool_calls: bool = True,
 ) -> AsyncIterator[CanonicalStreamItem]:
     stream = normalize_provider_stream(
         events,
@@ -219,6 +238,7 @@ async def _canonical_transformers_stream(
         capabilities=_local_stream_capabilities(
             _TRANSFORMERS_PROVIDER_FAMILY,
             max_queue_depth=max_queue_depth,
+            supports_tool_calls=supports_tool_calls,
         ),
     )
     try:
@@ -389,7 +409,7 @@ class TextGenerationModel(BaseNLPModel):
         manual_sampling: bool = False,
         pick: int | None = None,
         skip_special_tokens: bool = False,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         **kwargs: object,
     ) -> TextGenerationResponse:
         settings = settings or GenerationSettings()
@@ -401,6 +421,12 @@ class TextGenerationModel(BaseNLPModel):
         assert self._model, (
             f"Model {self._model} can't be executed, it "
             + "needs to be loaded first"
+        )
+        effective_capability = self._effective_local_capability(capability)
+        structured_output_protocol = (
+            LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+            if effective_capability is not None
+            else None
         )
 
         assert settings.temperature is None or (
@@ -443,7 +469,7 @@ class TextGenerationModel(BaseNLPModel):
             system_prompt=system_prompt,
             developer_prompt=developer_prompt,
             context=None,
-            tool=tool,
+            capability=effective_capability,
             chat_template_settings=asdict(settings.chat_settings),
             instructions=instructions,
         )
@@ -456,6 +482,7 @@ class TextGenerationModel(BaseNLPModel):
             settings=generation_settings,
             stopping_criterias=stopping_criterias,
             skip_special_tokens=skip_special_tokens,
+            local_structured_output_protocol=structured_output_protocol,
             use_async_generator=settings.use_async_generator,
             bos_token=self._tokenizer.bos_token,
             provider_family="transformers",
@@ -470,6 +497,12 @@ class TextGenerationModel(BaseNLPModel):
         **kwargs: object,
     ) -> AsyncGenerator[CanonicalStreamItem, None]:
         _l = self._log
+        structured_output_protocol = kwargs.get(
+            "local_structured_output_protocol"
+        )
+        assert structured_output_protocol is None or (
+            structured_output_protocol is LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+        )
         stop_event = ThreadEvent()
         thread_errors: list[BaseException] = []
         stream_stopping_criterias = list(stopping_criterias or [])
@@ -513,15 +546,23 @@ class TextGenerationModel(BaseNLPModel):
                     stream_stopping_criterias,
                     streamer=streamer,
                 )
-            except RuntimeError as exc:
-                if stop_event.is_set() and _is_event_loop_closed_error(exc):
+            except BaseException as exc:
+                if (
+                    isinstance(exc, RuntimeError)
+                    and stop_event.is_set()
+                    and _is_event_loop_closed_error(exc)
+                ):
                     return
                 thread_errors.append(exc)
-                finish_stream()
-            except Exception as exc:
                 # Thread targets cannot raise back into the consumer, so
-                # capture worker failures and wake the async iterator.
-                thread_errors.append(exc)
+                # record every terminal outcome before waking it. Preserve
+                # process-level interrupts in the worker after recording
+                # them; the async side still observes an abnormal outcome.
+                if isinstance(exc, KeyboardInterrupt | SystemExit):
+                    try:
+                        finish_stream()
+                    finally:
+                        raise
                 finish_stream()
 
         thread = Thread(
@@ -533,50 +574,91 @@ class TextGenerationModel(BaseNLPModel):
 
         _l(f"Generation thread #{thread.ident} ({thread.name}) started")
 
+        shutdown_error: _TextGenerationWorkerShutdownError | None = None
+
+        async def require_stream_thread_stopped(
+            *, repeat_error: bool = True
+        ) -> None:
+            nonlocal shutdown_error
+            if shutdown_error is not None:
+                if repeat_error:
+                    raise shutdown_error
+                return
+            await self._wait_for_stream_thread(thread)
+            if not thread.is_alive():
+                return
+            shutdown_error = _TextGenerationWorkerShutdownError(
+                "generation worker did not terminate during stream close"
+            )
+            raise shutdown_error
+
         async def events() -> AsyncGenerator[StreamProviderEvent, None]:
-            parser = LocalTextStreamEventParser()
+            parser = (
+                structured_output_protocol.parser()
+                if isinstance(
+                    structured_output_protocol,
+                    LocalStructuredOutputProtocol,
+                )
+                else LocalTextStreamEventParser(parse_tool_calls=False)
+            )
             stream = cast(AsyncIterator[str], streamer)
+            parser_flushed = False
             try:
                 while True:
-                    if thread_errors:
-                        raise thread_errors[0]
                     try:
                         chunk = await stream.__anext__()
-                        if thread_errors:
-                            raise thread_errors[0]
                         if chunk:
                             for event in parser.push(chunk):
                                 yield event
+                        if (
+                            thread_errors
+                            and not thread.is_alive()
+                            and not _streamer_has_pending_items(streamer)
+                        ):
+                            break
                     except TimeoutError:
-                        if thread_errors:
-                            raise thread_errors[0]
                         if not thread.is_alive():
                             break
                     except StopAsyncIteration:
                         break
 
+                await require_stream_thread_stopped()
                 if thread_errors:
-                    raise thread_errors[0]
+                    worker_error = thread_errors[0]
+                    if isinstance(worker_error, CancelledError | Exception):
+                        raise worker_error
+                    raise RuntimeError(
+                        "generation worker terminated abnormally"
+                    ) from worker_error
 
-                for event in parser.flush():
+                flushed_events = parser.flush(completed=True)
+                parser_flushed = True
+                for event in flushed_events:
                     yield event
             except GeneratorExit:
                 stop_event.set()
+                if not parser_flushed:
+                    parser.flush(completed=False)
+                    parser_flushed = True
                 raise
             except (CancelledError, Exception):
                 stop_event.set()
-                for event in parser.flush():
-                    yield event
+                if not parser_flushed:
+                    flushed_events = parser.flush(completed=False)
+                    parser_flushed = True
+                    for event in flushed_events:
+                        yield event
                 raise
             finally:
                 stop_event.set()
-                await self._wait_for_stream_thread(thread)
+                await require_stream_thread_stopped()
 
             _l(f"Generation thread #{thread.ident} ({thread.name}) finished")
 
         canonical_stream = _canonical_transformers_stream(
             events(),
             max_queue_depth=queue_size,
+            supports_tool_calls=(structured_output_protocol is not None),
         )
         try:
             async for item in canonical_stream:
@@ -586,13 +668,16 @@ class TextGenerationModel(BaseNLPModel):
             raise
         finally:
             stop_event.set()
-            await self._wait_for_stream_thread(thread)
+            await require_stream_thread_stopped(repeat_error=False)
 
     @staticmethod
     async def _wait_for_stream_thread(thread: Thread) -> None:
         deadline = perf_counter() + _STREAM_THREAD_JOIN_TIMEOUT_SECONDS
-        while thread.is_alive() and perf_counter() < deadline:
-            await sleep(_STREAMER_TIMEOUT_SECONDS)
+        while thread.is_alive():
+            remaining = deadline - perf_counter()
+            if remaining <= 0:
+                return
+            await sleep(min(_STREAMER_TIMEOUT_SECONDS, remaining))
 
     def _string_output(
         self,
@@ -600,17 +685,31 @@ class TextGenerationModel(BaseNLPModel):
         settings: GenerationSettings,
         stopping_criterias: list[StoppingCriteria] | None,
         skip_special_tokens: bool,
+        local_structured_output_protocol: (
+            LocalStructuredOutputProtocol | None
+        ) = None,
         **kwargs: object,
-    ) -> str:
+    ) -> str | TextGenerationNonStreamResult:
         assert isinstance(inputs, dict)
         input_length = inputs["input_ids"].shape[1]
         outputs = self._generate_output(inputs, settings, stopping_criterias)
-        return cast(
+        text = cast(
             str,
             self._tokenizer.decode(
                 outputs[0][input_length:],
                 skip_special_tokens=skip_special_tokens,
             ),
+        )
+        if local_structured_output_protocol is None:
+            return text
+        assert (
+            local_structured_output_protocol
+            is LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+        )
+        return local_structured_output_protocol.non_stream_result(
+            text,
+            provider_family="transformers",
+            provider_event_type="transformers.generate",
         )
 
     async def _token_generator(
@@ -621,6 +720,9 @@ class TextGenerationModel(BaseNLPModel):
         skip_special_tokens: bool,
         pick: int | None,
         probability_distribution: ProbabilityDistribution = "softmax",
+        local_structured_output_protocol: (
+            LocalStructuredOutputProtocol | None
+        ) = None,
         **kwargs: object,
     ) -> AsyncGenerator[CanonicalStreamItem, None]:
         async for item in _canonical_transformers_stream(
@@ -631,7 +733,9 @@ class TextGenerationModel(BaseNLPModel):
                 skip_special_tokens,
                 pick,
                 probability_distribution,
+                local_structured_output_protocol,
             ),
+            supports_tool_calls=(local_structured_output_protocol is not None),
         ):
             yield item
 
@@ -643,6 +747,9 @@ class TextGenerationModel(BaseNLPModel):
         skip_special_tokens: bool,
         pick: int | None,
         probability_distribution: ProbabilityDistribution = "softmax",
+        local_structured_output_protocol: (
+            LocalStructuredOutputProtocol | None
+        ) = None,
     ) -> AsyncGenerator[StreamProviderEvent, None]:
         assert isinstance(inputs, dict)
         assert not settings.temperature or (
@@ -685,7 +792,15 @@ class TextGenerationModel(BaseNLPModel):
 
         _l(f"Generated {len(generated_sequences)} sequences")
 
-        parser = LocalTextStreamEventParser()
+        assert local_structured_output_protocol is None or (
+            local_structured_output_protocol
+            is LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+        )
+        parser = (
+            local_structured_output_protocol.parser()
+            if local_structured_output_protocol is not None
+            else LocalTextStreamEventParser(parse_tool_calls=False)
+        )
         total_tokens = 0
         try:
             for step, token_id in enumerate(generated_sequences):
@@ -789,7 +904,7 @@ class TextGenerationModel(BaseNLPModel):
 
                 total_tokens = total_tokens + 1
         except (CancelledError, Exception):
-            for event in parser.flush():
+            for event in parser.flush(completed=False):
                 yield self._local_event_with_provider_type(
                     event,
                     provider_event_type="transformers.token",
@@ -818,6 +933,38 @@ class TextGenerationModel(BaseNLPModel):
             or provider_event_type,
         )
 
+    @staticmethod
+    def _provider_tool_schemas(
+        capability: ModelCapabilityCatalog | None,
+    ) -> object | None:
+        if capability is None or not capability.structured_parser_enabled:
+            return None
+        projection = capability.project(ProviderFamily.LOCAL.value)
+        return None if projection.is_empty else projection.schemas
+
+    def _effective_local_capability(
+        self,
+        capability: ModelCapabilityCatalog | None,
+        *,
+        chat_template: str | None = None,
+    ) -> ModelCapabilityCatalog | None:
+        if capability is None or not capability.structured_parser_enabled:
+            return None
+        if not self._tokenizer_supports_structured_capabilities(chat_template):
+            return None
+        return capability
+
+    def _tokenizer_supports_structured_capabilities(
+        self, chat_template: str | None = None
+    ) -> bool:
+        return (
+            LOCAL_STRUCTURED_OUTPUT_PROTOCOL.tokenizer_template(
+                self._tokenizer,
+                chat_template,
+            )
+            is not None
+        )
+
     def _tokenize_input(
         self,
         input: Input,
@@ -827,11 +974,30 @@ class TextGenerationModel(BaseNLPModel):
         tensor_format: Literal["pt"] = "pt",
         chat_template: str | None = None,
         chat_template_settings: dict[str, object] | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         instructions: str | None = None,
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         _l = self._log
-        messages = self._messages(input, system_prompt, developer_prompt, tool)
+        capability = self._effective_local_capability(
+            capability,
+            chat_template=chat_template,
+        )
+        structured_output_protocol = (
+            LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+            if capability is not None
+            else None
+        )
+        structured_output_template = (
+            structured_output_protocol.tokenizer_template(
+                self._tokenizer,
+                chat_template,
+            )
+            if structured_output_protocol is not None
+            else None
+        )
+        messages = self._messages(
+            input, system_prompt, developer_prompt, capability
+        )
         has_chat_template = self._tokenizer_has_chat_template()
 
         def _format_content(
@@ -899,6 +1065,15 @@ class TextGenerationModel(BaseNLPModel):
                 }
             )
 
+        schemas = self._provider_tool_schemas(capability)
+        if structured_output_protocol is not None:
+            assert structured_output_template is not None
+            assert isinstance(schemas, tuple)
+            template_messages = structured_output_protocol.prepare_messages(
+                template_messages,
+                schemas,
+            )
+
         if not has_chat_template:
             _l("Model does not support template messages, so staying plain")
 
@@ -932,18 +1107,21 @@ class TextGenerationModel(BaseNLPModel):
             _l(f"Got {len(template_messages)} template messages")
 
             _l(f"Applying chat template to {len(template_messages)} messages")
+            template_kwargs = {
+                **(chat_template_settings or {}),
+                "chat_template": (
+                    structured_output_template
+                    if structured_output_template is not None
+                    else chat_template
+                ),
+                "return_tensors": tensor_format,
+            }
+            if structured_output_protocol is not None:
+                assert schemas is not None
+                template_kwargs["tools"] = schemas
             inputs = self._tokenizer.apply_chat_template(
                 template_messages,
-                chat_template=chat_template,
-                tools=(
-                    tool.provider_json_schemas(
-                        provider_family=ProviderFamily.LOCAL.value
-                    )
-                    if tool
-                    else None
-                ),
-                **(chat_template_settings or {}),
-                return_tensors=tensor_format,
+                **template_kwargs,
             )
             inputs = self._normalize_tokenized_inputs(inputs, tensor_format)
 
@@ -1034,8 +1212,9 @@ class TextGenerationModel(BaseNLPModel):
         input: Input,
         system_prompt: str | None,
         developer_prompt: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> list[Message]:
+        _ = capability
         if isinstance(input, str):
             input = Message(role=MessageRole.USER, content=input)
         elif isinstance(input, list):

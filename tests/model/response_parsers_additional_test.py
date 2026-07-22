@@ -9,13 +9,16 @@ from unittest.mock import AsyncMock, MagicMock
 from avalan.entities import (
     ReasoningSettings,
     ReasoningToken,
+    ToolCall,
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
+    ToolCallParseOutcome,
     ToolCallToken,
     ToolFormat,
 )
 from avalan.event import Event
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
     ReasoningTokenLimitExceeded,
@@ -33,6 +36,28 @@ from avalan.model.stream import (
 )
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
+
+
+def _tool_catalog(
+    source: ToolManager | ModelCapabilityCatalog,
+) -> ModelCapabilityCatalog:
+    if not isinstance(source, ToolManager):
+        return source
+    seed = source.export_model_capability_seed()
+    seed["descriptors"] = [
+        {
+            "canonical_name": name,
+            "description": f"Invoke {name}.",
+            "aliases": [],
+            "parameter_schema": {
+                "type": "object",
+                "additionalProperties": True,
+            },
+            "result_schema": None,
+        }
+        for name in ("calc", "call", "math.calculator")
+    ]
+    return ModelCapabilityCatalog.create(seed)
 
 
 def _output_text(item: object) -> str | None:
@@ -63,6 +88,16 @@ def _is_tool_event(item: object) -> bool:
         StreamItemKind.TOOL_CALL_DONE,
         StreamItemKind.STREAM_DIAGNOSTIC,
     }
+
+
+def _diagnostic_entries(
+    event: StreamProviderEvent,
+) -> list[dict[str, Any]]:
+    assert isinstance(event.data, dict)
+    entries = event.data["diagnostics"]
+    assert isinstance(entries, list)
+    assert all(isinstance(entry, dict) for entry in entries)
+    return cast(list[dict[str, Any]], entries)
 
 
 def _answer_delta_texts(items: Iterable[object]) -> list[str | None]:
@@ -454,9 +489,43 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
 
 
 class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
+    async def test_real_catalog_push_and_finish_emit_one_call_lifecycle(
+        self,
+    ) -> None:
+        manager = ToolManager(parser=ToolCallParser())
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
+
+        started = list(
+            await parser.push('<tool_call>{"name":"call","arguments":')
+        )
+        arguments = list(await parser.push('{"a":1}}'))
+        finished = list(await parser.push("</tool_call>"))
+        flushed = list(await parser.flush())
+
+        self.assertEqual(started, [])
+        events = [
+            item
+            for item in arguments + finished
+            if isinstance(item, StreamProviderEvent)
+        ]
+        self.assertEqual(
+            [event.kind for event in events],
+            [
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+            ],
+        )
+        self.assertEqual(events[0].text_delta, '{"a":1}')
+        self.assertEqual(
+            {event.correlation.tool_call_id for event in events},
+            {"parser-tool-call-1"},
+        )
+        self.assertEqual(flushed, [])
+
     async def test_default_runtime_output_is_canonical_only(self) -> None:
         manager = ToolManager(parser=ToolCallParser())
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
 
         output = list(
             await parser.push(
@@ -481,7 +550,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
     ) -> None:
         manager = ToolManager(parser=ToolCallParser())
         parser = ToolCallResponseParser(
-            manager,
+            _tool_catalog(manager),
             None,
         )
 
@@ -500,20 +569,16 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         )
 
     async def test_emits_events_for_tool_calls(self) -> None:
-        base_parser = ToolCallParser()
-        manager = MagicMock()
-        manager.is_potential_tool_call.return_value = True
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
-        manager.get_calls.return_value = [
-            SimpleNamespace(name="call", arguments={"a": 1})
-        ]
+        manager = ToolManager(parser=ToolCallParser())
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(_tool_catalog(manager), event_manager)
 
         output: list[Any] = []
-        output.extend(await parser.push("<tool_call>"))
-        output.extend(await parser.push('{"a":1}'))
+        output.extend(
+            await parser.push('<tool_call>{"name":"call","arguments":')
+        )
+        output.extend(await parser.push('{"a":1}}'))
         output.extend(await parser.push("</tool_call>"))
 
         self.assertFalse(
@@ -570,7 +635,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager(parser=ToolCallParser())
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
         text = (
             "visible before "
             '<tool_call>{"name":"calc","arguments":{"x":1}}</tool_call>'
@@ -605,7 +670,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
 
     async def test_valid_tool_call_preserves_explicit_id(self) -> None:
         manager = ToolManager(parser=ToolCallParser())
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
         text = (
             '<tool_call>{"id":"model-call-1","name":"calc",'
             '"arguments":{"x":1}}</tool_call>'
@@ -645,7 +710,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
 
     async def test_streams_argument_delta_before_close_marker(self) -> None:
         manager = ToolManager(parser=ToolCallParser())
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
 
         first = list(
             await parser.push('<tool_call>{"name":"calc","arguments":')
@@ -708,16 +773,16 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
             " after <tool_callout/> text",
         ):
             with self.subTest(visible_suffix=visible_suffix):
-                manager = MagicMock()
+                manager = MagicMock(spec=ModelCapabilityCatalog)
                 manager.tool_format = None
                 manager.is_potential_tool_call.return_value = True
                 manager.tool_call_status.side_effect = (
                     base_parser.tool_call_status
                 )
-                manager.get_calls.return_value = [
-                    SimpleNamespace(name="call", arguments={})
-                ]
-                parser = ToolCallResponseParser(manager, None)
+                manager.parse_calls.return_value = ToolCallParseOutcome(
+                    calls=[ToolCall(id=None, name="call", arguments={})]
+                )
+                parser = ToolCallResponseParser(_tool_catalog(manager), None)
 
                 output = list(await parser.push(tool_text + visible_suffix))
 
@@ -748,12 +813,12 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
 
     async def test_split_tool_like_prefix_remains_visible(self) -> None:
         base_parser = ToolCallParser()
-        manager = MagicMock()
+        manager = MagicMock(spec=ModelCapabilityCatalog)
         manager.tool_format = None
         manager.is_potential_tool_call.return_value = True
         manager.tool_call_status.side_effect = base_parser.tool_call_status
-        manager.get_calls.return_value = []
-        parser = ToolCallResponseParser(manager, None)
+        manager.parse_calls.return_value = ToolCallParseOutcome()
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
 
         output: list[Any] = []
         for token in ("before ", "<tool_call", "out> text"):
@@ -776,7 +841,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager(parser=ToolCallParser())
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
 
         output: list[Any] = []
         output.extend(await parser.push("<tool_call>"))
@@ -812,7 +877,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager(parser=ToolCallParser())
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
         text = (
             '<tool_call>{"id":"bad-call-1","name":"bad",'
             '"arguments":[]}</tool_call>'
@@ -851,8 +916,8 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
             diagnostic_event.data["tool_call_id"],
             "bad-call-1",
         )
-        diagnostic_data = diagnostic_event.data["diagnostics"][0]
-        self.assertEqual(diagnostic_data["call_id"], "bad-call-1")
+        diagnostic_data = _diagnostic_entries(diagnostic_event)[0]
+        self.assertTrue(diagnostic_data["correlated"])
         self.assertEqual(
             ready_event.correlation.tool_call_id,
             "good-call-1",
@@ -867,7 +932,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager(parser=ToolCallParser())
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
         text = (
             '<tool_call>{"id":"bad-call-1","name":"bad",'
             '"arguments":[]}</tool_call>'
@@ -897,15 +962,13 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
                 diagnostic.data["tool_call_id"],
                 diagnostic.correlation.tool_call_id,
             )
-            nested = diagnostic.data["diagnostics"]
+            nested = _diagnostic_entries(diagnostic)
             self.assertEqual(len(nested), 1)
-            self.assertEqual(
-                nested[0]["call_id"], diagnostic.correlation.tool_call_id
-            )
+            self.assertTrue(nested[0]["correlated"])
 
     async def test_malformed_tool_call_preserves_explicit_id(self) -> None:
         manager = ToolManager(parser=ToolCallParser())
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
         text = (
             '<tool_call>{"id":"bad-call-1","name":"calc",'
             '"arguments":[]}</tool_call>'
@@ -928,14 +991,14 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(diagnostic.data, dict)
         assert isinstance(diagnostic.data, dict)
         self.assertEqual(diagnostic.data["tool_call_id"], "bad-call-1")
-        nested_diagnostics = diagnostic.data["diagnostics"]
-        self.assertEqual(nested_diagnostics[0]["call_id"], "bad-call-1")
+        nested_diagnostics = _diagnostic_entries(diagnostic)
+        self.assertTrue(nested_diagnostics[0]["correlated"])
 
     async def test_canonical_diagnostic_skips_event_manager(self) -> None:
         manager = ToolManager(parser=ToolCallParser())
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(_tool_catalog(manager), event_manager)
 
         output = await parser.push(
             '<tool_call>{"id":"bad-call-1","name":"calc",'
@@ -949,14 +1012,16 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         ]
         event_manager.trigger.assert_not_awaited()
         self.assertEqual(len(diagnostic_events), 1)
-        diagnostics = diagnostic_events[0].data["diagnostics"]
+        diagnostics = _diagnostic_entries(diagnostic_events[0])
         self.assertEqual(len(diagnostics), 1)
-        self.assertEqual(diagnostics[0]["call_id"], "bad-call-1")
+        self.assertTrue(diagnostics[0]["correlated"])
 
     async def test_canonical_diagnostic_includes_optional_fields(
         self,
     ) -> None:
-        parser = ToolCallResponseParser(MagicMock(), None)
+        parser = ToolCallResponseParser(
+            MagicMock(spec=ModelCapabilityCatalog), None
+        )
         started = datetime(2026, 1, 1, tzinfo=timezone.utc)
         finished = datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc)
         diagnostic = ToolCallDiagnostic(
@@ -980,15 +1045,19 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         assert isinstance(event, StreamProviderEvent)
         self.assertIsInstance(event.data, dict)
         assert isinstance(event.data, dict)
-        diagnostics = event.data["diagnostics"]
-        self.assertIsInstance(diagnostics, list)
+        diagnostics = _diagnostic_entries(event)
         diagnostic_data = diagnostics[0]
-        self.assertEqual(diagnostic_data["call_id"], "call-1")
-        self.assertEqual(diagnostic_data["requested_name"], "bad")
-        self.assertEqual(diagnostic_data["canonical_name"], "calc")
-        self.assertEqual(diagnostic_data["duration_ms"], 7)
-        self.assertEqual(diagnostic_data["started_at"], started.isoformat())
-        self.assertEqual(diagnostic_data["finished_at"], finished.isoformat())
+        self.assertEqual(
+            diagnostic_data,
+            {
+                "code": ToolCallDiagnosticCode.UNKNOWN_TOOL.value,
+                "stage": ToolCallDiagnosticStage.RESOLVE.value,
+                "status": "non_executed",
+                "retryable": True,
+                "detail_count": 1,
+                "correlated": True,
+            },
+        )
 
     def test_empty_argument_delta_text_handles_missing_arguments(self) -> None:
         self.assertEqual(
@@ -999,7 +1068,9 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         )
 
     def test_stream_argument_helper_edges(self) -> None:
-        parser = ToolCallResponseParser(MagicMock(), None)
+        parser = ToolCallResponseParser(
+            MagicMock(spec=ModelCapabilityCatalog), None
+        )
 
         self.assertEqual(
             parser._tool_call_id_for_call(
@@ -1022,9 +1093,11 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(parser._decode_json_object('{"ok": true} trailing'))
 
     def test_stream_payload_helper_edges(self) -> None:
-        harmony_manager = MagicMock()
+        harmony_manager = MagicMock(spec=ModelCapabilityCatalog)
         harmony_manager.tool_format = ToolFormat.HARMONY
-        harmony_parser = ToolCallResponseParser(harmony_manager, None)
+        harmony_parser = ToolCallResponseParser(
+            _tool_catalog(harmony_manager), None
+        )
 
         self.assertIsNone(harmony_parser._stream_tool_payload("analysis"))
         self.assertEqual(
@@ -1035,7 +1108,9 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
             '{"x":1}',
         )
 
-        parser = ToolCallResponseParser(MagicMock(), None)
+        parser = ToolCallResponseParser(
+            MagicMock(spec=ModelCapabilityCatalog), None
+        )
         self.assertEqual(parser._stream_tool_payload("<tool>{}</tool>"), "{}")
         self.assertIsNone(parser._stream_tool_payload("<tool_call"))
         self.assertIsNone(parser._stream_tool_payload("plain text"))
@@ -1052,14 +1127,16 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
             ) -> str | None:
                 return None
 
-        missing_marker_parser = MissingMarkerParser(MagicMock(), None)
+        missing_marker_parser = MissingMarkerParser(
+            MagicMock(spec=ModelCapabilityCatalog), None
+        )
         self.assertIsNone(missing_marker_parser._stream_tool_payload("plain"))
 
     async def test_dsml_tool_call_emits_ready_done(self) -> None:
         manager = ToolManager(
             parser=ToolCallParser(tool_format=ToolFormat.DSML)
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
         text = (
             "<｜DSML｜tool_calls>"
             '<｜DSML｜invoke name="math.calculator">'
@@ -1091,13 +1168,13 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(tool_call_ids), 1)
 
     async def test_handles_non_matching_tokens(self) -> None:
-        manager = MagicMock()
+        manager = MagicMock(spec=ModelCapabilityCatalog)
         manager.is_potential_tool_call.return_value = False
         manager.tool_call_status.return_value = (
             ToolCallParser.ToolCallBufferStatus.NONE
         )
-        manager.get_calls.return_value = []
-        parser = ToolCallResponseParser(manager, None)
+        manager.parse_calls.return_value = ToolCallParseOutcome()
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
         parser._pending_tokens = ["pending"]
         parser._pending_str = "pending"
         result = await parser.push("noise")
@@ -1108,7 +1185,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(parser._tag_buffer), 64)
 
     async def test_return_empty_result_when_list_ignores_appends(self) -> None:
-        manager = MagicMock()
+        manager = MagicMock(spec=ModelCapabilityCatalog)
         manager.is_potential_tool_call.return_value = True
         manager.tool_call_status.return_value = (
             ToolCallParser.ToolCallBufferStatus.OPEN
@@ -1118,7 +1195,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
             def append(self, value: str) -> None:
                 return None
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(_tool_catalog(manager), None)
         parser._pending_tokens = NonAppendingList()
         result = await parser.push("<tool_call>")
         self.assertEqual(result, [])

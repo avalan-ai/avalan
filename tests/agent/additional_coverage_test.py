@@ -118,6 +118,9 @@ class OrchestratorCoverageTestCase(unittest.IsolatedAsyncioTestCase):
         self.memory = MagicMock(spec=MemoryManager)
         self.memory.participant_id = "pid"
         self.tool = MagicMock(spec=ToolManager)
+        self.tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         self.event_manager = MagicMock(spec=EventManager)
         self.orch = Orchestrator(
             self.logger,

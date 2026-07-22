@@ -1,0 +1,500 @@
+{
+  "schema_version": 1,
+  "formats": {
+    "openai": {
+      "request": {
+        "model": "fixture-model",
+        "input": [
+          {
+            "role": "user",
+            "content": "Choose one region."
+          }
+        ],
+        "store": false,
+        "stream": false,
+        "max_output_tokens": 64,
+        "temperature": 0.0,
+        "top_p": 1.0
+      },
+      "schema_sha256": "1d4501803f9e7a71dce0689ac6d468e7caab893d169e11a5b4160f9619ab4816",
+      "capability_response": {
+        "id": "response-fixture",
+        "status": "completed",
+        "output": [
+          {
+            "id": "function-call-fixture",
+            "type": "function_call",
+            "call_id": "provider-call-001",
+            "name": "request_user_input",
+            "arguments": "{\"mode\": \"required\", \"reason\": \"Choose the deployment region.\", \"questions\": [{\"question_id\": \"region\", \"kind\": \"single_selection\", \"header\": \"Region\", \"prompt\": \"Which region should be used?\", \"required\": true, \"choices\": [{\"value\": \"us-east\", \"label\": \"US East\", \"description\": \"Use the eastern region.\"}, {\"value\": \"eu-west\", \"label\": \"EU West\", \"description\": \"Use the western Europe region.\"}], \"allow_other\": false, \"recommended_choice\": \"us-east\"}]}"
+          }
+        ]
+      },
+      "ordinary_response": {
+        "id": "response-fixture",
+        "status": "completed",
+        "output": [
+          {
+            "id": "message-fixture",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "done"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "azure_openai": {
+      "request": {
+        "model": "fixture-model",
+        "input": [
+          {
+            "role": "user",
+            "content": "Choose one region."
+          }
+        ],
+        "store": false,
+        "stream": false,
+        "max_output_tokens": 64
+      },
+      "capable_request_extra": {
+        "include": [
+          "reasoning.encrypted_content"
+        ]
+      },
+      "schema_sha256": "1d4501803f9e7a71dce0689ac6d468e7caab893d169e11a5b4160f9619ab4816",
+      "response_format": "openai",
+      "continuation_format": "openai"
+    },
+    "anthropic": {
+      "request": {
+        "model": "fixture-model",
+        "system": null,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Choose one region."
+          }
+        ],
+        "max_tokens": 64,
+        "temperature": 0.0
+      },
+      "capable_request_extra": {
+        "tool_choice": {
+          "type": "auto"
+        }
+      },
+      "schema_sha256": "81980c2bb69018f3f5be93d8b59833fd621195081c33c9a522ebf9bd5da74489",
+      "capability_response": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "provider-call-001",
+            "name": "request_user_input",
+            "input": {
+              "mode": "required",
+              "reason": "Choose the deployment region.",
+              "questions": [
+                {
+                  "question_id": "region",
+                  "kind": "single_selection",
+                  "header": "Region",
+                  "prompt": "Which region should be used?",
+                  "required": true,
+                  "choices": [
+                    {
+                      "value": "us-east",
+                      "label": "US East",
+                      "description": "Use the eastern region."
+                    },
+                    {
+                      "value": "eu-west",
+                      "label": "EU West",
+                      "description": "Use the western Europe region."
+                    }
+                  ],
+                  "allow_other": false,
+                  "recommended_choice": "us-east"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "ordinary_response": {
+        "content": [
+          {
+            "type": "text",
+            "text": "done"
+          }
+        ]
+      }
+    },
+    "bedrock": {
+      "request": {
+        "modelId": "fixture-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "Choose one region."
+              }
+            ]
+          }
+        ],
+        "inferenceConfig": {
+          "maxTokens": 64,
+          "temperature": 0.0,
+          "topK": 50,
+          "topP": 1.0
+        }
+      },
+      "capable_request_extra": {
+        "toolConfig": {
+          "toolChoice": {
+            "auto": {}
+          }
+        }
+      },
+      "schema_sha256": "7324ea35dbd18e238f1cc2f11ecb33e014ca5d06941e1e00269d5752d96c0cec",
+      "capability_response": {
+        "output": {
+          "message": {
+            "content": [
+              {
+                "toolUse": {
+                  "toolUseId": "provider-call-001",
+                  "name": "request_user_input",
+                  "input": {
+                    "mode": "required",
+                    "reason": "Choose the deployment region.",
+                    "questions": [
+                      {
+                        "question_id": "region",
+                        "kind": "single_selection",
+                        "header": "Region",
+                        "prompt": "Which region should be used?",
+                        "required": true,
+                        "choices": [
+                          {
+                            "value": "us-east",
+                            "label": "US East",
+                            "description": "Use the eastern region."
+                          },
+                          {
+                            "value": "eu-west",
+                            "label": "EU West",
+                            "description": "Use the western Europe region."
+                          }
+                        ],
+                        "allow_other": false,
+                        "recommended_choice": "us-east"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "ordinary_response": {
+        "output": {
+          "message": {
+            "content": [
+              {
+                "text": "done"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "google": {
+      "request": {
+        "model": "fixture-model",
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Choose one region."
+              }
+            ]
+          }
+        ],
+        "config": {
+          "max_output_tokens": 64,
+          "temperature": 0.0,
+          "top_p": 1.0,
+          "top_k": 50
+        }
+      },
+      "schema_sha256": "62040fb1a867454da105a2e8dd2a6c4a89f31cadc418328d3192a873a52ba614",
+      "capability_response": {
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "function_call": {
+                    "id": "provider-call-001",
+                    "name": "request_user_input",
+                    "args": {
+                      "mode": "required",
+                      "reason": "Choose the deployment region.",
+                      "questions": [
+                        {
+                          "question_id": "region",
+                          "kind": "single_selection",
+                          "header": "Region",
+                          "prompt": "Which region should be used?",
+                          "required": true,
+                          "choices": [
+                            {
+                              "value": "us-east",
+                              "label": "US East",
+                              "description": "Use the eastern region."
+                            },
+                            {
+                              "value": "eu-west",
+                              "label": "EU West",
+                              "description": "Use the western Europe region."
+                            }
+                          ],
+                          "allow_other": false,
+                          "recommended_choice": "us-east"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "ordinary_response": {
+        "text": "done",
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "text": "done"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "litellm": {
+      "request": {
+        "model": "fixture-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Choose one region."
+          }
+        ],
+        "api_base": "https://fixture.invalid/v1",
+        "stream": false
+      },
+      "schema_sha256": "9d6880da6f1ecb3fb7e9d6e968eb27ad395b4c49bc68bfb11a7f01601a1d758c",
+      "capability_response": {
+        "choices": [
+          {
+            "message": {
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "provider-call-001",
+                  "type": "function",
+                  "function": {
+                    "name": "request_user_input",
+                    "arguments": "{\"mode\": \"required\", \"reason\": \"Choose the deployment region.\", \"questions\": [{\"question_id\": \"region\", \"kind\": \"single_selection\", \"header\": \"Region\", \"prompt\": \"Which region should be used?\", \"required\": true, \"choices\": [{\"value\": \"us-east\", \"label\": \"US East\", \"description\": \"Use the eastern region.\"}, {\"value\": \"eu-west\", \"label\": \"EU West\", \"description\": \"Use the western Europe region.\"}], \"allow_other\": false, \"recommended_choice\": \"us-east\"}]}"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "ordinary_response": {
+        "choices": [
+          {
+            "message": {
+              "content": "done"
+            }
+          }
+        ]
+      }
+    },
+    "hugging_face": {
+      "request": {
+        "model": "fixture-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Choose one region."
+          }
+        ],
+        "temperature": 0.0,
+        "max_tokens": 64,
+        "top_p": 1.0,
+        "stop": null,
+        "stream": false
+      },
+      "schema_sha256": null,
+      "ordinary_response": {
+        "choices": [
+          {
+            "message": {
+              "content": "done"
+            }
+          }
+        ]
+      }
+    },
+    "ollama": {
+      "request": {
+        "model": "fixture-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Choose one region."
+          }
+        ],
+        "stream": false
+      },
+      "schema_sha256": null,
+      "ordinary_response": {
+        "message": {
+          "content": "done"
+        }
+      }
+    },
+    "local": {
+      "request": {
+        "arguments": null,
+        "content": "Choose one region.",
+        "name": null,
+        "role": "user",
+        "thinking": "",
+        "tool_call_error": null,
+        "tool_call_result": null,
+        "tool_calls": []
+      },
+      "schema_sha256": "9d6880da6f1ecb3fb7e9d6e968eb27ad395b4c49bc68bfb11a7f01601a1d758c",
+      "capability_response": {
+        "control_frame": "<tool_call>{\"arguments\":{\"mode\":\"required\",\"questions\":[{\"allow_other\":false,\"choices\":[{\"description\":\"Use the eastern region.\",\"label\":\"US East\",\"value\":\"us-east\"},{\"description\":\"Use the western Europe region.\",\"label\":\"EU West\",\"value\":\"eu-west\"}],\"header\":\"Region\",\"kind\":\"single_selection\",\"prompt\":\"Which region should be used?\",\"question_id\":\"region\",\"recommended_choice\":\"us-east\",\"required\":true}],\"reason\":\"Choose the deployment region.\"},\"id\":\"provider-call-001\",\"name\":\"request_user_input\"}</tool_call>"
+      },
+      "ordinary_response": {
+        "control_frame": "done"
+      }
+    },
+    "ds4": {
+      "request": {
+        "role": "user",
+        "content": "Choose one region."
+      },
+      "schema_sha256": "4231bfdde897cb9ff891b0b2c3525a755d9b6771c3f2dd94fad374f0cfa5bc59",
+      "response_format": "local",
+      "continuation_format": "local"
+    }
+  },
+  "continuations": {
+    "openai": {
+      "type": "function_call_output",
+      "call_id": "provider-call-001",
+      "output": "{\"kind\": \"answered\", \"request_id\": \"input-request-001\", \"provenance\": \"human\", \"resolved_at\": \"2026-07-21T12:00:00.000000Z\", \"answers\": [{\"question_id\": \"region\", \"kind\": \"single_selection\", \"provenance\": \"human\", \"value\": {\"kind\": \"selected_choice\", \"value\": \"us-east\"}}]}"
+    },
+    "anthropic": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "provider-call-001",
+          "content": "{\"kind\": \"answered\", \"request_id\": \"input-request-001\", \"provenance\": \"human\", \"resolved_at\": \"2026-07-21T12:00:00.000000Z\", \"answers\": [{\"question_id\": \"region\", \"kind\": \"single_selection\", \"provenance\": \"human\", \"value\": {\"kind\": \"selected_choice\", \"value\": \"us-east\"}}]}"
+        }
+      ]
+    },
+    "bedrock": {
+      "role": "user",
+      "content": [
+        {
+          "toolResult": {
+            "toolUseId": "provider-call-001",
+            "content": [
+              {
+                "json": {
+                  "kind": "answered",
+                  "request_id": "input-request-001",
+                  "provenance": "human",
+                  "resolved_at": "2026-07-21T12:00:00.000000Z",
+                  "answers": [
+                    {
+                      "question_id": "region",
+                      "kind": "single_selection",
+                      "provenance": "human",
+                      "value": {
+                        "kind": "selected_choice",
+                        "value": "us-east"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "status": "success"
+          }
+        }
+      ]
+    },
+    "google": {
+      "role": "user",
+      "parts": [
+        {
+          "function_response": {
+            "id": "provider-call-001",
+            "name": "request_user_input",
+            "response": {
+              "kind": "answered",
+              "request_id": "input-request-001",
+              "provenance": "human",
+              "resolved_at": "2026-07-21T12:00:00.000000Z",
+              "answers": [
+                {
+                  "question_id": "region",
+                  "kind": "single_selection",
+                  "provenance": "human",
+                  "value": {
+                    "kind": "selected_choice",
+                    "value": "us-east"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "litellm": {
+      "role": "tool",
+      "tool_call_id": "provider-call-001",
+      "name": "request_user_input",
+      "content": "{\"kind\": \"answered\", \"request_id\": \"input-request-001\", \"provenance\": \"human\", \"resolved_at\": \"2026-07-21T12:00:00.000000Z\", \"answers\": [{\"question_id\": \"region\", \"kind\": \"single_selection\", \"provenance\": \"human\", \"value\": {\"kind\": \"selected_choice\", \"value\": \"us-east\"}}]}"
+    },
+    "local": {
+      "role": "tool",
+      "name": "request_user_input",
+      "content": "{\"call_id\":\"provider-call-001\",\"name\":\"request_user_input\",\"result\":{\"answers\":[{\"kind\":\"single_selection\",\"provenance\":\"human\",\"question_id\":\"region\",\"value\":{\"kind\":\"selected_choice\",\"value\":\"us-east\"}}],\"kind\":\"answered\",\"provenance\":\"human\",\"request_id\":\"input-request-001\",\"resolved_at\":\"2026-07-21T12:00:00.000000Z\"}}"
+    }
+  }
+}

@@ -152,7 +152,7 @@ async def _long_stream(count: int) -> AsyncIterator[CanonicalStreamItem]:
 async def _local_text_events(
     chunks: AsyncIterator[str],
 ) -> AsyncIterator[StreamProviderEvent]:
-    parser = LocalTextStreamEventParser()
+    parser = LocalTextStreamEventParser(parse_tool_calls=False)
     chunks_exhausted = False
     try:
         while True:
@@ -185,7 +185,7 @@ def _local_text_stream(
         capabilities=StreamProviderCapabilities(
             backend=StreamProducerBackend.LOCAL,
             supports_reasoning=True,
-            supports_tool_calls=True,
+            supports_tool_calls=False,
             supports_cancellation=True,
             max_queue_depth=StreamPerformanceBudget().max_queue_depth,
         ),

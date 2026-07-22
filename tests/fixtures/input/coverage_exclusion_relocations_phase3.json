@@ -1,0 +1,75 @@
+{
+  "schema_version": 3,
+  "baseline_snapshot_sha256": "226f1035786d8328f0e1fdea6070507b5d11a267f63910cd6c9fef3db8d2f63c",
+  "current_snapshot_sha256": "eed04bcca2fbe223d9fe418df5a4b5f6d3bf2e10f12a3fcbe4320eb3feb44799",
+  "directive_count_before": 55,
+  "directive_count_after": 55,
+  "report_excluded_line_count_before": 1329,
+  "report_excluded_line_count_after": 1327,
+  "directive_relocations": [
+    {
+      "identity": "8f49d2496087a6964916383d4e715e6e0b06ae1dc7f10d4d486f44d3b4caba6f",
+      "path": "src/avalan/model/nlp/text/vllm.py",
+      "text": "    except ImportError:  # pragma: no cover - vllm may not be installed",
+      "occurrence": 1,
+      "from_line": 44,
+      "to_line": 51,
+      "reviewed_by": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "reason": "The reviewed capability and structured-protocol imports moved the unchanged vLLM optional-import coverage directive down by seven lines."
+    }
+  ],
+  "report_exclusion_relocations": [
+    {
+      "path": "src/avalan/agent/engine.py",
+      "from_lines": [34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
+      "to_lines": [35, 36, 37, 38, 39, 40, 41, 42, 43, 44],
+      "reviewed_by": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "reason": "The reviewed capability import moved the unchanged abstract EngineAgent parser-exclusion block down by one line."
+    },
+    {
+      "path": "src/avalan/flow/registry.py",
+      "from_lines": [56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87],
+      "to_lines": [56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85],
+      "reviewed_by": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "reason": "The reviewed FlowToolResolver signature contraction removed two physical Protocol lines and relocated the remaining parser exclusions without adding a coverage directive."
+    },
+    {
+      "path": "src/avalan/model/__init__.py",
+      "from_lines": [39, 40],
+      "to_lines": [86, 87],
+      "reviewed_by": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "reason": "The reviewed capability exports moved the unchanged TYPE_CHECKING fallback parser exclusions down by forty-seven lines."
+    },
+    {
+      "path": "src/avalan/model/nlp/text/ds4.py",
+      "from_lines": [309, 310, 311, 312, 313, 314, 315, 316],
+      "to_lines": [313, 314, 315, 316, 317, 318, 319, 320],
+      "reviewed_by": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "reason": "The reviewed capability imports moved the unchanged DS4 parser-exclusion block down by four lines."
+    },
+    {
+      "path": "src/avalan/model/nlp/text/generation.py",
+      "from_lines": [55, 56, 57, 58, 66, 67],
+      "to_lines": [63, 64, 65, 66, 74, 75],
+      "reviewed_by": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "reason": "The reviewed capability and structured-protocol imports moved the unchanged local generation TYPE_CHECKING parser exclusions down by eight lines."
+    },
+    {
+      "path": "src/avalan/model/nlp/text/vllm.py",
+      "from_lines": [44, 45],
+      "to_lines": [51, 52],
+      "reviewed_by": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "reason": "The reviewed capability and structured-protocol imports moved the unchanged vLLM optional-import parser exclusions down by seven lines."
+    }
+  ],
+  "report_exclusion_additions": [],
+  "report_exclusion_removals": [
+    {
+      "path": "src/avalan/flow/registry.py",
+      "lines": [63, 64],
+      "reviewed_by": "/root/phase3_closure_audit/turn3_toolmanager_readonly",
+      "reason": "The reviewed FlowToolResolver signature contraction removed the two former continuation lines from the Protocol parser-exclusion inventory."
+    }
+  ],
+  "ledger_sha256": "e580686aa03ca866cfd27f1794413643f191e8e32750f7b1ec64b5cba9a85405"
+}

@@ -19,6 +19,7 @@ from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
 from ..model.call import ModelCall, ModelCallContext
+from ..model.capability import ModelCapabilityCatalog
 from ..model.engine import Engine
 from ..model.manager import ModelManager
 from ..model.response.text import TextGenerationResponse
@@ -150,6 +151,7 @@ class EngineAgent(ABC):
         self,
         context: ModelCallContext,
     ) -> TextGenerationResponse | str:
+        context = self._model_call_context_with_capability(context)
         if context.parent and context.root_parent is None:
             root_parent_context = context.parent.root_parent or context.parent
             context = replace(context, root_parent=root_parent_context)
@@ -217,6 +219,7 @@ class EngineAgent(ABC):
         skip_special_tokens: bool = True,
         **kwargs: Any,
     ) -> TextGenerationResponse:
+        context = self._model_call_context_with_capability(context)
         input_value = input
         generation_fields = self._GENERATION_FIELDS
         uri_defaults = {
@@ -329,6 +332,9 @@ class EngineAgent(ABC):
             requires_input=True,
         )
 
+        capability = context.capability
+        assert capability is not None
+
         await self._event_manager.trigger(
             Event(
                 type=EventType.MODEL_EXECUTE_BEFORE,
@@ -348,7 +354,7 @@ class EngineAgent(ABC):
             engine_uri=self._engine_uri,
             model=self._model,
             operation=operation,
-            tool=self._tool,
+            capability=capability,
             context=context,
         )
         output = cast(
@@ -375,6 +381,18 @@ class EngineAgent(ABC):
             self._last_output = output
 
         return output
+
+    def _model_call_context_with_capability(
+        self,
+        context: ModelCallContext,
+    ) -> ModelCallContext:
+        """Return a per-call context bound to one capability catalog."""
+        if context.capability is not None:
+            return context
+        capability = ModelCapabilityCatalog.create(
+            self._tool.export_model_capability_seed()
+        )
+        return replace(context, capability=capability)
 
     def _developer_prompt_with_tool_bootstrap(
         self,

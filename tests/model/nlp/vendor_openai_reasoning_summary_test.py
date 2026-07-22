@@ -47,6 +47,7 @@ from avalan.entities import (
     ToolCallDiagnosticStage,
     ToolCallResult,
 )
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.nlp.text.vendor import openai as openai_module
 from avalan.model.nlp.text.vendor.openai import OpenAIClient, OpenAIStream
 from avalan.model.reasoning import (
@@ -796,18 +797,18 @@ def _summary_accounting(summary: object) -> tuple[int, int, int]:
     return nodes, characters, serialized_bytes
 
 
-def _tool_mock(count: int) -> MagicMock | None:
+def _capability_mock(count: int) -> MagicMock | None:
     if count == 0:
         return None
-    tool = MagicMock()
-    tool.json_schemas.return_value = [
+    capability = MagicMock(spec=ModelCapabilityCatalog)
+    capability.project.return_value.schemas = tuple(
         {
             "type": "function",
-            "function": {"name": f"pkg.tool_{index}"},
+            "function": {"name": f"tool_{index}"},
         }
         for index in range(count)
-    ]
-    return tool
+    )
+    return capability
 
 
 def _awaited_kwargs(create: AsyncMock) -> dict[str, Any]:
@@ -925,7 +926,7 @@ def test_summary_request_tool_matrix_keeps_include_deduplicated() -> None:
                 "gpt-5",
                 [Message(role=MessageRole.USER, content="hello")],
                 _settings(),
-                tool=cast(Any, _tool_mock(tool_count)),
+                capability=cast(Any, _capability_mock(tool_count)),
                 use_async_generator=False,
             )
         )

@@ -205,15 +205,17 @@ def test_type_contract_manifest_and_runner_are_strict(
     loaded = _VERIFIER.verify_input_types(
         real_path,
         repo_root=_ROOT,
-        through_phase=2,
+        through_phase=3,
         acceptance_manifest_path=_FIXTURES / "acceptance_manifest.json",
     )
-    assert loaded.current_phase == 2
-    assert [
+    assert loaded.current_phase == 3
+    active_fixture_ids = [
         fixture.id
         for fixture in loaded.fixtures
         if fixture.lifecycle == "active"
-    ] == [
+    ]
+    assert len(active_fixture_ids) == 18
+    assert active_fixture_ids == [
         "deterministic-fixtures-positive",
         "canonical-answers-positive",
         "async-handler-positive",
@@ -228,6 +230,10 @@ def test_type_contract_manifest_and_runner_are_strict(
         "typed-resolution-payload-negative",
         "input-required-identity-negative",
         "unchecked-any-leak-negative",
+        "model-capability-catalog-positive",
+        "tool-catalog-interchange-negative",
+        "capability-binding-identity-interchange-negative",
+        "capability-payload-result-shape-negative",
     ]
 
     invalid = deepcopy(manifest)

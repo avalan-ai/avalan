@@ -32,12 +32,17 @@ from avalan.entities import (
     ToolTransformer,
     ToolTransformerResult,
 )
+from avalan.interaction import RESERVED_INPUT_CAPABILITY_NAME
+from avalan.model import (
+    ModelCapabilityCatalog,
+    ModelCapabilityValidationError,
+)
 from avalan.model.provider import ProviderFamily
 from avalan.model.vendor import TextGenerationVendor
+from avalan.skill.settings import SkillBootstrapPromptSettings
 from avalan.tool import Tool, ToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.math import CalculatorTool
-from avalan.tool.parser import ToolCallParser
 
 
 class _SkillRegistryLike:
@@ -45,7 +50,872 @@ class _SkillRegistryLike:
     settings: object | None = None
 
 
+def _capability_catalog(manager: ToolManager) -> ModelCapabilityCatalog:
+    return ModelCapabilityCatalog.create(
+        manager.export_model_capability_seed()
+    )
+
+
 class ToolManagerCreationTestCase(TestCase):
+    def test_reserved_model_capability_name_fails_before_enablement(self):
+        def request_user_input() -> str:
+            """Return a value that must remain unreachable."""
+            return "unreachable"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[ToolSet(tools=[request_user_input])],
+                enable_tools=[],
+                settings=ToolManagerSettings(),
+            )
+
+    def test_reserved_model_capability_alias_fails_before_enablement(self):
+        def lookup() -> str:
+            """Return a value that must remain unreachable."""
+            return "unreachable"
+
+        setattr(lookup, "aliases", [RESERVED_INPUT_CAPABILITY_NAME])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[ToolSet(tools=[lookup])],
+                enable_tools=[],
+                settings=ToolManagerSettings(),
+            )
+
+    def test_similar_non_reserved_tool_name_remains_valid(self):
+        def request_user_inputs() -> str:
+            """Return one ordinary domain-tool value."""
+            return "ordinary"
+
+        manager = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[request_user_inputs])],
+            enable_tools=["request_user_inputs"],
+            settings=ToolManagerSettings(),
+        )
+
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["request_user_inputs"],
+        )
+
+    def test_provider_policy_map_rejects_reserved_projected_name_before_filter(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary package lookup."""
+            return "ordinary"
+
+        toolset = ToolSet(namespace="pkg", tools=[lookup])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["pkg.lookup"],
+                settings=ToolManagerSettings(
+                    tool_name_policy=ToolNamePolicySettings(
+                        mode=ToolNamePolicyMode.MAPPED,
+                        map={
+                            "pkg.lookup": RESERVED_INPUT_CAPABILITY_NAME,
+                        },
+                    )
+                ),
+            )
+
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup])
+
+    def test_provider_policy_rejects_sanitized_reserved_projection(
+        self,
+    ) -> None:
+        def input() -> str:
+            """Return an ordinary namespaced input value."""
+            return "ordinary"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[
+                    ToolSet(namespace="request.user", tools=[input])
+                ],
+                enable_tools=["request.user.input"],
+                settings=ToolManagerSettings(
+                    tool_name_policy=ToolNamePolicySettings(
+                        mode=ToolNamePolicyMode.SANITIZED,
+                    )
+                ),
+            )
+
+    def test_provider_policy_rejects_reserved_map_identity_without_tools(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            ToolManager.create_instance(
+                settings=ToolManagerSettings(
+                    tool_name_policy=ToolNamePolicySettings(
+                        mode=ToolNamePolicyMode.MAPPED,
+                        map={RESERVED_INPUT_CAPABILITY_NAME: "domain_input"},
+                    )
+                )
+            )
+
+    def test_provider_policy_allows_non_reserved_sanitized_projection(
+        self,
+    ) -> None:
+        def inputs() -> str:
+            """Return ordinary namespaced input values."""
+            return "ordinary"
+
+        manager = ToolManager.create_instance(
+            available_toolsets=[
+                ToolSet(namespace="request.user", tools=[inputs])
+            ],
+            enable_tools=["request.user.inputs"],
+            settings=ToolManagerSettings(
+                tool_name_policy=ToolNamePolicySettings(
+                    mode=ToolNamePolicyMode.SANITIZED,
+                )
+            ),
+        )
+
+        self.assertEqual(
+            _capability_catalog(manager).provider_name("request.user.inputs"),
+            "request_user_inputs",
+        )
+
+    def test_semantic_json_rejects_nested_non_json_values(self) -> None:
+        with self.assertRaisesRegex(
+            AssertionError,
+            "tool descriptor semantics must contain only JSON values",
+        ):
+            ToolManager._freeze_semantic_json({"invalid": object()})
+
+    def test_full_advertised_inventory_rejects_selector_hidden_collision(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "ordinary"
+
+        def request_user_input() -> str:
+            """Return a value that must remain unreachable."""
+            return "unreachable"
+
+        class SelectorInventoryToolSet(ToolSet):
+            filtered = False
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return [lookup, request_user_input]
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                self.assert_selector(enable_tools)
+                return [lookup]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.filtered = True
+                return super().with_enabled_tools(enable_tools)
+
+            @staticmethod
+            def assert_selector(enable_tools: list[str]) -> None:
+                assert enable_tools == ["lookup"]
+
+        toolset = SelectorInventoryToolSet(tools=[lookup])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertFalse(toolset.filtered)
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup])
+
+    def test_incomplete_advertised_inventory_cannot_hide_configured_collision(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "ordinary"
+
+        def request_user_input() -> str:
+            """Return a value that must remain unreachable."""
+            return "unreachable"
+
+        class IncompleteInventoryToolSet(ToolSet):
+            filtered = False
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return [lookup]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.filtered = True
+                return super().with_enabled_tools(enable_tools)
+
+        toolset = IncompleteInventoryToolSet(
+            tools=[lookup, request_user_input]
+        )
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertFalse(toolset.filtered)
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup, request_user_input])
+
+    def test_incomplete_advertised_inventory_fails_before_selection(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "lookup"
+
+        def search() -> str:
+            """Return an ordinary search."""
+            return "search"
+
+        class IncompleteInventoryToolSet(ToolSet):
+            @property
+            def available_tools(self) -> list[Any]:
+                return [lookup]
+
+        toolset = IncompleteInventoryToolSet(tools=[lookup, search])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "available_tools inventory must cover configured toolset tools",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup, search])
+
+    def test_selector_additions_are_validated_before_selection(self) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "ordinary"
+
+        def request_user_input() -> str:
+            """Return a value that must remain unreachable."""
+            return "unreachable"
+
+        class SelectorInventoryToolSet(ToolSet):
+            filtered = False
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return [lookup]
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return [request_user_input]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.filtered = True
+                self.tools.append(request_user_input)
+                return super().with_enabled_tools(enable_tools)
+
+        toolset = SelectorInventoryToolSet(tools=[lookup])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertFalse(toolset.filtered)
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup])
+
+    def test_selector_same_name_callable_schema_substitution_is_prevalidated(
+        self,
+    ) -> None:
+        def lookup(query: str) -> str:
+            """Return an ordinary lookup."""
+            return query
+
+        def replacement(secret: int) -> str:
+            """Return a substituted lookup."""
+            return str(secret)
+
+        replacement.__name__ = "lookup"
+
+        class SubstitutingSelectorToolSet(ToolSet):
+            selector_calls = 0
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return [lookup]
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return [replacement]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.selector_calls += 1
+                self._tools = [replacement]
+                return self
+
+        toolset = SubstitutingSelectorToolSet(tools=[lookup])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "selected tool inventory must exactly match permitted selection",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertEqual(toolset.selector_calls, 0)
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup])
+
+    def test_advertised_overlap_requires_complete_callable_identity(
+        self,
+    ) -> None:
+        def available_lookup(query: str) -> str:
+            """Return an available lookup result."""
+            return query
+
+        def advertised_lookup(query: str) -> str:
+            """Return an advertised lookup result."""
+            return query
+
+        available_lookup.__name__ = "lookup"
+        advertised_lookup.__name__ = "lookup"
+
+        class ConflictingAdvertisedToolSet(ToolSet):
+            selector_calls = 0
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return [available_lookup]
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return [available_lookup]
+
+            def advertised_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return [advertised_lookup]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.selector_calls += 1
+                self._tools[:] = [available_lookup]
+                return self
+
+        toolset = ConflictingAdvertisedToolSet(tools=[])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "advertised tool inventory conflicts with complete inventory "
+            "semantics",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertEqual(toolset.selector_calls, 0)
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [])
+
+    def test_selector_omitted_requested_tool_fails_before_mutation(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "lookup"
+
+        def search() -> str:
+            """Return an ordinary search."""
+            return "search"
+
+        class OmittingSelectorToolSet(ToolSet):
+            selector_calls = 0
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return [lookup, search]
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return [lookup]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.selector_calls += 1
+                self._tools = [lookup]
+                return self
+
+        toolset = OmittingSelectorToolSet(tools=[lookup, search])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "selected tool inventory must exactly match permitted selection",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup", "search"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertEqual(toolset.selector_calls, 0)
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup, search])
+
+    def test_selector_extra_and_reordered_plans_fail_before_mutation(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "lookup"
+
+        def search() -> str:
+            """Return an ordinary search."""
+            return "search"
+
+        cases = (
+            ("extra", ["lookup"], [lookup, search]),
+            ("reordered", ["lookup", "search"], [search, lookup]),
+        )
+        for label, enabled, planned in cases:
+            with self.subTest(label=label):
+
+                class InvalidPlanToolSet(ToolSet):
+                    selector_calls = 0
+
+                    @property
+                    def available_tools(self) -> list[Any]:
+                        return [lookup, search]
+
+                    def available_tools_for_enabled_tools(
+                        self,
+                        enable_tools: list[str],
+                    ) -> list[Any]:
+                        return list(planned)
+
+                    def with_enabled_tools(
+                        self,
+                        enable_tools: list[str],
+                    ) -> ToolSet:
+                        self.selector_calls += 1
+                        return super().with_enabled_tools(enable_tools)
+
+                toolset = InvalidPlanToolSet(tools=[lookup, search])
+
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "selected tool inventory must exactly match "
+                    "permitted selection",
+                ):
+                    ToolManager.create_instance(
+                        available_toolsets=[toolset],
+                        enable_tools=enabled,
+                        settings=ToolManagerSettings(),
+                    )
+
+                self.assertEqual(toolset.selector_calls, 0)
+
+    def test_selector_namespace_substitution_fails_before_mutation(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "lookup"
+
+        permitted = ToolSet(namespace="pkg", tools=[lookup])
+        substituted = ToolSet(namespace="other", tools=[lookup])
+
+        class NamespaceSubstitutionToolSet(ToolSet):
+            selector_calls = 0
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return [permitted]
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return [substituted]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.selector_calls += 1
+                return super().with_enabled_tools(enable_tools)
+
+        toolset = NamespaceSubstitutionToolSet(tools=[permitted])
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "selected tool inventory must exactly match permitted selection",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["pkg.lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertEqual(toolset.selector_calls, 0)
+
+    def test_selector_accepts_fresh_inventories_with_same_callable_semantics(
+        self,
+    ) -> None:
+        def lookup(query: str) -> str:
+            """Return an ordinary lookup."""
+            return query
+
+        class FreshInventoryToolSet(ToolSet):
+            selector_calls = 0
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return list((lookup,))
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return list((lookup,))
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.selector_calls += 1
+                return super().with_enabled_tools(enable_tools)
+
+        toolset = FreshInventoryToolSet(tools=[lookup])
+
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset],
+            enable_tools=["lookup"],
+            settings=ToolManagerSettings(),
+        )
+
+        self.assertEqual(toolset.selector_calls, 1)
+        assert manager.tools is not None
+        self.assertIs(manager.tools[0], lookup)
+
+    def test_selector_inventory_plan_must_be_pure(self) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "lookup"
+
+        class MutatingInventoryPlanToolSet(ToolSet):
+            selector_calls = 0
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return [lookup]
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                self._tools = list(self._tools)
+                return [lookup]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.selector_calls += 1
+                return super().with_enabled_tools(enable_tools)
+
+        toolset = MutatingInventoryPlanToolSet(tools=[lookup])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "advertised selector inventory must be pure",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertEqual(toolset.selector_calls, 0)
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup])
+
+    def test_selector_descriptor_drift_fails_before_mutation(self) -> None:
+        def lookup(query: str) -> str:
+            """Return an ordinary lookup."""
+            return query
+
+        class DriftingDescriptorToolSet(ToolSet):
+            inventory_reads = 0
+            selector_calls = 0
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return [lookup]
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                self.inventory_reads += 1
+                setattr(lookup, "parallel_safe", self.inventory_reads > 1)
+                setattr(
+                    lookup,
+                    "__annotations__",
+                    {
+                        "query": int if self.inventory_reads > 1 else str,
+                        "return": str,
+                    },
+                )
+                return [lookup]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.selector_calls += 1
+                return super().with_enabled_tools(enable_tools)
+
+        toolset = DriftingDescriptorToolSet(tools=[lookup])
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "advertised tool inventory changed during configuration",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertEqual(toolset.selector_calls, 0)
+
+    def test_custom_selector_without_inventory_fails_before_mutation(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "ordinary"
+
+        def request_user_input() -> str:
+            """Return a value that must remain unreachable."""
+            return "unreachable"
+
+        class HiddenSelectorToolSet(ToolSet):
+            filtered = False
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self.filtered = True
+                self.tools.append(request_user_input)
+                return super().with_enabled_tools(enable_tools)
+
+        toolset = HiddenSelectorToolSet(tools=[lookup])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "custom with_enabled_tools requires complete inventory APIs",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertFalse(toolset.filtered)
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup])
+
+    def test_selector_inventory_requires_complete_advertised_inventory(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "ordinary"
+
+        class IncompleteInventoryToolSet(ToolSet):
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return [lookup]
+
+        toolset = IncompleteInventoryToolSet(tools=[lookup])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "requires a complete available_tools inventory",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [lookup])
+
+    def test_construction_registration_failure_restores_toolset(self) -> None:
+        def first() -> str:
+            """Return the first value."""
+            return "first"
+
+        def invalid() -> str:
+            """Return a value with invalid capabilities."""
+            return "invalid"
+
+        setattr(invalid, "tool_capabilities", {"unknown": True})
+        toolset = ToolSet(tools=[first, invalid])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "tool_capabilities has unknown keys",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["first", "invalid"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertIs(toolset.tools, original_tools)
+        self.assertEqual(toolset.tools, [first, invalid])
+
+    def test_failed_selector_restores_equality_deceptive_callable(
+        self,
+    ) -> None:
+        class EqualityDeceptiveCallable:
+            def __init__(self, value: str) -> None:
+                self.__name__ = "lookup"
+                self._value = value
+
+            def __call__(self) -> str:
+                """Return the configured lookup value."""
+                return self._value
+
+            def __eq__(self, other: object) -> bool:
+                return isinstance(other, EqualityDeceptiveCallable)
+
+        original = EqualityDeceptiveCallable("original")
+        replacement = EqualityDeceptiveCallable("replacement")
+
+        class ReplacingSelectorToolSet(ToolSet):
+            @property
+            def available_tools(self) -> list[Any]:
+                return [original]
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return [original]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self._tools[0] = replacement
+                return self
+
+        toolset = ReplacingSelectorToolSet(tools=[original])
+        original_tools = toolset.tools
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "selected toolset inventory does not match prevalidated selection",
+        ):
+            ToolManager.create_instance(
+                available_toolsets=[toolset],
+                enable_tools=["lookup"],
+                settings=ToolManagerSettings(),
+            )
+
+        self.assertIs(toolset.tools, original_tools)
+        self.assertIs(toolset.tools[0], original)
+
     def test_settings_default_to_legacy_compatibility(self):
         settings = ToolManagerSettings()
 
@@ -265,13 +1135,15 @@ class ToolManagerCreationTestCase(TestCase):
     def test_get_calls_consumes_recovery_parser_output(self):
         call_id = _uuid4()
         manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[CalculatorTool()])],
             settings=ToolManagerSettings(
                 recovery_formats=[ToolCallRecoveryFormat.TOOL_CALL_BLOCK]
-            )
+            ),
         )
 
         with patch("avalan.tool.parser.uuid4", return_value=call_id):
-            calls = manager.get_calls(
+            calls = _capability_catalog(manager).get_calls(
                 '[TOOL_CALL]{"name": "calculator", "arguments": '
                 '{"expression": "1 + 1"}}[/TOOL_CALL]'
             )
@@ -398,10 +1270,7 @@ class ToolManagerCreationTestCase(TestCase):
             descriptors[0].return_schema,
             descriptors[0].schema["function"]["return"],
         )
-        self.assertEqual(
-            descriptors[0].provider_safe_schema,
-            descriptors[0].schema,
-        )
+        self.assertIsNone(descriptors[0].provider_safe_schema)
         self.assertIsNone(descriptors[0].namespace)
         self.assertEqual(descriptors[0].capabilities, ToolCapabilities())
         self.assertEqual(descriptors[0].policy, {})
@@ -434,15 +1303,7 @@ class ToolManagerCreationTestCase(TestCase):
             "math.multiply",
         )
         self.assertEqual(descriptor.namespace, "math")
-        assert descriptor.provider_safe_schema is not None
-        self.assertEqual(
-            descriptor.provider_safe_schema["function"]["name"],
-            "avl_bWF0aC5tdWx0aXBseQ",
-        )
-        self.assertEqual(
-            descriptor.provider_safe_schema["function"]["parameters"],
-            descriptor.schema["function"]["parameters"],
-        )
+        self.assertIsNone(descriptor.provider_safe_schema)
 
     def test_descriptors_expose_canonical_return_schemas(self):
         class Payload(TypedDict):
@@ -799,7 +1660,7 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertEqual(alias.canonical_name, "adder")
         self.assertIs(unknown.status, ToolNameResolutionStatus.UNKNOWN)
 
-    def test_resolve_tool_name_decodes_only_provider_originated_names(self):
+    def test_catalog_decodes_provider_names_before_execution(self):
         manager = ToolManager.create_instance(
             enable_tools=["math.adder"],
             available_toolsets=[
@@ -809,48 +1670,38 @@ class ToolManagerCreationTestCase(TestCase):
         )
         encoded = TextGenerationVendor.encode_tool_name("math.adder")
 
+        catalog = _capability_catalog(manager)
         without_provenance = manager.resolve_tool_name(encoded)
-        with_provenance = manager.resolve_tool_name(
-            encoded,
-            provider_originated=True,
-        )
 
         self.assertIs(
             without_provenance.status, ToolNameResolutionStatus.UNKNOWN
         )
-        self.assertIs(with_provenance.status, ToolNameResolutionStatus.EXACT)
-        self.assertEqual(with_provenance.canonical_name, "math.adder")
-        self.assertEqual(with_provenance.requested_name, encoded)
+        self.assertEqual(catalog.canonical_name(encoded), "math.adder")
 
-    def test_resolve_tool_name_provider_origin_plain_name(self):
+    def test_resolve_tool_name_accepts_plain_canonical_name(self):
         manager = ToolManager.create_instance(
             enable_tools=["adder"],
             available_toolsets=[ToolSet(tools=[DummyAdder()])],
             settings=ToolManagerSettings(),
         )
 
-        resolution = manager.resolve_tool_name(
-            "adder",
-            provider_originated=True,
-        )
+        resolution = manager.resolve_tool_name("adder")
 
         self.assertIs(resolution.status, ToolNameResolutionStatus.EXACT)
         self.assertEqual(resolution.canonical_name, "adder")
 
-    def test_resolve_tool_name_rejects_invalid_provider_origin_name(self):
+    def test_catalog_rejects_invalid_provider_names(self):
         manager = ToolManager.create_instance(
             enable_tools=[],
             settings=ToolManagerSettings(),
         )
 
+        catalog = _capability_catalog(manager)
         invalid_names = ("pkg.tool", "avl_notbase64")
         for name in invalid_names:
             with self.subTest(name=name):
-                with self.assertRaises(AssertionError):
-                    manager.resolve_tool_name(
-                        name,
-                        provider_originated=True,
-                    )
+                with self.assertRaises(ModelCapabilityValidationError):
+                    catalog.canonical_name(name)
 
     def test_resolve_tool_name_alias_recovery_uses_enabled_tools_only(self):
         manager = ToolManager.create_instance(
@@ -1649,6 +2500,717 @@ class NativeNoArgTool(Tool):
         return "hi"
 
 
+class ToolManagerRegistrationTransactionTestCase(TestCase):
+    @staticmethod
+    def _registry_references(manager: ToolManager) -> tuple[object, ...]:
+        return (
+            manager._tools,
+            manager._aliases,
+            manager._available_aliases,
+            manager._available_tool_names,
+            manager._bootstrap_tool_names,
+            manager._descriptors,
+            manager._registration_plans,
+            manager._toolsets,
+            manager._skills_bootstrap_prompt_settings,
+        )
+
+    @staticmethod
+    def _registry_values(manager: ToolManager) -> tuple[object, ...]:
+        return (
+            dict(manager._tools or {}),
+            {name: list(values) for name, values in manager._aliases.items()},
+            {
+                name: list(values)
+                for name, values in manager._available_aliases.items()
+            },
+            set(manager._available_tool_names),
+            set(manager._bootstrap_tool_names),
+            dict(manager._descriptors),
+            list(manager._registration_plans),
+            list(manager._toolsets or []),
+            manager._skills_bootstrap_prompt_settings,
+        )
+
+    def _assert_registry_unchanged(
+        self,
+        manager: ToolManager,
+        references: tuple[object, ...],
+        values: tuple[object, ...],
+    ) -> None:
+        current_references = self._registry_references(manager)
+        for before, after in zip(references, current_references, strict=True):
+            self.assertIs(after, before)
+        self.assertEqual(self._registry_values(manager), values)
+
+    def test_toolset_snapshot_deduplicates_shared_nested_toolsets(
+        self,
+    ) -> None:
+        shared = ToolSet(tools=[])
+        left = ToolSet(tools=[shared])
+        right = ToolSet(tools=[shared])
+
+        snapshots = ToolManager._snapshot_toolset_tools([left, right])
+
+        snapshotted_toolsets = [snapshot.toolset for snapshot in snapshots]
+        self.assertEqual(len(snapshotted_toolsets), 3)
+        self.assertEqual(
+            sum(toolset is shared for toolset in snapshotted_toolsets),
+            1,
+        )
+        self.assertEqual(
+            {id(toolset) for toolset in snapshotted_toolsets},
+            {id(left), id(right), id(shared)},
+        )
+
+    def test_new_toolset_registration_appends_registry_plan(self) -> None:
+        def lookup() -> str:
+            """Return one dynamically registered value."""
+            return "lookup"
+
+        manager = ToolManager.create_instance(settings=ToolManagerSettings())
+        toolset = ToolSet(namespace="dynamic", tools=[lookup])
+
+        manager._register_toolset(toolset)
+
+        self.assertEqual(len(manager._registration_plans), 1)
+        self.assertIs(manager._registration_plans[0].toolset, toolset)
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["dynamic.lookup"],
+        )
+        assert manager.tools is not None
+        self.assertIs(manager.tools[0], lookup)
+
+    def test_new_duplicate_canonical_registration_is_atomic(self) -> None:
+        def original() -> str:
+            """Return the original registered value."""
+            return "original"
+
+        def replacement() -> str:
+            """Return a colliding replacement value."""
+            return "replacement"
+
+        replacement.__name__ = "original"
+        manager = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[original])],
+            settings=ToolManagerSettings(),
+        )
+        candidate = ToolSet(tools=[replacement])
+        candidate_tools = candidate.tools
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "duplicate canonical tool registration 'original'",
+        ):
+            manager._register_toolset(candidate)
+
+        self._assert_registry_unchanged(manager, references, values)
+        self.assertIs(candidate.tools, candidate_tools)
+        self.assertEqual(candidate.tools, [replacement])
+
+    def test_filtered_reregistration_reconciles_inventory_changes(
+        self,
+    ) -> None:
+        def old_enabled() -> str:
+            """Return the formerly enabled value."""
+            return "old-enabled"
+
+        def old_disabled() -> str:
+            """Return the disabled advertised value."""
+            return "old-disabled"
+
+        def new_enabled() -> str:
+            """Return the newly enabled value."""
+            return "new-enabled"
+
+        class DynamicFilteredInventoryToolSet(ToolSet):
+            def __init__(self) -> None:
+                self.available = [old_enabled, old_disabled]
+                super().__init__(tools=self.available)
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return list(self.available)
+
+            def available_tools_for_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> list[Any]:
+                return [
+                    tool
+                    for tool in self.available
+                    if tool.__name__ in enable_tools
+                ]
+
+            def with_enabled_tools(
+                self,
+                enable_tools: list[str],
+            ) -> ToolSet:
+                self._tools = self.available_tools_for_enabled_tools(
+                    enable_tools
+                )
+                return self
+
+        toolset = DynamicFilteredInventoryToolSet()
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset],
+            enable_tools=["old_enabled", "new_enabled"],
+            settings=ToolManagerSettings(),
+        )
+        self.assertEqual(
+            manager._available_tool_names,
+            {"old_enabled", "old_disabled"},
+        )
+
+        toolset.available = [new_enabled]
+        toolset._tools = [new_enabled]
+        manager._register_toolset(toolset)
+
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["new_enabled"],
+        )
+        self.assertEqual(
+            manager._available_tool_names,
+            {"old_disabled", "new_enabled"},
+        )
+        self.assertIs(
+            manager.resolve_tool_name("old_disabled").status,
+            ToolNameResolutionStatus.DISABLED,
+        )
+        self.assertIs(
+            manager.resolve_tool_name("old_enabled").status,
+            ToolNameResolutionStatus.UNKNOWN,
+        )
+
+    def test_dynamic_advertised_inventory_reregistration_replaces_state(
+        self,
+    ) -> None:
+        def first() -> str:
+            """Return the first dynamic value."""
+            return "first"
+
+        def second() -> str:
+            """Return the second dynamic value."""
+            return "second"
+
+        setattr(first, "aliases", ["former"])
+        setattr(second, "aliases", ["current"])
+
+        class DynamicInventoryToolSet(ToolSet):
+            def __init__(self) -> None:
+                self.advertised: list[Any] = [first]
+                super().__init__(tools=[first])
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return list(self.advertised)
+
+            def replace(self, tool: Any) -> None:
+                self.advertised = [tool]
+                self._tools = [tool]
+
+        toolset = DynamicInventoryToolSet()
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset],
+            settings=ToolManagerSettings(),
+        )
+
+        toolset.replace(second)
+        manager._register_toolset(toolset)
+
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["second"],
+        )
+        self.assertIs(manager.tools[0], second)
+        self.assertNotIn("first", manager._available_tool_names)
+        self.assertNotIn("former", manager._available_aliases)
+        self.assertEqual(manager._available_aliases, {"current": ["second"]})
+        self.assertEqual(len(manager._registration_plans), 1)
+        self.assertEqual(manager._toolsets, [toolset])
+
+    def test_dynamic_reserved_inventory_drift_rolls_back_every_registry(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "ordinary"
+
+        def request_user_input() -> str:
+            """Return a value that must remain unreachable."""
+            return "unreachable"
+
+        class DynamicInventoryToolSet(ToolSet):
+            def __init__(self) -> None:
+                self.advertised: list[Any] = [lookup]
+                super().__init__(tools=[lookup])
+
+            @property
+            def available_tools(self) -> list[Any]:
+                return list(self.advertised)
+
+        toolset = DynamicInventoryToolSet()
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset],
+            settings=ToolManagerSettings(),
+        )
+        toolset.advertised.append(request_user_input)
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            manager._register_toolset(toolset)
+
+        self._assert_registry_unchanged(manager, references, values)
+
+    def test_incomplete_inventory_reregistration_rolls_back_every_state(
+        self,
+    ) -> None:
+        def existing() -> str:
+            """Return the existing value."""
+            return "existing"
+
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "ordinary"
+
+        def request_user_input() -> str:
+            """Return a value that must remain unreachable."""
+            return "unreachable"
+
+        class IncompleteInventoryToolSet(ToolSet):
+            @property
+            def available_tools(self) -> list[Any]:
+                return [lookup]
+
+        manager = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[existing])],
+            settings=ToolManagerSettings(),
+        )
+        candidate = IncompleteInventoryToolSet(
+            tools=[lookup, request_user_input]
+        )
+        candidate_tools = candidate.tools
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool configuration uses reserved model capability name",
+        ):
+            manager._register_toolset(candidate)
+
+        self._assert_registry_unchanged(manager, references, values)
+        self.assertIs(candidate.tools, candidate_tools)
+        self.assertEqual(candidate.tools, [lookup, request_user_input])
+
+    def test_empty_reregistration_selects_next_active_bootstrap_policy(
+        self,
+    ) -> None:
+        def list_skills() -> str:
+            """List configured skills."""
+            return "list"
+
+        def read_skill() -> str:
+            """Read one configured skill."""
+            return "read"
+
+        list_skills.__name__ = "list"
+        read_skill.__name__ = "read"
+        first_settings = SkillBootstrapPromptSettings(
+            additional_instructions=("Use the first policy.",)
+        )
+        second_settings = SkillBootstrapPromptSettings(
+            additional_instructions=("Use the second policy.",)
+        )
+        first = ToolSet(namespace="skills", tools=[list_skills])
+        first.bootstrap_prompt_settings = first_settings
+        second = ToolSet(namespace="skills", tools=[read_skill])
+        second.bootstrap_prompt_settings = second_settings
+        manager = ToolManager.create_instance(
+            available_toolsets=[first, second],
+            settings=ToolManagerSettings(),
+        )
+
+        initial_prompt = manager.bootstrap_prompt()
+        assert initial_prompt is not None
+        self.assertIn("Use the first policy.", initial_prompt)
+        self.assertNotIn("Use the second policy.", initial_prompt)
+
+        first._tools = []
+        manager._register_toolset(first)
+
+        prompt = manager.bootstrap_prompt()
+        assert prompt is not None
+        self.assertNotIn("Use the first policy.", prompt)
+        self.assertIn("Use the second policy.", prompt)
+        self.assertEqual(manager._toolsets, [second])
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["skills.read"],
+        )
+        self.assertIs(
+            manager._skills_bootstrap_prompt_settings,
+            second_settings,
+        )
+
+    def test_empty_bootstrap_plans_never_supply_prompt_settings(self) -> None:
+        def read_skill() -> str:
+            """Read one configured skill."""
+            return "read"
+
+        read_skill.__name__ = "read"
+        stale_settings = SkillBootstrapPromptSettings(
+            additional_instructions=("Never use stale policy.",)
+        )
+        active_settings = SkillBootstrapPromptSettings(
+            additional_instructions=("Use active policy.",)
+        )
+        empty = ToolSet(namespace="skills", tools=[])
+        empty.bootstrap_prompt_settings = stale_settings
+        active = ToolSet(namespace="skills", tools=[read_skill])
+        active.bootstrap_prompt_settings = active_settings
+
+        manager = ToolManager.create_instance(
+            available_toolsets=[empty, active],
+            settings=ToolManagerSettings(),
+        )
+
+        prompt = manager.bootstrap_prompt()
+        assert prompt is not None
+        self.assertNotIn("Never use stale policy.", prompt)
+        self.assertIn("Use active policy.", prompt)
+        self.assertEqual(manager._toolsets, [active])
+        self.assertIs(
+            manager._skills_bootstrap_prompt_settings,
+            active_settings,
+        )
+
+    def test_all_empty_bootstrap_plans_have_no_prompt_or_ownership(
+        self,
+    ) -> None:
+        first = ToolSet(namespace="skills", tools=[])
+        first.bootstrap_prompt_settings = SkillBootstrapPromptSettings(
+            additional_instructions=("Never use first policy.",)
+        )
+        second = ToolSet(namespace="skills", tools=[])
+        second.bootstrap_prompt_settings = SkillBootstrapPromptSettings(
+            additional_instructions=("Never use second policy.",)
+        )
+
+        manager = ToolManager.create_instance(
+            available_toolsets=[first, second],
+            settings=ToolManagerSettings(),
+        )
+
+        self.assertIsNone(manager.bootstrap_prompt())
+        self.assertIsNone(manager._skills_bootstrap_prompt_settings)
+        self.assertEqual(manager._toolsets, [])
+        self.assertIsNone(manager.tools)
+
+    def test_mid_registration_advertised_inventory_drift_rolls_back(
+        self,
+    ) -> None:
+        def existing() -> str:
+            """Return the existing value."""
+            return "existing"
+
+        def lookup() -> str:
+            """Return an ordinary lookup."""
+            return "ordinary"
+
+        def request_user_input() -> str:
+            """Return a value that must remain unreachable."""
+            return "unreachable"
+
+        class DriftingInventoryToolSet(ToolSet):
+            inventory_reads = 0
+
+            @property
+            def available_tools(self) -> list[Any]:
+                self.inventory_reads += 1
+                if self.inventory_reads == 1:
+                    return [lookup]
+                return [lookup, request_user_input]
+
+        manager = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[existing])],
+            settings=ToolManagerSettings(),
+        )
+        candidate = DriftingInventoryToolSet(tools=[lookup])
+        candidate_tools = candidate.tools
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "advertised tool inventory changed during registration",
+        ):
+            manager._register_toolset(candidate)
+
+        self._assert_registry_unchanged(manager, references, values)
+        self.assertIs(candidate.tools, candidate_tools)
+        self.assertEqual(candidate.tools, [lookup])
+
+    def test_same_name_callable_drift_rolls_back_every_registry_reference(
+        self,
+    ) -> None:
+        def existing() -> str:
+            """Return the existing value."""
+            return "existing"
+
+        def lookup(query: str) -> str:
+            """Return the original lookup."""
+            return query
+
+        def replacement(secret: int) -> str:
+            """Return a substituted lookup."""
+            return str(secret)
+
+        replacement.__name__ = "lookup"
+
+        class SameNameDriftingToolSet(ToolSet):
+            inventory_reads = 0
+
+            @property
+            def available_tools(self) -> list[Any]:
+                self.inventory_reads += 1
+                return [lookup] if self.inventory_reads == 1 else [replacement]
+
+        manager = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[existing])],
+            settings=ToolManagerSettings(),
+        )
+        candidate = SameNameDriftingToolSet(tools=[lookup])
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "available_tools inventory must cover configured toolset "
+            "tools or semantics",
+        ):
+            manager._register_toolset(candidate)
+
+        self._assert_registry_unchanged(manager, references, values)
+        self.assertEqual(candidate.tools, [lookup])
+
+    def test_same_name_callable_reregistration_is_atomic(self) -> None:
+        def lookup(query: str) -> str:
+            """Return the original lookup."""
+            return query
+
+        def replacement(secret: int) -> str:
+            """Return a substituted lookup."""
+            return str(secret)
+
+        replacement.__name__ = "lookup"
+
+        class DynamicInventoryToolSet(ToolSet):
+            @property
+            def available_tools(self) -> list[Any]:
+                return list(self.tools)
+
+        toolset = DynamicInventoryToolSet(tools=[lookup])
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset],
+            settings=ToolManagerSettings(),
+        )
+        toolset._tools = [replacement]
+        replacement_tools = toolset.tools
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "re-registration cannot substitute existing tool semantics",
+        ):
+            manager._register_toolset(toolset)
+
+        self._assert_registry_unchanged(manager, references, values)
+        self.assertIs(toolset.tools, replacement_tools)
+        self.assertEqual(toolset.tools, [replacement])
+
+    def test_explicit_remove_then_same_name_add_is_allowed(self) -> None:
+        def lookup(query: str) -> str:
+            """Return the original lookup."""
+            return query
+
+        def replacement(secret: int) -> str:
+            """Return the replacement lookup."""
+            return str(secret)
+
+        replacement.__name__ = "lookup"
+
+        class DynamicInventoryToolSet(ToolSet):
+            @property
+            def available_tools(self) -> list[Any]:
+                return list(self.tools)
+
+        toolset = DynamicInventoryToolSet(tools=[lookup])
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset],
+            settings=ToolManagerSettings(),
+        )
+
+        toolset._tools = []
+        manager._register_toolset(toolset)
+        self.assertIsNone(manager.tools)
+        self.assertEqual(manager._toolsets, [])
+
+        toolset._tools = [replacement]
+        manager._register_toolset(toolset)
+
+        assert manager.tools is not None
+        self.assertEqual(len(manager.tools), 1)
+        self.assertIs(manager.tools[0], replacement)
+        descriptor = manager.describe_tool("lookup")
+        assert descriptor is not None
+        self.assertIs(descriptor.callable, replacement)
+
+    def test_alias_reregistration_is_atomic_across_toolset_owners(
+        self,
+    ) -> None:
+        def lookup() -> str:
+            """Return the original lookup."""
+            return "lookup"
+
+        def other() -> str:
+            """Return a separately owned value."""
+            return "other"
+
+        class DynamicInventoryToolSet(ToolSet):
+            @property
+            def available_tools(self) -> list[Any]:
+                return list(self.tools)
+
+        setattr(lookup, "aliases", ["original"])
+        toolset = DynamicInventoryToolSet(tools=[lookup])
+        other_toolset = ToolSet(tools=[other])
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset, other_toolset],
+            settings=ToolManagerSettings(),
+        )
+        setattr(lookup, "aliases", ["substituted"])
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "re-registration cannot substitute existing tool semantics",
+        ):
+            manager._register_toolset(toolset)
+
+        self._assert_registry_unchanged(manager, references, values)
+        self.assertIsNotNone(manager.describe_tool("other"))
+        self.assertEqual(manager._toolsets, [toolset, other_toolset])
+
+    def test_descriptor_reregistration_is_atomic(self) -> None:
+        def lookup(query: str) -> str:
+            """Return the original lookup."""
+            return query
+
+        class DynamicInventoryToolSet(ToolSet):
+            @property
+            def available_tools(self) -> list[Any]:
+                return list(self.tools)
+
+        setattr(lookup, "parallel_safe", False)
+        toolset = DynamicInventoryToolSet(tools=[lookup])
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset],
+            settings=ToolManagerSettings(),
+        )
+        setattr(lookup, "parallel_safe", True)
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "re-registration cannot substitute existing tool semantics",
+        ):
+            manager._register_toolset(toolset)
+
+        self._assert_registry_unchanged(manager, references, values)
+        descriptor = manager.describe_tool("lookup")
+        assert descriptor is not None
+        self.assertFalse(descriptor.capabilities.parallel_safe)
+
+    def test_display_projector_reregistration_is_atomic(self) -> None:
+        def lookup(query: str) -> str:
+            """Return the original lookup."""
+            return query
+
+        def original_projector(*args: object) -> object:
+            return args
+
+        def replacement_projector(*args: object) -> object:
+            return args
+
+        setattr(lookup, "tool_display_projector", original_projector)
+        toolset = ToolSet(tools=[lookup])
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset],
+            settings=ToolManagerSettings(),
+        )
+        setattr(lookup, "tool_display_projector", replacement_projector)
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "re-registration cannot substitute existing tool semantics",
+        ):
+            manager._register_toolset(toolset)
+
+        self._assert_registry_unchanged(manager, references, values)
+        descriptor = manager.describe_tool("lookup")
+        assert descriptor is not None
+        self.assertIs(descriptor.display_projector, original_projector)
+
+    def test_second_tool_registration_failure_has_no_partial_mutation(
+        self,
+    ) -> None:
+        def existing() -> str:
+            """Return the existing value."""
+            return "existing"
+
+        def first() -> str:
+            """Return the first candidate value."""
+            return "first"
+
+        def invalid() -> str:
+            """Return a value with invalid capabilities."""
+            return "invalid"
+
+        setattr(invalid, "tool_capabilities", {"unknown": True})
+        manager = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[existing])],
+            settings=ToolManagerSettings(),
+        )
+        candidate = ToolSet(tools=[first, invalid])
+        candidate_tools = candidate.tools
+        references = self._registry_references(manager)
+        values = self._registry_values(manager)
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "tool_capabilities has unknown keys",
+        ):
+            manager._register_toolset(candidate)
+
+        self._assert_registry_unchanged(manager, references, values)
+        self.assertIs(candidate.tools, candidate_tools)
+        self.assertEqual(candidate.tools, [first, invalid])
+
+
 class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
     async def test_prepare_call_returns_canonical_plan_for_alias(self):
         adder = DummyAdder()
@@ -1730,7 +3292,7 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(diagnostic, ToolCallDiagnostic)
         assert isinstance(diagnostic, ToolCallDiagnostic)
-        self.assertEqual(diagnostic.requested_name, provider_name)
+        self.assertEqual(diagnostic.requested_name, "sum")
         self.assertIs(
             diagnostic.code, ToolCallDiagnosticCode.AMBIGUOUS_TOOL_NAME
         )
@@ -1779,7 +3341,9 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-    async def test_execute_call_reports_malformed_provider_encoded_name(self):
+    async def test_execute_call_treats_provider_metadata_as_non_executable(
+        self,
+    ):
         manager = ToolManager.create_instance(
             enable_tools=["adder"],
             available_toolsets=[ToolSet(tools=[DummyAdder()])],
@@ -1806,7 +3370,7 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(outcome.call_id, "call-1")
         self.assertEqual(outcome.requested_name, "avl_notbase64")
         self.assertIsNone(outcome.canonical_name)
-        self.assertIs(outcome.code, ToolCallDiagnosticCode.MALFORMED_CALL)
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.UNKNOWN_TOOL)
         self.assertIs(outcome.stage, ToolCallDiagnosticStage.RESOLVE)
 
     async def test_execute_call_reports_empty_name_diagnostic(self):
@@ -2522,7 +4086,7 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(diagnostic.details, {"filtered_name": "multiplier"})
         self.assertEqual(seen_flow_markers, [True, True])
 
-    async def test_prepare_call_rejects_flow_provider_name_rewrite(
+    async def test_prepare_call_ignores_flow_provider_metadata_rewrite(
         self,
     ) -> None:
         cases = ("multiplier", "pkg.tool")
@@ -2557,24 +4121,16 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
                     arguments={"a": 2, "b": 3},
                 )
 
-                diagnostic = await manager.prepare_call(
+                prepared = await manager.prepare_call(
                     call,
                     context=ToolCallContext(flow_tool_node=True),
                 )
 
-                self.assertIsInstance(diagnostic, ToolCallDiagnostic)
-                assert isinstance(diagnostic, ToolCallDiagnostic)
-                self.assertIs(
-                    diagnostic.code,
-                    ToolCallDiagnosticCode.FILTER_SUPPRESSED,
-                )
-                self.assertIs(
-                    diagnostic.stage,
-                    ToolCallDiagnosticStage.FILTER,
-                )
-                self.assertEqual(
-                    diagnostic.details, {"filtered_name": provider_name}
-                )
+                self.assertIsInstance(prepared, PreparedToolCall)
+                assert isinstance(prepared, PreparedToolCall)
+                self.assertEqual(prepared.call.name, "adder")
+                self.assertEqual(prepared.call.provider_name, provider_name)
+                self.assertIsInstance(prepared.callable, DummyAdder)
 
     async def test_prepare_call_accepts_flow_same_provider_name(
         self,
@@ -3606,7 +5162,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result.result, 3)
 
     async def test_call_no_tool_call(self):
-        calls = self.manager.get_calls("no tools here")
+        calls = _capability_catalog(self.manager).get_calls("no tools here")
         self.assertIsNone(calls)
 
     async def test_get_calls_normalizes_configured_tuple_formats(self):
@@ -3644,7 +5200,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
 
                 with patch("avalan.tool.parser.uuid4", return_value=call_id):
                     self.assertEqual(
-                        manager.get_calls(text),
+                        _capability_catalog(manager).get_calls(text),
                         [
                             ToolCall(
                                 id=call_id,
@@ -3663,7 +5219,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             available_toolsets=[ToolSet(tools=[CalculatorTool(), echo_input])],
             settings=ToolManagerSettings(tool_format=ToolFormat.REACT),
         )
-        outcome = manager.parse_calls(
+        outcome = _capability_catalog(manager).parse_calls(
             'Action: broken\nAction Input: {"expression": '
             "\nAction: calculator\n"
             'Action Input: {"expression": "1 + 1"}\n'
@@ -3707,7 +5263,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             patch("avalan.tool.parser.uuid4", return_value=call_id),
             patch("avalan.tool.manager.uuid4", return_value=result_id),
         ):
-            calls = manager.get_calls(
+            calls = _capability_catalog(manager).get_calls(
                 "Action: calculator\nAction Input: (4 + 6) * 5 / 2"
             )
             assert calls is not None
@@ -3744,7 +5300,9 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             available_toolsets=[ToolSet(tools=[DummyAdder()])],
             settings=ToolManagerSettings(tool_format=ToolFormat.REACT),
         )
-        calls = manager.get_calls("Action: adder\nAction Input: one plus two")
+        calls = _capability_catalog(manager).get_calls(
+            "Action: adder\nAction Input: one plus two"
+        )
 
         assert calls is not None
         result = await manager.execute_call(
@@ -3797,7 +5355,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.tool.parser.uuid4", side_effect=[first_id, second_id]
         ):
-            calls = self.manager.get_calls(text)
+            calls = _capability_catalog(self.manager).get_calls(text)
 
         self.assertEqual(
             calls,
@@ -3830,7 +5388,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             patch("avalan.tool.parser.uuid4", return_value=call_id),
             patch("avalan.tool.manager.uuid4", return_value=result_id),
         ):
-            calls = manager.get_calls(
+            calls = _capability_catalog(manager).get_calls(
                 'Action: math.calculator\nAction Input: {"expression": "2"}'
             )
             assert calls is not None
@@ -3869,7 +5427,9 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             patch("avalan.tool.parser.uuid4", return_value=call_id),
             patch("avalan.tool.manager.uuid4", return_value=result_id),
         ):
-            calls = manager.get_calls("[text.echo_input](hello)")
+            calls = _capability_catalog(manager).get_calls(
+                "[text.echo_input](hello)"
+            )
             assert calls is not None
             result = await manager(calls[0], context=ToolCallContext())
 
@@ -3892,6 +5452,10 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
 
     def test_parse_calls_reports_malformed_bracket_with_valid_call(self):
         manager = ToolManager.create_instance(
+            enable_tools=["math.calculator"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[CalculatorTool()])
+            ],
             settings=ToolManagerSettings(tool_format=ToolFormat.BRACKET),
         )
         call_id = _uuid4()
@@ -3901,7 +5465,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             "avalan.tool.parser.uuid4",
             side_effect=[call_id, diagnostic_id],
         ):
-            outcome = manager.parse_calls(
+            outcome = _capability_catalog(manager).parse_calls(
                 "[math..calculator](bad)\n[math.calculator](2)"
             )
 
@@ -3962,7 +5526,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
                     settings=ToolManagerSettings(tool_format=tool_format),
                 )
 
-                self.assertIsNone(manager.get_calls(text))
+                self.assertIsNone(_capability_catalog(manager).get_calls(text))
 
     async def test_get_calls_returns_none_for_parser_resource_diagnostics(
         self,
@@ -4002,7 +5566,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
                     settings=settings,
                 )
 
-                self.assertIsNone(manager.get_calls(text))
+                self.assertIsNone(_capability_catalog(manager).get_calls(text))
 
     async def test_call_with_tool(self):
         text = (
@@ -4015,7 +5579,7 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             patch("avalan.tool.parser.uuid4", return_value=call_id),
             patch("avalan.tool.manager.uuid4", return_value=result_id),
         ):
-            calls = self.manager.get_calls(text)
+            calls = _capability_catalog(self.manager).get_calls(text)
             expected_call = ToolCall(
                 id=call_id,
                 name="calculator",
@@ -4157,77 +5721,48 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(called, ["first", "filter", "second"])
 
 
-class ToolManagerPotentialCallTestCase(TestCase):
-    def setUp(self):
-        self.manager = ToolManager.create_instance(
-            enable_tools=[], settings=ToolManagerSettings()
-        )
+class ToolManagerModelBoundaryTestCase(TestCase):
+    def test_descriptor_lookup_fails_closed_for_blank_call_name(self) -> None:
+        manager = ToolManager.create_instance(settings=ToolManagerSettings())
+        call = ToolCall(id="malformed-call", name="", arguments={})
 
-    def test_is_potential_tool_call_true(self):
-        with patch.object(
-            self.manager._parser,
+        self.assertIsNone(manager.describe_tool_call(call))
+        self.assertFalse(manager.is_tool_call_parallel_safe(call))
+        diagnostic = manager.validate_tool_call(call)
+        assert diagnostic is not None
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.MALFORMED_CALL)
+        self.assertEqual(diagnostic.requested_name, "invalid")
+        self.assertIsNone(diagnostic.canonical_name)
+
+    def test_model_facing_compatibility_surface_is_removed(self):
+        manager = ToolManager.create_instance(settings=ToolManagerSettings())
+
+        for name in (
+            "canonical_tool_name",
+            "get_calls",
             "is_potential_tool_call",
-            return_value=True,
-        ) as called:
-            result = self.manager.is_potential_tool_call("buf", "tok")
-            self.assertTrue(result)
-            called.assert_called_once_with("buf", "tok")
-
-    def test_is_potential_tool_call_false(self):
-        with patch.object(
-            self.manager._parser,
-            "is_potential_tool_call",
-            return_value=False,
-        ) as called:
-            result = self.manager.is_potential_tool_call("", "")
-            self.assertFalse(result)
-            called.assert_called_once_with("", "")
-
-    def test_tool_call_status_proxies_parser(self):
-        self.assertIs(
-            self.manager.tool_call_status("<tool_call>"),
-            ToolCallParser.ToolCallBufferStatus.OPEN,
-        )
-
-    def test_tool_call_status_proxies_final_parser_status(self):
-        self.assertIs(
-            self.manager.tool_call_status("<tool_call>", final=True),
-            ToolCallParser.ToolCallBufferStatus.UNTERMINATED,
-        )
-
-    def test_parse_calls_returns_parser_outcome(self):
-        outcome = self.manager.parse_calls(
-            '<tool_call>{"name": "calculator", "arguments": {}}</tool_call>'
-        )
-
-        self.assertEqual(len(outcome.calls), 1)
-        self.assertEqual(outcome.calls[0].name, "calculator")
-
-    def test_stream_buffer_diagnostics_proxies_parser(self):
-        diagnostics = self.manager.stream_buffer_diagnostics("<tool_call>")
-
-        self.assertEqual(len(diagnostics), 1)
-        self.assertEqual(
-            diagnostics[0].code,
-            ToolCallDiagnosticCode.MALFORMED_CALL,
-        )
+            "json_schemas",
+            "parse_calls",
+            "provider_json_schemas",
+            "provider_tool_name",
+            "stream_buffer_diagnostics",
+            "tool_call_status",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(manager, name))
 
 
 class ToolManagerSchemasTestCase(TestCase):
     def test_json_schemas(self):
         calculator = CalculatorTool()
-        manager = ToolManager.create_instance(
-            enable_tools=["math.calculator"],
-            available_toolsets=[ToolSet(namespace="math", tools=[calculator])],
-            settings=ToolManagerSettings(),
-        )
-        schemas = manager.json_schemas()
+        schemas = ToolSet(namespace="math", tools=[calculator]).json_schemas()
+        assert schemas is not None
         self.assertEqual(len(schemas), 1)
         self.assertEqual(schemas[0]["function"]["name"], "math.calculator")
 
 
 class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
-    def test_provider_json_schemas_use_sanitized_names(self):
+    def test_catalog_projection_uses_sanitized_names(self):
         manager = ToolManager.create_instance(
             enable_tools=["math.adder"],
             available_toolsets=[
@@ -4240,30 +5775,25 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-        canonical_schemas = manager.json_schemas()
-        provider_schemas = manager.provider_json_schemas(
-            provider_family=ProviderFamily.OPENAI.value
+        projection = _capability_catalog(manager).project(
+            ProviderFamily.OPENAI
         )
+        provider_schemas = projection.schemas
         descriptor = manager.describe_tool("math.adder")
 
-        assert canonical_schemas is not None
         assert provider_schemas is not None
         assert descriptor is not None
         self.assertEqual(
-            canonical_schemas[0]["function"]["name"],
+            descriptor.schema["function"]["name"],
             "math.adder",
         )
         self.assertEqual(
             provider_schemas[0]["function"]["name"],
             "math_adder",
         )
-        assert descriptor.provider_safe_schema is not None
-        self.assertEqual(
-            descriptor.provider_safe_schema["function"]["name"],
-            "math_adder",
-        )
+        self.assertIsNone(descriptor.provider_safe_schema)
 
-    def test_provider_json_schemas_remove_top_level_composition(self):
+    def test_catalog_projection_removes_top_level_composition(self):
         manager = ToolManager.create_instance(
             enable_tools=["shell.composite"],
             available_toolsets=[
@@ -4276,8 +5806,8 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-        provider_schemas = manager.provider_json_schemas(
-            provider_family=ProviderFamily.OPENAI.value
+        provider_schemas = (
+            _capability_catalog(manager).project(ProviderFamily.OPENAI).schemas
         )
         descriptor = manager.describe_tool("shell.composite")
 
@@ -4290,7 +5820,7 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(parameters["type"], "object")
         self.assertIn("mode", parameters["properties"])
 
-    def test_provider_json_schemas_mix_maps_and_policy_fallback(self):
+    def test_catalog_projection_mixes_maps_and_policy_fallback(self):
         manager = ToolManager.create_instance(
             enable_tools=[
                 "shell.pdfinfo",
@@ -4323,9 +5853,9 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-        provider_schemas = manager.provider_json_schemas(
-            provider_family=ProviderFamily.OPENAI.value
-        )
+        catalog = _capability_catalog(manager)
+        projection = catalog.project(ProviderFamily.OPENAI)
+        provider_schemas = projection.schemas
         assert provider_schemas is not None
         provider_names = [
             schema["function"]["name"] for schema in provider_schemas
@@ -4342,17 +5872,12 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             ("database_query", "database.query"),
         ):
             with self.subTest(provider_name=provider_name):
-                resolution = manager.resolve_tool_name(
-                    provider_name,
-                    provider_originated=True,
+                self.assertEqual(
+                    projection.canonical_name(provider_name),
+                    canonical_name,
                 )
-                self.assertIs(
-                    resolution.status,
-                    ToolNameResolutionStatus.EXACT,
-                )
-                self.assertEqual(resolution.canonical_name, canonical_name)
 
-        calls = manager.get_calls(
+        calls = catalog.get_calls(
             '<tool_call>{"name": "pdfinfo", "arguments": {}}</tool_call>'
             '<tool_call>{"name": "shell_pdftoppm", "arguments": {}}'
             "</tool_call>"
@@ -4367,16 +5892,10 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(calls[1].provider_name, "shell_pdftoppm")
         self.assertEqual(calls[2].name, "database.query")
         self.assertEqual(calls[2].provider_name, "database_query")
-        unmapped_resolution = manager.resolve_tool_name(
-            "shell_pdfinfo",
-            provider_originated=True,
-        )
-        self.assertIs(
-            unmapped_resolution.status,
-            ToolNameResolutionStatus.UNKNOWN,
-        )
+        with self.assertRaises(ModelCapabilityValidationError):
+            projection.canonical_name("shell_pdfinfo")
 
-    def test_provider_originated_resolution_uses_policy(self):
+    def test_catalog_name_projection_uses_policy(self):
         manager = ToolManager.create_instance(
             enable_tools=["math.adder"],
             available_toolsets=[
@@ -4389,25 +5908,15 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-        resolution = manager.resolve_tool_name(
-            "math_adder",
-            provider_originated=True,
+        projection = _capability_catalog(manager).project(
+            ProviderFamily.OPENAI
         )
-
-        self.assertIs(resolution.status, ToolNameResolutionStatus.EXACT)
-        self.assertEqual(resolution.canonical_name, "math.adder")
         self.assertEqual(
-            manager.provider_tool_name(
-                "math.adder",
-                provider_family=ProviderFamily.OPENAI.value,
-            ),
+            projection.provider_name("math.adder"),
             "math_adder",
         )
         self.assertEqual(
-            manager.canonical_tool_name(
-                "math_adder",
-                provider_family=ProviderFamily.OPENAI.value,
-            ),
+            projection.canonical_name("math_adder"),
             "math.adder",
         )
 
@@ -4420,19 +5929,19 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             settings=ToolManagerSettings(
                 tool_name_policy=ToolNamePolicySettings(
                     mode=ToolNamePolicyMode.MAPPED,
-                    map={"math.adder": "1tool-name"},
+                    map={"math.adder": "math_adder"},
                 )
             ),
         )
 
-        calls = manager.get_calls(
-            '<tool_call>{"name": "1tool-name", '
+        calls = _capability_catalog(manager).get_calls(
+            '<tool_call>{"name": "math_adder", '
             '"arguments": {"a": 1, "b": 2}}</tool_call>'
         )
 
         assert calls is not None
         self.assertEqual(calls[0].name, "math.adder")
-        self.assertEqual(calls[0].provider_name, "1tool-name")
+        self.assertEqual(calls[0].provider_name, "math_adder")
 
     async def test_malformed_provider_name_does_not_execute_canonical_tool(
         self,
@@ -4450,7 +5959,7 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             available_toolsets=[ToolSet(tools=[PrefixNamedTool()])],
             settings=ToolManagerSettings(),
         )
-        calls = manager.get_calls(
+        calls = _capability_catalog(manager).get_calls(
             '<tool_call>{"name": "avl_notbase64", "arguments": {}}</tool_call>'
         )
 
@@ -4461,7 +5970,7 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
         assert isinstance(result, ToolCallDiagnostic)
         self.assertIs(result.code, ToolCallDiagnosticCode.MALFORMED_CALL)
 
-    def test_sanitized_collision_fails_during_initialization(self):
+    def test_sanitized_collision_fails_during_catalog_projection(self):
         def b() -> str:
             """Return a namespaced value."""
             return "b"
@@ -4470,21 +5979,27 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             """Return an underscored value."""
             return "a_b"
 
-        with self.assertRaisesRegex(AssertionError, "collision"):
-            ToolManager.create_instance(
-                enable_tools=["a.b", "a_b"],
-                available_toolsets=[
-                    ToolSet(namespace="a", tools=[b]),
-                    ToolSet(tools=[a_b]),
-                ],
-                settings=ToolManagerSettings(
-                    tool_name_policy=ToolNamePolicySettings(
-                        mode=ToolNamePolicyMode.SANITIZED
-                    )
-                ),
-            )
+        manager = ToolManager.create_instance(
+            enable_tools=["a.b", "a_b"],
+            available_toolsets=[
+                ToolSet(namespace="a", tools=[b]),
+                ToolSet(tools=[a_b]),
+            ],
+            settings=ToolManagerSettings(
+                tool_name_policy=ToolNamePolicySettings(
+                    mode=ToolNamePolicyMode.SANITIZED
+                )
+            ),
+        )
 
-    def test_raw_policy_fails_for_openai_provider_schemas(self):
+        with self.assertRaises(ModelCapabilityValidationError) as error:
+            _capability_catalog(manager).project(ProviderFamily.OPENAI)
+
+        self.assertEqual(
+            error.exception.code, "capability.provider_projection"
+        )
+
+    def test_raw_policy_fails_for_openai_catalog_projection(self):
         manager = ToolManager.create_instance(
             enable_tools=["math.adder"],
             available_toolsets=[
@@ -4497,10 +6012,12 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
-        with self.assertRaisesRegex(AssertionError, "openai"):
-            manager.provider_json_schemas(
-                provider_family=ProviderFamily.OPENAI.value
-            )
+        with self.assertRaises(ModelCapabilityValidationError) as error:
+            _capability_catalog(manager).project(ProviderFamily.OPENAI)
+
+        self.assertEqual(
+            error.exception.code, "capability.provider_projection"
+        )
 
     async def test_sanitized_call_parses_and_executes_canonically(self):
         manager = ToolManager.create_instance(
@@ -4521,7 +6038,7 @@ class ToolManagerNamePolicyTestCase(IsolatedAsyncioTestCase):
             patch("avalan.tool.parser.uuid4", return_value=call_id),
             patch("avalan.tool.manager.uuid4", return_value=result_id),
         ):
-            calls = manager.get_calls(
+            calls = _capability_catalog(manager).get_calls(
                 '<tool_call>{"name": "math_calculator", '
                 '"arguments": {"expression": "1 + 2"}}</tool_call>'
             )
@@ -4775,7 +6292,7 @@ class ToolManagerExtraCallTestCase(IsolatedAsyncioTestCase):
             patch("avalan.tool.parser.uuid4", return_value=call_id),
             patch("avalan.tool.manager.uuid4", return_value=result_id),
         ):
-            calls = self.manager.get_calls(text)
+            calls = _capability_catalog(self.manager).get_calls(text)
             expected_call = ToolCall(
                 id=call_id,
                 name="calculator",
@@ -4942,7 +6459,7 @@ class ToolManagerFiltersTransformersTestCase(IsolatedAsyncioTestCase):
             patch("avalan.tool.parser.uuid4", return_value=call_id),
             patch("avalan.tool.manager.uuid4", return_value=result_id),
         ):
-            calls = namespaced_manager.get_calls(text)
+            calls = _capability_catalog(namespaced_manager).get_calls(text)
             expected_call = ToolCall(
                 id=call_id,
                 name="math.calculator",

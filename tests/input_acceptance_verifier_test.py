@@ -569,6 +569,115 @@ def _protocol_mutations(decisions: dict[str, Any]) -> list[dict[str, Any]]:
     return mutations
 
 
+def _manifest_with_planned_expansion() -> (
+    tuple[dict[str, Any], str, list[str], str, list[str]]
+):
+    """Return active and planned parameter expansions in manifest order."""
+    manifest, _ = _synthetic_contract_inventory()
+    active_node_id = manifest["nodes"][0]["node_id"]
+    assert isinstance(active_node_id, str)
+    active_instances = [
+        f"{active_node_id}[first]",
+        f"{active_node_id}[second]",
+    ]
+    planned_node_id = (
+        "tests/synthetic_contract_test.py::test_future_parameter_contract"
+    )
+    planned_instances = [
+        f"{planned_node_id}[capable]",
+        f"{planned_node_id}[incapable]",
+    ]
+    manifest["nodes"].append(
+        {
+            "id": "synthetic-future-parameter-contract",
+            "category": "unit",
+            "lifecycle": "planned",
+            "active_from_phase": 1,
+            "requirement_ids": ["SYNTHETIC-007"],
+            "node_id": planned_node_id,
+        }
+    )
+    manifest["parameter_expansions"] = [
+        {
+            "node_id": active_node_id,
+            "instance_node_ids": active_instances,
+            "sha256": _snapshot_digest(active_instances),
+        },
+        {
+            "node_id": planned_node_id,
+            "instance_node_ids": planned_instances,
+            "sha256": _snapshot_digest(planned_instances),
+        },
+    ]
+    return (
+        manifest,
+        active_node_id,
+        active_instances,
+        planned_node_id,
+        planned_instances,
+    )
+
+
+def test_planned_parameter_expansion_is_validated_without_early_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validate planned instances while selecting only active instances."""
+    (
+        manifest,
+        active_node_id,
+        active_instances,
+        planned_node_id,
+        planned_instances,
+    ) = _manifest_with_planned_expansion()
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_ACCEPTANCE_LEDGER_SHA256",
+        _ledger_digest(manifest),
+    )
+    path = tmp_path / "manifest.json"
+    _write(path, manifest)
+
+    loaded = _VERIFIER.load_manifest(path)
+
+    assert {
+        expansion.node_id: expansion.instance_node_ids
+        for expansion in loaded.parameter_expansions
+    } == {
+        active_node_id: tuple(active_instances),
+        planned_node_id: tuple(planned_instances),
+    }
+    assert loaded.active_pytest_instances(0) == (
+        *active_instances,
+        *(
+            node["node_id"]
+            for node in manifest["nodes"][1:6]
+            if isinstance(node["node_id"], str)
+        ),
+    )
+    assert not set(planned_instances) & set(loaded.active_pytest_instances(0))
+
+
+def test_planned_parameter_expansion_digest_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a stale digest for an exact planned parameter expansion."""
+    manifest, _, _, _, _ = _manifest_with_planned_expansion()
+    manifest["parameter_expansions"][1]["sha256"] = "0" * 64
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_ACCEPTANCE_LEDGER_SHA256",
+        _ledger_digest(manifest),
+    )
+    path = tmp_path / "manifest.json"
+    _write(path, manifest)
+
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="parameter expansion digest mismatch",
+    ):
+        _VERIFIER.load_manifest(path)
+
+
 def test_acceptance_rejects_invalid_inventory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -581,7 +690,7 @@ def test_acceptance_rejects_invalid_inventory(
     )
     path = tmp_path / "manifest.json"
     _write(path, manifest)
-    assert _VERIFIER.load_manifest(path).current_phase == 2
+    assert _VERIFIER.load_manifest(path).current_phase == 3
 
     invalid = deepcopy(manifest)
     invalid["categories"].append("unit")
@@ -963,9 +1072,9 @@ def test_evidence_state_and_review_history_fail_closed(
     complete_fixture = deepcopy(evidence["quality_gate"])
     _VERIFIER._validate_quality_gate_evidence(
         complete_fixture,
-        active_acceptance_nodes=86,
-        active_pytest_instances=125,
-        active_type_fixtures=14,
+        active_acceptance_nodes=99,
+        active_pytest_instances=187,
+        active_type_fixtures=18,
         root=_ROOT,
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
@@ -983,9 +1092,9 @@ def test_evidence_state_and_review_history_fail_closed(
     }
     _VERIFIER._validate_quality_gate_evidence(
         pending,
-        active_acceptance_nodes=86,
-        active_pytest_instances=125,
-        active_type_fixtures=14,
+        active_acceptance_nodes=99,
+        active_pytest_instances=187,
+        active_type_fixtures=18,
         root=_ROOT,
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
@@ -998,9 +1107,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             premature,
-            active_acceptance_nodes=86,
-            active_pytest_instances=125,
-            active_type_fixtures=14,
+            active_acceptance_nodes=99,
+            active_pytest_instances=187,
+            active_type_fixtures=18,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1041,10 +1150,10 @@ def test_evidence_state_and_review_history_fail_closed(
         {
             "command": commands[3],
             "exit_code": 0,
-            "active_nodes": 86,
-            "active_instances": 125,
+            "active_nodes": 99,
+            "active_instances": 187,
         },
-        {"command": commands[4], "exit_code": 0, "active_fixtures": 14},
+        {"command": commands[4], "exit_code": 0, "active_fixtures": 18},
         {
             "command": commands[5],
             "exit_code": 0,
@@ -1121,9 +1230,9 @@ def test_evidence_state_and_review_history_fail_closed(
     )
     _VERIFIER._validate_quality_gate_evidence(
         complete,
-        active_acceptance_nodes=86,
-        active_pytest_instances=125,
-        active_type_fixtures=14,
+        active_acceptance_nodes=99,
+        active_pytest_instances=187,
+        active_type_fixtures=18,
         root=_ROOT,
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
@@ -1175,9 +1284,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             complete,
-            active_acceptance_nodes=86,
-            active_pytest_instances=125,
-            active_type_fixtures=14,
+            active_acceptance_nodes=99,
+            active_pytest_instances=187,
+            active_type_fixtures=18,
             root=tmp_path,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1195,9 +1304,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_tree,
-            active_acceptance_nodes=86,
-            active_pytest_instances=125,
-            active_type_fixtures=14,
+            active_acceptance_nodes=99,
+            active_pytest_instances=187,
+            active_type_fixtures=18,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1210,9 +1319,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_report,
-            active_acceptance_nodes=86,
-            active_pytest_instances=125,
-            active_type_fixtures=14,
+            active_acceptance_nodes=99,
+            active_pytest_instances=187,
+            active_type_fixtures=18,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1225,9 +1334,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_coverage,
-            active_acceptance_nodes=86,
-            active_pytest_instances=125,
-            active_type_fixtures=14,
+            active_acceptance_nodes=99,
+            active_pytest_instances=187,
+            active_type_fixtures=18,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1239,14 +1348,15 @@ def test_evidence_state_and_review_history_fail_closed(
         evidence["review_history_sha256"],
         evidence["review_history_phase0_sha256"],
         evidence["review_history_phase1_sha256"],
-        2,
+        evidence["review_history_phase2_sha256"],
+        3,
         "/root",
     )
     quality_history = deepcopy(evidence["quality_history"])
     _VERIFIER._validate_quality_history(
         quality_history,
         evidence["quality_history_sha256"],
-        2,
+        3,
     )
     rewritten_quality = deepcopy(quality_history)
     rewritten_quality[0]["quality_gate_sha256"] = "0" * 64
@@ -1263,50 +1373,31 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_quality,
             rewritten_quality_digest,
-            2,
+            3,
         )
 
-    pending = deepcopy(history[:7])
-    pending_digest = _canonical_digest(pending)
-    monkeypatch.setattr(
-        _VERIFIER,
-        "_EXPECTED_CURRENT_REVIEW_STATUS",
-        "pending",
+    rewritten_phase2_quality = deepcopy(quality_history)
+    rewritten_phase2_quality[1]["quality_gate_sha256"] = "1" * 64
+    rewritten_phase2_quality_digest = _canonical_digest(
+        rewritten_phase2_quality
     )
     monkeypatch.setattr(
         _VERIFIER,
-        "_EXPECTED_REVIEW_HISTORY_SHA256",
-        pending_digest,
+        "_EXPECTED_QUALITY_HISTORY_SHA256",
+        rewritten_phase2_quality_digest,
     )
-    _VERIFIER._validate_review_history(
-        pending,
-        pending_digest,
-        evidence["review_history_phase0_sha256"],
-        evidence["review_history_phase1_sha256"],
-        2,
-        "/root",
-    )
-    monkeypatch.setattr(
-        _VERIFIER,
-        "_EXPECTED_CURRENT_REVIEW_STATUS",
-        "approved",
-    )
-    monkeypatch.setattr(
-        _VERIFIER,
-        "_EXPECTED_REVIEW_HISTORY_SHA256",
-        evidence["review_history_sha256"],
-    )
-    _VERIFIER._validate_review_history(
-        history,
-        evidence["review_history_sha256"],
-        evidence["review_history_phase0_sha256"],
-        evidence["review_history_phase1_sha256"],
-        2,
-        "/root",
-    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="lost its phase-2 record",
+    ):
+        _VERIFIER._validate_quality_history(
+            rewritten_phase2_quality,
+            rewritten_phase2_quality_digest,
+            3,
+        )
 
     wrong_terminal_reviewer = deepcopy(history)
-    wrong_terminal_reviewer[7]["reviewer"] = "/root/broker_review"
+    wrong_terminal_reviewer[9]["reviewer"] = "/root/acceptance_review"
     wrong_terminal_reviewer_digest = _canonical_digest(wrong_terminal_reviewer)
     monkeypatch.setattr(
         _VERIFIER,
@@ -1322,13 +1413,15 @@ def test_evidence_state_and_review_history_fail_closed(
             wrong_terminal_reviewer_digest,
             evidence["review_history_phase0_sha256"],
             evidence["review_history_phase1_sha256"],
-            2,
+            evidence["review_history_phase2_sha256"],
+            3,
             "/root",
         )
     for index, message in (
         (0, "phase-0 review prefix digest mismatch"),
         (3, "phase-1 review prefix digest mismatch"),
         (5, "phase-2 pending review prefix digest mismatch"),
+        (7, "phase-2 review prefix digest mismatch"),
     ):
         rewritten = deepcopy(history)
         rewritten[index]["evidence"] += " rewritten"
@@ -1347,9 +1440,42 @@ def test_evidence_state_and_review_history_fail_closed(
                 rewritten_digest,
                 evidence["review_history_phase0_sha256"],
                 evidence["review_history_phase1_sha256"],
-                2,
+                evidence["review_history_phase2_sha256"],
+                3,
                 "/root",
             )
+
+
+def test_pending_structural_inventory_is_key_order_independent_and_exact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accept reordered fields and reject each incorrect inventory field."""
+    expected = _VERIFIER._EXPECTED_PENDING_SOURCE_INVENTORY
+    reordered = {
+        "excluded_line_count": expected[3],
+        "statement_count": expected[2],
+        "source_file_count": expected[1],
+        "source_inventory_sha256": expected[0],
+    }
+    monkeypatch.setattr(
+        _VERIFIER, "_source_statement_inventory", lambda root: expected
+    )
+    _VERIFIER._validate_pending_structural_inventory(reordered, _ROOT)
+
+    mutations = {
+        "source_inventory_sha256": "0" * 64,
+        "source_file_count": expected[1] + 1,
+        "statement_count": expected[2] + 1,
+        "excluded_line_count": expected[3] + 1,
+    }
+    for field, value in mutations.items():
+        invalid = dict(reordered)
+        invalid[field] = value
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="differs from the live source tree",
+        ):
+            _VERIFIER._validate_pending_structural_inventory(invalid, _ROOT)
 
 
 def test_acceptance_rejects_na_reason_without_exact_ids(

@@ -8,11 +8,32 @@ from avalan.entities import (
     ToolFormat,
     ToolManagerSettings,
 )
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import StreamItemKind, StreamProviderEvent
 from avalan.tool.manager import ToolManager
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "tool_parsing"
+
+
+def _catalog(
+    manager: ToolManager, *canonical_names: str
+) -> ModelCapabilityCatalog:
+    seed = manager.export_model_capability_seed()
+    seed["descriptors"] = [
+        {
+            "canonical_name": name,
+            "description": f"Invoke {name}.",
+            "aliases": [],
+            "parameter_schema": {
+                "type": "object",
+                "additionalProperties": True,
+            },
+            "result_schema": None,
+        }
+        for name in canonical_names or ("fixture_tool",)
+    ]
+    return ModelCapabilityCatalog.create(seed)
 
 
 def read_json_fixture(name: str) -> Any:
@@ -48,7 +69,16 @@ class ToolCallParserFixtureTestCase(IsolatedAsyncioTestCase):
         for case in cases:
             with self.subTest(case=case["name"]):
                 manager = ToolManager.create_instance(enable_tools=[])
-                parser = ToolCallResponseParser(manager, None)
+                call = case.get("call")
+                names = (
+                    (call["name"],)
+                    if isinstance(call, dict)
+                    and isinstance(call.get("name"), str)
+                    else ()
+                )
+                parser = ToolCallResponseParser(
+                    _catalog(manager, *names), None
+                )
                 items: list[Any] = []
 
                 for token in case["tokens"]:
@@ -105,7 +135,9 @@ class ToolCallParserFixtureTestCase(IsolatedAsyncioTestCase):
             enable_tools=[],
             settings=ToolManagerSettings(tool_format=ToolFormat.HARMONY),
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(
+            _catalog(manager, fixture["call"]["name"]), None
+        )
         items: list[Any] = []
 
         for token in fixture["tokens"]:

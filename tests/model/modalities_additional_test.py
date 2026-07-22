@@ -126,7 +126,7 @@ class VisionTextToVideoCallTestCase(IsolatedAsyncioTestCase):
             engine_uri=None,  # type: ignore[arg-type]
             model=model,
             operation=operation,
-            tool=None,
+            capability=None,
         )
 
         self.assertEqual(result, "ok")
@@ -164,7 +164,7 @@ class VisionTextToVideoCallTestCase(IsolatedAsyncioTestCase):
                 engine_uri=None,  # type: ignore[arg-type]
                 model=model,  # type: ignore[arg-type]
                 operation=operation,
-                tool=None,
+                capability=None,
             )
 
 
@@ -210,7 +210,7 @@ class ModelManagerVisionTextToVideoCallTestCase(IsolatedAsyncioTestCase):
             ),
             model=model,
             operation=operation,
-            tool=None,
+            capability=None,
             context=ModelCallContext(
                 specification=Specification(role=None, goal=None),
                 input=operation.input,

@@ -3,6 +3,7 @@ from ....entities import (
     Input,
     TransformerEngineSettings,
 )
+from ....model.capability import ModelCapabilityCatalog
 from ....model.reasoning import validate_reasoning_summary_request
 from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
@@ -11,12 +12,16 @@ from ....model.stream import (
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    TextGenerationNonStreamResult,
     _reject_legacy_token_stream_chunk,
 )
-from ....tool.manager import ToolManager
 from ....types import LooseJsonValue
 from ...vendor import TextGenerationVendorStream
 from .generation import TextGenerationModel
+from .local_protocol import (
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL,
+    LocalStructuredOutputProtocol,
+)
 
 from asyncio import CancelledError, get_running_loop
 from collections.abc import Callable, Iterator, Mapping
@@ -95,8 +100,21 @@ class MlxLmStream(TextGenerationVendorStream):
         *,
         use_executor: bool = True,
         executor: ThreadPoolExecutor | None = None,
+        local_structured_output_protocol: (
+            LocalStructuredOutputProtocol | None
+        ) = None,
     ) -> None:
         self._closed = False
+        assert local_structured_output_protocol is None or (
+            local_structured_output_protocol
+            is LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+        )
+        self._local_structured_output_protocol = (
+            local_structured_output_protocol
+        )
+        self._supports_tool_calls = (
+            local_structured_output_protocol is not None
+        )
         assert use_executor or executor is None
         self._owns_executor = executor is None and use_executor
         self._executor = executor or (
@@ -194,6 +212,7 @@ class MlxLmStream(TextGenerationVendorStream):
                 backend=StreamProducerBackend.LOCAL,
                 provider_family="mlx",
                 supports_reasoning=True,
+                supports_tool_calls=self._supports_tool_calls,
                 supports_cancellation=True,
             ),
             close_after_terminal=close_after_terminal,
@@ -202,7 +221,11 @@ class MlxLmStream(TextGenerationVendorStream):
     async def _provider_events(
         self,
     ) -> AsyncGenerator[StreamProviderEvent, None]:
-        parser = LocalTextStreamEventParser()
+        parser = (
+            self._local_structured_output_protocol.parser()
+            if self._local_structured_output_protocol is not None
+            else LocalTextStreamEventParser(parse_tool_calls=False)
+        )
         try:
             try:
                 while True:
@@ -218,7 +241,7 @@ class MlxLmStream(TextGenerationVendorStream):
                             provider_event_type="mlx_lm.delta",
                         )
             except (CancelledError, Exception):
-                for event in parser.flush():
+                for event in parser.flush(completed=False):
                     yield self._event_with_provider_type(
                         event,
                         provider_event_type="mlx_lm.delta",
@@ -356,6 +379,9 @@ class MlxLmModel(TextGenerationModel):
         inputs: dict[str, Tensor] | BatchEncoding | Tensor,
         settings: GenerationSettings,
         skip_special_tokens: bool,
+        local_structured_output_protocol: (
+            LocalStructuredOutputProtocol | None
+        ) = None,
     ) -> AsyncGenerator[CanonicalStreamItem, None]:
         mlx_lm = _require_mlx_lm()
         stream_generate_fn = cast(
@@ -380,6 +406,9 @@ class MlxLmModel(TextGenerationModel):
         stream = MlxLmStream(
             stream_generate,
             executor=self._worker_executor(),
+            local_structured_output_protocol=(
+                local_structured_output_protocol
+            ),
         )
         try:
             while True:
@@ -396,7 +425,10 @@ class MlxLmModel(TextGenerationModel):
         inputs: dict[str, Tensor] | BatchEncoding | Tensor,
         settings: GenerationSettings,
         skip_special_tokens: bool,
-    ) -> str:
+        local_structured_output_protocol: (
+            LocalStructuredOutputProtocol | None
+        ) = None,
+    ) -> str | TextGenerationNonStreamResult:
         mlx_lm = _require_mlx_lm()
         generate_fn = cast(Callable[..., str], getattr(mlx_lm, "generate"))
 
@@ -412,7 +444,18 @@ class MlxLmModel(TextGenerationModel):
                 max_tokens=settings.max_new_tokens,
             )
 
-        return self._run_on_worker(generate_text)
+        text = self._run_on_worker(generate_text)
+        if local_structured_output_protocol is None:
+            return text
+        assert (
+            local_structured_output_protocol
+            is LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+        )
+        return local_structured_output_protocol.non_stream_result(
+            text,
+            provider_family="mlx",
+            provider_event_type="mlx.generate",
+        )
 
     def close(self) -> None:
         """Close MLX worker resources."""
@@ -445,17 +488,23 @@ class MlxLmModel(TextGenerationModel):
         instructions: str | None = None,
         skip_special_tokens: bool = False,
         tensor_format: Literal["pt"] = "pt",
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> TextGenerationResponse:
         settings = settings or GenerationSettings()
         validate_reasoning_summary_request(self, settings)
+        effective_capability = self._effective_local_capability(capability)
+        structured_output_protocol = (
+            LOCAL_STRUCTURED_OUTPUT_PROTOCOL
+            if effective_capability is not None
+            else None
+        )
         inputs = super()._tokenize_input(
             input,
             system_prompt=system_prompt,
             developer_prompt=developer_prompt,
             context=None,
             tensor_format=tensor_format,
-            tool=tool,
+            capability=effective_capability,
             chat_template_settings=asdict(settings.chat_settings),
             instructions=instructions,
         )
@@ -473,6 +522,7 @@ class MlxLmModel(TextGenerationModel):
             generation_settings=generation_settings,
             settings=generation_settings,
             skip_special_tokens=skip_special_tokens,
+            local_structured_output_protocol=structured_output_protocol,
             use_async_generator=settings.use_async_generator,
             bos_token=self._tokenizer.bos_token,
             provider_family="mlx",

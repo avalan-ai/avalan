@@ -38,12 +38,18 @@ from avalan.entities import (
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
+    ToolFormat,
     TransformerEngineSettings,
 )
 from avalan.event import Event, EventPayloadKind, EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
+from avalan.model.capability import (
+    DomainCapabilitySeed,
+    ModelCapabilityCatalog,
+    ModelCapabilityDescriptor,
+)
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -68,7 +74,56 @@ from avalan.task.usage import (
     usage_observations_from_response,
 )
 from avalan.tool.manager import ToolManager
-from avalan.tool.parser import ToolCallParser
+
+
+def _tool_parser_catalog(
+    *, tool_format: ToolFormat | None = None
+) -> ModelCapabilityCatalog:
+    return ModelCapabilityCatalog.create(
+        DomainCapabilitySeed(
+            descriptors=(
+                ModelCapabilityDescriptor(
+                    canonical_name="calc",
+                    description="Calculate one expression.",
+                    parameter_schema={
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                ),
+            ),
+            tool_format=tool_format,
+        )
+    )
+
+
+def _posthoc_capability(
+    calls_by_text: dict[str, list[ToolCall]],
+) -> ModelCapabilityCatalog:
+    names = tuple(
+        sorted(
+            {call.name for calls in calls_by_text.values() for call in calls}
+        )
+    )
+    catalog = ModelCapabilityCatalog.create(
+        DomainCapabilitySeed(
+            descriptors=tuple(
+                ModelCapabilityDescriptor(
+                    canonical_name=name,
+                    description=f"Invoke {name}.",
+                    parameter_schema={
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                )
+                for name in names
+            )
+        )
+    )
+    capability = MagicMock(spec=ModelCapabilityCatalog)
+    capability.get_calls.side_effect = calls_by_text.get
+    capability.project.side_effect = catalog.project
+    capability.classify_batch.side_effect = catalog.classify_batch
+    return cast(ModelCapabilityCatalog, capability)
 
 
 class _DummyEngine:
@@ -316,9 +371,13 @@ def _make_response(
     engine_args: dict,
     **kwargs,
 ) -> OrchestratorResponse:
+    kwargs.setdefault(
+        "enable_tool_parsing", kwargs.get("capability") is not None
+    )
     context = ModelCallContext(
         specification=operation.specification,
         input=input_value,
+        capability=kwargs.get("capability"),
         engine_args=dict(engine_args),
     )
     return OrchestratorResponse(
@@ -834,14 +893,6 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
     async def test_answer_delta_parser_with_no_items_suppresses_raw_delta(
         self,
     ):
-        base_parser = ToolCallParser()
-        manager = MagicMock()
-        manager.tool_format = None
-        manager.is_potential_tool_call.side_effect = (
-            base_parser.is_potential_tool_call
-        )
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
-        manager.get_calls.side_effect = base_parser
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
         agent.engine = engine
@@ -853,7 +904,9 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
         )
-        response._tool_parser = ToolCallResponseParser(manager, None)
+        response._tool_parser = ToolCallResponseParser(
+            _tool_parser_catalog(), None
+        )
 
         await response._process_canonical_response_item(
             _canonical_item(
@@ -1213,10 +1266,8 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         agent.return_value = inner_response
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="calc", arguments=None)]
-            if text == "call"
-            else None
+        capability = _posthoc_capability(
+            {"call": [ToolCall(id=uuid4(), name="calc", arguments=None)]}
         )
 
         async def exec_tool(call, context):
@@ -1237,6 +1288,8 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         output = await response.to_str()
@@ -1296,10 +1349,8 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         agent.return_value = inner_response
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="calc", arguments=None)]
-            if text == "call"
-            else None
+        capability = _posthoc_capability(
+            {"call": [ToolCall(id=uuid4(), name="calc", arguments=None)]}
         )
 
         async def exec_tool(call, context):
@@ -1320,6 +1371,8 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         await response.to_str()
@@ -1367,9 +1420,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         call = ToolCall(id=uuid4(), name="calc", arguments=None)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [call] if text == "call" else None
-        )
+        capability = _posthoc_capability({"call": [call]})
         tool.return_value = ToolCallResult(
             id=uuid4(),
             call=call,
@@ -1385,6 +1436,8 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=MagicMock(trigger=AsyncMock()),
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         await response.to_str()
@@ -1799,14 +1852,6 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(calls, [])
 
     async def test_response_text_and_calls_parses_raw_tool_syntax(self):
-        base_parser = ToolCallParser()
-        manager = MagicMock()
-        manager.tool_format = None
-        manager.is_potential_tool_call.side_effect = (
-            base_parser.is_potential_tool_call
-        )
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
-        manager.get_calls.side_effect = base_parser
         tool_text = (
             'before <tool_call>{"name": "calc", '
             '"arguments": {"x": 1}}</tool_call> after'
@@ -1823,7 +1868,9 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             {},
             enable_tool_parsing=False,
         )
-        response._tool_parser = ToolCallResponseParser(manager, None)
+        response._tool_parser = ToolCallResponseParser(
+            _tool_parser_catalog(), None
+        )
 
         text, calls = await response._response_text_and_calls(
             response._response
@@ -1846,14 +1893,6 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
     async def test_non_stream_response_text_and_calls_uses_parser_stage(
         self,
     ) -> None:
-        base_parser = ToolCallParser()
-        manager = MagicMock()
-        manager.tool_format = None
-        manager.is_potential_tool_call.side_effect = (
-            base_parser.is_potential_tool_call
-        )
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
-        manager.get_calls.side_effect = base_parser
         tool_text = (
             'before <tool_call>{"name": "calc", '
             '"arguments": {"x": 1}}</tool_call> after'
@@ -1874,7 +1913,9 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             {},
             enable_tool_parsing=False,
         )
-        response._tool_parser = ToolCallResponseParser(manager, None)
+        response._tool_parser = ToolCallResponseParser(
+            _tool_parser_catalog(), None
+        )
 
         text, calls = await response._response_text_and_calls(
             response._response
@@ -1896,14 +1937,6 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
     async def test_non_stream_response_text_and_calls_direct_parser_stage(
         self,
     ) -> None:
-        base_parser = ToolCallParser()
-        manager = MagicMock()
-        manager.tool_format = None
-        manager.is_potential_tool_call.side_effect = (
-            base_parser.is_potential_tool_call
-        )
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
-        manager.get_calls.side_effect = base_parser
         tool_text = (
             'before <tool_call>{"name": "calc", '
             '"arguments": {"x": 1}}</tool_call> after'
@@ -1919,7 +1952,9 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             {},
             enable_tool_parsing=False,
         )
-        response._tool_parser = ToolCallResponseParser(manager, None)
+        response._tool_parser = ToolCallResponseParser(
+            _tool_parser_catalog(), None
+        )
 
         text, calls = await response._non_stream_response_text_and_calls(
             tool_text

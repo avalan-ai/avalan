@@ -23,6 +23,7 @@ from avalan.entities import (
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
 )
+from avalan.model import ModelCapabilityCatalog
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -648,14 +649,16 @@ class A2AToolSetTestCase(TestCase):
         )
 
         names = {descriptor.name for descriptor in manager.list_tools()}
+        schemas = (
+            ModelCapabilityCatalog.create(
+                manager.export_model_capability_seed()
+            )
+            .project()
+            .schemas
+        )
         self.assertEqual(names, {"a2a.call", "shell.pipeline"})
         self.assertEqual(
-            len(
-                {
-                    schema["function"]["name"]
-                    for schema in manager.json_schemas() or []
-                }
-            ),
+            len({schema["function"]["name"] for schema in schemas}),
             2,
         )
 

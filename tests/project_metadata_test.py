@@ -81,12 +81,12 @@ def _workflow_enforces_exact_input_gates(workflow: str) -> bool:
         "      - name: Verify structured-input type contracts\n"
         "        run: |\n"
         "          make lint\n"
-        "          make typecheck-input-contract INPUT_PHASE=2\n"
+        "          make typecheck-input-contract INPUT_PHASE=3\n"
     )
     postgresql_gate = (
         "      - name: Run exact tests with PostgreSQL\n"
         "        if: matrix.target.os == 'ubuntu-latest'\n"
-        "        run: make test-pgsql-exact no-install INPUT_PHASE=2\n"
+        "        run: make test-pgsql-exact no-install INPUT_PHASE=3\n"
     )
     portable_gate = (
         "      - name: Run exact tests\n"
@@ -94,7 +94,7 @@ def _workflow_enforces_exact_input_gates(workflow: str) -> bool:
         "        run: |\n"
         "          make test-coverage-exact no-install\n"
         "          poetry run python scripts/verify_input_acceptance.py "
-        "--through-phase 2\n"
+        "--through-phase 3\n"
     )
     metadata_gate = (
         "      - name: Verify clean generated metadata\n"

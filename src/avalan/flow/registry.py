@@ -59,9 +59,7 @@ class FlowNodeFactory(Protocol):
 class FlowToolResolver(Protocol):
     def list_tools(self) -> list[ToolDescriptor]: ...
 
-    def resolve_tool_name(
-        self, name: str, *, provider_originated: bool = False
-    ) -> ToolNameResolution: ...
+    def resolve_tool_name(self, name: str) -> ToolNameResolution: ...
 
     def validate_tool_call(
         self, call: ToolCall

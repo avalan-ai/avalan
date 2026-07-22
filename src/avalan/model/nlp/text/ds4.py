@@ -31,9 +31,12 @@ from ....entities import (
     ToolCall,
     TransformerEngineSettings,
 )
+from ....model.capability import ModelCapabilityCatalog
+from ....model.provider import ProviderFamily
 from ....model.reasoning import validate_reasoning_summary_request
 from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
+    NATIVE_STRUCTURED_OUTPUT_METADATA_KEY,
     CanonicalStreamItem,
     LocalTextStreamEventParser,
     StreamItemCorrelation,
@@ -41,11 +44,11 @@ from ....model.stream import (
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    TextGenerationNonStreamResult,
     normalize_provider_stream,
     stream_token_metadata,
 )
 from ....tool.dsml import DsmlParseResult, DsmlPromptMessage, DsmlTools
-from ....tool.manager import ToolManager
 from ....types import LooseJsonValue
 from .generation import TextGenerationModel
 
@@ -60,6 +63,7 @@ from collections.abc import (
     Callable,
     Coroutine,
     Iterable,
+    Mapping,
 )
 from dataclasses import dataclass, field, replace
 from inspect import Parameter, signature
@@ -532,7 +536,10 @@ class Ds4Worker:
             run_id=run_id,
             turn_id=turn_id,
             provider_family=provider_family or "ds4",
-            capabilities=capabilities or self._stream_capabilities(),
+            capabilities=capabilities
+            or self._stream_capabilities(
+                supports_tool_calls=generation_plan.parse_dsml_tools
+            ),
             close_after_terminal=close_after_terminal,
         )
         try:
@@ -572,6 +579,34 @@ class Ds4Worker:
             }:
                 raise self._exception_from_terminal_item(item)
         return "".join(chunks)
+
+    async def generate_non_stream_result_async(
+        self,
+        prompt_tokens: list[int],
+        generation_plan: _Ds4GenerationPlan,
+    ) -> TextGenerationNonStreamResult:
+        """Return one rich result from the native DS4 event boundary."""
+        events = [
+            event
+            async for event in self._stream_events(
+                prompt_tokens,
+                generation_plan,
+            )
+        ]
+        usage = next(
+            (
+                event.usage
+                for event in reversed(events)
+                if event.kind is StreamItemKind.USAGE_COMPLETED
+            ),
+            None,
+        )
+        return TextGenerationNonStreamResult.from_events(
+            events,
+            provider_family="ds4",
+            usage=usage,
+            terminal_event_type="ds4.completed",
+        )
 
     async def _stream_events(
         self,
@@ -697,14 +732,14 @@ class Ds4Worker:
         generation_plan: _Ds4GenerationPlan,
         usage: _Ds4Usage,
     ) -> AsyncGenerator[StreamProviderEvent, None]:
-        parser = LocalTextStreamEventParser()
+        parser = LocalTextStreamEventParser(parse_tool_calls=False)
         async for chunk in self._generate_text_chunks(
             session, generation_plan, usage
         ):
             for event in parser.push(chunk.text):
                 yield self._event_with_metadata(event, chunk.metadata)
         for event in parser.flush():
-            yield event
+            yield self._event_with_metadata(event, {})
 
     async def _generate_dsml_tool_events(
         self,
@@ -715,7 +750,7 @@ class Ds4Worker:
         buffered: list[str] = []
         dsml_start: int | None = None
         content_emitted_until = 0
-        parser = LocalTextStreamEventParser()
+        parser = LocalTextStreamEventParser(parse_tool_calls=False)
         argument_stream = _Ds4DsmlArgumentStream()
 
         async for chunk in self._generate_text_chunks(
@@ -749,7 +784,7 @@ class Ds4Worker:
                         yield self._event_with_metadata(event, chunk.metadata)
                     content_emitted_until = content_end
                 for event in parser.flush():
-                    yield event
+                    yield self._event_with_metadata(event, {})
 
             raw_dsml = text[dsml_start:]
             for event in self._dsml_argument_delta_events(
@@ -763,9 +798,9 @@ class Ds4Worker:
             raise Ds4GenerationError("DS4 generated malformed DSML.")
         if dsml_start is None and content_emitted_until < len(text):
             for event in parser.push(text[content_emitted_until:]):
-                yield event
+                yield self._event_with_metadata(event, {})
             for event in parser.flush():
-                yield event
+                yield self._event_with_metadata(event, {})
 
         calls = self._correlated_tool_calls(
             parsed.calls, argument_stream.tool_call_ids
@@ -870,9 +905,12 @@ class Ds4Worker:
         event: StreamProviderEvent,
         metadata: dict[str, LooseJsonValue],
     ) -> StreamProviderEvent:
-        if not metadata or event.text_delta is None:
+        event_metadata = {**event.metadata, **metadata}
+        if event.kind is StreamItemKind.ANSWER_DELTA:
+            event_metadata[NATIVE_STRUCTURED_OUTPUT_METADATA_KEY] = True
+        if event_metadata == event.metadata:
             return event
-        return replace(event, metadata={**event.metadata, **metadata})
+        return replace(event, metadata=event_metadata)
 
     @staticmethod
     def _new_tool_call_id() -> str:
@@ -981,12 +1019,14 @@ class Ds4Worker:
         }
 
     @staticmethod
-    def _stream_capabilities() -> StreamProviderCapabilities:
+    def _stream_capabilities(
+        *, supports_tool_calls: bool = True
+    ) -> StreamProviderCapabilities:
         return StreamProviderCapabilities(
             backend=StreamProducerBackend.LOCAL,
             provider_family="ds4",
             supports_reasoning=True,
-            supports_tool_calls=True,
+            supports_tool_calls=supports_tool_calls,
             supports_usage=True,
             supports_terminal_events=True,
             supports_cancellation=True,
@@ -1830,12 +1870,13 @@ class Ds4Model(TextGenerationModel):
         manual_sampling: bool | int = False,
         pick: int | None = None,
         skip_special_tokens: bool = False,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> TextGenerationResponse:
         _ = skip_special_tokens
         generation_settings = settings or GenerationSettings()
         validate_reasoning_summary_request(self, generation_settings)
-        parse_dsml_tools = self._uses_dsml_tools(input, tool)
+        effective_capability = self._effective_ds4_capability(capability)
+        parse_dsml_tools = self._uses_dsml_tools(input, effective_capability)
         rendered_system_prompt = _combine_instructions(
             instructions,
             system_prompt,
@@ -1845,7 +1886,7 @@ class Ds4Model(TextGenerationModel):
             rendered_system_prompt,
             developer_prompt,
             generation_settings,
-            tool=tool,
+            capability=effective_capability,
         )
         generation_plan = self._generation_plan(
             generation_settings,
@@ -1868,6 +1909,22 @@ class Ds4Model(TextGenerationModel):
                 generation_settings=generation_settings,
                 settings=generation_settings,
                 use_async_generator=True,
+                bos_token=None,
+                provider_family="ds4",
+            )
+
+        if generation_plan.parse_dsml_tools:
+            result = await self._ds4_worker().generate_non_stream_result_async(
+                prompt_tokens,
+                generation_plan,
+            )
+            return TextGenerationResponse(
+                result,
+                inputs=prompt_tokens,
+                logger=self._logger,
+                generation_settings=generation_settings,
+                settings=generation_settings,
+                use_async_generator=False,
                 bos_token=None,
                 provider_family="ds4",
             )
@@ -1903,7 +1960,7 @@ class Ds4Model(TextGenerationModel):
                 rendered_system_prompt,
                 developer_prompt,
                 GenerationSettings(),
-                tool=None,
+                capability=None,
             )
         )
 
@@ -1950,13 +2007,14 @@ class Ds4Model(TextGenerationModel):
         developer_prompt: str | None,
         settings: GenerationSettings,
         *,
-        tool: ToolManager | None,
+        capability: ModelCapabilityCatalog | None,
     ) -> list[int]:
         worker = self._ds4_worker()
+        capability = self._effective_ds4_capability(capability)
         system_content, messages = self._ds4_prompt_messages(
             input, system_prompt, developer_prompt
         )
-        tool_schemas = self._tool_schemas(tool)
+        tool_schemas = self._tool_schemas(capability)
         if tool_schemas is not None or self._messages_include_tools(messages):
             rendered = DsmlTools.render_prompt(
                 system_content,
@@ -1977,13 +2035,14 @@ class Ds4Model(TextGenerationModel):
         developer_prompt: str | None,
         settings: GenerationSettings,
         *,
-        tool: ToolManager | None,
+        capability: ModelCapabilityCatalog | None,
     ) -> list[int]:
         worker = self._ds4_worker()
+        capability = self._effective_ds4_capability(capability)
         system_content, messages = self._ds4_prompt_messages(
             input, system_prompt, developer_prompt
         )
-        tool_schemas = self._tool_schemas(tool)
+        tool_schemas = self._tool_schemas(capability)
         if tool_schemas is not None or self._messages_include_tools(messages):
             rendered = DsmlTools.render_prompt(
                 system_content,
@@ -2095,14 +2154,44 @@ class Ds4Model(TextGenerationModel):
         )
 
     @classmethod
-    def _tool_schemas(cls, tool: ToolManager | None) -> str | None:
-        if tool is None or tool.is_empty:
+    def _tool_schemas(
+        cls, capability: ModelCapabilityCatalog | None
+    ) -> str | None:
+        if capability is None or not capability.structured_parser_enabled:
             return None
-        return DsmlTools.render_tool_schemas(tool.json_schemas())
+        projection = capability.project(ProviderFamily.LOCAL.value)
+        if projection.is_empty:
+            return None
+        schemas: list[dict[str, object]] = []
+        for schema in projection.schemas:
+            function = cast(Mapping[str, object], schema["function"])
+            schemas.append(
+                {
+                    **cast(Mapping[str, object], schema),
+                    "function": dict(function),
+                }
+            )
+        return DsmlTools.render_tool_schemas(schemas)
 
-    def _uses_dsml_tools(self, input: Input, tool: ToolManager | None) -> bool:
-        if tool is not None and not tool.is_empty:
-            return True
+    def _effective_ds4_capability(
+        self, capability: ModelCapabilityCatalog | None
+    ) -> ModelCapabilityCatalog | None:
+        if capability is None or not capability.structured_parser_enabled:
+            return None
+        worker = self._model
+        if not isinstance(worker, Ds4Worker) or not worker.is_alive:
+            return None
+        return capability
+
+    def _uses_dsml_tools(
+        self,
+        input: Input,
+        capability: ModelCapabilityCatalog | None,
+    ) -> bool:
+        if capability is not None and capability.structured_parser_enabled:
+            projection = capability.project(ProviderFamily.LOCAL.value)
+            if not projection.is_empty:
+                return True
         try:
             raw_messages = self._messages(input, None, None, None)
         except AssertionError:

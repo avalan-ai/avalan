@@ -7,7 +7,7 @@ from json import dumps, loads
 from pathlib import Path
 from sys import modules
 from sys import path as sys_path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -87,8 +87,114 @@ def _set_ledger_digest(ledger: dict[str, Any]) -> None:
     ledger["ledger_sha256"] = _canonical_digest(payload)
 
 
+def test_phase3_live_exclusion_fixtures_match_reviewed_relocations() -> None:
+    """Pin the reviewed Phase 3 parser and directive relocations."""
+    fixtures = _ROOT / "tests" / "fixtures" / "input"
+    phase2 = loads(
+        (fixtures / "coverage_exclusions_phase2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    phase3 = loads(
+        (fixtures / "coverage_exclusions_phase3.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    ledger = loads(
+        (fixtures / "coverage_exclusion_relocations_phase3.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    reviewer = "/root/phase3_closure_audit/turn3_toolmanager_readonly"
+    vllm_path = "src/avalan/model/nlp/text/vllm.py"
+
+    assert phase2["snapshot_sha256"] == (
+        _VERIFIER._EXPECTED_EXCLUSION_PHASE2_SHA256
+    )
+    assert phase3["snapshot_sha256"] == _canonical_digest(
+        _snapshot_digest_payload(phase3)
+    )
+    assert phase3["snapshot_sha256"] == (
+        _VERIFIER._EXPECTED_EXCLUSION_CURRENT_SHA256
+    )
+    assert [
+        exclusion
+        for exclusion in phase3["exclusions"]
+        if exclusion["path"] == vllm_path
+    ] == [
+        {
+            "path": vllm_path,
+            "line": 51,
+            "text": (
+                "    except ImportError:  # pragma: no cover - vllm may"
+                " not be installed"
+            ),
+        }
+    ]
+    assert phase3["report_excluded_lines"][
+        "src/avalan/model/nlp/text/ds4.py"
+    ] == list(range(313, 321))
+    assert phase3["report_excluded_lines"][
+        "src/avalan/model/nlp/text/generation.py"
+    ] == [63, 64, 65, 66, 74, 75]
+    assert phase3["report_excluded_lines"][vllm_path] == [51, 52]
+    assert ledger["baseline_snapshot_sha256"] == phase2["snapshot_sha256"]
+    assert ledger["current_snapshot_sha256"] == phase3["snapshot_sha256"]
+    assert ledger["directive_relocations"] == [
+        {
+            "identity": (
+                "8f49d2496087a6964916383d4e715e6e0b06ae1dc7f10d4d486f44d3b4caba6f"
+            ),
+            "path": vllm_path,
+            "text": (
+                "    except ImportError:  # pragma: no cover - vllm may"
+                " not be installed"
+            ),
+            "occurrence": 1,
+            "from_line": 44,
+            "to_line": 51,
+            "reviewed_by": reviewer,
+            "reason": (
+                "The reviewed capability and structured-protocol imports"
+                " moved the unchanged vLLM optional-import coverage"
+                " directive down by seven lines."
+            ),
+        }
+    ]
+    reviewed_entries = [
+        entry
+        for field in (
+            "directive_relocations",
+            "report_exclusion_relocations",
+            "report_exclusion_additions",
+            "report_exclusion_removals",
+        )
+        for entry in ledger[field]
+    ]
+    assert reviewed_entries
+    assert {entry["reviewed_by"] for entry in reviewed_entries} == {reviewer}
+    ledger_payload = {
+        key: value for key, value in ledger.items() if key != "ledger_sha256"
+    }
+    assert ledger["ledger_sha256"] == _canonical_digest(ledger_payload)
+    assert ledger["ledger_sha256"] == (
+        _VERIFIER._EXPECTED_EXCLUSION_RELOCATION_SHA256
+    )
+    report_lines = _VERIFIER._verify_exclusion_history_chain(
+        fixtures / "coverage_exclusions.json",
+        fixtures / "coverage_exclusions_phase2.json",
+        fixtures / "coverage_exclusion_relocations_phase2.json",
+        fixtures / "coverage_exclusions_phase3.json",
+        fixtures / "coverage_exclusion_relocations_phase3.json",
+        _ROOT,
+        _ROOT / "src",
+    )
+    assert report_lines[vllm_path] == (51, 52)
+
+
 def _synthetic_repository(
     tmp_path: Path,
+    fixture_dir: Path | None = None,
 ) -> tuple[Path, dict[str, Any], Path, Path, Path]:
     """Create a tiny source tree and exact raw coverage evidence."""
     source = tmp_path / "src" / "package"
@@ -159,13 +265,403 @@ def _synthetic_repository(
         "report_exclusion_relocations": [],
     }
     _set_ledger_digest(ledger)
-    baseline_path = tmp_path / "coverage_exclusions.json"
-    current_path = tmp_path / "coverage_exclusions_phase1.json"
-    relocation_path = tmp_path / "coverage_exclusion_relocations_phase1.json"
+    evidence_dir = fixture_dir or tmp_path
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    baseline_path = evidence_dir / "coverage_exclusions.json"
+    current_path = evidence_dir / "coverage_exclusions_phase1.json"
+    relocation_path = (
+        evidence_dir / "coverage_exclusion_relocations_phase1.json"
+    )
     _write_json(baseline_path, baseline)
     _write_json(current_path, current)
     _write_json(relocation_path, ledger)
     return sample, report, baseline_path, current_path, relocation_path
+
+
+def _synthetic_phase3_repository(tmp_path: Path) -> dict[str, Any]:
+    """Create an exact synthetic Phase 0-3 exclusion history."""
+    sample, sample_report, baseline_path, phase1_path, phase1_ledger_path = (
+        _synthetic_repository(
+            tmp_path,
+            tmp_path / "tests" / "fixtures" / "input",
+        )
+    )
+    phase1 = loads(phase1_path.read_text(encoding="utf-8"))
+    protocol = sample.parent / "protocol.py"
+    protocol.write_text(
+        "from typing import Protocol\n\n"
+        "class AddedProtocol(Protocol):\n"
+        "    def call(\n"
+        "        self,\n"
+        "        value: int,\n"
+        "    ) -> int: ...\n\n"
+        "VALUE = 1\n",
+        encoding="utf-8",
+    )
+    analyzer = _VERIFIER.Coverage(config_file=False, data_file=None)
+    _, _, old_excluded, _, _ = analyzer.analysis2(str(protocol))
+    normalized = "src/package/protocol.py"
+    phase2 = deepcopy(phase1)
+    phase2["report_excluded_lines"][normalized] = old_excluded
+    _set_snapshot_digest(phase2, "snapshot_sha256")
+    phase2_ledger = {
+        "schema_version": 2,
+        "baseline_snapshot_sha256": phase1["snapshot_sha256"],
+        "current_snapshot_sha256": phase2["snapshot_sha256"],
+        "directive_count_before": len(phase1["exclusions"]),
+        "directive_count_after": len(phase2["exclusions"]),
+        "report_excluded_line_count_before": sum(
+            len(lines) for lines in phase1["report_excluded_lines"].values()
+        ),
+        "report_excluded_line_count_after": sum(
+            len(lines) for lines in phase2["report_excluded_lines"].values()
+        ),
+        "directive_relocations": [],
+        "report_exclusion_relocations": [],
+        "report_exclusion_additions": [
+            {
+                "path": normalized,
+                "lines": old_excluded,
+                "reviewed_by": _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+                "reason": (
+                    "The synthetic protocol adds reviewed parser exclusion"
+                    " evidence."
+                ),
+            }
+        ],
+    }
+    _set_ledger_digest(phase2_ledger)
+    evidence_dir = baseline_path.parent
+    phase2_path = evidence_dir / "coverage_exclusions_phase2.json"
+    phase2_ledger_path = (
+        evidence_dir / "coverage_exclusion_relocations_phase2.json"
+    )
+    _write_json(phase2_path, phase2)
+    _write_json(phase2_ledger_path, phase2_ledger)
+
+    protocol.write_text(
+        "from typing import Protocol\n\n"
+        "class AddedProtocol(Protocol):\n"
+        "    def call(self, value: int) -> int: ...\n\n"
+        "VALUE = 1\n",
+        encoding="utf-8",
+    )
+    current_analyzer = _VERIFIER.Coverage(config_file=False, data_file=None)
+    _, statements, excluded, _, _ = current_analyzer.analysis2(str(protocol))
+    phase3 = deepcopy(phase2)
+    phase3["report_excluded_lines"][normalized] = excluded
+    _set_snapshot_digest(phase3, "snapshot_sha256")
+    removed = old_excluded[1 : 1 + len(old_excluded) - len(excluded)]
+    phase3_ledger = {
+        "schema_version": 3,
+        "baseline_snapshot_sha256": phase2["snapshot_sha256"],
+        "current_snapshot_sha256": phase3["snapshot_sha256"],
+        "directive_count_before": len(phase2["exclusions"]),
+        "directive_count_after": len(phase3["exclusions"]),
+        "report_excluded_line_count_before": sum(
+            len(lines) for lines in phase2["report_excluded_lines"].values()
+        ),
+        "report_excluded_line_count_after": sum(
+            len(lines) for lines in phase3["report_excluded_lines"].values()
+        ),
+        "directive_relocations": [],
+        "report_exclusion_relocations": [
+            {
+                "path": normalized,
+                "from_lines": old_excluded,
+                "to_lines": excluded,
+                "reviewed_by": _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+                "reason": (
+                    "The synthetic signature contraction relocates and"
+                    " removes reviewed parser exclusions."
+                ),
+            }
+        ],
+        "report_exclusion_additions": [],
+        "report_exclusion_removals": [
+            {
+                "path": normalized,
+                "lines": removed,
+                "reviewed_by": _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+                "reason": (
+                    "The synthetic signature contraction removes three"
+                    " physical Protocol continuation lines."
+                ),
+            }
+        ],
+    }
+    _set_ledger_digest(phase3_ledger)
+    phase3_path = evidence_dir / "coverage_exclusions_phase3.json"
+    phase3_ledger_path = (
+        evidence_dir / "coverage_exclusion_relocations_phase3.json"
+    )
+    _write_json(phase3_path, phase3)
+    _write_json(phase3_ledger_path, phase3_ledger)
+
+    protocol_entry = {
+        "executed_lines": sorted(set(statements) | set(excluded)),
+        "excluded_lines": excluded,
+        "missing_lines": [],
+        "summary": _summary(
+            covered=len(statements),
+            excluded=len(excluded),
+            missing=0,
+            statements=len(statements),
+        ),
+    }
+    report = deepcopy(sample_report)
+    report["files"][normalized] = protocol_entry
+    report["totals"] = {
+        field: (
+            sample_report["totals"][field] + protocol_entry["summary"][field]
+        )
+        for field in (
+            "covered_lines",
+            "excluded_lines",
+            "missing_lines",
+            "num_statements",
+        )
+    }
+    report_path = tmp_path / "coverage.json"
+    _write_json(report_path, report)
+    return {
+        "report": report,
+        "report_path": report_path,
+        "baseline_path": baseline_path,
+        "phase1_path": phase1_path,
+        "phase1_ledger_path": phase1_ledger_path,
+        "phase2": phase2,
+        "phase2_ledger": phase2_ledger,
+        "phase2_path": phase2_path,
+        "phase2_ledger_path": phase2_ledger_path,
+        "phase3": phase3,
+        "phase3_ledger": phase3_ledger,
+        "phase3_path": phase3_path,
+        "phase3_ledger_path": phase3_ledger_path,
+        "normalized": normalized,
+    }
+
+
+def _pin_phase3_history(
+    history: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pin every synthetic Phase 0-3 history digest."""
+    baseline = loads(history["baseline_path"].read_text(encoding="utf-8"))
+    phase1 = loads(history["phase1_path"].read_text(encoding="utf-8"))
+    phase1_ledger = loads(
+        history["phase1_ledger_path"].read_text(encoding="utf-8")
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_BASELINE_SHA256",
+        baseline["baseline_sha256"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_PHASE1_SHA256",
+        phase1["snapshot_sha256"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_PHASE1_RELOCATION_SHA256",
+        phase1_ledger["ledger_sha256"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_PHASE1_REVIEWER",
+        _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_PHASE2_SHA256",
+        history["phase2"]["snapshot_sha256"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_PHASE2_RELOCATION_SHA256",
+        history["phase2_ledger"]["ledger_sha256"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_PHASE2_REVIEWER",
+        _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_CURRENT_SHA256",
+        history["phase3"]["snapshot_sha256"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_RELOCATION_SHA256",
+        history["phase3_ledger"]["ledger_sha256"],
+    )
+
+
+def test_phase3_history_succeeds_implicitly_explicitly_and_through_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Use one complete Phase 0-3 chain through every public route."""
+    history = _synthetic_phase3_repository(tmp_path)
+    _pin_phase3_history(history, monkeypatch)
+
+    implicit = _VERIFIER.verify_src_coverage(
+        history["report_path"],
+        repo_root=tmp_path,
+    )
+    explicit = _VERIFIER.verify_src_coverage(
+        history["report_path"],
+        repo_root=tmp_path,
+        exclusion_baseline_path=history["baseline_path"],
+        exclusion_prior_path=history["phase2_path"],
+        exclusion_prior_relocation_path=history["phase2_ledger_path"],
+        exclusion_current_path=history["phase3_path"],
+        exclusion_relocation_path=history["phase3_ledger_path"],
+    )
+    assert implicit == explicit
+
+    monkeypatch.setattr(
+        _VERIFIER, "default_report_path", lambda: history["report_path"]
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "default_exclusion_baseline_path",
+        lambda: history["baseline_path"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "default_exclusion_prior_path",
+        lambda: history["phase2_path"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "default_exclusion_prior_relocation_path",
+        lambda: history["phase2_ledger_path"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "default_exclusion_current_path",
+        lambda: history["phase3_path"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "default_exclusion_relocation_path",
+        lambda: history["phase3_ledger_path"],
+    )
+    monkeypatch.setattr(_VERIFIER, "repository_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_parse_args",
+        lambda: SimpleNamespace(
+            report=history["report_path"],
+            exclusion_baseline=history["baseline_path"],
+            exclusion_prior=history["phase2_path"],
+            exclusion_prior_relocations=history["phase2_ledger_path"],
+            exclusion_current=history["phase3_path"],
+            exclusion_relocations=history["phase3_ledger_path"],
+            repo_root=tmp_path,
+        ),
+    )
+    assert _VERIFIER.main() == 0
+    assert "exact source coverage passed" in capsys.readouterr().out
+
+
+def test_phase3_removal_ledger_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject every malformed or unsupported schema-3 removal claim."""
+    history = _synthetic_phase3_repository(tmp_path)
+    _pin_phase3_history(history, monkeypatch)
+
+    for mutation, message in (
+        ("missing", "changed exclusion counts"),
+        ("extra", "changed exclusion counts"),
+        ("duplicate", "removal is duplicated"),
+        ("empty", "empty coverage report exclusion removal"),
+        ("unreviewed", "relocation is unreviewed"),
+        ("wrong_count", "changed exclusion counts"),
+        ("wrong_lines", "removal differs from snapshots"),
+    ):
+        ledger = deepcopy(history["phase3_ledger"])
+        removals = ledger["report_exclusion_removals"]
+        if mutation == "missing":
+            removals.clear()
+        elif mutation == "extra":
+            removals.append(
+                {
+                    "path": "src/package/sample.py",
+                    "lines": [2],
+                    "reviewed_by": _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+                    "reason": (
+                        "An invalid extra synthetic removal must be rejected."
+                    ),
+                }
+            )
+        elif mutation == "duplicate":
+            removals.append(deepcopy(removals[0]))
+        elif mutation == "empty":
+            removals[0]["lines"] = []
+        elif mutation == "unreviewed":
+            removals[0]["reviewed_by"] = "pending"
+        elif mutation == "wrong_count":
+            removals[0]["lines"] = removals[0]["lines"][:-1]
+        else:
+            removals[0]["lines"] = [100, 101, 102]
+        _set_ledger_digest(ledger)
+        _write_json(history["phase3_ledger_path"], ledger)
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_EXCLUSION_RELOCATION_SHA256",
+            ledger["ledger_sha256"],
+        )
+        with pytest.raises(
+            _VERIFIER.CoverageVerificationError,
+            match=message,
+        ):
+            _VERIFIER.verify_src_coverage(
+                history["report_path"],
+                repo_root=tmp_path,
+            )
+
+
+def test_complete_history_rejects_early_removals_and_digest_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prohibit removals before Phase 3 and pin every historical digest."""
+    history = _synthetic_phase3_repository(tmp_path)
+    _pin_phase3_history(history, monkeypatch)
+    phase2_ledger = deepcopy(history["phase2_ledger"])
+    phase2_ledger["schema_version"] = 3
+    phase2_ledger["report_exclusion_removals"] = []
+    _set_ledger_digest(phase2_ledger)
+    _write_json(history["phase2_ledger_path"], phase2_ledger)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_EXCLUSION_PHASE2_RELOCATION_SHA256",
+        phase2_ledger["ledger_sha256"],
+    )
+    with pytest.raises(
+        _VERIFIER.CoverageVerificationError,
+        match="removals are prohibited",
+    ):
+        _VERIFIER.verify_src_coverage(
+            history["report_path"], repo_root=tmp_path
+        )
+
+    _write_json(history["phase2_ledger_path"], history["phase2_ledger"])
+    _pin_phase3_history(history, monkeypatch)
+    monkeypatch.setattr(
+        _VERIFIER, "_EXPECTED_EXCLUSION_PHASE1_SHA256", "0" * 64
+    )
+    with pytest.raises(
+        _VERIFIER.CoverageVerificationError,
+        match="phase-1 snapshot digest changed",
+    ):
+        _VERIFIER.verify_src_coverage(
+            history["report_path"], repo_root=tmp_path
+        )
 
 
 def _verify(
@@ -680,18 +1176,54 @@ def test_exact_coverage_allows_only_reviewed_exclusion_relocations(
             "_EXPECTED_EXCLUSION_RELOCATION_SHA256",
             candidate_ledger["ledger_sha256"],
         )
-        return cast(
-            dict[str, tuple[int, ...]],
-            _VERIFIER._verify_exclusion_history_chain(
-                baseline_path,
-                current_path,
-                relocation_path,
-                next_current_path,
-                next_ledger_path,
-                tmp_path,
-                tmp_path / "src",
-            ),
+        baseline_snapshot = _VERIFIER._read_exclusion_snapshot(
+            baseline_path,
+            tmp_path,
+            tmp_path / "src",
+            digest_field="baseline_sha256",
+            expected_digest=baseline["baseline_sha256"],
+            label="baseline",
         )
+        prior_snapshot = _VERIFIER._read_exclusion_snapshot(
+            current_path,
+            tmp_path,
+            tmp_path / "src",
+            digest_field="snapshot_sha256",
+            expected_digest=valid_current["snapshot_sha256"],
+            label="prior",
+        )
+        _VERIFIER._verify_exclusion_relocations(
+            relocation_path,
+            baseline_snapshot,
+            prior_snapshot,
+            tmp_path,
+            tmp_path / "src",
+            expected_digest=valid_ledger["ledger_sha256"],
+            expected_reviewer=_VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+            allow_report_additions=False,
+        )
+        current_snapshot = _VERIFIER._read_exclusion_snapshot(
+            next_current_path,
+            tmp_path,
+            tmp_path / "src",
+            digest_field="snapshot_sha256",
+            expected_digest=candidate_current["snapshot_sha256"],
+            label="current",
+        )
+        _VERIFIER._verify_exclusion_relocations(
+            next_ledger_path,
+            prior_snapshot,
+            current_snapshot,
+            tmp_path,
+            tmp_path / "src",
+            expected_digest=candidate_ledger["ledger_sha256"],
+            expected_reviewer=_VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+            allow_report_additions=True,
+        )
+        _VERIFIER._verify_observed_exclusions(
+            current_snapshot, tmp_path, tmp_path / "src"
+        )
+        return cast(dict[str, tuple[int, ...]], current_snapshot.report_lines)
 
     assert verify_addition(
         deepcopy(next_current),
@@ -732,20 +1264,3 @@ def test_exact_coverage_allows_only_reviewed_exclusion_relocations(
             verify_addition(candidate_current, candidate_ledger)
 
     verify_addition(deepcopy(next_current), deepcopy(next_ledger))
-    rewritten_prior = deepcopy(valid_current)
-    rewritten_prior["exclusions"][0]["line"] += 1
-    _set_snapshot_digest(rewritten_prior, "snapshot_sha256")
-    _write_json(current_path, rewritten_prior)
-    with pytest.raises(
-        _VERIFIER.CoverageVerificationError,
-        match="prior snapshot digest changed",
-    ):
-        _VERIFIER._verify_exclusion_history_chain(
-            baseline_path,
-            current_path,
-            relocation_path,
-            next_current_path,
-            next_ledger_path,
-            tmp_path,
-            tmp_path / "src",
-        )

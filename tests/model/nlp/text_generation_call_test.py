@@ -39,7 +39,7 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
             system_prompt=None,
             developer_prompt=None,
             context=None,
-            tool=None,
+            capability=None,
             chat_template_settings=asdict(settings.chat_settings),
             instructions=None,
         )
@@ -136,7 +136,7 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
             system_prompt=None,
             developer_prompt=None,
             context=None,
-            tool=None,
+            capability=None,
             chat_template_settings=asdict(settings.chat_settings),
         )
 

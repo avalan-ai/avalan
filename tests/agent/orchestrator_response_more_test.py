@@ -91,9 +91,13 @@ def _make_response(
     engine_args: dict,
     **kwargs,
 ) -> OrchestratorResponse:
+    kwargs.setdefault(
+        "enable_tool_parsing", kwargs.get("capability") is not None
+    )
     context = ModelCallContext(
         specification=operation.specification,
         input=input_value,
+        capability=kwargs.get("capability"),
         engine_args=dict(engine_args),
     )
     return OrchestratorResponse(

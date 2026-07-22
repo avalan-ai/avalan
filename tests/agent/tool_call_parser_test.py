@@ -1,15 +1,19 @@
-from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
-from avalan.entities import ToolFormat
+from avalan.entities import ToolCall, ToolCallParseOutcome, ToolFormat
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import StreamItemKind, StreamProviderEvent
 from avalan.tool.parser import ToolCallParser
 
 
-def _call() -> SimpleNamespace:
-    return SimpleNamespace(name="calc", arguments={})
+def _call() -> ToolCall:
+    return ToolCall(id="call-1", name="calc", arguments={})
+
+
+def _outcome(text: str, marker: str) -> ToolCallParseOutcome:
+    return ToolCallParseOutcome(calls=[_call()] if marker in text else [])
 
 
 def _kinds(items: list[object]) -> list[StreamItemKind]:
@@ -31,17 +35,15 @@ def _answer_text(items: list[object]) -> str:
 
 class ToolCallParserTestCase(IsolatedAsyncioTestCase):
     async def test_with_tool_call_tags(self):
-        manager = MagicMock()
-
-        def _get_calls(text: str):
-            return [_call()] if "</tool_call>" in text else None
-
-        manager.is_potential_tool_call.return_value = True
-        manager.get_calls.side_effect = _get_calls
+        capability = MagicMock(spec=ModelCapabilityCatalog)
+        capability.is_potential_tool_call.return_value = True
+        capability.parse_calls.side_effect = lambda text: _outcome(
+            text, "</tool_call>"
+        )
         base_parser = ToolCallParser()
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        capability.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(capability, None)
         tokens: list[object] = []
         for t in ["<tool_call>", "x", "</tool_call>", "y"]:
             tokens.extend(await parser.push(t))
@@ -51,18 +53,16 @@ class ToolCallParserTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_answer_text(tokens), "y")
 
     async def test_harmony_format_tokens(self):
-        manager = MagicMock()
-
-        def _get_calls(text: str):
-            return [_call()] if "<|call|>" in text else None
-
-        manager.is_potential_tool_call.return_value = True
-        manager.get_calls.side_effect = _get_calls
-        manager.tool_format = ToolFormat.HARMONY
+        capability = MagicMock(spec=ModelCapabilityCatalog)
+        capability.is_potential_tool_call.return_value = True
+        capability.parse_calls.side_effect = lambda text: _outcome(
+            text, "<|call|>"
+        )
+        capability.tool_format = ToolFormat.HARMONY
         base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        capability.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(capability, None)
         tokens: list[object] = []
         parts = [
             "<|channel|>",
@@ -80,18 +80,16 @@ class ToolCallParserTestCase(IsolatedAsyncioTestCase):
     async def test_harmony_final_channel_marker_closes_without_visible_leak(
         self,
     ):
-        manager = MagicMock()
-
-        def _get_calls(text: str):
-            return [_call()] if "<|call|>" in text else None
-
-        manager.is_potential_tool_call.return_value = True
-        manager.get_calls.side_effect = _get_calls
-        manager.tool_format = ToolFormat.HARMONY
+        capability = MagicMock(spec=ModelCapabilityCatalog)
+        capability.is_potential_tool_call.return_value = True
+        capability.parse_calls.side_effect = lambda text: _outcome(
+            text, "<|call|>"
+        )
+        capability.tool_format = ToolFormat.HARMONY
         base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        capability.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(capability, None)
         tokens: list[object] = []
         parts = [
             "<|channel|>",
@@ -106,18 +104,16 @@ class ToolCallParserTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_answer_text(tokens), "done")
 
     async def test_harmony_format_tokens_analysis(self):
-        manager = MagicMock()
-
-        def _get_calls(text: str):
-            return [_call()] if "<|call|>" in text else None
-
-        manager.is_potential_tool_call.return_value = True
-        manager.get_calls.side_effect = _get_calls
-        manager.tool_format = ToolFormat.HARMONY
+        capability = MagicMock(spec=ModelCapabilityCatalog)
+        capability.is_potential_tool_call.return_value = True
+        capability.parse_calls.side_effect = lambda text: _outcome(
+            text, "<|call|>"
+        )
+        capability.tool_format = ToolFormat.HARMONY
         base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        capability.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(capability, None)
         tokens: list[object] = []
         parts = [
             "<|channel|>",
@@ -133,18 +129,16 @@ class ToolCallParserTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(_answer_text(tokens), "end")
 
     async def test_harmony_format_tokens_with_prefix(self):
-        manager = MagicMock()
-
-        def _get_calls(text: str):
-            return [_call()] if "<|call|>" in text else None
-
-        manager.is_potential_tool_call.return_value = True
-        manager.get_calls.side_effect = _get_calls
-        manager.tool_format = ToolFormat.HARMONY
+        capability = MagicMock(spec=ModelCapabilityCatalog)
+        capability.is_potential_tool_call.return_value = True
+        capability.parse_calls.side_effect = lambda text: _outcome(
+            text, "<|call|>"
+        )
+        capability.tool_format = ToolFormat.HARMONY
         base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
-        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        capability.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(capability, None)
         tokens: list[object] = []
         parts = [
             "<|start|>",

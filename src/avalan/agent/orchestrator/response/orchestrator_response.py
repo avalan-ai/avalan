@@ -18,10 +18,23 @@ from ....entities import (
 )
 from ....event import Event, EventObservabilityPayload, EventType
 from ....event.manager import EventManager
+from ....interaction.entities import RESERVED_INPUT_CAPABILITY_NAME
 from ....model.call import ModelCallContext
+from ....model.capability import (
+    CapabilityBatchAccepted,
+    CapabilityBatchRejected,
+    CapabilityBatchRejectionCode,
+    ModelCapabilityCatalog,
+    ModelCapabilityValidationError,
+    ProviderCapabilityCall,
+    TaskInputCapabilityCall,
+)
 from ....model.response.parsers.tool import ToolCallResponseParser
 from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID,
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY,
+    NATIVE_STRUCTURED_OUTPUT_METADATA_KEY,
     CanonicalStreamItem,
     StreamChannel,
     StreamConsumerProjection,
@@ -137,6 +150,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _engine_args: dict[str, Any]
     _event_manager: EventManager | None
     _tool_manager: ToolManager | None
+    _capability_catalog: ModelCapabilityCatalog | None
     _calls: Queue[ToolCall]
     _tool_result_outcomes: Queue[_ToolExecutionOutcome]
     _input: Input
@@ -169,6 +183,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _canonical_reasoning_segments: StreamReasoningSegmentState
     _canonical_item_available: AsyncioEvent
     _canonical_tool_call_lifecycles: dict[str, _CanonicalToolCallLifecycle]
+    _staged_tool_call_items: list[CanonicalStreamItem]
+    _staged_tool_batch_invalid: bool
+    _staged_tool_batch_rejection_code: CapabilityBatchRejectionCode | None
+    _staged_tool_batch_present: bool
+    _classified_tool_call_object_ids: set[int]
+    _canonical_tool_call_provider_families: dict[str, str]
+    _provider_tool_call_ids_by_canonical_id: dict[str, str]
+    _text_parser_tool_call_ids: set[str]
     _canonical_tool_call_argument_delta_ids: set[str]
     _canonical_tool_call_ready_ids: set[str]
     _canonical_tool_call_done_ids: set[str]
@@ -177,6 +199,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _canonical_tool_execution_terminal_ids: set[str]
     _canonical_tool_call_reserved_ids: set[str]
     _response_tool_call_id_aliases: dict[str, str]
+    _response_reserved_tool_call_ids: set[str]
     _canonical_tool_call_ids_by_object: dict[int, str]
     _canonical_tool_call_index: int
     _canonical_tool_call_diagnostic_index: int
@@ -186,6 +209,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _maximum_tool_cycles: MaximumToolCycles
     _block_repeated_tool_calls: bool
     _final_response_text: str | None
+    _task_input_call: TaskInputCapabilityCall | None
 
     def __init__(
         self,
@@ -207,6 +231,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         block_repeated_tool_calls: bool = False,
         enable_tool_parsing: bool = True,
         maximum_tool_cycles: MaximumToolCycles = DEFAULT_MAXIMUM_TOOL_CYCLES,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> None:
         assert input and response and engine_agent and operation
         assert type(block_repeated_tool_calls) is bool
@@ -218,6 +243,19 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._engine_args = engine_args
         self._event_manager = event_manager
         self._tool_manager = None if tool and tool.is_empty else tool
+        context_capability = context.capability
+        if capability is None:
+            capability = context_capability
+        elif context_capability is None:
+            context = replace(context, capability=capability)
+        else:
+            assert (
+                context_capability is capability
+            ), "response capability must match the model-call context"
+        self._capability_catalog = capability
+        assert (
+            not enable_tool_parsing or capability is not None
+        ), "tool parsing requires an explicit model capability catalog"
         self._context = context
         self._finished = False
         self._step = 0
@@ -238,8 +276,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._cancellation_checker = None
         self._model_responses = [response]
         self._tool_parser = (
-            ToolCallResponseParser(self._tool_manager, self._event_manager)
-            if enable_tool_parsing and self._tool_manager
+            ToolCallResponseParser(capability, self._event_manager)
+            if enable_tool_parsing and capability is not None
             else None
         )
         self._canonical_items = []
@@ -260,6 +298,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._canonical_reasoning_segments = StreamReasoningSegmentState()
         self._canonical_item_available = AsyncioEvent()
         self._canonical_tool_call_lifecycles = {}
+        self._staged_tool_call_items = []
+        self._staged_tool_batch_invalid = False
+        self._staged_tool_batch_rejection_code = None
+        self._staged_tool_batch_present = False
+        self._classified_tool_call_object_ids = set()
+        self._canonical_tool_call_provider_families = {}
+        self._provider_tool_call_ids_by_canonical_id = {}
+        self._text_parser_tool_call_ids = set()
         self._canonical_tool_call_argument_delta_ids = set()
         self._canonical_tool_call_ready_ids = set()
         self._canonical_tool_call_done_ids = set()
@@ -268,6 +314,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._canonical_tool_execution_terminal_ids = set()
         self._canonical_tool_call_reserved_ids = set()
         self._response_tool_call_id_aliases = {}
+        self._response_reserved_tool_call_ids = set()
         self._canonical_tool_call_ids_by_object = {}
         self._canonical_tool_call_index = 0
         self._canonical_tool_call_diagnostic_index = 0
@@ -277,6 +324,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._maximum_tool_cycles = maximum_tool_cycles
         self._block_repeated_tool_calls = block_repeated_tool_calls
         self._final_response_text = None
+        self._task_input_call = None
 
     @property
     def input_token_count(self) -> int:
@@ -307,6 +355,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     def canonical_items(self) -> tuple[CanonicalStreamItem, ...]:
         return tuple(self._canonical_items)
 
+    @property
+    def task_input_call(self) -> TaskInputCapabilityCall | None:
+        """Return the validated reserved call awaiting control-plane wiring."""
+        return self._task_input_call
+
     async def consumer_projections(
         self,
         *,
@@ -335,6 +388,20 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self,
         item: object,
     ) -> None:
+        if (
+            self._capability_catalog is not None
+            and getattr(item, "kind", None) is StreamItemKind.STREAM_DIAGNOSTIC
+        ):
+            self._mark_staged_tool_batch_invalid()
+            return
+        correlation = getattr(item, "correlation", None)
+        if isinstance(correlation, StreamItemCorrelation):
+            tool_call_id = correlation.tool_call_id
+            if self._is_valid_tool_call_id(tool_call_id):
+                assert tool_call_id is not None
+                self._text_parser_tool_call_ids.add(
+                    self._canonical_lifecycle_tool_call_id(tool_call_id)
+                )
         if isinstance(item, StreamProviderEvent):
             self._append_canonical_provider_event_item(item)
             return
@@ -383,6 +450,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             StreamItemKind.STREAM_ERRORED,
             StreamItemKind.STREAM_CANCELLED,
         ):
+            if event.kind is not StreamItemKind.STREAM_COMPLETED:
+                self._discard_untrusted_response_tool_call_batch()
             self._finish_canonical_stream(
                 event.kind,
                 data=event.data,
@@ -411,6 +480,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert event.kind in _TOOL_CALL_LIFECYCLE_KINDS
         tool_call_id = correlation.tool_call_id
         if not self._is_valid_tool_call_id(tool_call_id):
+            if self._capability_catalog is not None:
+                self._mark_staged_tool_batch_invalid(
+                    CapabilityBatchRejectionCode.MISSING_CALL_ID
+                )
+                return None
             return self._append_canonical_tool_call_lifecycle_diagnostic(
                 tool_call_id=None,
                 code="orchestrator.tool_call.missing_id",
@@ -435,6 +509,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 tool_call_id=tool_call_id,
             )
             state.invalid = True
+            if self._capability_catalog is not None:
+                self._mark_staged_tool_batch_invalid()
+                return None
             return self._append_canonical_tool_call_lifecycle_diagnostic(
                 tool_call_id=tool_call_id,
                 code="orchestrator.tool_call.missing_argument_delta",
@@ -488,6 +565,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         if item.terminal_outcome is not None:
             if item.kind is StreamItemKind.STREAM_COMPLETED:
                 return None
+            self._discard_untrusted_response_tool_call_batch()
             self._finish_canonical_stream(
                 item.kind,
                 data=item.data,
@@ -606,6 +684,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             item.kind is not StreamItemKind.ANSWER_DELTA
             or item.text_delta is None
             or self._tool_parser is None
+            or self._is_locally_classified_answer(item)
         ):
             return False
         canonicalizes = getattr(
@@ -614,6 +693,16 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             False,
         )
         return canonicalizes if isinstance(canonicalizes, bool) else False
+
+    @staticmethod
+    def _is_locally_classified_answer(
+        item: CanonicalStreamItem,
+    ) -> bool:
+        return item.kind is StreamItemKind.ANSWER_DELTA and (
+            item.metadata.get(NATIVE_STRUCTURED_OUTPUT_METADATA_KEY) is True
+            or item.metadata.get(LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY)
+            == LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID
+        )
 
     def _canonical_token_event_item(
         self,
@@ -658,7 +747,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         ):
             await self._emit_token_generated_event(canonical_item)
             self._step += 1
-            if self._tool_parser:
+            if self._tool_parser and not (
+                self._is_locally_classified_answer(canonical_item)
+            ):
                 for parser_item in await self._tool_parser.push(
                     canonical_item.text_delta
                 ):
@@ -701,6 +792,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         data: Any | None,
         metadata: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
+        if self._capability_catalog is not None:
+            return metadata
         if tool_display_projection_from_metadata(metadata) is not None:
             return metadata
         if not isinstance(data, dict):
@@ -718,9 +811,13 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 else None
             ),
         )
+        projection = self._tool_call_display_projection(call)
         return {
             **({} if metadata is None else metadata),
-            **self._tool_call_display_metadata(call),
+            **cast(
+                dict[str, Any],
+                tool_display_projection_metadata(projection),
+            ),
         }
 
     def _append_canonical_tool_call_lifecycle_item(
@@ -739,6 +836,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert kind in _TOOL_CALL_LIFECYCLE_KINDS
         tool_call_id = correlation.tool_call_id
         if not self._is_valid_tool_call_id(tool_call_id):
+            if self._capability_catalog is not None:
+                self._mark_staged_tool_batch_invalid(
+                    CapabilityBatchRejectionCode.MISSING_CALL_ID
+                )
+                return None
             return self._append_canonical_tool_call_lifecycle_diagnostic(
                 tool_call_id=None,
                 code="orchestrator.tool_call.missing_id",
@@ -749,6 +851,23 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert tool_call_id is not None
         tool_call_id = self._canonical_lifecycle_tool_call_id(tool_call_id)
         correlation = replace(correlation, tool_call_id=tool_call_id)
+        if provider_family is not None:
+            existing_family = self._canonical_tool_call_provider_families.get(
+                tool_call_id
+            )
+            if (
+                existing_family is not None
+                and existing_family != provider_family
+            ):
+                if self._capability_catalog is not None:
+                    self._mark_staged_tool_batch_invalid()
+                    return None
+                raise StreamValidationError(
+                    "tool-call lifecycle provider family changed"
+                )
+            self._canonical_tool_call_provider_families[tool_call_id] = (
+                provider_family
+            )
         state = self._canonical_tool_call_lifecycle(tool_call_id)
         state.correlation = self._merged_tool_call_correlation(
             state.correlation,
@@ -762,7 +881,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             tool_call_id=tool_call_id,
             state=state,
         )
-        if diagnostic is not None:
+        if diagnostic is not None or state.invalid:
             if not state.queued:
                 state.invalid = True
                 self._close_invalid_tool_call_lifecycle(
@@ -772,29 +891,104 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             return diagnostic
 
         item_metadata = None if metadata is None else dict(metadata)
-        if kind is StreamItemKind.TOOL_CALL_READY:
+        if (
+            kind is StreamItemKind.TOOL_CALL_READY
+            and self._capability_catalog is None
+        ):
             item_metadata = self._tool_call_ready_display_metadata(
                 tool_call_id,
                 data,
                 item_metadata,
             )
 
-        item = self._append_canonical_item(
-            kind,
-            text_delta=text_delta,
-            data=data,
-            usage=usage,
-            correlation=correlation,
-            visibility=visibility,
-            metadata=item_metadata,
-            provider_family=provider_family,
-            provider_event_type=provider_event_type,
+        item = (
+            self._stage_canonical_tool_call_item(
+                kind,
+                text_delta=text_delta,
+                data=data,
+                usage=usage,
+                correlation=correlation,
+                visibility=visibility,
+                metadata=item_metadata,
+                provider_family=provider_family,
+                provider_event_type=provider_event_type,
+            )
+            if self._capability_catalog is not None
+            else self._append_canonical_item(
+                kind,
+                text_delta=text_delta,
+                data=data,
+                usage=usage,
+                correlation=correlation,
+                visibility=visibility,
+                metadata=item_metadata,
+                provider_family=provider_family,
+                provider_event_type=provider_event_type,
+            )
         )
         if item is None:
             return None
         if kind is StreamItemKind.TOOL_CALL_DONE:
             self._queue_completed_canonical_tool_call(tool_call_id, state)
         return item
+
+    def _stage_canonical_tool_call_item(
+        self,
+        kind: StreamItemKind,
+        *,
+        text_delta: str | None,
+        data: Any | None,
+        usage: Any | None,
+        correlation: StreamItemCorrelation,
+        visibility: StreamVisibility,
+        metadata: dict[str, Any] | None,
+        provider_family: str | None,
+        provider_event_type: str | None,
+    ) -> CanonicalStreamItem:
+        """Stage one model-authored tool-call lifecycle item privately."""
+        assert kind in _TOOL_CALL_LIFECYCLE_KINDS
+        item = CanonicalStreamItem(
+            stream_session_id=self._canonical_stream_session_id,
+            run_id=self._canonical_run_id,
+            turn_id=self._canonical_turn_id,
+            sequence=self._canonical_sequence,
+            kind=kind,
+            channel=stream_channel_for_kind(kind),
+            correlation=correlation,
+            text_delta=text_delta,
+            data=cast(Any, data),
+            usage=cast(Any, usage),
+            visibility=visibility,
+            metadata=metadata or {},
+            provider_family=provider_family,
+            provider_event_type=provider_event_type,
+        )
+        self._staged_tool_call_items.append(item)
+        self._staged_tool_batch_present = True
+        tool_call_id = correlation.tool_call_id
+        assert tool_call_id is not None
+        state = self._canonical_tool_call_lifecycle(tool_call_id)
+        if kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            assert text_delta is not None
+            state.argument_deltas.append(text_delta)
+        elif kind is StreamItemKind.TOOL_CALL_READY:
+            state.ready_item = item
+        else:
+            state.done = True
+        return item
+
+    def _mark_staged_tool_batch_invalid(
+        self,
+        code: CapabilityBatchRejectionCode = (
+            CapabilityBatchRejectionCode.MALFORMED_CALL
+        ),
+    ) -> None:
+        """Mark the current model tool-call batch invalid privately."""
+        assert isinstance(code, CapabilityBatchRejectionCode)
+        self._staged_tool_batch_present = True
+        self._staged_tool_batch_invalid = True
+        if self._staged_tool_batch_rejection_code is None:
+            self._staged_tool_batch_rejection_code = code
 
     def _canonical_tool_call_item_diagnostic(
         self,
@@ -1018,6 +1212,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert isinstance(message, str)
         assert message.strip()
         assert isinstance(details, dict)
+        if self._capability_catalog is not None:
+            self._mark_staged_tool_batch_invalid()
+            if self._is_valid_tool_call_id(tool_call_id):
+                assert tool_call_id is not None
+                state = self._canonical_tool_call_lifecycles.get(tool_call_id)
+                if state is not None:
+                    state.invalid = True
+            return None
         if self._is_valid_tool_call_id(tool_call_id):
             assert tool_call_id is not None
             correlation_id = tool_call_id
@@ -1053,6 +1255,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert tool_call_id
         if state.done:
             return
+        if self._capability_catalog is not None:
+            self._mark_staged_tool_batch_invalid()
+            state.done = True
+            return
         if not state.argument_deltas and state.ready_item is None:
             return
         self._append_canonical_item(
@@ -1072,6 +1278,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 continue
             state.invalid = True
             state.incomplete_diagnostic_emitted = True
+            if self._capability_catalog is not None:
+                self._mark_staged_tool_batch_invalid()
+                state.done = True
+                continue
             if state.ready_item is None:
                 self._append_canonical_tool_call_lifecycle_diagnostic(
                     tool_call_id=tool_call_id,
@@ -1147,7 +1357,16 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
 
     def _begin_tool_call_lifecycle_response(self) -> None:
         self._canonical_tool_call_lifecycles = {}
+        self._staged_tool_call_items = []
+        self._staged_tool_batch_invalid = False
+        self._staged_tool_batch_rejection_code = None
+        self._staged_tool_batch_present = False
+        self._classified_tool_call_object_ids = set()
+        self._canonical_tool_call_provider_families = {}
+        self._provider_tool_call_ids_by_canonical_id = {}
+        self._text_parser_tool_call_ids = set()
         self._response_tool_call_id_aliases = {}
+        self._response_reserved_tool_call_ids = set()
         self._canonical_reasoning_segments = StreamReasoningSegmentState()
 
     def _canonical_lifecycle_tool_call_id(self, source_id: str) -> str:
@@ -1158,10 +1377,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             return alias
         if not self._canonical_tool_call_id_used(source_id):
             self._reserve_canonical_tool_call_id(source_id)
+            self._response_reserved_tool_call_ids.add(source_id)
             self._response_tool_call_id_aliases[source_id] = source_id
+            self._provider_tool_call_ids_by_canonical_id[source_id] = source_id
             return source_id
         alias = self._next_generated_tool_call_id()
+        self._response_reserved_tool_call_ids.add(alias)
         self._response_tool_call_id_aliases[source_id] = alias
+        self._provider_tool_call_ids_by_canonical_id[alias] = source_id
         return alias
 
     def _reserve_canonical_tool_call_id(self, tool_call_id: str) -> None:
@@ -1326,7 +1549,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             await self._await_pending_tool_batch()
             return None
 
-        if self._response_drained and not self._calls.empty():
+        if self._response_drained and (
+            not self._calls.empty() or self._staged_tool_batch_present
+        ):
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED
             )
@@ -1363,10 +1588,13 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 ):
                     continue
                 tool_outcomes.append(tool_result)
+                provider_result = self._provider_facing_tool_outcome(
+                    tool_result
+                )
                 tool_messages.extend(
                     self._tool_observation_messages(
-                        tool_result,
-                        call=outcome.call,
+                        provider_result,
+                        call=self._provider_facing_tool_call(outcome.call),
                         json_output=True,
                     )
                 )
@@ -1478,6 +1706,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             try:
                 await self._flush_canonical_text_tool_call_parser_stage()
             except Exception as exc:
+                self._discard_untrusted_response_tool_call_batch()
                 self._finish_canonical_stream(
                     StreamItemKind.STREAM_ERRORED,
                     data={
@@ -1489,6 +1718,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             self._finalize_incomplete_canonical_tool_calls()
             if (
                 not self._calls.empty()
+                or self._staged_tool_batch_present
                 or not self._tool_result_outcomes.empty()
             ):
                 return await self._next_item()
@@ -1503,6 +1733,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_CANCELLED
             )
+            self._discard_untrusted_response_tool_call_batch()
             self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
             raise
         except Exception as exc:
@@ -1513,6 +1744,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     "message": str(exc),
                 },
             )
+            self._discard_untrusted_response_tool_call_batch()
             self._finish_canonical_stream(
                 StreamItemKind.STREAM_ERRORED,
                 data={
@@ -1681,33 +1913,35 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 cancellation_checker=self._cancellation_checker,
             )
 
-        if not self._tool_manager:
-            self._response = response
-            return text
-
         current_response = response
         delta = text
         while True:
+            structured_batch = bool(structured_calls)
+            calls = (
+                structured_calls
+                if structured_batch
+                else (
+                    self._capability_catalog.get_calls(delta)
+                    if self._capability_catalog
+                    else None
+                )
+            )
+            if not calls and not self._staged_tool_batch_present:
+                break
+            classified_calls = self._classify_complete_tool_call_batch(
+                list(calls or []),
+                text_originated=not structured_batch,
+            )
+            if not classified_calls:
+                break
             await self._trigger_derived_canonical_observability_event(
                 EventType.TOOL_DETECT,
                 StreamItemKind.STREAM_DIAGNOSTIC,
                 summary={"stage": "tool_detection"},
             )
 
-            calls = (
-                structured_calls
-                if structured_calls
-                else (
-                    self._tool_manager.get_calls(delta)
-                    if self._tool_manager
-                    else None
-                )
-            )
-            if not calls:
-                break
-
             results: list[ToolCallOutcome] = []
-            pending_calls = list(calls)
+            pending_calls = classified_calls
             while pending_calls:
                 batch, pending_calls = self._split_tool_call_batch(
                     pending_calls
@@ -2112,15 +2346,287 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     def _drain_tool_call_batch(self) -> list[ToolCall]:
         calls: list[ToolCall] = []
         while not self._calls.empty():
-            call = self._calls.get()
-            if self._should_execute_staged_tool_call(call):
-                calls.append(call)
+            calls.append(self._calls.get())
+        if not calls and not self._staged_tool_batch_present:
+            return []
+        already_classified = bool(calls) and all(
+            id(call) in self._classified_tool_call_object_ids for call in calls
+        )
+        classified_calls = (
+            calls
+            if already_classified
+            else self._classify_complete_tool_call_batch(calls)
+        )
+        if not classified_calls:
+            return []
+        calls = [
+            call
+            for call in classified_calls
+            if self._should_execute_staged_tool_call(call)
+        ]
         if not calls:
             return []
         batch, remaining = self._split_tool_call_batch(calls)
+        for call in batch:
+            self._classified_tool_call_object_ids.discard(id(call))
         for call in remaining:
             self._put_staging_item(self._calls, call, "tool call")
         return batch
+
+    def _classify_complete_tool_call_batch(
+        self,
+        calls: list[ToolCall],
+        *,
+        text_originated: bool = False,
+    ) -> list[ToolCall] | None:
+        assert type(text_originated) is bool
+        capability = self._capability_catalog
+        if capability is None:
+            return list(calls)
+
+        if self._staged_tool_batch_invalid:
+            rejection = CapabilityBatchRejected(
+                code=(
+                    self._staged_tool_batch_rejection_code
+                    or CapabilityBatchRejectionCode.MALFORMED_CALL
+                ),
+                message="Batch contains an invalid capability call.",
+            )
+            self._discard_staged_tool_call_batch()
+            self._append_capability_batch_rejection(
+                rejection,
+                call_count=len(calls),
+            )
+            return None
+
+        if not calls:
+            self._discard_staged_tool_call_batch()
+            return []
+
+        provider_families = {
+            provider_family
+            for call in calls
+            if call.id is not None
+            and (
+                provider_family := (
+                    self._canonical_tool_call_provider_families.get(
+                        str(call.id)
+                    )
+                )
+            )
+            is not None
+        }
+        if len(provider_families) > 1:
+            rejection = CapabilityBatchRejected(
+                code=CapabilityBatchRejectionCode.MALFORMED_CALL,
+                message="Batch contains conflicting provider families.",
+            )
+            self._discard_staged_tool_call_batch()
+            self._append_capability_batch_rejection(
+                rejection,
+                call_count=len(calls),
+            )
+            return None
+        provider_family = next(iter(provider_families), None)
+        provider_calls: list[ProviderCapabilityCall] = []
+        try:
+            projection = capability.project(provider_family)
+            for call in calls:
+                provider_name = call.provider_name
+                if provider_name is None:
+                    try:
+                        provider_name = projection.provider_name(call.name)
+                    except ModelCapabilityValidationError:
+                        provider_name = call.name
+                parser_originated = text_originated or (
+                    call.id is not None
+                    and str(call.id) in self._text_parser_tool_call_ids
+                )
+                is_reserved = (
+                    call.name == RESERVED_INPUT_CAPABILITY_NAME
+                    or provider_name == RESERVED_INPUT_CAPABILITY_NAME
+                )
+                source_call_id = (
+                    self._provider_tool_call_ids_by_canonical_id.get(
+                        str(call.id)
+                    )
+                    if call.id is not None
+                    else None
+                )
+                provider_call_id = source_call_id or call.id
+                provider_calls.append(
+                    ProviderCapabilityCall(
+                        call_id=provider_call_id,
+                        provider_name=provider_name,
+                        arguments=(
+                            "{"
+                            if call.provider_arguments_malformed
+                            else call.arguments
+                        ),
+                        structured=not (parser_originated and is_reserved),
+                    )
+                )
+        except (AssertionError, ModelCapabilityValidationError):
+            rejection = CapabilityBatchRejected(
+                code=CapabilityBatchRejectionCode.MALFORMED_CALL,
+                message="Batch contains an invalid capability call.",
+            )
+            self._discard_staged_tool_call_batch()
+            self._append_capability_batch_rejection(
+                rejection,
+                call_count=len(calls),
+            )
+            return None
+
+        classification = capability.classify_batch(
+            provider_calls,
+            provider_family=provider_family,
+        )
+        if isinstance(classification, CapabilityBatchRejected):
+            self._discard_staged_tool_call_batch()
+            self._append_capability_batch_rejection(
+                classification,
+                call_count=len(calls),
+            )
+            return None
+        assert isinstance(classification, CapabilityBatchAccepted)
+        if classification.task_input is not None:
+            self._task_input_call = classification.task_input
+            self._discard_staged_tool_call_batch()
+            return []
+        domain_calls = self._canonical_domain_calls(
+            calls,
+            list(classification.domain_calls),
+        )
+        if self._tool_manager is None:
+            self._discard_staged_tool_call_batch()
+            raise RuntimeError(
+                "accepted domain capability calls require a tool registry"
+            )
+        self._publish_staged_domain_tool_calls(domain_calls)
+        self._classified_tool_call_object_ids.update(
+            id(call) for call in domain_calls
+        )
+        return domain_calls
+
+    def _canonical_domain_calls(
+        self,
+        staged_calls: list[ToolCall],
+        decoded_calls: list[ToolCall],
+    ) -> list[ToolCall]:
+        """Pair decoded domain calls with their response lifecycle IDs."""
+        assert len(staged_calls) == len(decoded_calls)
+        canonical_calls: list[ToolCall] = []
+        for staged_call, decoded_call in zip(
+            staged_calls, decoded_calls, strict=True
+        ):
+            if staged_call.id is None:
+                canonical_calls.append(decoded_call)
+                continue
+            canonical_id = str(staged_call.id)
+            if decoded_call.id is not None:
+                self._provider_tool_call_ids_by_canonical_id.setdefault(
+                    canonical_id,
+                    str(decoded_call.id),
+                )
+            canonical_calls.append(replace(decoded_call, id=canonical_id))
+        return canonical_calls
+
+    def _publish_staged_domain_tool_calls(
+        self,
+        calls: list[ToolCall],
+    ) -> None:
+        """Publish staged lifecycle frames after domain batch acceptance."""
+        accepted_ids = {str(call.id) for call in calls if call.id is not None}
+        calls_by_id = {
+            str(call.id): call for call in calls if call.id is not None
+        }
+        staged_items = [
+            item
+            for item in self._staged_tool_call_items
+            if item.correlation.tool_call_id in accepted_ids
+        ]
+        correlations = {
+            tool_call_id: state.correlation
+            for tool_call_id, state in (
+                self._canonical_tool_call_lifecycles.items()
+            )
+            if tool_call_id in accepted_ids
+        }
+        self._canonical_tool_call_lifecycles = {
+            tool_call_id: _CanonicalToolCallLifecycle(
+                correlation=correlation,
+                queued=True,
+            )
+            for tool_call_id, correlation in correlations.items()
+        }
+        self._staged_tool_call_items = []
+        self._staged_tool_batch_invalid = False
+        self._staged_tool_batch_rejection_code = None
+        self._staged_tool_batch_present = False
+        for item in staged_items:
+            metadata = dict(item.metadata)
+            if item.kind is StreamItemKind.TOOL_CALL_READY:
+                tool_call_id = item.correlation.tool_call_id
+                assert tool_call_id is not None
+                metadata.update(
+                    self._tool_call_display_metadata(calls_by_id[tool_call_id])
+                )
+            self._append_canonical_item(
+                item.kind,
+                text_delta=item.text_delta,
+                data=item.data,
+                usage=item.usage,
+                correlation=item.correlation,
+                visibility=item.visibility,
+                metadata=metadata,
+                provider_family=item.provider_family,
+                provider_event_type=item.provider_event_type,
+            )
+
+    def _discard_staged_tool_call_batch(self) -> None:
+        """Discard private lifecycle state without exposing correlations."""
+        for tool_call_id in self._response_reserved_tool_call_ids:
+            if (
+                tool_call_id
+                not in self._canonical_tool_call_argument_delta_ids
+                and tool_call_id not in self._canonical_tool_call_ready_ids
+                and tool_call_id not in self._canonical_tool_call_done_ids
+            ):
+                self._canonical_tool_call_reserved_ids.discard(tool_call_id)
+        self._canonical_tool_call_lifecycles = {}
+        self._staged_tool_call_items = []
+        self._staged_tool_batch_invalid = False
+        self._staged_tool_batch_rejection_code = None
+        self._staged_tool_batch_present = False
+        self._canonical_tool_call_provider_families = {}
+        self._provider_tool_call_ids_by_canonical_id = {}
+        self._text_parser_tool_call_ids = set()
+        self._response_tool_call_id_aliases = {}
+        self._response_reserved_tool_call_ids = set()
+        self._classified_tool_call_object_ids = set()
+
+    def _discard_untrusted_response_tool_call_batch(self) -> None:
+        """Discard all effects derived from an abnormal model response."""
+        while not self._calls.empty():
+            self._calls.get()
+        self._task_input_call = None
+        self._discard_staged_tool_call_batch()
+
+    def _append_capability_batch_rejection(
+        self,
+        rejection: CapabilityBatchRejected,
+        *,
+        call_count: int,
+    ) -> None:
+        assert isinstance(rejection, CapabilityBatchRejected)
+        assert isinstance(call_count, int) and call_count >= 0
+        details: dict[str, Any] = {"call_count": call_count}
+        self._append_canonical_guard_diagnostic(
+            code=rejection.code.value,
+            message=rejection.message,
+            details=details,
+        )
 
     def _should_execute_staged_tool_call(self, call: ToolCall) -> bool:
         if call.id is None:
@@ -2302,9 +2808,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         calls: list[ToolCall],
     ) -> None:
         while not self._calls.empty():
-            call = self._calls.get()
-            if self._should_execute_staged_tool_call(call):
-                calls.append(call)
+            calls.append(self._calls.get())
 
     async def _emit_token_generated_event(
         self,
@@ -2386,7 +2890,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         for result in results:
             tool_messages.extend(
                 self._tool_observation_messages(
-                    result,
+                    self._provider_facing_tool_outcome(result),
                     json_output=False,
                 )
             )
@@ -2790,6 +3294,40 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             ),
         ]
 
+    def _provider_facing_tool_call(self, call: ToolCall) -> ToolCall:
+        """Restore the source provider ID for model continuation messages."""
+        if call.id is None:
+            return call
+        canonical_id = str(call.id)
+        provider_id = self._provider_tool_call_ids_by_canonical_id.get(
+            canonical_id
+        )
+        if provider_id is None or provider_id == canonical_id:
+            return call
+        return replace(call, id=provider_id)
+
+    def _provider_facing_tool_outcome(
+        self,
+        outcome: ToolCallOutcome,
+    ) -> ToolCallOutcome:
+        """Restore provider correlation while keeping public lifecycle IDs."""
+        if isinstance(outcome, ToolCallResult | ToolCallError):
+            provider_call = self._provider_facing_tool_call(outcome.call)
+            if provider_call is outcome.call:
+                return outcome
+            return replace(
+                outcome,
+                call=provider_call,
+            )
+        if outcome.call_id is None:
+            return outcome
+        provider_id = self._provider_tool_call_ids_by_canonical_id.get(
+            str(outcome.call_id)
+        )
+        if provider_id is None or provider_id == str(outcome.call_id):
+            return outcome
+        return replace(outcome, call_id=provider_id)
+
     @classmethod
     def _model_facing_outcome(
         cls, outcome: ToolCallOutcome
@@ -2935,6 +3473,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         context = ModelCallContext(
             specification=self._operation.specification,
             input=messages,
+            capability=self._capability_catalog,
             engine_args=self._continuation_engine_args(),
             parent=parent_context,
             root_parent=root_parent,

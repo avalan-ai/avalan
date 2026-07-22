@@ -6,8 +6,8 @@ from ..entities import (
     MessageContentImage,
     MessageContentText,
 )
-from ..tool.manager import ToolManager
 from ..tool.name_policy import ToolNamePolicy
+from .capability import CorrelatedCapabilityResult, ModelCapabilityCatalog
 from .message import (
     TemplateMessage,
     TemplateMessageContent,
@@ -24,13 +24,14 @@ from .stream import (
     StreamProviderCapabilities,
     StreamProviderEvent,
     StreamValidationError,
+    TextGenerationNonStreamToolCall,
     TextGenerationStream,
     _close_async_iterable,
     normalize_provider_stream,
 )
 
 from abc import ABC
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Mapping
 from dataclasses import replace
 from inspect import isawaitable
 from json import JSONDecodeError, dumps, loads
@@ -70,9 +71,16 @@ class TextGenerationVendor(ABC):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream | AsyncIterator[CanonicalStreamItem] | str:
+        raise NotImplementedError()
+
+    @staticmethod
+    def capability_result_message(
+        result: CorrelatedCapabilityResult,
+    ) -> object:
+        """Return one provider-native correlated continuation payload."""
         raise NotImplementedError()
 
     def _system_prompt(self, messages: list[Message]) -> str | None:
@@ -150,11 +158,11 @@ class TextGenerationVendor(ABC):
     def provider_tool_name(
         tool_name: str,
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         provider_family: ProviderFamily | str | None = None,
     ) -> str:
-        if isinstance(tool, ToolManager):
-            return tool.provider_tool_name(
+        if capability is not None:
+            return capability.provider_name(
                 tool_name,
                 provider_family=provider_family_value(provider_family),
             )
@@ -164,11 +172,11 @@ class TextGenerationVendor(ABC):
     def canonical_tool_name(
         tool_name: str,
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         provider_family: ProviderFamily | str | None = None,
     ) -> str:
-        if isinstance(tool, ToolManager):
-            return tool.canonical_tool_name(
+        if capability is not None:
+            return capability.canonical_name(
                 tool_name,
                 provider_family=provider_family_value(provider_family),
             )
@@ -178,6 +186,52 @@ class TextGenerationVendor(ABC):
             if not tool_name.startswith("avl_"):
                 return tool_name
             raise
+
+    @staticmethod
+    def non_stream_tool_call(
+        *,
+        call_id: object,
+        provider_name: object,
+        arguments: object,
+        capability: ModelCapabilityCatalog | None,
+        provider_family: ProviderFamily | str,
+        provider_event_type: str,
+    ) -> TextGenerationNonStreamToolCall:
+        """Return one validated provider-native non-stream call."""
+        if type(call_id) is not str or not call_id.strip():
+            raise ValueError(
+                "provider tool call id must be a non-empty string"
+            )
+        if type(provider_name) is not str or not provider_name.strip():
+            raise ValueError(
+                "provider tool call name must be a non-empty string"
+            )
+        if arguments is None:
+            serialized_arguments = "{}"
+        elif type(arguments) is str:
+            serialized_arguments = arguments
+        elif isinstance(arguments, Mapping):
+            serialized_arguments = dumps(
+                arguments,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        else:
+            raise ValueError(
+                "provider tool call arguments must be an object or string"
+            )
+        canonical_name = TextGenerationVendor.canonical_tool_name(
+            provider_name,
+            capability=capability,
+            provider_family=provider_family,
+        )
+        return TextGenerationNonStreamToolCall(
+            call_id=call_id,
+            name=canonical_name,
+            arguments=serialized_arguments,
+            provider_event_type=provider_event_type,
+        )
 
     @staticmethod
     def build_tool_call_text(

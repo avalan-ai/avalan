@@ -3,19 +3,31 @@ from .....entities import (
     Message,
     MessageRole,
     ReasoningEffort,
+    ToolCallDiagnostic,
+    ToolCallError,
+    ToolCallResult,
 )
 from .....model.provider import ProviderFamily
 from .....model.stream import (
     CanonicalStreamItem,
+    StreamItemCorrelation,
     StreamItemKind,
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    TextGenerationNonStreamResult,
+    TextGenerationNonStreamToolCall,
     TextGenerationSingleStream,
     TextGenerationStream,
 )
-from .....tool.manager import ToolManager
 from .....types import LooseJsonValue
+from .....utils import to_json, tool_call_diagnostic_payload
+from ....capability import (
+    CorrelatedCapabilityResult,
+    ModelCapabilityCatalog,
+    ProviderCapabilityCall,
+    TaskInputCapabilityCall,
+)
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
@@ -31,11 +43,28 @@ from google.genai import Client
 from google.genai.types import GenerateContentResponse
 
 
+def _mutable_provider_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _mutable_provider_json(item) for key, item in value.items()
+        }
+    if isinstance(value, tuple | list):
+        return [_mutable_provider_json(item) for item in value]
+    return value
+
+
 class GoogleStream(TextGenerationVendorStream):
     _stream: AsyncIterator[GenerateContentResponse]
+    _capability_catalog: ModelCapabilityCatalog | None
 
-    def __init__(self, stream: AsyncIterator[GenerateContentResponse]):
+    def __init__(
+        self,
+        stream: AsyncIterator[GenerateContentResponse],
+        *,
+        capability: ModelCapabilityCatalog | None = None,
+    ):
         self._stream = stream
+        self._capability_catalog = capability
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -81,6 +110,12 @@ class GoogleStream(TextGenerationVendorStream):
             or StreamProviderCapabilities(
                 backend=StreamProducerBackend.HOSTED,
                 provider_family=ProviderFamily.GOOGLE,
+                supports_tool_calls=(
+                    self._capability_catalog is not None
+                    and not self._capability_catalog.project(
+                        ProviderFamily.GOOGLE
+                    ).is_empty
+                ),
                 supports_usage=True,
                 supports_cancellation=True,
             ),
@@ -105,6 +140,50 @@ class GoogleStream(TextGenerationVendorStream):
                     text_delta=text,
                     provider_payload=provider_payload,
                     provider_event_type="generate_content.delta",
+                )
+            for (
+                call_id,
+                provider_name,
+                arguments,
+            ) in GoogleClient._function_calls(chunk):
+                if self._capability_catalog is not None:
+                    decoded = self._capability_catalog.decode_call(
+                        ProviderCapabilityCall(
+                            call_id=call_id,
+                            provider_name=provider_name,
+                            arguments=cast(
+                                str | Mapping[str, object], arguments
+                            ),
+                        ),
+                        provider_family=ProviderFamily.GOOGLE,
+                    )
+                    canonical_name = (
+                        decoded.canonical_name
+                        if isinstance(decoded, TaskInputCapabilityCall)
+                        else decoded.name
+                    )
+                else:
+                    canonical_name = provider_name
+                correlation = StreamItemCorrelation(tool_call_id=call_id)
+                yield StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    correlation=correlation,
+                    text_delta=to_json(arguments),
+                    provider_payload=provider_payload,
+                    provider_event_type="generate_content.function_call",
+                )
+                yield StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_READY,
+                    correlation=correlation,
+                    data={"name": canonical_name},
+                    provider_payload=provider_payload,
+                    provider_event_type="generate_content.function_call",
+                )
+                yield StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_DONE,
+                    correlation=correlation,
+                    provider_payload=provider_payload,
+                    provider_event_type="generate_content.function_call",
                 )
         if terminal_usage is not None:
             self._usage = terminal_usage
@@ -141,19 +220,28 @@ class GoogleClient(TextGenerationVendor):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
         self._validate_reasoning_summary_request(settings)
         assert (
             instructions is None
         ), "Google does not support provider instructions"
-        contents = self._template_messages(messages, ["system", "tool"])
+        contents = self._template_messages(
+            messages,
+            ["system"],
+            capability=capability,
+        )
         kwargs: dict[str, Any] = {
             "model": model_id,
             "contents": cast(Any, contents),
         }
-        config = self._config(model_id, messages, settings)
+        config = self._config(
+            model_id,
+            messages,
+            settings,
+            capability=capability,
+        )
         if config:
             kwargs["config"] = config
 
@@ -161,17 +249,34 @@ class GoogleClient(TextGenerationVendor):
             stream = await self._client.aio.models.generate_content_stream(
                 **kwargs,
             )
-            return GoogleStream(stream=stream.__aiter__())
+            return GoogleStream(
+                stream=stream.__aiter__(),
+                capability=capability,
+            )
         else:
             response = await self._client.aio.models.generate_content(
                 **kwargs,
             )
-
+            answer_text, calls = GoogleClient._response_parts(
+                response,
+                capability=capability,
+            )
+            usage = GoogleClient._field(response, "usage_metadata") or (
+                GoogleClient._field(response, "usageMetadata")
+            )
+            if calls:
+                return TextGenerationNonStreamResult.from_provider_parts(
+                    answer_text=answer_text,
+                    calls=calls,
+                    provider_family=ProviderFamily.GOOGLE,
+                    usage=usage,
+                    answer_event_type="generate_content.text",
+                    terminal_event_type="generate_content.completed",
+                )
             return TextGenerationSingleStream(
-                response.text or "",
+                answer_text,
                 provider_family=ProviderFamily.GOOGLE,
-                usage=GoogleClient._field(response, "usage_metadata")
-                or GoogleClient._field(response, "usageMetadata"),
+                usage=usage,
             )
 
     def _config(
@@ -179,11 +284,42 @@ class GoogleClient(TextGenerationVendor):
         model_id: str,
         messages: list[Message],
         settings: GenerationSettings | None,
+        *,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> dict[str, Any] | None:
         config: dict[str, Any] = {}
         system_prompt = self._system_prompt(messages)
         if system_prompt:
             config["system_instruction"] = system_prompt
+        if capability is not None:
+            projection = capability.project(ProviderFamily.GOOGLE)
+            if not projection.is_empty:
+                declarations: list[dict[str, Any]] = []
+                for schema in projection.schemas:
+                    if schema.get("type") != "function":
+                        continue
+                    function = schema.get("function")
+                    if not isinstance(function, Mapping):
+                        continue
+                    declarations.append(
+                        {
+                            "name": function.get("name", ""),
+                            "description": function.get("description", ""),
+                            "parameters_json_schema": _mutable_provider_json(
+                                function.get("parameters", {})
+                            ),
+                        }
+                    )
+                config["tools"] = [{"function_declarations": declarations}]
+                if settings and settings.tool_choice is not None:
+                    config["tool_config"] = {
+                        "function_calling_config": {
+                            "mode": "ANY",
+                            "allowed_function_names": [
+                                projection.tool_choice(settings.tool_choice)
+                            ],
+                        }
+                    }
         if settings is None:
             return config or None
         if settings.max_new_tokens is not None:
@@ -229,18 +365,107 @@ class GoogleClient(TextGenerationVendor):
         self,
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
+        *,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> list[dict[str, Any]]:
-        templated = cast(
-            list[dict[str, Any]],
-            super()._template_messages(messages, exclude_roles),
-        )
+        excluded_roles = set(exclude_roles or [])
         output: list[dict[str, Any]] = []
-        for message in templated:
-            content = message.get("content")
+        for message in messages:
+            if str(message.role) in excluded_roles:
+                continue
+            if message.role == MessageRole.TOOL:
+                outcome = (
+                    message.tool_call_result
+                    or message.tool_call_error
+                    or message.tool_call_diagnostic
+                )
+                if outcome is None:
+                    continue
+                if isinstance(outcome, ToolCallDiagnostic):
+                    if outcome.call_id is None:
+                        output.append(
+                            {
+                                "role": "model",
+                                "parts": [
+                                    {
+                                        "text": to_json(
+                                            tool_call_diagnostic_payload(
+                                                outcome
+                                            )
+                                        )
+                                    }
+                                ],
+                            }
+                        )
+                        continue
+                    call_id = str(outcome.call_id)
+                    canonical_name = (
+                        message.name
+                        or outcome.canonical_name
+                        or outcome.requested_name
+                        or "tool"
+                    )
+                    result: object = tool_call_diagnostic_payload(outcome)
+                else:
+                    assert isinstance(
+                        outcome,
+                        (ToolCallResult, ToolCallError),
+                    )
+                    call_id = str(outcome.call.id)
+                    canonical_name = outcome.call.name
+                    result = (
+                        outcome.result
+                        if isinstance(outcome, ToolCallResult)
+                        else {"error": outcome.message}
+                    )
+                provider_name = TextGenerationVendor.provider_tool_name(
+                    canonical_name,
+                    capability=capability,
+                    provider_family=ProviderFamily.GOOGLE,
+                )
+                output.append(
+                    {
+                        "role": str(MessageRole.USER),
+                        "parts": [
+                            {
+                                "function_response": {
+                                    "id": call_id,
+                                    "name": provider_name,
+                                    "response": {"output": result},
+                                }
+                            }
+                        ],
+                    }
+                )
+                continue
+
+            templated = cast(
+                list[dict[str, Any]],
+                super()._template_messages([message]),
+            )[0]
+            parts = (
+                []
+                if message.content is None and message.tool_calls
+                else self._parts(templated.get("content"))
+            )
+            for call in message.tool_calls or []:
+                parts.append(
+                    {
+                        "function_call": {
+                            "id": str(call.id) if call.id is not None else "",
+                            "name": TextGenerationVendor.provider_tool_name(
+                                call.name,
+                                capability=capability,
+                                provider_family=ProviderFamily.GOOGLE,
+                            ),
+                            "args": call.arguments or {},
+                        }
+                    }
+                )
             output.append(
                 {
-                    "role": self._message_role(cast(str, message["role"])),
-                    "parts": self._parts(content),
+                    "role": self._message_role(cast(str, templated["role"])),
+                    "parts": parts,
                 }
             )
         return output
@@ -338,6 +563,107 @@ class GoogleClient(TextGenerationVendor):
         if isinstance(value, dict):
             return value.get(attribute)
         return getattr(value, attribute, None)
+
+    @staticmethod
+    def _function_calls(
+        response: object,
+    ) -> tuple[tuple[str, str, object], ...]:
+        candidates = GoogleClient._field(response, "candidates")
+        if not isinstance(candidates, list):
+            return ()
+        calls: list[tuple[str, str, object]] = []
+        for candidate in candidates:
+            content = GoogleClient._field(candidate, "content")
+            parts = GoogleClient._field(content, "parts")
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                call = GoogleClient._field(part, "function_call")
+                if call is None:
+                    call = GoogleClient._field(part, "functionCall")
+                if call is None:
+                    continue
+                call_id = GoogleClient._field(call, "id")
+                name = GoogleClient._field(call, "name")
+                arguments = GoogleClient._field(call, "args")
+                if not isinstance(call_id, str) or not call_id.strip():
+                    raise ValueError(
+                        "google function call id must be a non-empty string"
+                    )
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError(
+                        "google function call name must be a non-empty string"
+                    )
+                if arguments is None:
+                    arguments = {}
+                if not isinstance(arguments, (str, Mapping)):
+                    raise ValueError(
+                        "google function call arguments must be an object "
+                        "or string"
+                    )
+                calls.append((call_id, name, arguments))
+        return tuple(calls)
+
+    @staticmethod
+    def _response_text(
+        response: object,
+        *,
+        capability: ModelCapabilityCatalog | None = None,
+    ) -> str:
+        answer_text, calls = GoogleClient._response_parts(
+            response,
+            capability=capability,
+        )
+        return answer_text + "".join(
+            TextGenerationVendor.build_tool_call_text(
+                call.call_id,
+                call.name,
+                call.arguments,
+                tool_name_is_canonical=True,
+            )
+            for call in calls
+        )
+
+    @staticmethod
+    def _response_parts(
+        response: object,
+        *,
+        capability: ModelCapabilityCatalog | None = None,
+    ) -> tuple[str, tuple[TextGenerationNonStreamToolCall, ...]]:
+        text = GoogleClient._field(response, "text")
+        answer_text = text if isinstance(text, str) else ""
+        calls: list[TextGenerationNonStreamToolCall] = []
+        for call_id, provider_name, arguments in GoogleClient._function_calls(
+            response
+        ):
+            calls.append(
+                TextGenerationVendor.non_stream_tool_call(
+                    call_id=call_id,
+                    provider_name=provider_name,
+                    arguments=arguments,
+                    capability=capability,
+                    provider_family=ProviderFamily.GOOGLE,
+                    provider_event_type="generate_content.function_call",
+                )
+            )
+        return answer_text, tuple(calls)
+
+    @staticmethod
+    def capability_result_message(
+        result: CorrelatedCapabilityResult,
+    ) -> dict[str, Any]:
+        return {
+            "role": str(MessageRole.USER),
+            "parts": [
+                {
+                    "function_response": {
+                        "id": str(result.call_id),
+                        "name": result.provider_name,
+                        "response": result.provider_payload(),
+                    }
+                }
+            ],
+        }
 
     @staticmethod
     def _file_uri(file: dict[str, Any]) -> str | None:

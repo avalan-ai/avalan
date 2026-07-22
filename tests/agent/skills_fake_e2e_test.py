@@ -53,9 +53,13 @@ class _ToolBootstrapWrapper:
     def bootstrap_prompt(self) -> str:
         return self._bootstrap
 
+    def export_model_capability_seed(self) -> dict[str, Any]:
+        return ToolManager.create_instance().export_model_capability_seed()
+
 
 class _NoBootstrapTool:
-    pass
+    def export_model_capability_seed(self) -> dict[str, Any]:
+        return ToolManager.create_instance().export_model_capability_seed()
 
 
 class _FakeSkillLoop:

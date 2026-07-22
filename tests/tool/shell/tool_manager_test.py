@@ -21,6 +21,7 @@ from avalan.entities import (
     ToolManagerSettings,
     ToolNameResolutionStatus,
 )
+from avalan.model import ModelCapabilityCatalog
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
     SHELL_COMMAND_IDS,
@@ -108,6 +109,56 @@ class ShellToolManagerFilteringTest(TestCase):
         self.assertEqual(diagnostic.requested_name, "shell.cat")
         self.assertIsNone(diagnostic.canonical_name)
         self.assertEqual(diagnostic.details["candidates"], ["shell.cat"])
+
+    def test_partial_shell_toolset_no_op_reregistration_preserves_state(
+        self,
+    ) -> None:
+        toolset = ShellToolSet()
+        manager = ToolManager.create_instance(
+            available_toolsets=[toolset],
+            enable_tools=["shell.rg"],
+            settings=ToolManagerSettings(),
+        )
+        registered_tools = manager.tools
+        assert registered_tools is not None
+        rg_tool = registered_tools[0]
+        selected_tools = toolset.tools
+
+        self.assertIs(
+            manager.resolve_tool_name("shell.rg").status,
+            ToolNameResolutionStatus.EXACT,
+        )
+        self.assertIs(
+            manager.resolve_tool_name("shell.git_status").status,
+            ToolNameResolutionStatus.UNKNOWN,
+        )
+        self.assertIs(
+            manager.resolve_tool_name("shell.pipeline").status,
+            ToolNameResolutionStatus.DISABLED,
+        )
+
+        manager._register_toolset(toolset)
+
+        registered_tools = manager.tools
+        assert registered_tools is not None
+        self.assertEqual(_tool_names(manager), ("shell.rg",))
+        self.assertIs(registered_tools[0], rg_tool)
+        self.assertIs(toolset.tools, selected_tools)
+        self.assertEqual(toolset.tools, [rg_tool])
+        self.assertEqual(manager._toolsets, [toolset])
+        self.assertIs(manager._registration_plans[0].toolset, toolset)
+        self.assertIs(
+            manager.resolve_tool_name("shell.rg").status,
+            ToolNameResolutionStatus.EXACT,
+        )
+        self.assertIs(
+            manager.resolve_tool_name("shell.git_status").status,
+            ToolNameResolutionStatus.UNKNOWN,
+        )
+        self.assertIs(
+            manager.resolve_tool_name("shell.pipeline").status,
+            ToolNameResolutionStatus.DISABLED,
+        )
 
     def test_unavailable_shell_toolset_reports_unknown_shell_tools(
         self,
@@ -402,7 +453,7 @@ class ShellToolManagerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(outcome, ToolCallDiagnostic)
         assert isinstance(outcome, ToolCallDiagnostic)
-        self.assertEqual(outcome.requested_name, provider_name)
+        self.assertEqual(outcome.requested_name, "shell.cat")
         self.assertIsNone(outcome.canonical_name)
         self.assertIs(outcome.code, ToolCallDiagnosticCode.DISABLED_TOOL)
         self.assertIs(outcome.stage, ToolCallDiagnosticStage.RESOLVE)
@@ -705,18 +756,17 @@ def _tool_names(manager: ToolManager) -> tuple[str, ...]:
 
 
 def _schema_names(manager: ToolManager) -> tuple[str, ...]:
-    schemas = manager.json_schemas()
-    return tuple(schema["function"]["name"] for schema in schemas or ())
+    return tuple(
+        descriptor.schema["function"]["name"]
+        for descriptor in manager.list_tools()
+        if descriptor.schema is not None
+    )
 
 
 def _provider_safe_name(manager: ToolManager, name: str) -> str:
-    descriptor = manager.describe_tool(name)
-    assert descriptor is not None
-    assert descriptor.provider_safe_schema is not None
-    function = descriptor.provider_safe_schema["function"]
-    assert isinstance(function, dict)
-    provider_name = function["name"]
-    assert isinstance(provider_name, str)
+    provider_name = ModelCapabilityCatalog.create(
+        manager.export_model_capability_seed()
+    ).provider_name(name)
     assert provider_name.startswith("avl_")
     assert "." not in provider_name
     return provider_name

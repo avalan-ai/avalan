@@ -33,6 +33,7 @@ from avalan.entities import (
 from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import ShellToolSettings
@@ -65,6 +66,9 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.memory = MagicMock(spec=MemoryManager)
         self.memory.participant_id = uuid4()
         self.tool = MagicMock(spec=ToolManager)
+        self.tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         self.event_manager = MagicMock(spec=EventManager)
         self.orch = Orchestrator(
             self.logger,
@@ -101,6 +105,27 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.orch.memory, self.memory)
         self.assertIs(self.orch.tool, self.tool)
         self.assertIs(self.orch.event_manager, self.event_manager)
+
+    async def test_call_shares_one_capability_catalog(self) -> None:
+        captured: dict[str, object] = {}
+
+        def response_factory(*args: object, **kwargs: object) -> str:
+            captured["context"] = args[5]
+            captured["capability"] = kwargs["capability"]
+            return "resp"
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            response_factory,
+        ):
+            response = await self.orch("hi")
+
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(response, "resp")
+        self.assertIsInstance(context.capability, ModelCapabilityCatalog)
+        self.assertIs(captured["context"], context)
+        self.assertIs(captured["capability"], context.capability)
+        self.tool.export_model_capability_seed.assert_called_once_with()
 
     async def test_call_uses_default_maximum_tool_cycles(self):
         captured = {}

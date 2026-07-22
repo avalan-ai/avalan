@@ -665,7 +665,7 @@ async def model_run(
                 engine_uri=engine_uri,
                 model=model,
                 operation=operation,
-                tool=None,
+                capability=None,
                 context=context,
             )
             output = await manager(task)

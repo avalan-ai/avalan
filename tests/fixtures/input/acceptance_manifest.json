@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "current_phase": 2,
+  "current_phase": 3,
   "categories": [
     "unit",
     "integration",
@@ -11,6 +11,76 @@
     "public_e2e"
   ],
   "parameter_expansions": [
+    {
+      "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_022",
+      "instance_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[anthropic-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[anthropic-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[anyscale-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[anyscale-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[bedrock-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[bedrock-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[deepinfra-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[deepinfra-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[deepseek-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[deepseek-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[google-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[google-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[groq-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[groq-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[hugging_face-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[hugging_face-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[hyperbolic-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[hyperbolic-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[litellm-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[litellm-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[ollama-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[ollama-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[openai-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[openai-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[openrouter-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[openrouter-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[together-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[together-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[azure_openai-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[azure_openai-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[generic_openai_compatible-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[generic_openai_compatible-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[transformers-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[transformers-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[vllm-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[vllm-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[mlx_lm-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[mlx_lm-incapable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[ds4-capable]",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022[ds4-incapable]"
+      ],
+      "sha256": "5696c322dab99245a0c97869edd4b56fc3118e6888d0614a01383b4896d8fb63"
+    },
+    {
+      "node_id": "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix",
+      "instance_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix[transformers-no-chat-template]",
+        "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix[transformers-parser-disabled]",
+        "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix[vllm-no-chat-template]",
+        "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix[vllm-parser-disabled]",
+        "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix[mlx-lm-no-chat-template]",
+        "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix[mlx-lm-parser-disabled]",
+        "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix[ds4-unsupported-capability]"
+      ],
+      "sha256": "c48006724c87f566ec34c1b6fdf6f241360befe37ba1bd408e659b4faa6963fa"
+    },
+    {
+      "node_id": "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection",
+      "instance_node_ids": [
+        "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection[request-id]",
+        "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection[secret]",
+        "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection[authentication]",
+        "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection[interaction-class]",
+        "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection[approval]"
+      ],
+      "sha256": "b8ea0d1aa75d1a51cc0ec6f0ab72c211d9ca0d9080f9dc61ca0de73f79fc83a9"
+    },
     {
       "node_id": "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
       "instance_node_ids": [
@@ -186,6 +256,24 @@
         "behavior-091",
         "behavior-092",
         "behavior-093"
+      ]
+    },
+    {
+      "phase": 3,
+      "node_ids": [
+        "behavior-001",
+        "behavior-003",
+        "behavior-022",
+        "behavior-023",
+        "behavior-024",
+        "behavior-025",
+        "behavior-026",
+        "behavior-027",
+        "behavior-028",
+        "behavior-023-local-negative",
+        "behavior-027-forbidden-fields",
+        "behavior-027-orchestrator-rejection",
+        "behavior-028-orchestrator-accounting"
       ]
     }
   ],
@@ -396,6 +484,111 @@
         "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix"
       ],
       "sha256": "0e1963469ea0ceda1f389fa64bc3d19ec63e08792b5250c473e66cc618f1651a"
+    },
+    {
+      "phase": 3,
+      "node_ids": [
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_001",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_003",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_004",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_005",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_006",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_007",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_008",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_009",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_010",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_011",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_012",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_013",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_014",
+        "tests/input/security_contract_test.py::test_requirement_input_n_015",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_019",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_020",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_021",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_023",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_024",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_025",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_026",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_027",
+        "tests/input/model_capability_contract_test.py::test_requirement_input_n_028",
+        "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix",
+        "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection",
+        "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_rejected_structured_batches_have_zero_domain_side_effects",
+        "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_valid_reserved_call_preserves_exact_provider_id",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_029",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_030",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_031",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_032",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_033",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_034",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_035",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_036",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_037",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_038",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_039",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_040",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_041",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_042",
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_043",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_090",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_091",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_092",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_093",
+        "tests/input_contract_test.py::test_requirement_catalog_is_complete",
+        "tests/input_contract_test.py::test_acceptance_manifest_lifecycle_is_monotonic",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory",
+        "tests/input_contract_test.py::test_failure_matrix_is_complete",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_na_reason_without_exact_ids",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_cli_executes_exact_synthetic_node",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_pytest_non_evidence",
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_placeholder_and_execution_tricks",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_accepts_empty_module_variants",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_rejects_invalid_reports",
+        "tests/input_contract_metadata_test.py::test_exact_make_target_fails_closed_on_pytest_failure",
+        "tests/input_contract_metadata_test.py::test_project_metadata_pins_complete_common_gate",
+        "tests/project_metadata_test.py::test_workflow_exact_gate_detection_rejects_partial_coverage",
+        "tests/input_contract_harness_test.py::test_admin_dsn_runner_script_uses_ephemeral_database",
+        "tests/input_contract_harness_test.py::test_main_selects_admin_dsn_and_runner_script",
+        "tests/input_contract_harness_test.py::test_docker_forwards_runner_and_always_stops",
+        "tests/input_contract_harness_test.py::test_common_gate_cleans_partial_coverage",
+        "tests/input_contract_harness_test.py::test_common_gate_skips_acceptance_after_coverage_failure",
+        "tests/input_type_contract_test.py::test_type_contract_manifest_and_runner_are_strict",
+        "tests/input_contract_test.py::test_deterministic_fixtures_are_reproducible",
+        "tests/input_contract_test.py::test_contract_decisions_are_frozen",
+        "tests/input_contract_test.py::test_no_bc_removal_inventory_is_frozen",
+        "tests/input_contract_test.py::test_baseline_evidence_is_complete",
+        "tests/input_contract_test.py::test_capability_remains_dormant",
+        "tests/input/interaction_boundary_e2e_test.py::test_codec_and_snapshot_round_trip",
+        "tests/input/interaction_boundary_e2e_test.py::test_illegal_transition_preserves_prior_request",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_projects_correlated_input_required",
+        "tests/input/interaction_boundary_e2e_test.py::test_canonical_interaction_boundary_e2e",
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content",
+        "tests/src_coverage_verifier_test.py::test_exact_coverage_allows_only_reviewed_exclusion_relocations",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_terminal_validator_rejects_input_required_without_one_pending",
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_invalid_interaction_state_fails_closed",
+        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
+        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_references",
+        "tests/interaction/interaction_state_test.py::test_answer_type_must_match_question",
+        "tests/interaction/interaction_state_test.py::test_answer_set_rejects_unknown_missing_and_invalid_text",
+        "tests/interaction/interaction_state_test.py::test_selection_answers_validate_values_and_cardinality",
+        "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults",
+        "tests/interaction/interaction_state_test.py::test_transition_error_rejects_invalid_public_constructor_values",
+        "tests/interaction/interaction_state_test.py::test_pending_transition_rejects_invalid_preconditions_and_overflow",
+        "tests/interaction/interaction_state_test.py::test_resolution_transition_rejects_revision_and_resolution_errors",
+        "tests/interaction/interaction_validation_test.py::test_invalid_primitives",
+        "tests/interaction/interaction_codec_test.py::test_codec_rejects_invalid_root_types_and_unsupported_variants",
+        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
+        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_pending_interaction_rejects_false_stream_completion",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_multiple_pending_requests_reject_input_required_cardinality",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_illegal_lifecycle_order",
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix"
+      ],
+      "sha256": "06bc2506694e21e6451e6f3a788645334200e5b059c0050f966fdf3920c72829"
     }
   ],
   "requirement_activation_slices": [
@@ -424,80 +617,13 @@
       "active_node_ids": [
         "tests/input/broker_contract_test.py::test_requirement_input_n_019"
       ],
-      "remaining_owner": "future model capability composition",
-      "remaining_scope": "Negotiate and project the reserved provider-neutral task-input capability through model/provider hosts while production advertisement remains dormant until atomic activation.",
+      "remaining_owner": "future attached runtime integration",
+      "remaining_scope": "Convert an attached model invocation of the reserved capability into one broker-created input_required interaction while preserving the same runtime call correlation.",
       "planned_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_022"
+        "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required"
       ],
       "reviewed_by": "/root",
-      "evidence": "The broker lifecycle is active while model and provider capability advertisement remains dormant and unadvertised."
-    },
-    {
-      "requirement_id": "INPUT-N-023",
-      "phase": 1,
-      "active_owner": "provider-free canonical lifecycle",
-      "active_scope": "Enforce bounded typed request aggregates and complete provider-free request, resolution, and continuation projection.",
-      "active_node_ids": [
-        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
-        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
-      ],
-      "remaining_owner": "future model capability composition",
-      "remaining_scope": "Advertise, await, and return the request through capable and incapable production model hosts.",
-      "planned_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_023"
-      ],
-      "reviewed_by": "/root",
-      "evidence": "The provider-free lifecycle is executable and typed without activating any model capability registry."
-    },
-    {
-      "requirement_id": "INPUT-N-025",
-      "phase": 1,
-      "active_owner": "canonical request aggregate",
-      "active_scope": "Validate the bounded related-question aggregate and reject malformed selection collections and references.",
-      "active_node_ids": [
-        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
-        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_choice_collections",
-        "tests/interaction/interaction_entities_test.py::test_selection_questions_reject_invalid_references"
-      ],
-      "remaining_owner": "future model capability composition",
-      "remaining_scope": "Verify production model hosts render and return one related question bundle through the reserved capability.",
-      "planned_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_025"
-      ],
-      "reviewed_by": "/root",
-      "evidence": "Canonical aggregate and selection invariants are active while host rendering remains planned."
-    },
-    {
-      "requirement_id": "INPUT-N-026",
-      "phase": 1,
-      "active_owner": "canonical request aggregate",
-      "active_scope": "Reject empty, mutable, duplicate, untyped, or more-than-three-question canonical request aggregates.",
-      "active_node_ids": [
-        "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants"
-      ],
-      "remaining_owner": "future model capability composition",
-      "remaining_scope": "Verify production model capability parsing rejects more than three requested questions before side effects.",
-      "planned_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_026"
-      ],
-      "reviewed_by": "/root",
-      "evidence": "The canonical constructor owns the three-question limit; provider batch enforcement remains planned."
-    },
-    {
-      "requirement_id": "INPUT-N-027",
-      "phase": 1,
-      "active_owner": "canonical continuation security boundary",
-      "active_scope": "Reject provider secrets, revision drift, invalid JSON, and unsafe continuation snapshot content before restoration.",
-      "active_node_ids": [
-        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json"
-      ],
-      "remaining_owner": "future model capability composition",
-      "remaining_scope": "Verify activated provider call handling never executes actions, reads process input, assumes a renderer, or fabricates human provenance.",
-      "planned_node_ids": [
-        "tests/input/model_capability_contract_test.py::test_requirement_input_n_027"
-      ],
-      "reviewed_by": "/root",
-      "evidence": "Continuation security is active at the canonical codec boundary while provider execution policy remains planned."
+      "evidence": "The broker lifecycle is active; the attached model-call to broker-created input_required boundary remains explicitly planned and unexecuted."
     },
     {
       "requirement_id": "INPUT-N-098",
@@ -553,7 +679,7 @@
     {
       "id": "behavior-001",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 3,
       "requirement_ids": [
         "INPUT-N-001"
@@ -562,18 +688,19 @@
     },
     {
       "id": "behavior-002",
-      "category": "unit",
+      "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 3,
+      "active_from_phase": 4,
       "requirement_ids": [
-        "INPUT-N-002"
+        "INPUT-N-002",
+        "INPUT-N-019"
       ],
-      "node_id": "tests/input/canonical_contract_test.py::test_requirement_input_n_002"
+      "node_id": "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required"
     },
     {
       "id": "behavior-003",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 3,
       "requirement_ids": [
         "INPUT-N-003"
@@ -763,10 +890,9 @@
     {
       "id": "behavior-022",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 3,
       "requirement_ids": [
-        "INPUT-N-019",
         "INPUT-N-022"
       ],
       "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_022"
@@ -774,7 +900,7 @@
     {
       "id": "behavior-023",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 3,
       "requirement_ids": [
         "INPUT-N-023"
@@ -784,7 +910,7 @@
     {
       "id": "behavior-024",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 3,
       "requirement_ids": [
         "INPUT-N-024"
@@ -794,7 +920,7 @@
     {
       "id": "behavior-025",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 3,
       "requirement_ids": [
         "INPUT-N-025"
@@ -804,7 +930,7 @@
     {
       "id": "behavior-026",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 3,
       "requirement_ids": [
         "INPUT-N-026"
@@ -814,7 +940,7 @@
     {
       "id": "behavior-027",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 3,
       "requirement_ids": [
         "INPUT-N-027"
@@ -824,12 +950,54 @@
     {
       "id": "behavior-028",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 3,
       "requirement_ids": [
         "INPUT-N-028"
       ],
       "node_id": "tests/input/model_capability_contract_test.py::test_requirement_input_n_028"
+    },
+    {
+      "id": "behavior-023-local-negative",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-023"
+      ],
+      "node_id": "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix"
+    },
+    {
+      "id": "behavior-027-forbidden-fields",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-027"
+      ],
+      "node_id": "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection"
+    },
+    {
+      "id": "behavior-027-orchestrator-rejection",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-027",
+        "INPUT-N-028"
+      ],
+      "node_id": "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_rejected_structured_batches_have_zero_domain_side_effects"
+    },
+    {
+      "id": "behavior-028-orchestrator-accounting",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "INPUT-N-022",
+        "INPUT-N-028"
+      ],
+      "node_id": "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_valid_reserved_call_preserves_exact_provider_id"
     },
     {
       "id": "behavior-029",

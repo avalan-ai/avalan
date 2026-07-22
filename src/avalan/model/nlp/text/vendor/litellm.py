@@ -1,4 +1,11 @@
-from .....entities import GenerationSettings, Message
+from .....entities import (
+    GenerationSettings,
+    Message,
+    MessageRole,
+    ToolCallDiagnostic,
+    ToolCallError,
+    ToolCallResult,
+)
 from .....model.provider import ProviderFamily
 from .....model.stream import (
     CanonicalStreamItem,
@@ -10,11 +17,19 @@ from .....model.stream import (
     StreamReasoningRepresentation,
     StreamReasoningSegmentState,
     StreamVisibility,
+    TextGenerationNonStreamResult,
+    TextGenerationNonStreamToolCall,
     TextGenerationSingleStream,
     TextGenerationStream,
 )
-from .....tool.manager import ToolManager
 from .....types import LooseJsonValue
+from .....utils import to_json, tool_call_diagnostic_payload
+from ....capability import (
+    CorrelatedCapabilityResult,
+    ModelCapabilityCatalog,
+    ProviderCapabilityCall,
+    TaskInputCapabilityCall,
+)
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
     DiffusionPipeline,
@@ -28,16 +43,35 @@ from typing import Any, AsyncIterator, cast
 import litellm
 
 
+def _mutable_provider_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _mutable_provider_json(item) for key, item in value.items()
+        }
+    if isinstance(value, tuple | list):
+        return [_mutable_provider_json(item) for item in value]
+    return value
+
+
 class LiteLLMStream(TextGenerationVendorStream):
     _stream: AsyncIterator[Any]
     _tool_call_ids_by_index: dict[int, str]
     _tool_call_names_by_id: dict[str, str]
+    _tool_call_arguments_by_id: dict[str, str]
+    _capability_catalog: ModelCapabilityCatalog | None
     _reasoning_segments: StreamReasoningSegmentState
 
-    def __init__(self, stream: AsyncIterator[Any]) -> None:
+    def __init__(
+        self,
+        stream: AsyncIterator[Any],
+        *,
+        capability: ModelCapabilityCatalog | None = None,
+    ) -> None:
         self._stream = stream
         self._tool_call_ids_by_index = {}
         self._tool_call_names_by_id = {}
+        self._tool_call_arguments_by_id = {}
+        self._capability_catalog = capability
         self._reasoning_segments = StreamReasoningSegmentState()
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
@@ -76,6 +110,7 @@ class LiteLLMStream(TextGenerationVendorStream):
     ) -> AsyncIterator[CanonicalStreamItem]:
         self._tool_call_ids_by_index = {}
         self._tool_call_names_by_id = {}
+        self._tool_call_arguments_by_id = {}
         self._reasoning_segments = StreamReasoningSegmentState()
         return self._provider_canonical_stream(
             self._provider_events(),
@@ -173,6 +208,10 @@ class LiteLLMStream(TextGenerationVendorStream):
                 if name is not None:
                     self._tool_call_names_by_id[call_id] = name
                 if arguments is not None:
+                    self._tool_call_arguments_by_id[call_id] = (
+                        self._tool_call_arguments_by_id.get(call_id, "")
+                        + arguments
+                    )
                     yield StreamProviderEvent(
                         kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                         correlation=StreamItemCorrelation(
@@ -188,10 +227,32 @@ class LiteLLMStream(TextGenerationVendorStream):
         if LiteLLMClient._field(choice, "finish_reason") == "tool_calls":
             for call_id in tool_call_ids or list(self._tool_call_names_by_id):
                 correlation = StreamItemCorrelation(tool_call_id=call_id)
+                provider_name = self._tool_call_names_by_id.get(call_id)
+                canonical_name: object | None = provider_name
+                if (
+                    self._capability_catalog is not None
+                    and provider_name is not None
+                ):
+                    decoded = self._capability_catalog.decode_call(
+                        ProviderCapabilityCall(
+                            call_id=call_id,
+                            provider_name=provider_name,
+                            arguments=(
+                                self._tool_call_arguments_by_id.get(call_id)
+                                or None
+                            ),
+                        ),
+                        provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+                    )
+                    canonical_name = (
+                        decoded.canonical_name
+                        if isinstance(decoded, TaskInputCapabilityCall)
+                        else decoded.name
+                    )
                 yield StreamProviderEvent(
                     kind=StreamItemKind.TOOL_CALL_READY,
                     correlation=correlation,
-                    data={"name": self._tool_call_names_by_id.get(call_id)},
+                    data={"name": canonical_name},
                     provider_payload=provider_payload,
                     provider_event_type="chat.completion.tool_call.done",
                 )
@@ -302,14 +363,17 @@ class LiteLLMClient(TextGenerationVendor):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
         self._validate_reasoning_summary_request(settings)
         assert (
             instructions is None
         ), "LiteLLM does not support provider instructions"
-        template_messages = self._template_messages(messages)
+        template_messages = self._template_messages(
+            messages,
+            capability=capability,
+        )
         kwargs: dict[str, Any] = dict(
             model=model_id,
             messages=template_messages,
@@ -318,15 +382,142 @@ class LiteLLMClient(TextGenerationVendor):
         )
         if self._base_url:
             kwargs["api_base"] = self._base_url
+        if capability is not None:
+            projection = capability.project(ProviderFamily.OPENAI_COMPATIBLE)
+            if not projection.is_empty:
+                kwargs["tools"] = _mutable_provider_json(projection.schemas)
+                if settings and settings.tool_choice is not None:
+                    provider_name = projection.tool_choice(
+                        settings.tool_choice
+                    )
+                    kwargs["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": provider_name},
+                    }
         result = await litellm.acompletion(**kwargs)
         if use_async_generator:
-            return LiteLLMStream(result)
+            stream_kwargs: dict[str, ModelCapabilityCatalog] = {}
+            if capability is not None:
+                stream_kwargs["capability"] = capability
+            return LiteLLMStream(result, **stream_kwargs)
 
-        return TextGenerationSingleStream(
-            LiteLLMClient._message_text(result) or "",
-            provider_family=ProviderFamily.OPENAI_COMPATIBLE,
-            usage=LiteLLMClient._field(result, "usage"),
+        answer_text, calls = LiteLLMClient._message_parts(
+            result,
+            capability=capability,
         )
+        usage = LiteLLMClient._field(result, "usage")
+        if calls:
+            return TextGenerationNonStreamResult.from_provider_parts(
+                answer_text=answer_text,
+                calls=calls,
+                provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+                usage=usage,
+                answer_event_type="chat.completion.text",
+                terminal_event_type="chat.completion.completed",
+            )
+        return TextGenerationSingleStream(
+            answer_text,
+            provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+            usage=usage,
+        )
+
+    def _template_messages(
+        self,
+        messages: list[Message],
+        *,
+        capability: ModelCapabilityCatalog | None = None,
+    ) -> list[dict[str, Any]]:
+        templated: list[dict[str, Any]] = []
+        for message in messages:
+            if message.role == MessageRole.TOOL:
+                outcome = (
+                    message.tool_call_result
+                    or message.tool_call_error
+                    or message.tool_call_diagnostic
+                )
+                if outcome is None:
+                    continue
+                if isinstance(outcome, ToolCallDiagnostic):
+                    if outcome.call_id is None:
+                        templated.append(
+                            {
+                                "role": str(MessageRole.ASSISTANT),
+                                "content": to_json(
+                                    tool_call_diagnostic_payload(outcome)
+                                ),
+                            }
+                        )
+                        continue
+                    call_id = str(outcome.call_id)
+                    canonical_name = (
+                        message.name
+                        or outcome.canonical_name
+                        or outcome.requested_name
+                        or "tool"
+                    )
+                    output: object = tool_call_diagnostic_payload(outcome)
+                else:
+                    assert isinstance(
+                        outcome,
+                        (ToolCallResult, ToolCallError),
+                    )
+                    call_id = str(outcome.call.id)
+                    canonical_name = outcome.call.name
+                    output = (
+                        outcome.result
+                        if isinstance(outcome, ToolCallResult)
+                        else {"error": outcome.message}
+                    )
+                provider_name = TextGenerationVendor.provider_tool_name(
+                    canonical_name,
+                    capability=capability,
+                    provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+                )
+                templated.append(
+                    {
+                        "role": str(MessageRole.TOOL),
+                        "tool_call_id": call_id,
+                        "name": provider_name,
+                        "content": to_json(output),
+                    }
+                )
+                continue
+
+            formatted = cast(
+                list[dict[str, Any]],
+                super()._template_messages([message]),
+            )[0]
+            if message.tool_calls:
+                formatted["tool_calls"] = [
+                    {
+                        "id": str(call.id) if call.id is not None else "",
+                        "type": "function",
+                        "function": {
+                            "name": TextGenerationVendor.provider_tool_name(
+                                call.name,
+                                capability=capability,
+                                provider_family=(
+                                    ProviderFamily.OPENAI_COMPATIBLE
+                                ),
+                            ),
+                            "arguments": to_json(call.arguments or {}),
+                        },
+                    }
+                    for call in message.tool_calls
+                ]
+            templated.append(formatted)
+        return templated
+
+    @staticmethod
+    def capability_result_message(
+        result: CorrelatedCapabilityResult,
+    ) -> dict[str, Any]:
+        return {
+            "role": str(MessageRole.TOOL),
+            "tool_call_id": str(result.call_id),
+            "name": result.provider_name,
+            "content": to_json(result.provider_payload()),
+        }
 
     @staticmethod
     def _field(value: object, name: str) -> object | None:
@@ -344,13 +535,57 @@ class LiteLLMClient(TextGenerationVendor):
         return content if isinstance(content, str) else None
 
     @staticmethod
-    def _message_text(response: object) -> str | None:
+    def _message_text(
+        response: object,
+        *,
+        capability: ModelCapabilityCatalog | None = None,
+    ) -> str | None:
+        answer_text, calls = LiteLLMClient._message_parts(
+            response,
+            capability=capability,
+        )
+        text = answer_text + "".join(
+            TextGenerationVendor.build_tool_call_text(
+                call.call_id,
+                call.name,
+                call.arguments,
+                tool_name_is_canonical=True,
+            )
+            for call in calls
+        )
+        return text or None
+
+    @staticmethod
+    def _message_parts(
+        response: object,
+        *,
+        capability: ModelCapabilityCatalog | None = None,
+    ) -> tuple[str, tuple[TextGenerationNonStreamToolCall, ...]]:
         choices = LiteLLMClient._field(response, "choices")
         if not isinstance(choices, list) or not choices:
-            return None
+            return "", ()
         message = LiteLLMClient._field(choices[0], "message")
         content = LiteLLMClient._field(message, "content")
-        return content if isinstance(content, str) else None
+        answer_text = content if isinstance(content, str) else ""
+        calls: list[TextGenerationNonStreamToolCall] = []
+        tool_calls = LiteLLMClient._field(message, "tool_calls")
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                call_id = LiteLLMClient._field(tool_call, "id")
+                function = LiteLLMClient._field(tool_call, "function")
+                name = LiteLLMClient._field(function, "name")
+                arguments = LiteLLMClient._field(function, "arguments")
+                calls.append(
+                    TextGenerationVendor.non_stream_tool_call(
+                        call_id=call_id,
+                        provider_name=name,
+                        arguments=arguments,
+                        capability=capability,
+                        provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+                        provider_event_type="chat.completion.tool_call",
+                    )
+                )
+        return answer_text, tuple(calls)
 
     @staticmethod
     def _reasoning_text(delta: object) -> str | None:

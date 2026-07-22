@@ -9,6 +9,7 @@ from avalan.entities import (
     ToolManagerSettings,
     ToolNameResolutionStatus,
 )
+from avalan.model import ModelCapabilityCatalog
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
     SHELL_GIT_COMMAND_IDS,
@@ -315,7 +316,7 @@ class ShellGitToolManagerPhase1Test(TestCase):
         self.assertIsNotNone(manager.describe_tool("shell.git_log"))
         self.assertIsNone(manager.describe_tool("shell.git_commit"))
 
-    def test_tool_manager_provider_name_round_trips_git_tool(self) -> None:
+    def test_model_catalog_name_round_trips_git_tool(self) -> None:
         manager = ToolManager.create_instance(
             available_toolsets=[ShellToolSet()],
             enable_tools=["shell.git_status"],
@@ -323,11 +324,14 @@ class ShellGitToolManagerPhase1Test(TestCase):
         )
 
         self.assertEqual(_manager_tool_names(manager), ("shell.git_status",))
-        provider_name = manager.provider_tool_name("shell.git_status")
+        catalog = ModelCapabilityCatalog.create(
+            manager.export_model_capability_seed()
+        )
+        provider_name = catalog.provider_name("shell.git_status")
 
         self.assertNotEqual(provider_name, "shell.git_status")
         self.assertEqual(
-            manager.canonical_tool_name(provider_name),
+            catalog.canonical_name(provider_name),
             "shell.git_status",
         )
         self.assertEqual(
@@ -377,9 +381,10 @@ class ShellGitToolManagerPhase1Test(TestCase):
             settings=ToolManagerSettings(),
         )
         schemas = [
-            schema
-            for schema in manager.json_schemas() or ()
-            if schema["function"]["name"].startswith("shell.git_")
+            descriptor.schema
+            for descriptor in manager.list_tools()
+            if descriptor.schema is not None
+            and descriptor.name.startswith("shell.git_")
         ]
 
         self.assertTrue(schemas)
@@ -559,7 +564,9 @@ def _manager_tool_names(manager: ToolManager) -> tuple[str, ...]:
 
 def _manager_schema_names(manager: ToolManager) -> tuple[str, ...]:
     return tuple(
-        schema["function"]["name"] for schema in manager.json_schemas() or ()
+        descriptor.schema["function"]["name"]
+        for descriptor in manager.list_tools()
+        if descriptor.schema is not None
     )
 
 

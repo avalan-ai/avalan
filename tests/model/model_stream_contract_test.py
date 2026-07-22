@@ -279,8 +279,10 @@ async def _local_text_chunks(
 
 async def _local_text_events(
     chunks: AsyncIterable[str],
+    *,
+    parse_tool_calls: bool = False,
 ) -> AsyncIterator[StreamProviderEvent]:
-    parser = LocalTextStreamEventParser()
+    parser = LocalTextStreamEventParser(parse_tool_calls=parse_tool_calls)
     iterator = chunks.__aiter__()
     chunks_exhausted = False
 
@@ -328,13 +330,16 @@ def _local_text_stream(
     provider_family: str | None = "transformers",
     capabilities: StreamProviderCapabilities | None = None,
     close_after_terminal: bool = True,
+    parse_tool_calls: bool = False,
 ) -> AsyncIterator[CanonicalStreamItem]:
     iterator = chunks.__aiter__()
     events_exhausted = False
 
     async def tracked_events() -> AsyncIterator[StreamProviderEvent]:
         nonlocal events_exhausted
-        async for event in _local_text_events(iterator):
+        async for event in _local_text_events(
+            iterator, parse_tool_calls=parse_tool_calls
+        ):
             yield event
         events_exhausted = True
 
@@ -370,6 +375,7 @@ async def _collect_local_items(
     provider_family: str | None = "transformers",
     capabilities: StreamProviderCapabilities | None = None,
     close_after_terminal: bool = True,
+    parse_tool_calls: bool = False,
 ) -> tuple[CanonicalStreamItem, ...]:
     return tuple(
         [
@@ -379,6 +385,7 @@ async def _collect_local_items(
                 provider_family=provider_family,
                 capabilities=capabilities,
                 close_after_terminal=close_after_terminal,
+                parse_tool_calls=parse_tool_calls,
             )
         ]
     )
@@ -5649,18 +5656,28 @@ class StreamContractTestCase(TestCase):
 
         malformed_items = run(
             _collect_local_items(
-                _local_text_chunks(("<tool_call>not-json</tool_call>",))
+                _local_text_chunks(
+                    (
+                        (
+                            '<tool_call id="malformed-call" name="tool">'
+                            "not-json</tool_call>"
+                        ),
+                    )
+                ),
+                parse_tool_calls=True,
             )
         )
-        diagnostic = next(
-            item
-            for item in malformed_items
-            if item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+        self.assertEqual(
+            accumulate_canonical_stream_items(malformed_items).answer_text,
+            '<tool_call id="malformed-call" name="tool">not-json</tool_call>',
         )
-        self.assertEqual(diagnostic.data["code"], "tool_call.malformed")
         self.assertFalse(
             any(
-                item.kind is StreamItemKind.TOOL_CALL_READY
+                item.kind
+                in {
+                    StreamItemKind.STREAM_DIAGNOSTIC,
+                    StreamItemKind.TOOL_CALL_READY,
+                }
                 for item in malformed_items
             )
         )
@@ -6775,12 +6792,26 @@ class StreamContractTestCase(TestCase):
 
         parsed_tool_items = run(
             _collect_local_items(
-                _local_text_chunks(("<tool_call>{}</tool_call> after",))
+                _local_text_chunks(
+                    (
+                        (
+                            '<tool_call id="boundary-call" name="tool">'
+                            "{}</tool_call> after"
+                        ),
+                    )
+                ),
+                parse_tool_calls=True,
             )
         )
-        self.assertLess(
-            _first_sequence(parsed_tool_items, StreamItemKind.TOOL_CALL_DONE),
-            _last_sequence(parsed_tool_items, StreamItemKind.ANSWER_DELTA),
+        self.assertEqual(
+            accumulate_canonical_stream_items(parsed_tool_items).answer_text,
+            '<tool_call id="boundary-call" name="tool">{}</tool_call> after',
+        )
+        self.assertFalse(
+            any(
+                item.kind is StreamItemKind.TOOL_CALL_DONE
+                for item in parsed_tool_items
+            )
         )
 
     def test_provider_stream_normalizer_preserves_terminal_event_context(
@@ -6954,13 +6985,21 @@ class StreamContractTestCase(TestCase):
     def test_local_text_parser_stream_normalizer_maps_channels(
         self,
     ) -> None:
+        text = (
+            "answer <think>private</think>"
+            '<tool_call id="math-call" name="math">'
+            '{"x":1}</tool_call>'
+        )
         items = run(
             _collect_local_items(
                 _local_text_chunks(
                     (
                         "answer ",
                         "<think>private</think>",
-                        '<tool_call name="math">{"x":1}</tool_call>',
+                        (
+                            '<tool_call id="math-call" name="math">'
+                            '{"x":1}</tool_call>'
+                        ),
                     )
                 ),
                 capabilities=StreamProviderCapabilities(
@@ -6971,6 +7010,7 @@ class StreamContractTestCase(TestCase):
                     supports_cancellation=True,
                     max_queue_depth=8,
                 ),
+                parse_tool_calls=True,
             )
         )
 
@@ -6979,17 +7019,14 @@ class StreamContractTestCase(TestCase):
             [
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.ANSWER_DELTA,
-                StreamItemKind.REASONING_DELTA,
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.ANSWER_DONE,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
-        self.assertEqual([item.sequence for item in items], list(range(10)))
+        self.assertEqual([item.sequence for item in items], list(range(7)))
         self.assertEqual(
             {item.provider_family for item in items}, {"transformers"}
         )
@@ -6997,24 +7034,10 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(
             items[0].metadata["capabilities"]["max_queue_depth"], 8
         )
-        self.assertEqual(items[1].text_delta, "answer ")
-        self.assertIs(items[2].visibility, StreamVisibility.PRIVATE)
-        self.assertEqual(
-            items[3].correlation.tool_call_id, "local-tool-call-1"
-        )
-        self.assertEqual(
-            items[4].data, {"name": "math", "arguments": {"x": 1}}
-        )
-        self.assertEqual(
-            items[5].correlation.tool_call_id, "local-tool-call-1"
-        )
         accumulator = accumulate_canonical_stream_items(items)
-        self.assertEqual(accumulator.answer_text, "answer ")
-        self.assertEqual(accumulator.reasoning_text, "private")
-        self.assertEqual(
-            accumulator.tool_call_arguments,
-            {"local-tool-call-1": '{"x":1}'},
-        )
+        self.assertEqual(accumulator.answer_text, text)
+        self.assertEqual(accumulator.reasoning_text, "")
+        self.assertEqual(accumulator.tool_call_arguments, {})
 
     def test_local_text_parser_stream_normalizer_marks_complete_tool_calls(
         self,
@@ -7023,10 +7046,11 @@ class StreamContractTestCase(TestCase):
             _collect_local_items(
                 _local_text_chunks(
                     (
-                        '<tool_call name="math">{"expression"',
+                        '<tool_call id="math-call" name="math">{"expression"',
                         ':"2+2"}</tool_call>',
                     )
-                )
+                ),
+                parse_tool_calls=True,
             )
         )
         tool_items = [
@@ -7045,10 +7069,10 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(
             [item.correlation.tool_call_id for item in tool_items],
             [
-                "local-tool-call-1",
-                "local-tool-call-1",
-                "local-tool-call-1",
-                "local-tool-call-1",
+                "math-call",
+                "math-call",
+                "math-call",
+                "math-call",
             ],
         )
         self.assertEqual(
@@ -7058,109 +7082,49 @@ class StreamContractTestCase(TestCase):
         self.assertEqual([item.sequence for item in items], list(range(7)))
         self.assertEqual(
             accumulate_canonical_stream_items(items).tool_call_arguments,
-            {"local-tool-call-1": '{"expression":"2+2"}'},
+            {"math-call": '{"expression":"2+2"}'},
         )
 
     def test_local_text_parser_closes_tool_calls_before_next_channel(
         self,
     ) -> None:
-        different_call_items = run(
-            _collect_local_items(
-                _local_text_chunks(
+        first = '<tool_call id="math-call" name="math">{"x":1}</tool_call>'
+        cases = (
+            (
+                (
+                    first,
                     (
-                        '<tool_call name="math">{"x":1}</tool_call>',
-                        '<tool_call name="lookup">{"q":2}</tool_call>',
+                        '<tool_call id="lookup-call" name="lookup">'
+                        '{"q":2}</tool_call>'
+                    ),
+                ),
+                first
+                + '<tool_call id="lookup-call" name="lookup">'
+                '{"q":2}</tool_call>',
+            ),
+            ((first, "answer"), first + "answer"),
+            (
+                (first, "<think>private</think>"),
+                first + "<think>private</think>",
+            ),
+        )
+        for chunks, expected_text in cases:
+            with self.subTest(chunks=chunks):
+                items = run(
+                    _collect_local_items(
+                        _local_text_chunks(chunks),
+                        parse_tool_calls=True,
                     )
                 )
-            )
-        )
-        different_call_tool_items = [
-            item
-            for item in different_call_items
-            if item.channel is StreamChannel.TOOL_CALL
-        ]
-
-        self.assertEqual(
-            [item.kind for item in different_call_tool_items],
-            [
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
-            ],
-        )
-        self.assertEqual(
-            [
-                item.correlation.tool_call_id
-                for item in different_call_tool_items
-            ],
-            [
-                "local-tool-call-1",
-                "local-tool-call-1",
-                "local-tool-call-1",
-                "local-tool-call-2",
-                "local-tool-call-2",
-                "local-tool-call-2",
-            ],
-        )
-        self.assertEqual(
-            different_call_tool_items[1].data,
-            {"name": "math", "arguments": {"x": 1}},
-        )
-        self.assertEqual(
-            different_call_tool_items[4].data,
-            {"name": "lookup", "arguments": {"q": 2}},
-        )
-
-        text_items = run(
-            _collect_local_items(
-                _local_text_chunks(
-                    (
-                        '<tool_call name="math">{"x":1}</tool_call>',
-                        "answer",
+                accumulator = accumulate_canonical_stream_items(items)
+                self.assertEqual(accumulator.answer_text, expected_text)
+                self.assertEqual(accumulator.tool_call_arguments, {})
+                self.assertFalse(
+                    any(
+                        item.channel is StreamChannel.TOOL_CALL
+                        for item in items
                     )
                 )
-            )
-        )
-        self.assertEqual(
-            [item.kind for item in text_items],
-            [
-                StreamItemKind.STREAM_STARTED,
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
-                StreamItemKind.ANSWER_DELTA,
-                StreamItemKind.ANSWER_DONE,
-                StreamItemKind.STREAM_COMPLETED,
-                StreamItemKind.STREAM_CLOSED,
-            ],
-        )
-
-        reasoning_items = run(
-            _collect_local_items(
-                _local_text_chunks(
-                    (
-                        '<tool_call name="math">{"x":1}</tool_call>',
-                        "<think>private</think>",
-                    )
-                )
-            )
-        )
-        self.assertEqual(
-            [item.kind for item in reasoning_items],
-            [
-                StreamItemKind.STREAM_STARTED,
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
-                StreamItemKind.REASONING_DELTA,
-                StreamItemKind.REASONING_DONE,
-                StreamItemKind.STREAM_COMPLETED,
-                StreamItemKind.STREAM_CLOSED,
-            ],
-        )
 
     def test_local_text_parser_stream_reports_invalid_chunks(
         self,
@@ -7595,69 +7559,54 @@ class StreamContractTestCase(TestCase):
     def test_local_stream_normalizer_parses_streamed_tool_call_text(
         self,
     ) -> None:
+        invalid_text = (
+            'before <tool_call id="math-call" name="math">'
+            '{"x":1}</tool_call> after'
+        )
         items = run(
             _collect_local_items(
                 _local_text_chunks(
                     (
                         "before ",
                         "<tool_",
-                        'call name="math">',
+                        'call id="math-call" name="math">',
                         '{"x":',
                         "1}",
                         "</tool_call>",
                         " after",
                     )
-                )
+                ),
+                parse_tool_calls=True,
             )
         )
 
-        tool_items = [
-            item for item in items if item.channel is StreamChannel.TOOL_CALL
-        ]
-        self.assertEqual(
-            [item.kind for item in tool_items],
-            [
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
-            ],
-        )
-        self.assertEqual(
-            {item.correlation.tool_call_id for item in tool_items},
-            {"local-tool-call-1"},
-        )
-        self.assertEqual(tool_items[0].text_delta, '{"x":')
-        self.assertEqual(tool_items[1].text_delta, "1}")
-        self.assertEqual(
-            tool_items[2].data, {"name": "math", "arguments": {"x": 1}}
-        )
         accumulator = accumulate_canonical_stream_items(items)
-        self.assertEqual(accumulator.answer_text, "before  after")
-        self.assertEqual(
-            accumulator.tool_call_arguments, {"local-tool-call-1": '{"x":1}'}
+        self.assertEqual(accumulator.answer_text, invalid_text)
+        self.assertEqual(accumulator.tool_call_arguments, {})
+        self.assertFalse(
+            any(item.channel is StreamChannel.TOOL_CALL for item in items)
         )
 
         split_boundary_items = run(
             _collect_local_items(
                 _local_text_chunks(
                     (
-                        "before ",
                         "<tool_call",
-                        ' name="math">',
+                        ' id="split-call" name="math">',
                         "{}",
                         "</tool_call>",
                     )
-                )
+                ),
+                parse_tool_calls=True,
             )
         )
         split_boundary_accumulator = accumulate_canonical_stream_items(
             split_boundary_items
         )
-        self.assertEqual(split_boundary_accumulator.answer_text, "before ")
+        self.assertEqual(split_boundary_accumulator.answer_text, "")
         self.assertEqual(
             split_boundary_accumulator.tool_call_arguments,
-            {"local-tool-call-1": "{}"},
+            {"split-call": "{}"},
         )
         split_boundary_ready = next(
             item
@@ -7688,126 +7637,72 @@ class StreamContractTestCase(TestCase):
             if item.kind is StreamItemKind.TOOL_CALL_READY
         ]
 
-        self.assertEqual(ready_items[0].data, {"name": None, "arguments": {}})
-        self.assertEqual(ready_items[1].data, {"name": None, "arguments": {}})
+        self.assertEqual(ready_items, [])
         self.assertEqual(
-            {item.correlation.tool_call_id for item in ready_items},
-            {"local-tool-call-1", "local-tool-call-2"},
+            accumulate_canonical_stream_items(items).answer_text,
+            "<tool_call></tool_call><tool_call>{}</tool_call>",
+        )
+        self.assertFalse(
+            any(
+                item.kind is StreamItemKind.STREAM_DIAGNOSTIC for item in items
+            )
         )
 
     def test_local_stream_normalizer_reports_malformed_tool_call_text(
         self,
     ) -> None:
-        items = run(
-            _collect_local_items(
-                _local_text_chunks(
+        cases = (
+            (
+                (
+                    "before ",
+                    '<tool_call id="math-call" name="math">',
+                    '{"x":',
+                ),
+                'before <tool_call id="math-call" name="math">{"x":',
+            ),
+            (
+                (
+                    '<tool_call id="invalid-call" name="math">',
+                    "not-json</tool_call>",
+                ),
+                (
+                    '<tool_call id="invalid-call" name="math">'
+                    "not-json</tool_call>"
+                ),
+            ),
+            (
+                (
                     (
-                        "before ",
-                        '<tool_call name="math">',
-                        '{"x":',
+                        '<tool_call id="non-object-call" name="math">'
+                        "[]</tool_call>"
+                    ),
+                ),
+                '<tool_call id="non-object-call" name="math">[]</tool_call>',
+            ),
+            (('<tool_call id="partial',), '<tool_call id="partial'),
+            (
+                ('<tool_call id="partial-call" name="math">{}</tool_',),
+                '<tool_call id="partial-call" name="math">{}</tool_',
+            ),
+        )
+        for chunks, expected_text in cases:
+            with self.subTest(chunks=chunks):
+                items = run(
+                    _collect_local_items(
+                        _local_text_chunks(chunks),
+                        parse_tool_calls=True,
                     )
                 )
-            )
-        )
-
-        diagnostic = next(
-            item
-            for item in items
-            if item.kind is StreamItemKind.STREAM_DIAGNOSTIC
-        )
-        self.assertEqual(diagnostic.data["code"], "tool_call.malformed")
-        self.assertEqual(
-            diagnostic.correlation.tool_call_id, "local-tool-call-1"
-        )
-        self.assertIs(diagnostic.visibility, StreamVisibility.DIAGNOSTIC)
-        self.assertFalse(
-            any(item.kind is StreamItemKind.TOOL_CALL_READY for item in items)
-        )
-        accumulator = accumulate_canonical_stream_items(items)
-        self.assertEqual(accumulator.answer_text, "before ")
-        self.assertEqual(
-            accumulator.tool_call_arguments, {"local-tool-call-1": '{"x":'}
-        )
-
-        invalid_json_items = run(
-            _collect_local_items(
-                _local_text_chunks(
-                    (
-                        "before ",
-                        "<tool_call name='math'>not-json</tool_call>",
-                        " after",
+                accumulator = accumulate_canonical_stream_items(items)
+                self.assertEqual(accumulator.answer_text, expected_text)
+                self.assertEqual(accumulator.tool_call_arguments, {})
+                self.assertFalse(
+                    any(
+                        item.channel is StreamChannel.TOOL_CALL
+                        or item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+                        for item in items
                     )
                 )
-            )
-        )
-        invalid_json_diagnostic = next(
-            item
-            for item in invalid_json_items
-            if item.kind is StreamItemKind.STREAM_DIAGNOSTIC
-        )
-        self.assertEqual(
-            invalid_json_diagnostic.data["message"],
-            "malformed tool call arguments",
-        )
-        self.assertEqual(
-            invalid_json_diagnostic.correlation.tool_call_id,
-            "local-tool-call-1",
-        )
-        self.assertFalse(
-            any(
-                item.kind is StreamItemKind.TOOL_CALL_READY
-                for item in invalid_json_items
-            )
-        )
-        invalid_json_accumulator = accumulate_canonical_stream_items(
-            invalid_json_items
-        )
-        self.assertEqual(invalid_json_accumulator.answer_text, "before  after")
-        self.assertEqual(
-            invalid_json_accumulator.tool_call_arguments,
-            {"local-tool-call-1": "not-json"},
-        )
-
-        non_object_items = run(
-            _collect_local_items(
-                _local_text_chunks(("<tool_call>[]</tool_call>",))
-            )
-        )
-        non_object_diagnostic = next(
-            item
-            for item in non_object_items
-            if item.kind is StreamItemKind.STREAM_DIAGNOSTIC
-        )
-        self.assertEqual(
-            non_object_diagnostic.correlation.tool_call_id,
-            "local-tool-call-1",
-        )
-        self.assertFalse(
-            any(
-                item.kind is StreamItemKind.TOOL_CALL_READY
-                for item in non_object_items
-            )
-        )
-
-        partial_open_items = run(
-            _collect_local_items(_local_text_chunks(("<tool_call name",)))
-        )
-        self.assertTrue(
-            any(
-                item.kind is StreamItemKind.STREAM_DIAGNOSTIC
-                for item in partial_open_items
-            )
-        )
-
-        partial_close_items = run(
-            _collect_local_items(_local_text_chunks(("<tool_call>{}</tool_",)))
-        )
-        self.assertEqual(
-            accumulate_canonical_stream_items(
-                partial_close_items
-            ).tool_call_arguments,
-            {"local-tool-call-1": "{}</tool_"},
-        )
 
     def test_local_stream_normalizer_maps_bad_chunk_to_error_terminal(
         self,
@@ -8851,44 +8746,76 @@ class StreamContractTestCase(TestCase):
     def test_local_text_event_parser_preserves_split_semantics(self) -> None:
         parser = LocalTextStreamEventParser()
 
+        chunks = (
+            "a<think>r",
+            '</think><tool_call id="lookup-call" name="lookup">{"q"',
+            ':"v"}</tool_call>b',
+        )
+        self.assertEqual(parser.push(chunks[0]), ())
+        self.assertEqual(parser.push(chunks[1]), ())
+        self.assertEqual(parser.push(chunks[2]), ())
+        events = parser.flush()
+
+        self.assertEqual(
+            [(event.kind, event.text_delta) for event in events],
+            [
+                (StreamItemKind.ANSWER_DELTA, chunks[0]),
+                (StreamItemKind.ANSWER_DELTA, chunks[1]),
+                (StreamItemKind.ANSWER_DELTA, chunks[2]),
+            ],
+        )
+        self.assertFalse(
+            any(
+                event.kind
+                in {
+                    StreamItemKind.REASONING_DELTA,
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    StreamItemKind.TOOL_CALL_READY,
+                    StreamItemKind.TOOL_CALL_DONE,
+                }
+                for event in events
+            )
+        )
+
+    def test_local_text_event_parser_can_disable_tool_calls(self) -> None:
+        parser = LocalTextStreamEventParser(parse_tool_calls=False)
+
         events = (
             *parser.push("a<think>r"),
-            *parser.push('</think><tool_call name="lookup">{"q"'),
+            *parser.push(
+                '</think><tool_call id="lookup-call" name="lookup">{"q"'
+            ),
             *parser.push(':"v"}</tool_call>b'),
             *parser.flush(),
         )
 
         self.assertEqual(
-            [(event.kind, event.text_delta) for event in events],
-            [
-                (StreamItemKind.ANSWER_DELTA, "a"),
-                (StreamItemKind.REASONING_DELTA, "r"),
-                (StreamItemKind.TOOL_CALL_ARGUMENT_DELTA, '{"q"'),
-                (StreamItemKind.TOOL_CALL_ARGUMENT_DELTA, ':"v"}'),
-                (StreamItemKind.TOOL_CALL_READY, None),
-                (StreamItemKind.TOOL_CALL_DONE, None),
-                (StreamItemKind.ANSWER_DELTA, "b"),
-            ],
-        )
-        tool_call_ids = {
-            event.correlation.tool_call_id
-            for event in events
-            if event.kind
-            in {
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
-            }
-        }
-        self.assertEqual(tool_call_ids, {"local-tool-call-1"})
-        ready = next(
-            event
-            for event in events
-            if event.kind is StreamItemKind.TOOL_CALL_READY
+            "".join(
+                event.text_delta or ""
+                for event in events
+                if event.kind is StreamItemKind.ANSWER_DELTA
+            ),
+            'a<tool_call id="lookup-call" name="lookup">'
+            '{"q":"v"}</tool_call>b',
         )
         self.assertEqual(
-            ready.data,
-            {"name": "lookup", "arguments": {"q": "v"}},
+            "".join(
+                event.text_delta or ""
+                for event in events
+                if event.kind is StreamItemKind.REASONING_DELTA
+            ),
+            "r",
+        )
+        self.assertFalse(
+            any(
+                event.kind
+                in {
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    StreamItemKind.TOOL_CALL_READY,
+                    StreamItemKind.TOOL_CALL_DONE,
+                }
+                for event in events
+            )
         )
 
     def test_stream_token_metadata_is_metadata_only_enrichment(self) -> None:

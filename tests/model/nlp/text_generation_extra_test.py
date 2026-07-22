@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import MagicMock, patch
 
@@ -14,7 +15,17 @@ from avalan.entities import (
     MessageToolCall,
     TransformerEngineSettings,
 )
+from avalan.model import (
+    DomainCapabilitySeed,
+    ModelCapabilityCatalog,
+    ModelCapabilityDescriptor,
+)
 from avalan.model.nlp.text.generation import TextGenerationModel
+from avalan.model.nlp.text.local_protocol import (
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL,
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID,
+    LOCAL_STRUCTURED_OUTPUT_TEMPLATE_NAME,
+)
 from avalan.model.stream import StreamItemKind
 
 
@@ -162,6 +173,164 @@ class TokenizeInputWrapperTestCase(TestCase):
         input_ids = result["input_ids"] if isinstance(result, dict) else None
         assert input_ids is not None
         self.assertTrue(torch.equal(input_ids, torch.tensor([[4, 5]])))
+
+
+class LocalCapabilitySupportTestCase(TestCase):
+    @staticmethod
+    def _capability() -> ModelCapabilityCatalog:
+        return ModelCapabilityCatalog.create(
+            DomainCapabilitySeed(
+                descriptors=(
+                    ModelCapabilityDescriptor(
+                        canonical_name="math.calculate",
+                        description="Calculate one expression.",
+                        parameter_schema={
+                            "type": "object",
+                            "properties": {"expression": {"type": "string"}},
+                            "required": ("expression",),
+                            "additionalProperties": False,
+                        },
+                    ),
+                )
+            )
+        )
+
+    @staticmethod
+    def _model(template: object) -> TextGenerationModel:
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+            ),
+        )
+        tokenizer = MagicMock()
+        tokenizer.chat_template = template
+        tokenizer.apply_chat_template.return_value = [1, 2]
+        model._tokenizer = tokenizer
+        model._log = MagicMock()
+        return model
+
+    def test_capability_requires_explicit_exact_protocol_template(
+        self,
+    ) -> None:
+        capability = self._capability()
+        supported = self._model(
+            {LOCAL_STRUCTURED_OUTPUT_TEMPLATE_NAME: "{{ messages }}"}
+        )
+        native_tools = self._model(
+            "{% if tools %}{{ tools | length }}{% endif %}{{ messages }}"
+        )
+        unknown_adapter = self._model(
+            {"tool_use": "{{ tools }}{{ messages }}"}
+        )
+        empty_adapter = self._model(
+            {LOCAL_STRUCTURED_OUTPUT_TEMPLATE_NAME: " "}
+        )
+
+        self.assertIs(
+            supported._effective_local_capability(capability), capability
+        )
+        self.assertIsNone(native_tools._effective_local_capability(capability))
+        self.assertIsNone(
+            unknown_adapter._effective_local_capability(capability)
+        )
+        self.assertIsNone(
+            empty_adapter._effective_local_capability(capability)
+        )
+        self.assertEqual(
+            capability.descriptors[0].canonical_name,
+            "math.calculate",
+        )
+
+    def test_capability_requires_callable_template_application(self) -> None:
+        model = self._model(
+            {LOCAL_STRUCTURED_OUTPUT_TEMPLATE_NAME: "{{ messages }}"}
+        )
+        model._tokenizer = SimpleNamespace(
+            chat_template={
+                LOCAL_STRUCTURED_OUTPUT_TEMPLATE_NAME: "{{ messages }}"
+            }
+        )
+
+        self.assertFalse(model._tokenizer_supports_structured_capabilities())
+
+    def test_unsupported_template_omits_structured_schemas(self) -> None:
+        capability = self._capability()
+        model = self._model("{{ messages }}")
+
+        model._tokenize_input("hello", capability=capability)
+
+        tokenizer = cast(MagicMock, model._tokenizer)
+        kwargs = tokenizer.apply_chat_template.call_args.kwargs
+        self.assertNotIn("tools", kwargs)
+
+    def test_exact_adapter_receives_projection_and_protocol_instruction(
+        self,
+    ) -> None:
+        capability = self._capability()
+        model = self._model(
+            {
+                "default": "{{ messages }}",
+                LOCAL_STRUCTURED_OUTPUT_TEMPLATE_NAME: "{{ messages }}",
+            }
+        )
+
+        model._tokenize_input("hello", capability=capability)
+
+        tokenizer = cast(MagicMock, model._tokenizer)
+        call = tokenizer.apply_chat_template.call_args
+        tools = call.kwargs["tools"]
+        assert tools is not None
+        self.assertEqual(tools[0]["function"]["name"], "math.calculate")
+        self.assertEqual(
+            call.kwargs["chat_template"],
+            "{{ messages }}",
+        )
+        messages = call.args[0]
+        instruction = messages[0]["content"]
+        assert isinstance(instruction, str)
+        self.assertIn(LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID, instruction)
+        self.assertIn(
+            "<tool_call id=JSON_STRING name=JSON_STRING>"
+            "JSON_OBJECT</tool_call>",
+            instruction,
+        )
+        self.assertIn('"name":"math.calculate"', instruction)
+        self.assertEqual(messages[-1]["content"], "hello")
+
+    def test_explicit_native_template_override_disables_protocol(self) -> None:
+        capability = self._capability()
+        model = self._model(
+            {
+                "default": "native {{ messages }}",
+                LOCAL_STRUCTURED_OUTPUT_TEMPLATE_NAME: "exact {{ messages }}",
+            }
+        )
+
+        model._tokenize_input(
+            "hello",
+            capability=capability,
+            chat_template="native {{ messages }}",
+        )
+
+        tokenizer = cast(MagicMock, model._tokenizer)
+        call = tokenizer.apply_chat_template.call_args
+        self.assertNotIn("tools", call.kwargs)
+        self.assertEqual(call.kwargs["chat_template"], "native {{ messages }}")
+        self.assertNotIn(
+            LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID,
+            str(call.args[0]),
+        )
+
+    def test_protocol_rejects_non_json_schema_values(self) -> None:
+        with self.assertRaisesRegex(
+            TypeError,
+            "schemas must contain only JSON values",
+        ):
+            LOCAL_STRUCTURED_OUTPUT_PROTOCOL.instruction(
+                cast(Any, ({"invalid": object()},))
+            )
 
 
 class TokenizeInputContentTextTestCase(TestCase):
