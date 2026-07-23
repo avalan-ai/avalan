@@ -2,6 +2,7 @@ from ....entities import EngineMessage, TextPartition
 from ....memory.permanent import (
     PermanentMessage,
     PermanentMessageMemory,
+    PermanentMessagePartition,
     PermanentMessageScored,
     VectorFunction,
 )
@@ -113,8 +114,15 @@ class PgsqlMessageMemory(PgsqlMemory[EngineMessage], PermanentMessageMemory):
             self._session_id,
             partitions,
             created_at=now_utc,
-            message_id=uuid4(),
+            message_id=(
+                engine_message.idempotency_key.value
+                if engine_message.idempotency_key is not None
+                else uuid4()
+            ),
         )
+        if engine_message.idempotency_key is not None:
+            await self._append_keyed_message(message, message_partitions)
+            return
 
         async with self._database.connection() as connection:
             async with connection.transaction():
@@ -188,6 +196,143 @@ class PgsqlMessageMemory(PgsqlMemory[EngineMessage], PermanentMessageMemory):
                         ],
                     )
 
+                    await cursor.close()
+
+    async def _append_keyed_message(
+        self,
+        message: PermanentMessage,
+        message_partitions: list[PermanentMessagePartition],
+    ) -> None:
+        async with self._database.connection() as connection:
+            async with connection.transaction():
+                async with connection.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        INSERT INTO "messages"(
+                            "id",
+                            "agent_id",
+                            "model_id",
+                            "session_id",
+                            "author",
+                            "data",
+                            "partitions",
+                            "created_at"
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                        ON CONFLICT ("id") DO NOTHING
+                        RETURNING "id"
+                    """,
+                        (
+                            str(message.id),
+                            str(message.agent_id),
+                            message.model_id,
+                            (
+                                str(message.session_id)
+                                if message.session_id
+                                else None
+                            ),
+                            str(message.author),
+                            message.data,
+                            message.partitions,
+                            message.created_at,
+                        ),
+                    )
+                    inserted = await cursor.fetchone()
+                    if inserted is None:
+                        await cursor.execute(
+                            """
+                            SELECT
+                                "agent_id"::TEXT,
+                                "model_id",
+                                "session_id"::TEXT,
+                                "author"::TEXT,
+                                "data",
+                                "partitions"
+                            FROM "messages"
+                            WHERE "id" = %s
+                        """,
+                            (str(message.id),),
+                        )
+                        existing = await cursor.fetchone()
+                        if existing is None:
+                            raise RuntimeError(
+                                "message idempotency key disappeared"
+                            )
+                        existing_session_id = existing["session_id"]
+                        actual = (
+                            str(existing["agent_id"]),
+                            existing["model_id"],
+                            (
+                                str(existing_session_id)
+                                if existing_session_id is not None
+                                else None
+                            ),
+                            str(existing["author"]),
+                            existing["data"],
+                            existing["partitions"],
+                        )
+                        expected = (
+                            str(message.agent_id),
+                            message.model_id,
+                            (
+                                str(message.session_id)
+                                if message.session_id
+                                else None
+                            ),
+                            str(message.author),
+                            message.data,
+                            message.partitions,
+                        )
+                        if actual != expected:
+                            raise RuntimeError(
+                                "message idempotency key conflicts with "
+                                "storage"
+                            )
+                        await cursor.close()
+                        return
+
+                    if message.session_id:
+                        await cursor.execute(
+                            """
+                            UPDATE "sessions"
+                            SET "messages" = "messages" + 1
+                            WHERE "id" = %s
+                        """,
+                            (str(message.session_id),),
+                        )
+
+                    await cursor.executemany(
+                        """
+                        INSERT INTO "message_partitions"(
+                            "agent_id",
+                            "session_id",
+                            "message_id",
+                            "partition",
+                            "data",
+                            "embedding",
+                            "created_at"
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s
+                        )
+                    """,
+                        [
+                            (
+                                str(partition.agent_id),
+                                (
+                                    str(partition.session_id)
+                                    if partition.session_id
+                                    else None
+                                ),
+                                str(partition.message_id),
+                                partition.partition,
+                                partition.data,
+                                self._vector(partition.embedding),
+                                partition.created_at,
+                            )
+                            for partition in message_partitions
+                        ],
+                    )
                     await cursor.close()
 
     async def get_recent_messages(

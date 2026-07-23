@@ -1745,7 +1745,7 @@ async def create_response(
                 if source_error is None and stream_terminal_succeeded(
                     terminal_projection
                 ):
-                    await orchestrator.sync_messages()
+                    await orchestrator.sync_messages(response)
             except CancelledError:
                 cancelled = True
                 raise
@@ -1885,7 +1885,7 @@ async def create_response(
             if terminal_error is not None:
                 body["error"] = terminal_error
     if status == "completed" and source_error is None:
-        await orchestrator.sync_messages()
+        await orchestrator.sync_messages(response)
     return body
 
 

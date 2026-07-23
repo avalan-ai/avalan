@@ -1,13 +1,14 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "recorded_at": "2026-07-22T09:37:14Z",
+  "recorded_at": "2026-07-23T05:47:33Z",
   "implementation_owner": "/root",
   "independent_reviewer": "/root/input_contract_audit",
-  "review_history_sha256": "f59a5cb66ee765407b15134bfe8e2a2c19600b807dcca550a89ef68b2caaee1c",
+  "review_history_sha256": "ce375482081e5180ba4904bf4d7517af8069cd21f82a1e7771c5077c7ba0cfdd",
   "review_history_phase0_sha256": "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b",
   "review_history_phase1_sha256": "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85",
   "review_history_phase2_sha256": "7c94eb4806501ecb3ae82f1447fd94ed95e31d185d41e9fbcba2f31ce448a408",
+  "review_history_prior_sha256": "f59a5cb66ee765407b15134bfe8e2a2c19600b807dcca550a89ef68b2caaee1c",
   "review_history": [
     {
       "sequence": 0,
@@ -152,9 +153,27 @@
       "status": "approved",
       "recorded_at": "2026-07-22T09:37:14Z",
       "evidence": "Independent terminal review approved the first frozen Phase 3 evidence with zero P1, P2, or P3 findings after validating the authoritative full, exact-coverage, acceptance, type, lint, diff, and focused results together with the live coverage-report and normalized-tree bindings."
+    },
+    {
+      "sequence": 16,
+      "phase": 4,
+      "role": "semantic",
+      "reviewer": "/root/execution_runtime_review",
+      "status": "approved",
+      "recorded_at": "2026-07-23T05:34:16Z",
+      "evidence": "Independent execution-runtime semantic review and the follow-up execution, orchestrator-cleanup, response-cleanup, and text-response coverage-review loops completed with zero remaining P1, P2, or P3 findings across invocation isolation, attached suspension and resumption, cancellation, concurrency, and cleanup convergence."
+    },
+    {
+      "sequence": 17,
+      "phase": 4,
+      "role": "gate",
+      "reviewer": "/root/execution_gate_review",
+      "status": "approved",
+      "recorded_at": "2026-07-23T05:47:33Z",
+      "evidence": "Independent execution-state terminal review by /root/execution_gate_review completed with zero P1, P2, or P3 findings after validating the ordered authoritative results, live exact-coverage artifact and source inventory, fail-closed evidence schema, neutral execution naming, unchanged skip and deselection posture, and exclusion of preserved unrelated docs/examples/skills/code content; normalized final-tree bindings are sealed atomically with this approval."
     }
   ],
-  "quality_history_sha256": "0bc69e337549c1308468fd095e26a5a680440e8d60181527469b52b13497710f",
+  "quality_history_sha256": "c1798ede412d1b56848dede3f7d242b1067ced5a871e60bbb9a4f9098df5b875",
   "quality_history": [
     {
       "phase": 1,
@@ -167,10 +186,17 @@
       "state": "complete",
       "quality_gate_sha256": "d004e9f765e9167d31debb7642883e774e42a03503f32f8869eb6b4e084e3953",
       "evidence_sha256": "d0e276493609d2e7254c576bf50552a933e4e54cb67c9ec6e6a71f94a17f0302"
+    },
+    {
+      "phase": 3,
+      "state": "complete",
+      "quality_gate_sha256": "62c94da810be0c995525580c19df034b35aee2700f6e9e8fa51c69ba778e0102",
+      "evidence_sha256": "59788e2441bec0bd34a61ff94f8b14459ca229a37fcf693ae6b94fb8106e8ab9"
     }
   ],
   "active_test_node_ids": [
     "tests/input/canonical_contract_test.py::test_requirement_input_n_001",
+    "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_003",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_004",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_005",
@@ -213,6 +239,10 @@
     "tests/input/canonical_contract_test.py::test_requirement_input_n_041",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_042",
     "tests/input/canonical_contract_test.py::test_requirement_input_n_043",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_044",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_045",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_046",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_047",
     "tests/input/broker_contract_test.py::test_requirement_input_n_090",
     "tests/input/broker_contract_test.py::test_requirement_input_n_091",
     "tests/input/broker_contract_test.py::test_requirement_input_n_092",
@@ -268,7 +298,255 @@
     "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation",
     "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_illegal_lifecycle_order",
     "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
-    "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix"
+    "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix",
+    "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_handler_wait",
+    "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_next_provider_call",
+    "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_publication",
+    "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_request_creation",
+    "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_resolution_commit",
+    "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_result_append",
+    "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cleanup_failure_retries_once_without_rewriting_cancel",
+    "tests/agent/execution_attached_boundaries_test.py::AttachedConcurrencyIsolationTest::test_waiting_run_does_not_block_second_attached_run",
+    "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_continuation_read_closes_exactly_once",
+    "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_initial_provider_read_closes_exactly_once",
+    "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_waiting_attached_branch_does_not_block_unrelated_run",
+    "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_checker_after_continuation_start_converges",
+    "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_consumer_cancel_after_result_append_converges",
+    "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_invocations_are_fully_isolated",
+    "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_prompts_share_only_the_prior_snapshot",
+    "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_definition_sync_and_tool_configuration_are_stable",
+    "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_empty_model_output_is_not_added_to_memory",
+    "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_hydrates_prompt_without_resyncing_prefix",
+    "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_recursively_snapshots_mapping_proxies",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_contexts_reject_broker_calls_outside_their_branch",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_failed_sink_stays_owned_and_retries_without_duplicates",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_host_support_intersects_model_adapter_proof",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_parent_exit_syncs_two_concurrent_owned_responses",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_server_boundary_syncs_its_exact_response",
+    "tests/agent/execution_response_ownership_adversarial_test.py::EngineLifetimeAdversarialTest::test_closing_one_engine_does_not_close_another",
+    "tests/agent/execution_response_ownership_adversarial_test.py::EngineLifetimeAdversarialTest::test_engine_provider_support_defaults_to_incapable",
+    "tests/agent/execution_response_ownership_adversarial_test.py::EngineLifetimeAdversarialTest::test_engines_own_independent_lifecycle_state",
+    "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_active_responses_remain_isolated",
+    "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_blocked_active_sync_does_not_block_new_root",
+    "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_explicit_running_sync_retains_response_until_exit",
+    "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_failed_automatic_sync_retries_before_model_dispatch",
+    "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_next_root_call_syncs_completed_exchange",
+    "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_broker_result_must_match_every_requested_field",
+    "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_pending_request_must_match_reserved_call",
+    "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_forged_derived_state",
+    "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_illegal_transition_and_revision",
+    "tests/agent/execution_strict_invariants_test.py::SnapshotRevisionReplayTest::test_response_cursor_tail_requires_its_own_revision",
+    "tests/agent/execution_strict_invariants_test.py::MessageToolCallArgumentsTest::test_arguments_are_closed_normalized_and_detached",
+    "tests/agent/execution_strict_invariants_test.py::MessageToolCallArgumentsTest::test_arguments_reject_non_json_shapes",
+    "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_cleanup_failure_is_surfaced_and_retryable",
+    "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_complete_reserved_call_suspends_without_read_ahead",
+    "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_initial_checker_cancellation_closes_provider_once",
+    "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_streaming_continuation_failure_is_terminal",
+    "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_streaming_input_required_terminates_cleanly",
+    "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_ledger_records_each_typed_payload",
+    "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_ledger_rejects_invalid_fields_and_payload_shapes",
+    "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_prompt_accepts_every_input_variant_and_rejects_mixed_input",
+    "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_prompt_freezes_list_input_and_validates_text_fields",
+    "tests/agent/execution_test.py::ExecutionCreationTest::test_attached_runtime_preserves_real_task_and_branch_ids",
+    "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_mints_genuine_ids_and_stable_definition",
+    "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_rejects_invalid_synchronized_prefixes",
+    "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_tracks_an_already_synchronized_prefix",
+    "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_validates_runtime_trust_and_types",
+    "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_enforces_attached_runtime_origin",
+    "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_rejects_invalid_dependencies",
+    "tests/agent/execution_test.py::ExecutionCreationTest::test_transcript_and_prompt_snapshot_nested_mutable_payloads",
+    "tests/agent/execution_test.py::ExecutionCreationTest::test_uuid_factory_mints_distinct_ids",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_cancel_and_fail_accept_nonrunning_nonterminal_states",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_failed_memory_sink_retries_only_the_unacknowledged_tail",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_mutations_reject_bad_types_and_stale_revisions",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_prompt_response_and_sync_are_ledger_authoritative",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_reducer_rejects_logical_identity_drift",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_repeated_sync_never_duplicates_assistant_output",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_revision_exhaustion_fails_without_mutation",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_terminal_transitions_and_cleanup_are_exactly_once",
+    "tests/agent/execution_test.py::InteractionStateTest::test_abandon_releases_reservation_without_rolling_back_count",
+    "tests/agent/execution_test.py::InteractionStateTest::test_attached_result_resumes_same_run_on_new_turn",
+    "tests/agent/execution_test.py::InteractionStateTest::test_conflicting_replay_and_wrong_correlation_fail_closed",
+    "tests/agent/execution_test.py::InteractionStateTest::test_equivalent_request_limit_is_separate_and_bounded",
+    "tests/agent/execution_test.py::InteractionStateTest::test_input_required_rejects_wrong_correlation",
+    "tests/agent/execution_test.py::InteractionStateTest::test_input_required_replay_and_new_stream_resume",
+    "tests/agent/execution_test.py::InteractionStateTest::test_invalid_interaction_transitions_leave_state_unchanged",
+    "tests/agent/execution_test.py::InteractionStateTest::test_nonmatching_committed_result_is_not_an_idempotent_replay",
+    "tests/agent/execution_test.py::InteractionStateTest::test_request_lifecycle_and_immutable_contract_fail_closed",
+    "tests/agent/execution_test.py::InteractionStateTest::test_result_compare_and_swap_allows_one_concurrent_winner",
+    "tests/agent/execution_test.py::InteractionStateTest::test_result_requires_waiting_state_and_exact_request",
+    "tests/agent/execution_test.py::InteractionStateTest::test_terminal_request_is_recorded_and_replayed_exactly_once",
+    "tests/agent/execution_test.py::InteractionStateTest::test_turn_advance_rejects_an_interaction_boundary",
+    "tests/agent/execution_test.py::ExecutionConcurrencyTest::test_cancellation_wins_while_turn_identity_awaits",
+    "tests/agent/execution_test.py::ExecutionConcurrencyTest::test_cancelled_identity_await_leaves_snapshot_unchanged",
+    "tests/agent/execution_test.py::RuntimeValidationTest::test_runtime_accepts_an_async_callable_object",
+    "tests/agent/execution_test.py::RuntimeValidationTest::test_runtime_accepts_defaults_and_rejects_invalid_dependencies",
+    "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_inconsistent_state",
+    "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_post_terminal_work_and_origin_drift",
+    "tests/agent/execution_test.py::RuntimeValidationTest::test_typed_suspension_and_termination_errors",
+    "tests/agent/execution_transcript_adversarial_test.py::TranscriptTruthTest::test_completion_materializes_final_assistant_transcript",
+    "tests/agent/execution_transcript_adversarial_test.py::TranscriptTruthTest::test_same_task_overlapping_runs_sync_explicit_executions",
+    "tests/agent/execution_transcript_adversarial_test.py::RetrySafeSynchronizationTest::test_cancelled_append_keeps_entry_retryable",
+    "tests/agent/execution_transcript_adversarial_test.py::RetrySafeSynchronizationTest::test_failed_message_and_response_append_retry_without_loss",
+    "tests/agent/execution_transcript_adversarial_test.py::StreamTerminalTruthTest::test_empty_tool_observation_completes_execution_once",
+    "tests/agent/execution_transcript_adversarial_test.py::InteractionResumeAdversarialTest::test_input_required_cannot_advance_without_resolution",
+    "tests/agent/execution_transcript_adversarial_test.py::InteractionResumeAdversarialTest::test_resume_rejects_missing_correlated_result_message",
+    "tests/agent/execution_transcript_adversarial_test.py::SnapshotInvariantTest::test_public_snapshot_rejects_impossible_status_shapes",
+    "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_conversions_and_wrappers_expose_input_required",
+    "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_default_stream_has_exact_input_required_order",
+    "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_invalid_resolution_retries_without_continuation",
+    "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_malformed_request_invokes_no_broker_or_continuation",
+    "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_preamble_order_and_materialization_match_streaming",
+    "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_clarification_words_do_not_approve_protected_action",
+    "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_equivalent_input_reaches_its_bound_without_tool_cycles",
+    "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_every_question_type_crosses_the_attached_runtime",
+    "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_human_answer_provenance_is_preserved_separately",
+    "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_model_visible_declined_cancelled_and_unavailable_outcomes",
+    "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_protected_action_waits_for_separate_explicit_approval",
+    "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default",
+    "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_trusted_default_uses_broker_owned_provenance",
+    "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_permanent_commit_then_raise_retries_same_key_once",
+    "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_pre_commit_failure_remains_retryable",
+    "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_later_recent_failure_does_not_repeat_permanent",
+    "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_acknowledged_component_wins_staggered_retry",
+    "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_payloadless_and_conflicting_keyed_messages_fail_closed",
+    "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_engine_execution_context_properties_and_guards",
+    "tests/agent/execution_memory_idempotency_test.py::StructuredToolMemoryTest::test_contentless_tool_call_round_trips_both_stores",
+    "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_generation_settings_dataclass_base_merges_nested_override",
+    "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_engine_helpers_normalize_bootstrap_and_reasoning_summary",
+    "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_message_and_key_types_are_strict",
+    "tests/agent/execution_message_exactness_test.py::ResponseMaterializationTest::test_transcript_response_must_be_one_exact_message",
+    "tests/agent/execution_message_exactness_test.py::CorrelatedInteractionMessagesTest::test_result_messages_reject_order_substitution_and_extras",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_runtime_error_after_provider_fails_and_closes",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancellation_after_provider_cancels_and_closes",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_base_exit_after_provider_fails_and_closes",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_outer_agent_event_keeps_provider_owned",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_persistent_public_fail_preserves_primary_and_falls_back",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cleanup_failures_are_notes_on_the_primary_exit",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_retries_two_close_failures_to_third_success",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_nonreturning_cancel_is_owned_until_late_failure_drains",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_drain_has_no_owner_head_of_line_blocking",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_drain_skips_healthy_handoff_until_abandoned",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_first_owner_wins_mixed_intent",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_close_timeout_remains_owned_for_late_success",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_close_must_confirm_provider_closure",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_settlement_timeout_retains_late_failure_for_retry",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_preclosed_executionless_response",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_timeout_completion_races",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_nonprovider_settlement_preserves_primary",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_notes_exclude_primary_and_duplicates",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_setup_failure_preserves_primary",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_unexpected_cleanup_failure_cannot_mask_event_exit",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_failure_is_only_a_secondary_note",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_creates_and_releases_a_durable_owner",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_captures_owner_creation_and_convergence_failures",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_unhanded_cleanup_captures_unexpected_convergence_exit",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_exact_execution_drain_skips_other_owner",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_drain_aggregates_unexpected_owner_exit",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_retain_rejects_provider_ownership_collision",
+    "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancelled_cleanup_task_is_preserved_as_a_note",
+    "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_memory_entry_rejects_every_untyped_identity_field",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_response_and_completion_commit_atomically",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_loser_records_nothing",
+    "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_rolls_back_partial_failure",
+    "tests/agent/execution_test.py::InteractionStateTest::test_provider_exit_fallback_is_terminal_and_idempotent",
+    "tests/agent/execution_test.py::InteractionStateTest::test_provider_exit_retains_both_transition_failures_for_retry",
+    "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_settlement_is_coalesced",
+    "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_uses_first_owner_classification",
+    "tests/agent/json_orchestrator_test.py::JsonUsageResponseHelperTestCase::test_usage_responses_from_preserves_tuple_property",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_blocked_after_listener_cancellation_settles_provider",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_after_listener_error_settles_provider",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_after_event_keyboard_interrupt_settles_provider",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_repeated_cancellation_cannot_interrupt_local_cleanup",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_wrapper_error_settles_provider",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_registration_error_settles_provider",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_cancel_base_exception_does_not_skip_unowned_close",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_close_base_exception_does_not_skip_terminalization",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_terminalization_base_exception_is_secondary",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_explicit_close_base_exception_keeps_closed_provider",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_registration_cancellation_settles_provider",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_public_sync_skips_provider_still_transferring",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_claims_transferring_owner_before_registration",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_closes_running_registered_response",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_closes_input_required_response_and_branch",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_unowned_close_retry_retains_owner_until_public_sync",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_nonreturning_cancel_does_not_block_later_owner",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_provider_base_exits_cleanup_all_consumption_boundaries",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_errored_provider_close_retry_coalesces_before_release",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_preserves_body_primary_and_runs_every_stage",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_pre_provider_base_exits_terminalize_without_owner",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_handoff_installation_failures_preserve_owner",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_unexpected_owner_convergence_cannot_mask_primary",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_commit_then_raise_completion_keeps_canonical_winner",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_cancellation_winner_has_no_success_projection",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_completion_winner_is_cached_success",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_cancellation_winner_is_typed_terminal",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_completion_winner_is_typed_terminal",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_acknowledged_continuation_has_one_exit_owner",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_public_aclose_retries_before_explicit_sync_release",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_explicit_sync_retries_failed_iteration_cleanup",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_all_response_sync_retries_failed_cleanup",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_orchestrator_exit_retries_failed_cleanup",
+    "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_provider_close_retry_coalesces_before_ownership_release",
+    "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorExecutionMessageCoverageTest::test_execution_messages_normalize_text_and_homogeneous_lists",
+    "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_cancelled_cleanup_task_is_attached_to_primary_failure",
+    "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_sync_owned_only_skips_unowned_response",
+    "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_sync_rechecks_new_terminal_before_release",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_aclose_delegates_after_completed_execution",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_terminal_iterator_waits_for_pending_tool_batch",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_iterator_preserves_stop_without_canonical_item",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_drained_reserved_call_starts_attached_interaction",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_stream_cleanup_finishes_state_before_provider_error",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_completed_tool_outcome_records_execution_messages",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_abort_batch_with_execution_is_consumed",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_attached_runtime",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_abandons_failed_scheduling",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_caller_cancellation_cleans_local_waiters",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_item_notification_cancels_session_watcher",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_task_input_rejects_failed_admission",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_terminated_returns_for_streaming_consumer",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_terminated_raises_for_materialized_consumer",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_append_terminal_rejects_nonterminal_request",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_rejects_already_applied_continuation",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_records_cancelled_model_continuation",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_unpublished_interaction_needs_no_canonical_cancel",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_reserved_call_validation_failure_restages_batch",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_child_context_can_reuse_current_execution_origin",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_canonical_answer_text_ignores_other_channels",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_finalize_execution_rejects_nonterminal_kind",
+    "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_cancelled_initial_model_dispatch_cancels_execution",
+    "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_failed_initial_model_dispatch_fails_execution",
+    "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_advertises_incapable_without_provider_proof",
+    "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_rejects_untrusted_provider_support",
+    "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_aexit_runs_all_cleanup_on_keyboard_interrupt",
+    "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_aexit_runs_response_cleanup_on_cancelled_error",
+    "tests/agent/renderer_test.py::RendererTestCase::test_template_caches_are_isolated_by_renderer",
+    "tests/memory/permanent/elasticsearch_message_memory_test.py::ElasticsearchMessageMemoryTestCase::test_keyed_append_uses_stable_document_and_vector_ids",
+    "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_retry_reuses_one_transactional_row",
+    "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_rejects_conflicting_storage",
+    "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_rejects_disappearing_conflict_row",
+    "tests/memory/permanent/s3vectors_message_memory_test.py::S3VectorsMessageMemoryTestCase::test_keyed_append_uses_stable_object_and_vector_ids",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_plain_text_stays_exact_and_prefix_collision_is_escaped",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_none_and_empty_thinking_round_trip_distinctly",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_structured_tool_call_and_result_round_trip_exactly",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_multimodal_content_round_trips_exactly",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_single_content_item_round_trips_and_invalid_item_fails",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_tool_errors_and_diagnostics_use_safe_closed_values",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_public_values_and_payloadless_message",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_nested_message_fields",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_tool_result_error_and_diagnostic_fields",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_finite_diagnostic_duration",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_json_tool_outcome_values",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_forged_or_drifted_envelopes",
+    "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity",
+    "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned",
+    "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_sequential_resolved_interactions_share_one_stream",
+    "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_overlapping_interactions_remain_invalid",
+    "tests/input_acceptance_verifier_test.py::test_current_runtime_manifest_inventory_fails_closed",
+    "tests/input_acceptance_verifier_test.py::test_current_runtime_file_inventory_fails_closed",
+    "tests/input_acceptance_verifier_test.py::test_current_regression_classification_fails_closed",
+    "tests/input_type_contract_test.py::test_current_type_fixture_inventory_and_sources_fail_closed"
   ],
   "git": {
     "branch": "input",
@@ -306,15 +584,21 @@
       {
         "phase": 3,
         "state": "dormant_unadvertised"
+      },
+      {
+        "phase": 4,
+        "state": "dormant_unadvertised"
       }
     ],
     "production_source_changes": [
       "src/avalan/agent/",
       "src/avalan/cli/",
+      "src/avalan/entities.py",
       "src/avalan/event/__init__.py",
       "src/avalan/event/manager.py",
       "src/avalan/flow/registry.py",
       "src/avalan/interaction/",
+      "src/avalan/memory/",
       "src/avalan/model/",
       "src/avalan/server/a2a/router.py",
       "src/avalan/server/routers/chat.py",
@@ -334,10 +618,12 @@
       "scripts/verify_src_coverage.py",
       "src/avalan/agent/",
       "src/avalan/cli/",
+      "src/avalan/entities.py",
       "src/avalan/event/__init__.py",
       "src/avalan/event/manager.py",
       "src/avalan/flow/registry.py",
       "src/avalan/interaction/",
+      "src/avalan/memory/",
       "src/avalan/model/",
       "src/avalan/server/a2a/router.py",
       "src/avalan/server/routers/chat.py",
@@ -360,6 +646,7 @@
       "tests/input_type_contracts/",
       "tests/interaction/",
       "tests/interaction_type_contracts/",
+      "tests/memory/",
       "tests/model/",
       "tests/project_metadata_test.py",
       "tests/reasoning_summary_phase1_test.py",
@@ -370,18 +657,1145 @@
     ]
   },
   "pending_structural_inventory": {
-    "source_inventory_sha256": "32cd39d8285af3b782ca095bda1a80de5e991e98e4baf1ba1cf003c5d02a80ba",
-    "source_file_count": 424,
-    "statement_count": 108402,
-    "excluded_line_count": 1327
+    "source_inventory_sha256": "a803978249761cdf9b9f8ebf019ca4df9fa7e33d18b9281a424c104dca4c4563",
+    "source_file_count": 426,
+    "statement_count": 111511,
+    "excluded_line_count": 1356
+  },
+  "current_regression_classification": {
+    "catalog_sha256": "e7e18a868cdda568f185b8620cf1460cb51916dd1c6bc14080398c63fd08c24a",
+    "mechanical_nodes": [
+      {
+        "node_id": "tests/agent/additional_coverage_test.py::OrchestratorCoverageTestCase::test_id_and_reset",
+        "baseline_ast_sha256": "9de71b771b18a85dd51e692c577086c576d86fafaf2d167b63bb163389bc778e",
+        "current_ast_sha256": "2b79982e4d2af3190090017c2468fc26a3de06f920d1a9cfdec566b122324eea",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/default_orchestrator_test.py::DefaultOrchestratorTestCase::test_stream_end_event",
+        "baseline_ast_sha256": "1c6f11df5875a7c39e6b7032de514c57732e7a712fdd64a275df68c611924c31",
+        "current_ast_sha256": "3af3cc5cd54962c4c5ad9144451928408eaa414a9fe46f057330d00f7149a68b",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/default_orchestrator_test.py::DefaultOrchestratorTestCase::test_user_string_rendering",
+        "baseline_ast_sha256": "43062f3259d2edae1ff5fad7433c30d781356975f03aae997b0387ea2a7dcce1",
+        "current_ast_sha256": "037a0067be628103ceb5d20805ac4fe78b04e96829472ca57ed8e1d49db0a857",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/default_orchestrator_test.py::DefaultOrchestratorTestCase::test_user_template_rendering",
+        "baseline_ast_sha256": "2527fcd2ba3e6887ee8a052217b4e5cfbd5fbc5a7690b3b499dfda500c5ceff6",
+        "current_ast_sha256": "0a867ffdea55024abdb3571bb723f173c10f5c1d98f9795579c83010e7cdde1d",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/default_orchestrator_test.py::DefaultOrchestratorTestCase::test_user_prefix_rendering",
+        "baseline_ast_sha256": "36632f66563bb40b9d1086e10c1fde1dceca9eeafc39d2b7fff58cabfa60e0b1",
+        "current_ast_sha256": "bb1d56cd823c5300f497280ddc3d4bd6b85b5fb885f31ebc822d4157becc6f4e",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/json_orchestrator_test.py::JsonOrchestratorExecutionTestCase::test_json_return",
+        "baseline_ast_sha256": "ad2446e408be6ad7bfecb426ee6bfa2799d6228513941aec5e2a34ea41092452",
+        "current_ast_sha256": "2e5eb2308323a04c3a5b6baea2bf450faa93e584de0f0fb1ab18fff83646e8b2",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/json_orchestrator_test.py::JsonOrchestratorExecutionTestCase::test_json_return_preserves_exact_usage",
+        "baseline_ast_sha256": "d843133f085fd0a7aecbeb4ccf1aeabadec2af2ce0eee1ed2a719644ea49c84a",
+        "current_ast_sha256": "9b43fd6cbf7874a9cd1aa55dc278d4ed3882ffc055bcfdcb9645cf5c48fd4114",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/json_orchestrator_test.py::JsonOrchestratorExecutionTestCase::test_json_return_uses_estimated_counts_for_malformed_usage",
+        "baseline_ast_sha256": "cef81211c3c08b909cdea260ef2c5bd7321c552815f1cbb979cea6a97c3778de",
+        "current_ast_sha256": "564dfea4fa556d085b61372493834dddb831a0ac6777044764f35b6b524a3d93",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_test.py::OrchestratorResponseCanonicalLifecycleTestCase::test_cancellation_checker_stops_queued_tool_before_execution",
+        "baseline_ast_sha256": "14efac0b4d25ab18802cb29ccf4b5c6d922bb77980325e14ba4fe0f1e8c0cd2f",
+        "current_ast_sha256": "512d9db71adb6766b69b02ff3275ecc0275467268cd5fb7342fa54cca21420c4",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_test.py::OrchestratorResponseToStrTestCase::test_consumed_tool_batch_history_is_not_recorded_twice",
+        "baseline_ast_sha256": "d62a93750f243a528c193f1e118cace5d26725d9bb0b21a43cf9c4a2a63af99d",
+        "current_ast_sha256": "5dea6823a81a9756e1a08e37fb2611e2c2686ff579bb96326465d7d588c81d06",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_test.py::OrchestratorResponseContextTestCase::test_child_context_inherits_identifiers",
+        "baseline_ast_sha256": "5153de0df13dc2ffe9180704a4eb8cee7d5805f45ff5eb72cc3aa9b8289238ef",
+        "current_ast_sha256": "fd47ec4ef45fefe9bed8b54587edfbea3ea140753e0a010fca0a0254a4d57e99",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_executes_operation",
+        "baseline_ast_sha256": "00ec12a46edb83602f0d34e2ffe9016377df5dbfa19a72f7e93ab47d19a794c7",
+        "current_ast_sha256": "7a3e9723366aa95b3b787a55e3e7397558a279012258502c9e11c5d5f3ba48a7",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_shares_one_capability_catalog",
+        "baseline_ast_sha256": "9e6fd5d42795632dea17e58f8150db04a2e31f4747d2dce72e25aa15feaa3dd3",
+        "current_ast_sha256": "28581c3e2029d268b96c7ff4221e19c914c4a43c5a9857e18d9aa9a0432929d0",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_response_uses_effective_agent_prompt",
+        "baseline_ast_sha256": "e8ceca046a0442387023cd6f16594b6f2a74692dafd1b2cbfafb3570c73d14a5",
+        "current_ast_sha256": "c0f321d8665154b536fb13e1cff2987dc42091e2c5e4c656122f142e9c598dad",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_injects_shell_manifest_after_user_template",
+        "baseline_ast_sha256": "82fcc3f989304b3ac7271bc282de1a4198018ac454f4e1fbc73575eff7ae7236",
+        "current_ast_sha256": "2371ccb0e8a4e8609e09c8d2b4da9d8afebd459471f78001555226f7d251352f",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_triggers_events",
+        "baseline_ast_sha256": "8dbbaeb2f9323486841945c32163e2af82a08704faf8d47c884e6f67b52be6b8",
+        "current_ast_sha256": "0f22909b3781b12e97213c32bb7eaf580f0e6fb314930a075af227234b93787f",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_no_operation_available",
+        "baseline_ast_sha256": "626247b479add9199b242ed6972fa29ecfa7cb6ba116373e9a41dd5e7f1d3155",
+        "current_ast_sha256": "6b64bcd274495206fe59fbce21f4cee04e3677ef205e4947f406d6f8f3315555",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_aexit_saves_message",
+        "baseline_ast_sha256": "3bad0e6134e814b53643cbcfaeb7ccfe00e6ae79304b3acb318713ce4b4544dc",
+        "current_ast_sha256": "3b3f674fd70d3c2353cddadcd3cd501e644009adf1551fe90b58d9a3a32dce20",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_test.py::OrchestratorAenterTestCase::test_aenter_loads_engine_and_agent",
+        "baseline_ast_sha256": "dc2d53fa57e9c85e0cf12304ac7a75cdd7789e1e2fe4d1c5e873b6fa7179da45",
+        "current_ast_sha256": "eb42f045eae9a736f76fdcdfafbce55b00a5deb28ab3eed1561b5dd3943f82f6",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/renderer_test.py::RendererTestCase::test_template_caching",
+        "baseline_ast_sha256": "e9d4ef0e3727d5573d5eda22744e328b712c4517314965a584f7f4cb1b6834f9",
+        "current_ast_sha256": "4ecd7c3829fb9f26a2e70881929f70f91effb710129c3d419c07dbc0cd750f89",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/model/nlp/text_generation_extra_test.py::TokenizeInputHarmonyContentTestCase::test_harmony_tool_call_sets_empty_content",
+        "baseline_ast_sha256": "0a022f3bb0bf68a6f141ed7d12b6b6cf398bc57dd3be55d3c3c2a2b44bd6b51d",
+        "current_ast_sha256": "7e36a870a65ae70b9be554f1005e2ea92fcb8f3984d74118974277af1b730411",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/server/chat_pgsql_memory_test.py::PgsqlChatCompletionTestCase::test_syncs_messages_to_pgsql",
+        "baseline_ast_sha256": "e5da73077c590fb8403a4a4576906f80a2fa6cba5e4b2ca1f3bb6f55b0880471",
+        "current_ast_sha256": "706b843abe94f9bd2174b2368a8a45eb16b79b8339ac94f4ed12926d366d6797",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/server/chat_router_unit_test.py::ChatRouterUnitTest::test_repeated_chat_stream_requests_bound_no_listener_state",
+        "baseline_ast_sha256": "c37ae091d499de1c629c24c9a0fff90f8100beaa1e027de844979fb2bb57bb51",
+        "current_ast_sha256": "0574b223226a1b8c2742185100c283a9bc02ff2890cf47a19ab5204412ea70fe",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/server/create_response_sse_test.py::CreateResponseSSEEventsTestCase::test_repeated_response_stream_requests_release_sources",
+        "baseline_ast_sha256": "acf7f457104ad7cacd0c20657eda8dfd015f01438cc6be664caceda91f629bdf",
+        "current_ast_sha256": "a560d3c1774634fcc3a4584c7443a9b7ecbf9593251be02d60c0ec02fdd8ac3c",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/server/responses_test.py::ResponsesEndpointTestCase::test_streaming_responses",
+        "baseline_ast_sha256": "30cbebf18cc9acf644dc86097165bb7fffd60b7d93923f0dc6542cb79c3bc5b0",
+        "current_ast_sha256": "5deed985f41e23c472d36bacfad24b6f1bc4a1748e5d9ba703cef4048c980dd2",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "Pre-existing regression node mechanically migrates fixtures or assertions to the current runtime shape and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/src_coverage_verifier_test.py::test_phase3_removal_ledger_fails_closed",
+        "baseline_ast_sha256": "82580106052664d7df21f424510293cbcca20e0d6833de659cec700f56736efb",
+        "current_ast_sha256": "fe283ca0ae25f3632707b5c10075f7e0b184b1912352f15734ccd30cc0402bc4",
+        "disposition": "mechanical_fixture_or_assertion_migration",
+        "evidence": "The pre-existing exclusion-removal negative mechanically follows the renamed current-link digest constant without changing its fail-closed behavior."
+      }
+    ],
+    "reviewed_nonsemantic_nodes": [
+      {
+        "node_id": "tests/src_coverage_verifier_test.py::test_current_history_link_fails_closed",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "de5310d6a80593e1b1dacd224e59a257c2b459689110833fd9eac802f5d54c8d",
+        "disposition": "gate_support",
+        "reviewed_by": "/root",
+        "evidence": "The new current-link negative gate proves an unreviewed exclusion-history successor is rejected while the immutable historical chain remains valid."
+      },
+      {
+        "node_id": "tests/src_coverage_verifier_test.py::test_phase3_history_succeeds_implicitly_explicitly_and_through_cli",
+        "baseline_ast_sha256": "a70efdb0d50865283a0bdf550e4565b1c51ebfe70f818219b7152d1862bf3422",
+        "current_ast_sha256": "b303534c794f0077e94b338b01e60cca029756da096ac99c5c76848d45b59fc1",
+        "disposition": "gate_support",
+        "reviewed_by": "/root",
+        "evidence": "The exact-coverage history gate now validates the immutable historical link and the distinct current-tree exclusion link through implicit, explicit, and CLI routes."
+      },
+      {
+        "node_id": "tests/src_coverage_verifier_test.py::test_phase3_live_exclusion_fixtures_match_reviewed_relocations",
+        "baseline_ast_sha256": "a7959f6432c3f98f68c445a3b0e2d3a28f85920dcc5874c20f770d4ad5365be3",
+        "current_ast_sha256": "9ab16267e96f54e4e06e47b4244296a7233eeb39184a4296bd0805904e4870b4",
+        "disposition": "gate_support",
+        "reviewed_by": "/root",
+        "evidence": "The live exclusion gate binds historical artifacts separately from the reviewed current source-tree snapshot and relocation ledger."
+      },
+      {
+        "node_id": "tests/tool/a2a_tool_test.py::A2ACallToolHttpE2ETestCase::test_calls_sdk_v1_router_and_streams_status",
+        "baseline_ast_sha256": "8dcc6cedb00fee055efbb2f94d6d5115565d7a9efe5225acb5cfbc3670e6d57b",
+        "current_ast_sha256": "c296b7f5f72b637b592979abfd544672ed15cd21a9c0e26dabe3cf3fdd918c76",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "The A2A HTTP regression binds successful stream synchronization to the exact canonical response returned by the orchestrate boundary."
+      },
+      {
+        "node_id": "tests/tool/a2a_tool_test.py::A2ACallToolHttpE2ETestCase::test_calls_sdk_v1_router_with_forwarded_input_file",
+        "baseline_ast_sha256": "c79b9fb66388fa60bfc14f62a3c7b5fc1842cb108074c6fb9f0dafdcf3ca1b50",
+        "current_ast_sha256": "83fcb6ce0b69f08365cae37004c33a37caf45bf1c596b7fcffb6f79384956a53",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "The forwarded-file A2A regression proves exactly one synchronization of the same canonical response without weakening file projection checks."
+      },
+      {
+        "node_id": "tests/tool/a2a_tool_test.py::A2ACallToolHttpE2ETestCase::test_default_denied_served_agent_reports_pipeline_over_a2a",
+        "baseline_ast_sha256": "bc79a4981bc7a80aa519e85fba0a5e1e32e8d56d7db5a2a55ef2ff7e07ee1eca",
+        "current_ast_sha256": "301dd8301ea0c5d7caae99e6c00181305e139d04e024ae686805e2b1cffad07e",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "The denied-pipeline A2A regression binds diagnostic projection and memory synchronization to one exact canonical response object."
+      },
+      {
+        "node_id": "tests/tool/a2a_tool_test.py::A2ACallToolHttpE2ETestCase::test_served_pipeline_enabled_agent_streams_over_a2a",
+        "baseline_ast_sha256": "37ec861c160a20f9e3bd43db2a0712727eaa0dfdd4dff6b59a3dcca73c62bbf5",
+        "current_ast_sha256": "4a0166054a95a55d5c34c2ef6ecfc8cd55bc2bb4598b0b64f5522a32e9de8f0c",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "The enabled-pipeline A2A regression binds streamed tool output and memory synchronization to one exact canonical response object."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::BranchBrokerDefenseTest::test_cancellation_rejects_invalid_store_results",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "d84361789914d94ec608bdeaea264d2acd350b278bfb2c84a1866fbeb807254f",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::BranchBrokerDefenseTest::test_child_registration_rejects_every_invalid_result",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "bf45d392cec7c8814c0928fb154d2f734a6a5bf0d735d859fd3264ddd583f55a",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::BranchBrokerDefenseTest::test_public_type_actor_and_scope_guards",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "82acb311c750dcd1e34c4649d9d7cf2196be2c22df27b189e08b52a1a0d2ce1e",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::BrokerResultValidationTest::test_applied_admission_rejects_contract_and_delivery_substitution",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "18275fbe3d73d4caa5a0550b19a91410d2fc6d3e3ebb3043fedccb53ccec960c",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::BrokerResultValidationTest::test_rejected_admission_rejects_delivery_then_returns_without_one",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "f57778b456e07718ecd3cdd5ad6414b72df80c36565e586e53ec14c3dcd72685",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::ExecutionHelperDefenseTest::test_missing_active_input_and_memory_message_fail_closed",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "3d7593cfa16df10c03a05420dcb36f8a1ef6a7058b233742f90b95f8a4da8e48",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::ExecutionHelperDefenseTest::test_result_replay_skips_an_unrelated_interaction",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "ab1c65c7dcde5b09bb77649deba374f7404dc2debb0b4c82398acfa95269ebb1",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::ExecutionHelperDefenseTest::test_terminal_request_rejects_changed_and_nonterminal_contracts",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "752d0e23cde696bb58c877a3ffaa066277e644d616dda38a5d3b606420c9bccd",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::ExecutionMutationDefenseTest::test_new_stream_turn_mints_a_stream_session",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "edbf9e7540d477931143f2052867347709b571a78457ad78c91832b836ae7a09",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::ExecutionMutationDefenseTest::test_response_cursor_conflict_is_detected",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "580e5ea6ef7ce7360dd693cd75507927ba3da3925b158cd4b3312000ee7145fa",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::ExecutionMutationDefenseTest::test_transcript_cursor_conflict_is_detected",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "67b0183458d05b929ccacc4b481f93b80afaf609691e1f26bb1ae1866aaafb1e",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_ledger_origin_guards_reject_empty_misordered_and_stale_tails",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "de7826eb508561359904685edb88d9a500b4de82466dd9a9ec6048768063ab87",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_replay_rejects_interaction_correlation_substitutions",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "7cae09a84300f3d3d23176e1800ffb787bff01c7469849a6d825358d7d7b6cba",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_replay_rejects_model_turn_while_interaction_is_reserved",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "d4b51196799b4c0cb344a8f55f9427c6bcd441f05bec0ba7cd265a3904c34b3a",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_replay_rejects_repeated_input_and_interaction_loop_overflow",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "289493a5edd70488b59e6f34f3e47852b3d0f3c08b7dfaaa1a9626881c50f392",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_replay_rejects_terminal_and_cleanup_ordering",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "4b9f12dfebf97731db17719eacf446fe2fd3444e32278722a8ae777127fd5357",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_terminal_ledger_rejects_wrong_kind_and_post_terminal_work",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "c854364b8a28ac9ca700ed2c0db6939091546692af523ec0150d0f7c5acf00f3",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current execution defensive branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_abandon_unclaimed_marks_owner_before_sync",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "d6eb4d676f60461f1e67937e9fa7fef1024b992bb8f4249c39cc6ead8d028e06",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_close_response_collection_returns_base_exception",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "ea48c905aa1f47e598a5145ad7cebc0784c52d9345097556d809cb315f950ac0",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_exit_collects_collection_invocation_failures",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "77b203af68b0b4e189a595bbbdff7deaab4b0d54953931fb4acea8a262417a3b",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_pending_cleanup_surfaces_engine_drain_error",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "3b6b1fa37ec73f1d481cdadea3d7c32cf21110d88191617ce9f6d58ddf271fba",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_terminal_snapshot_preserves_provider_cleanup_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "07d9892c6621909219519c72c35fe063fba876531f67f148ea1252d547166749",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_engine_call_failure_collects_stage_errors",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "4ff9cffc7838f27093cc2ca0fdd68a29e8e0c6e0433d129c3fd5046a7cd6d347",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_engine_call_failure_handles_cancelled_cleanup_task",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "ddf9d7a6257246408839b76c81ba4d221c8332d687b6c325aa9524034ba7c257",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_execution_provider_exit_attaches_settlement_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "5a3a96ff75fcb8e0cc166e52ca953a36727bd9179560b3ebe02dd5ff04a50005",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_execution_provider_exit_handles_cancelled_cleanup_task",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "4bda07af9cca1aff5eda156603af3698cbe320cbfdac03ffb4f436ca46b8dbe0",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_provider_handoff_failure_collects_boundary_errors",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "bb18adeed725566d4c34b1fb55a651305c10e82b05b22eb484a30156167700dd",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_unowned_cleanup_retains_execution_settlement_error",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "9841ed0a19cb73f4a68b95cd0323125112404f9694e9e50c930d3ff6f13dd6c2",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_unowned_provider_settlement_attaches_cleanup_results",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "d976d25f66da8d5eda086a2c230ae62904bdfef4035814e0ce656a290c8b5ab7",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_completed_owner_ignores_cleanup_and_inactive_attempts",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "2a2402c83e61bb5e30a952d205081ccc1b645580b93166216b4954c5b743fdc6",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_converge_reports_cancelled_retained_attempt",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "8a7a527f84122578441d4bc12c67cf5098adf2c687b61673282d98bbd25df6ff",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_observer_ignores_cancelled_and_unobservable_tasks",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "7b1bc632f3d5f8b49cab280d533f6bd42b5b6da97559282f0c49c9d149f77a82",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_poll_task_distinguishes_cancel_outcomes",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "8b2f83da04c2316109824f92bf496f8ff01d15d1576ca70ee5142e3418888e11",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_poll_task_reports_stubborn_cancellation",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "015f484409d332a786112b2eeda548ff87b9879d81c08b3c04d1f1f678d654f7",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_run_attempt_retains_operation_when_poll_is_incomplete",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "68654541dff05d8d9d5965a5461a63634e222e4956f479538bdb36b099b2d575",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_run_sync_propagates_engine_memory_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "38a2b2a0e53f480a68f4790f80c9e6892a45e611992869789367df02e4b56814",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator cleanup and settlement branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_cancel_task_deadline_rejects_uncooperative_task",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "5279b560d1c42b919d48470dc207496a9387f6f07bae63516810d860914d560b",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_cleanup_observer_ignores_cancelled_task",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "3bb9287219a31cc9c32c68f6a6aa92d34b5824a4346c5e6540ef39990db40b3a",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_cleanup_observer_ignores_pending_task",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "a7ab71f225a00a3f62a012c5e75edbd07d1b69c251310be1bd43f497026a4fcf",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_cleanup_task_deadline_cancels_unfinished_task",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "df77a0bb0b7d4e3ced985cae680ec95dfd3c613a36dfd80768290cc18bdc65e9",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_close_provider_is_idempotent_after_cleanup",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "c6cbd4265ca65c119f8d8f9a33da79b68ebdf0d346af46e7001acb6b68538498",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_completed_provider_event_is_not_appended",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "226c2883d1a6b6a3d4b7386c0786b9782b42827c3c48d5d98f13a0096a5da14e",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_execution_cleanup_deadline_clears_cancelled_task",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e1c2091087564db2482fa3760fb766770921118c67045a3387970cdf06e7ea23",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_pending_batch_caller_cancellation_notes_cleanup_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "3d8ae0b6db504c203b4ad61735f9bccc50c66ea9e48f7adb99468e96aa3c4e36",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_tool_continuation_cancellation_keeps_cleanup_failure_note",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "5467c8043f4d1361b69a1b66cd4a368985b114eb45aa72768df449d53588de00",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_aborted_tool_batch_notes_finalize_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "9ad24b474ee593cbbea51de7cde34750ddd1b565c63d68d5156d72ce6449b82b",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_cancellation_cleanup_aggregates_independent_failures",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "da7744c9c9677415bcf8d03ea9159cb2f512cbcba8f6dac3423edc57f1d4b7a7",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_cancelled_tool_batch_notes_finalize_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "0a99777016c30ba86f0ffa6a61182f3ea8185fb457814d71bb1b89917877224d",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_cleanup_failure_is_not_attached_to_itself",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "978d837415cb2da197449659b82fe9cfedfac70876fa20a7c49f000814273392",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_completion_guard_rejects_unsettled_success",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "dbefab42c5608b92948d4da786e43d2bad33c2a9ea0ab722bdb6b098e5ad5a24",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_continuation_install_failure_is_settled",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "3dab1ff38fe714aa28fdc5ce059bb870473e597ad039d58fd6efa8558844d72e",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_error_cleanup_attempts_every_stage",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "5cc37294dea2a284a30ffe428219ea9a673e7c2aab1e9099bcc71af41f027eda",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_failed_tool_batch_notes_finalize_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "95ce239ac7d36fb9c02bf8f10ce5ae3f5dba7b8c68953e02ebc131dd9a86dcf0",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_handoff_settlement_captures_all_result_shapes",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "3f4116be0d0e3106d855e1c297cad05b525cd681621b7e1d8605139eef708f54",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_keyboard_interrupt_notes_cleanup_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "5c2c8353142df71264135e074be41547df77b657533da22cb52b18a5b59c328c",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_stream_failure_collects_all_cleanup_failures",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e5ef58732b98657b127515ff481bc226d9ce92d91937782b7909f214d229dbe6",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_stream_failure_respects_cancelled_execution",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "792593cefa7e7457f92a8a301d9bef0c630d134fdf3cfab935356a9ca53ccc91",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_terminal_guard_rejects_errored_stream",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "f7a832a1ed7eab9556a8538c532a4d590260be2d6fec7ddbe9256a90cf8da43a",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_interaction_cleanup_aggregates_branch_failures",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e4df9c16949029ab715b97a585afdcc25de8b4f87f674fa50006922e2aba9a34",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_pending_interaction_task_cleanup_failure_is_raised",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "add4b8af54fa66af924facb8758a4e1c93f8665de2eaf4c000bc11938ff97a26",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_poll_caller_cancellation_notes_cleanup_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e80f2b9c41d9ed5e3cea9d169a44e1439f77b531a6343331913ff5eaa1a3e921",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_poll_session_cancellation_notes_cleanup_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "8805735d9701807eae1f76df6b141decfb39f37d035b1f1dde34dbe441e88da0",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_response_collection_cancellation_notes_cleanup_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "58fdd0ec97c2bcee1924a9b1a5bb346942004e1ae034c94548b063eff2a681a4",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current orchestrator response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/model/text_generation_response_additional_test.py::TextGenerationResponseAdditionalTestCase::test_cleanup_failure_notes_are_identity_deduplicated",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e897b094dfc4d00fd19c5ac6233581fe289273185354dca62c874258eb1da7b4",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current text-generation response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/model/text_generation_response_additional_test.py::TextGenerationResponseAdditionalTestCase::test_cleanup_task_observer_handles_terminal_failures",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "4947a221708efa98d3e016e2da102d90d46cc3a26540bfe4e99cf3b5a10d83ef",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current text-generation response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/model/text_generation_response_additional_test.py::TextGenerationResponseAdditionalTestCase::test_interrupted_iteration_preserves_cancel_cleanup_failure",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "bcd8b37e48f6cf9cbf1d6ec647e021a424d4ec054ca588770ca35d04580cbab8",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current text-generation response-cleanup branch and adds no acceptance behavior."
+      },
+      {
+        "node_id": "tests/model/text_generation_response_additional_test.py::TextGenerationResponseAdditionalTestCase::test_reap_cleanup_tasks_discards_cancelled_stage",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "866eced0aec2fd246193a102cdae4d9c138eacd4537f923a649ad5587016b64e",
+        "disposition": "reviewed_nonsemantic",
+        "reviewed_by": "/root",
+        "evidence": "The approved coverage-only regression exercises an already-reviewed current text-generation response-cleanup branch and adds no acceptance behavior."
+      }
+    ],
+    "support_surfaces": [
+      {
+        "path": "tests/agent/additional_coverage_test.py",
+        "baseline_ast_sha256": "62a6020b92a21a6e7df9fd7b0a726218a5fd6b00edd3083ba7e280c4d69f4b46",
+        "current_ast_sha256": "a9c89e23e416f7e9fd72e971b4cf8447f408486767a9b0b8f3db7045a47597d4",
+        "change_kind": "mechanical_fixture_migration",
+        "reviewed_by": "/root",
+        "evidence": "Shared orchestrator fixture state is mechanically adapted to the current execution lifecycle without adding collection behavior."
+      },
+    {
+      "path": "tests/agent/default_orchestrator_test.py",
+      "baseline_ast_sha256": "c815f6464b1a8dfd24ec0f0c37dbcb17661df157c759a76e116985338e1f1392",
+      "current_ast_sha256": "b7825568b3d0046c71cd207b5449313a710ef096e8326d27d51ac41f8488d19c",
+      "change_kind": "mechanical_fixture_migration",
+      "reviewed_by": "/root",
+      "evidence": "Imports and shared model-input fixtures are mechanically migrated to the current normalized input and capability shape."
+    },
+    {
+      "path": "tests/agent/execution_attached_boundaries_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "325355aa45d88590cffec8bd5ef1dbb6405ba40fc367728fa40d0c4f164beacb",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New execution fixtures support exact attached-boundary ownership and completion behavior."
+    },
+    {
+      "path": "tests/agent/execution_cancellation_integration_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "3c3c7ce792f134763e7c791eec1c774318ce8e0f78162546059ddfe11fa85e8c",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New integration helpers support deterministic cancellation propagation and cleanup assertions."
+    },
+    {
+      "path": "tests/agent/execution_direct_iteration_cancellation_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "d66395a033f3ded7823d7a628add932cb5ef0cf283117ddfe0b0610c5da2e948",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New direct-iteration fixtures support cancellation timing and terminal-state verification."
+    },
+    {
+      "path": "tests/agent/execution_isolation_integration_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "088c899891efc00225105f05b271906ba1f006cdc2b8358569b7a80fe8611540",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New integration helpers support independent execution-state and response-isolation checks."
+    },
+    {
+      "path": "tests/agent/execution_memory_idempotency_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "c5dd0ac5fc01de321ca34395939327681d98ab5951bae8c776d19e35f786ed16",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New memory fixtures support exact idempotent synchronization and replay protection."
+    },
+    {
+      "path": "tests/agent/execution_message_exactness_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "fd9860ae999cc537374eadf873d8ee65cf67d6491cc7cded0f9e837e9af6b1b3",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New message helpers support identity-preserving transcript and synchronization assertions."
+    },
+    {
+      "path": "tests/agent/execution_response_ownership_adversarial_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "155d58e804881a3c0bd7f6a2532ac091029111a0609916fd0a7f3c6b86d0754a",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New adversarial fixtures support strict response ownership and rejection boundaries."
+    },
+    {
+      "path": "tests/agent/execution_sequential_response_sync_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "e911477c89d8d59379225fb816a78f343df183444d67805fd9f8688789d31607",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New sequential-response helpers support ordered one-time synchronization verification."
+    },
+    {
+      "path": "tests/agent/execution_strict_invariants_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "cad85be169a4e46b6dc5f7688dd3903a33419becfb24ddc43e9db05ec0b89380",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New strict-invariant fixtures support fail-closed state and lifecycle boundary checks."
+    },
+    {
+      "path": "tests/agent/execution_suspension_adversarial_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "77cf490d23738361b96a76930b3b0ffd80b2c8b5346cfa299537bfbf896e0d02",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New adversarial helpers support suspension ownership and resumption-state assertions."
+    },
+    {
+      "path": "tests/agent/execution_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "55539a64e679ae57e6d1678b0f4c9b0bba6554e4c5f1af9c96de5b4bef8c659c",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New execution helpers support the reviewed state machine and response lifecycle contract."
+    },
+    {
+      "path": "tests/agent/execution_transcript_adversarial_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "72a5131970c204340034ffdae1c27ba8c35e6c0ec0146b166cbfbab2c6227c1b",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New adversarial transcript helpers support exact ordering and mutation-resistance checks."
+    },
+    {
+      "path": "tests/agent/execution_wrapper_input_required_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "fb76bef565efa8a8b7dadde982c51f110cb6f4095f834a02bc467f42211c06f0",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New wrapper fixtures support mandatory-input validation and exact delegation behavior."
+    },
+    {
+      "path": "tests/agent/json_orchestrator_test.py",
+        "baseline_ast_sha256": "301753a7967d5b8363a0f42d7fdbffa9fba78b583481cc78efb73f857e7816f1",
+        "current_ast_sha256": "0f925b0eb292978ab377115a29362e9a082a710b0b70cccd1a0316cfbc8be0cf",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Shared response and usage helpers support the reviewed current structured execution and exact usage behavior."
+      },
+    {
+      "path": "tests/agent/loader_test.py",
+      "baseline_ast_sha256": "6c4d6e43ce0174474de30e02d4be4c2229ecd4345cbe0a64f131c2e6f46189c8",
+      "current_ast_sha256": "6a63758fe0b91e5dcb05215fe026440c243214f91ac0010c50893d00a6fc1fd9",
+      "change_kind": "mechanical_fixture_migration",
+      "reviewed_by": "/root",
+      "evidence": "The loader capture fixture is mechanically adapted to the synchronizable current response and capability contract."
+    },
+    {
+      "path": "tests/agent/orchestrator_cleanup_ownership_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "ad31462cb6b427fc9df3b792224dbc293efbe14b5130f770bd68f57b3f5f5150",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New cleanup fixtures support exact ownership, ordering, and interruption behavior."
+    },
+    {
+      "path": "tests/agent/orchestrator_convergence_coverage_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "065c3d05695a68d31a8895754e3f9a6c6d2c788e2bee12b36bbc2f2fa3fc89a0",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New convergence helpers support terminal-state and cleanup coverage across orchestrators."
+    },
+    {
+      "path": "tests/agent/orchestrator_response_convergence_coverage_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "5ba19780c000de65bf3af5653f69a0ed34592948c486e68656d39255a7bbb726",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New response-convergence helpers support exact completion and failure-path coverage."
+    },
+    {
+      "path": "tests/agent/orchestrator_response_test.py",
+        "baseline_ast_sha256": "9905d3963c1dc239c176706e7317ac52da8d24dae4749df21993ab2d84f29f55",
+        "current_ast_sha256": "35811d2a8e180ef5c2d96d12b69f5dd766f0e8dbf7ba5f1e005ca0b067e4703e",
+        "change_kind": "mechanical_fixture_migration",
+        "reviewed_by": "/root",
+        "evidence": "Shared cancellation and async response fixtures are mechanically aligned with the reviewed current lifecycle API."
+      },
+    {
+      "path": "tests/agent/orchestrator_test.py",
+      "baseline_ast_sha256": "bc9c8ca3ce9f4f28eb289f1c1694762644bd7a9c711b87cd4481257dc058b577",
+      "current_ast_sha256": "ad5989484bcec00fdd7a04c10dfa627f72f31c3743bf9c98311a29506ea2b0c5",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "Execution, capability, response ownership, and synchronization fixtures support the reviewed current runtime semantics."
+    },
+    {
+      "path": "tests/input/attached_runtime_e2e_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "096d804b109c64f38c05fc49dc1d57dc2dc15ae142b04ec6256c90d96abc8add",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New end-to-end helpers support attached execution ownership across public runtime paths."
+    },
+    {
+      "path": "tests/input/attached_runtime_matrix_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "09bcb9ae3a456b3593487fb3e4f07987547b0b2e9311c83a1946a97473622098",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New matrix fixtures support exact attached-runtime behavior across input combinations."
+    },
+    {
+      "path": "tests/input/broker_contract_test.py",
+        "baseline_ast_sha256": "156750cbd6b9e3392061b31761c6cdd58a682d1ddf1e6fbd4ee85d36d48ce336",
+        "current_ast_sha256": "c4f6e148d249bf31998c69bacade6173cce23b27915680c0a7cf02a2b5728867",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Broker fixtures and helpers provide the shared semantic harness for current execution-state acceptance coverage."
+      },
+      {
+        "path": "tests/input_acceptance_verifier_test.py",
+        "baseline_ast_sha256": "9480832423ae7bc033688976b10557cc837bc958d3cb582c81ffa177bd4a129c",
+        "current_ast_sha256": "c0d1253cb6abd27f0259fa852cb9b205be30102066ff6c8550a5585766f90817",
+        "change_kind": "gate_support",
+        "reviewed_by": "/root",
+        "evidence": "Verifier imports, constants, and shared helpers support the fail-closed current metadata and runtime gate."
+      },
+      {
+        "path": "tests/input_contract_test.py",
+        "baseline_ast_sha256": "c5c44a92f2080f8f814a4c55b37b6958f235d224cedf635c059d001f2d1a5d8c",
+        "current_ast_sha256": "40a9d22ebf11ec0198df721006fd17efbc337d32c9341f013a5ec69c5718b29f",
+        "change_kind": "gate_support",
+        "reviewed_by": "/root",
+        "evidence": "Metadata helpers and frozen current expectations support exact contract and evidence validation at the gate."
+      },
+      {
+        "path": "tests/memory/permanent/elasticsearch_message_memory_test.py",
+        "baseline_ast_sha256": "8e1bcdace835a5ed8cc3311b8577c17d9aa96f59f670af103c0b237fcd0ab35d",
+        "current_ast_sha256": "27c328537517942cbb611a495bea8022ab7fa39809d0327b2ec24c04c15b0ede",
+        "change_kind": "mechanical_fixture_migration",
+        "reviewed_by": "/root",
+        "evidence": "The shared entity import surface is mechanically extended for reviewed idempotent memory fixture coverage."
+      },
+      {
+        "path": "tests/memory/permanent/pgsql_test.py",
+        "baseline_ast_sha256": "a32912066032a7ddad6478171cc4dabd57d14f5132ac1f561f8292cfa0cd7952",
+        "current_ast_sha256": "a2bf57cf2fae6b9f2dc452ad7614f40e1278e5c62e13ea3d03f6a004d33231d0",
+        "change_kind": "mechanical_fixture_migration",
+        "reviewed_by": "/root",
+        "evidence": "The entity import migration is reviewed together with the exact carried duplicate test node, whose ordered pair remains frozen."
+      },
+    {
+      "path": "tests/memory/permanent/s3vectors_message_memory_test.py",
+      "baseline_ast_sha256": "5e4460fb835ac11245c32781b3519c5076e6e00025176bb403477dd133e11ace",
+      "current_ast_sha256": "393902bc8710b892529f1ff8f8e5eb934f2637cc6cfe51237f51bea435728069",
+      "change_kind": "mechanical_fixture_migration",
+      "reviewed_by": "/root",
+      "evidence": "The shared entity import surface is mechanically extended for reviewed idempotent vector-memory fixture coverage."
+    },
+    {
+      "path": "tests/memory/permanent/structured_message_codec_test.py",
+      "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+      "current_ast_sha256": "ceb79b6258efe9918f579ab2ecfdef464fd96682490b012fe34495c03288f314",
+      "change_kind": "semantic_support",
+      "reviewed_by": "/root",
+      "evidence": "New codec fixtures support exact structured-message round trips and rejection behavior."
+    },
+    {
+      "path": "tests/model/model_stream_interaction_test.py",
+        "baseline_ast_sha256": "8c42275f86187f405c2bfc5d3184dd2ffeef6057a8e7471121a5f02eadc85a20",
+        "current_ast_sha256": "33aed4310d8ad5566f7e703c563389fcced99b55d0b7edfde1ea34c4265f50dd",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "The shared stream-rejection helper returns exact errors so the active test can assert direct outer postconditions without delegated check credit."
+      },
+      {
+        "path": "tests/project_metadata_test.py",
+        "baseline_ast_sha256": "ba50b1195110ae5afc31479caacfb70c4de294359e6b4753efbf8a49e60923da",
+        "current_ast_sha256": "09825f4005fde09d077f76355d0b0a89052dcab172b8b9b8e40579f2bf183f8d",
+        "change_kind": "gate_support",
+        "reviewed_by": "/root",
+        "evidence": "Workflow expectation helpers are deliberately advanced from the historical gate to the exact current gate commands."
+      },
+      {
+        "path": "tests/server/protocol_streaming_e2e_test.py",
+        "baseline_ast_sha256": "4052f48cbb7f9eca2ff5813d51c795cccf69f3f9d64fb306650a9656f5c6a5be",
+        "current_ast_sha256": "f233b582e72b74e09ebeedeb647e427a3c76653bc6a7c1c59d8ee7318f5d3b85",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Shared protocol helpers assert that synchronization receives the exact canonical response identity under current semantics."
+      },
+      {
+        "path": "tests/server/reasoning_summary_protocol_test.py",
+        "baseline_ast_sha256": "d09f2f9c2994206fb4197c7de372ee67a84714a7eb22da0ae7683089afa81a8e",
+        "current_ast_sha256": "c5acd82bdaca9f69596832ee79418b78bb8a876b27867a2ad95e1c0bd2e32170",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "The protocol projection helper asserts exact response identity at synchronization rather than only call count."
+      },
+      {
+        "path": "tests/server/responses_test.py",
+        "baseline_ast_sha256": "d9da80a693966e1c95fbf3c4aa105959c12eb5414d1f7f832b4e8999540c2e85",
+        "current_ast_sha256": "3dcb90e9b1100c4e1b133fed54d0c5f6a5b823d23e6c9020625362b2c643d7dd",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Response orchestrator fixtures enforce exact pending-response identity and single synchronization across server paths."
+      },
+      {
+        "path": "tests/server/streaming_conformance_test.py",
+        "baseline_ast_sha256": "69bc664f5a85de71175206ca0d1007c371ac99a139891328aaf1e52f88328b95",
+        "current_ast_sha256": "fed488e083cedb3626634cdcaf3d76259f5b18815da1fb33c2e61614efbd809d",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "The streaming conformance helper asserts that message synchronization receives the exact generated response object."
+      },
+      {
+        "path": "tests/src_coverage_verifier_test.py",
+        "baseline_ast_sha256": "6e3af569b23f1841cfa6be707ba86bc32deeda5fa7a9e1265550d114592a77cc",
+        "current_ast_sha256": "1ab0b7f06ba414513e12666dd1e6bcf46b4bcf777ed9c18106baddf328c8fba0",
+        "change_kind": "gate_support",
+        "reviewed_by": "/root",
+        "evidence": "Coverage-history fixtures and helpers bind the immutable historical exclusion record to a separately reviewed current-tree exclusion link."
+      },
+      {
+        "path": "tests/tool/a2a_tool_test.py",
+        "baseline_ast_sha256": "cccd568a501fdafe51928ee1176786ef7bbd29942fa25cc2443233a00092dea9",
+        "current_ast_sha256": "d1c3a201e15411f55db831045218637bcb7bc771e9cb1a1647907fead9cbdf41",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "The A2A E2E fixture requires explicit response-owned synchronization and retains the exact canonical response identity for direct assertions."
+      },
+      {
+        "path": "tests/agent/execution_coverage_regression_test.py",
+        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+        "current_ast_sha256": "cb62d94e376ca9976a6227e76d6b87e8c891a198273b6781517b87d1b3392c21",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "New coverage-only execution helpers support reviewed defensive-branch coverage without adding acceptance behavior."
+      },
+      {
+        "path": "tests/agent/orchestrator_cleanup_gap_coverage_test.py",
+        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+        "current_ast_sha256": "38c3f89a6a4dd0bbbfa0cbe34f723ec4e69cd805cc13b8fb14adfbebe30e1833",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "New coverage-only orchestrator helpers support reviewed cleanup and settlement branches without adding acceptance behavior."
+      },
+      {
+        "path": "tests/agent/orchestrator_response_cleanup_coverage_test.py",
+        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+        "current_ast_sha256": "6725c544b62f79e46716e7f112a065db3564980ffd195904454395a2620dc0c8",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "New coverage-only response helpers support reviewed cleanup and aggregation branches without adding acceptance behavior."
+      },
+      {
+        "path": "tests/model/text_generation_response_additional_test.py",
+        "baseline_ast_sha256": "c631a8a8729d55768be2dcf374b8ca87f52b3a799aaf3422df3e7ffbd33f1608",
+        "current_ast_sha256": "29e404d4758b88677645365ce667554844923921c28d5bfa1a5866e0ef88059c",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Response cleanup imports and helpers support approved coverage-only regressions without adding acceptance behavior."
+      }
+    ]
   },
   "inventory": {
     "behavior_requirements": 107,
     "public_scenarios": 12,
     "delivery_requirements": 12,
-    "active_acceptance_nodes": 99,
-    "active_pytest_instances": 187,
-    "planned_acceptance_nodes": 174,
+    "active_acceptance_nodes": 352,
+    "active_pytest_instances": 440,
+    "planned_acceptance_nodes": 169,
     "failure_conditions": 15,
     "failure_surfaces": 84,
     "failure_cells": 1260,
@@ -394,24 +1808,24 @@
       "poetry run pytest --verbose -s",
       "make test-coverage -- -100 src/",
       "make test-coverage-exact no-install",
-      "poetry run python scripts/verify_input_acceptance.py --through-phase 3",
-      "make typecheck-input-contract INPUT_PHASE=3",
+      "poetry run python scripts/verify_input_acceptance.py --through-phase 4",
+      "make typecheck-input-contract INPUT_PHASE=4",
       "make lint",
       "git diff --check",
-      "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/input_type_contract_test.py tests/input/canonical_contract_test.py tests/input/model_capability_contract_test.py tests/agent/orchestrator_response_capability_test.py tests/model/model_call_test.py tests/model/model_capability_test.py tests/model/nlp/vendor_google_capability_test.py tests/tool/tool_manager_test.py"
+      "poetry run python scripts/verify_input_acceptance.py --through-phase 4 --runtime-only"
     ],
     "state_details": {
-      "completed_at": "2026-07-22T09:25:17Z",
-      "gate_run_id": "input-capability-authoritative-ecdd67ebe387"
+      "completed_at": "2026-07-23T05:47:33Z",
+      "gate_run_id": "input-execution-authoritative-cb20c0323cb5"
     },
     "results": [
       {
         "command": "poetry run pytest --verbose -s",
         "exit_code": 0,
-        "passed": 11013,
+        "passed": 11332,
         "skipped": 66,
-        "subtests_passed": 8129,
-        "seconds": 172.6,
+        "subtests_passed": 8304,
+        "seconds": 263.34,
         "deselected": 0,
         "xfail": 0,
         "xpass": 0
@@ -424,31 +1838,31 @@
       {
         "command": "make test-coverage-exact no-install",
         "exit_code": 0,
-        "covered_statements": 108402,
-        "total_statements": 108402,
-        "source_files": 424,
+        "covered_statements": 111511,
+        "total_statements": 111511,
+        "source_files": 426,
         "missing_lines": 0,
         "missing_files": 0,
-        "passed": 11013,
+        "passed": 11332,
         "skipped": 66,
-        "subtests_passed": 8129,
-        "seconds": 273.96
+        "subtests_passed": 8304,
+        "seconds": 398.11
       },
       {
-        "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 3",
+        "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 4",
         "exit_code": 0,
-        "active_nodes": 99,
-        "active_instances": 187
+        "active_nodes": 352,
+        "active_instances": 440
       },
       {
-        "command": "make typecheck-input-contract INPUT_PHASE=3",
+        "command": "make typecheck-input-contract INPUT_PHASE=4",
         "exit_code": 0,
-        "active_fixtures": 18
+        "active_fixtures": 21
       },
       {
         "command": "make lint",
         "exit_code": 0,
-        "source_files_typechecked": 424,
+        "source_files_typechecked": 426,
         "script_files_typechecked": 6
       },
       {
@@ -456,37 +1870,32 @@
         "exit_code": 0
       },
       {
-        "command": "poetry run pytest --verbose -s tests/input_contract_test.py tests/input_acceptance_verifier_test.py tests/input_type_contract_test.py tests/input/canonical_contract_test.py tests/input/model_capability_contract_test.py tests/agent/orchestrator_response_capability_test.py tests/model/model_call_test.py tests/model/model_capability_test.py tests/model/nlp/vendor_google_capability_test.py tests/tool/tool_manager_test.py",
+        "command": "poetry run python scripts/verify_input_acceptance.py --through-phase 4 --runtime-only",
         "exit_code": 0,
-        "passed": 488,
-        "skipped": 0,
-        "subtests_passed": 82,
-        "seconds": 12.83,
-        "deselected": 0,
-        "xfail": 0,
-        "xpass": 0
+        "active_nodes": 249,
+        "active_instances": 249
       }
     ],
     "tree_binding": {
       "baseline_head": "609aa091c17756ab952cf5fe668ca3d867f0e311",
-      "inventory_file_count": 1270,
-      "inventory_sha256": "59171e64a5f20f150114cd835e64faafe1b67a5430657a2889c92b1ed8a7ee81",
+      "inventory_file_count": 1299,
+      "inventory_sha256": "7053378e343617444a401cda1532a03b3500f2da90d1294773ab3a2e7b47b587",
       "normalized_evidence_kind": "regular",
-      "normalized_evidence_sha256": "bd2369062e3ecd457051a462f9d4ecc27f74bb3934c335c98f37f984019b712e",
+      "normalized_evidence_sha256": "db57028c353e1bbbcefbc967f9f78917263127503597ab930296df360e11c7be",
       "normalized_verifier_kind": "regular",
-      "normalized_verifier_sha256": "4f276c3f122571a73714a2c8c8b7149c83c0497a19ade038b56d56908a7afce0",
-      "tree_sha256": "60eb9628f98003ad6407e2506555db23c901be60082a5a45cc67c13becbc7baf"
+      "normalized_verifier_sha256": "a9b172a3f20016ce1863957dd1f04e10d6d3d09375845f67276761c5201ea2e3",
+      "tree_sha256": "5f51f94c16a7b887c0087bfa473d6f706b7a5ea88ef338d27022672296a5f304"
     },
     "coverage_binding": {
-      "report_sha256": "ecdd67ebe3878439b41b9f9f04b9154f0772f6c3b5621d599ea18fc4d912a5e6",
-      "source_inventory_sha256": "32cd39d8285af3b782ca095bda1a80de5e991e98e4baf1ba1cf003c5d02a80ba",
-      "source_file_count": 424,
-      "statement_count": 108402,
-      "excluded_line_count": 1327
+      "report_sha256": "cb20c0323cb5315d7f7a7cb79342cc80f2314f0c47ef0e01c9cc97ebdc48646c",
+      "source_inventory_sha256": "a803978249761cdf9b9f8ebf019ca4df9fa7e33d18b9281a424c104dca4c4563",
+      "source_file_count": 426,
+      "statement_count": 111511,
+      "excluded_line_count": 1356
     }
   },
   "typing_async_audit": {
-    "strict_type_fixture_count": 18,
+    "strict_type_fixture_count": 21,
     "negative_type_fixtures_planned": 0,
     "effect_interfaces_async": [
       "scripted provider",

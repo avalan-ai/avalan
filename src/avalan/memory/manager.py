@@ -1,4 +1,4 @@
-from ..entities import EngineMessage, MessageContentImage, MessageContentText
+from ..entities import EngineMessage, EngineMessageIdempotencyKey
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..filters import Partitioner
@@ -11,12 +11,20 @@ from ..memory.permanent import (
     PermanentMessageMemory,
     VectorFunction,
 )
+from ..memory.permanent.codec import message_partition_text
 
-from collections.abc import Callable
+from asyncio import Task, create_task, shield
+from collections.abc import Awaitable, Callable
+from enum import StrEnum
 from logging import Logger
 from time import perf_counter
 from types import TracebackType
 from uuid import UUID
+
+
+class _MessageComponent(StrEnum):
+    PERMANENT = "permanent"
+    RECENT = "recent"
 
 
 class MemoryManager:
@@ -29,6 +37,15 @@ class MemoryManager:
     _text_partitioner_factory: Callable[[], Partitioner] | None
     _logger: Logger
     _event_manager: EventManager | None = None
+    _message_identities: dict[EngineMessageIdempotencyKey, EngineMessage]
+    _message_component_acks: dict[
+        EngineMessageIdempotencyKey,
+        set[_MessageComponent],
+    ]
+    _message_component_tasks: dict[
+        tuple[EngineMessageIdempotencyKey, _MessageComponent],
+        Task[None],
+    ]
 
     @classmethod
     async def create_instance(
@@ -90,6 +107,9 @@ class MemoryManager:
         self._text_partitioner_factory = text_partitioner_factory
         self._permanent_memory_stores = {}
         self._event_manager = event_manager
+        self._message_identities = {}
+        self._message_component_acks = {}
+        self._message_component_tasks = {}
         if permanent_message_memory:
             self.add_permanent_message_memory(permanent_message_memory)
         if recent_message_memory:
@@ -163,18 +183,22 @@ class MemoryManager:
         ]
 
     async def append_message(self, engine_message: EngineMessage) -> None:
-        if not (
-            isinstance(engine_message, EngineMessage)
-            and engine_message.agent_id
-            and engine_message.message
-            and engine_message.message.content
-        ):
+        if not isinstance(engine_message, EngineMessage):
             self._logger.info("Skipping non engine message %s", engine_message)
             return
+        content_text = message_partition_text(engine_message.message)
+        if content_text is None:
+            self._logger.info("Skipping non engine message %s", engine_message)
+            return
+        self._register_message_identity(engine_message)
 
         self._logger.debug("<Memory> Appending message")
 
-        if self._permanent_message_memory:
+        permanent = self._permanent_message_memory
+        if permanent and not self._component_acknowledged(
+            engine_message,
+            _MessageComponent.PERMANENT,
+        ):
             start = perf_counter()
             if self._event_manager:
                 await self._event_manager.trigger(
@@ -184,32 +208,27 @@ class MemoryManager:
                             "message": engine_message,
                             "participant_id": self._participant_id,
                             "session_id": (
-                                self._permanent_message_memory.session_id
-                                if self._permanent_message_memory
-                                else None
+                                permanent.session_id if permanent else None
                             ),
                         },
                         started=start,
                     )
                 )
-            content = engine_message.message.content
-            content_text = (
-                content.text
-                if isinstance(content, MessageContentText)
-                else (
-                    str(content)
-                    if not isinstance(content, MessageContentImage)
-                    else None
-                )
-            )
             text_partitioner = self._ensure_text_partitioner(
                 "Text partitioner is required for permanent message memory"
             )
-            partitions = (
-                await text_partitioner(content_text) if content_text else []
-            )
-            await self._permanent_message_memory.append_with_partitions(
-                engine_message, partitions=partitions
+            partitions = await text_partitioner(content_text)
+
+            async def append_permanent() -> None:
+                await permanent.append_with_partitions(
+                    engine_message,
+                    partitions=partitions,
+                )
+
+            await self._append_message_component(
+                engine_message,
+                _MessageComponent.PERMANENT,
+                append_permanent,
             )
             if self._event_manager:
                 end = perf_counter()
@@ -220,9 +239,7 @@ class MemoryManager:
                             "message": engine_message,
                             "participant_id": self._participant_id,
                             "session_id": (
-                                self._permanent_message_memory.session_id
-                                if self._permanent_message_memory
-                                else None
+                                permanent.session_id if permanent else None
                             ),
                         },
                         started=start,
@@ -231,12 +248,87 @@ class MemoryManager:
                     )
                 )
 
-        if self._recent_message_memory:
-            await self._recent_message_memory.append(
-                self._agent_id, engine_message
+        recent = self._recent_message_memory
+        if recent and not self._component_acknowledged(
+            engine_message,
+            _MessageComponent.RECENT,
+        ):
+
+            async def append_recent() -> None:
+                await recent.append(self._agent_id, engine_message)
+
+            await self._append_message_component(
+                engine_message,
+                _MessageComponent.RECENT,
+                append_recent,
             )
 
         self._logger.debug("<Memory> Message appended")
+
+    def _register_message_identity(self, message: EngineMessage) -> None:
+        key = message.idempotency_key
+        if key is None:
+            return
+        existing = self._message_identities.setdefault(key, message)
+        if existing != message:
+            raise ValueError("idempotency key identifies a different message")
+
+    def _component_acknowledged(
+        self,
+        message: EngineMessage,
+        component: _MessageComponent,
+    ) -> bool:
+        key = message.idempotency_key
+        return (
+            key is not None
+            and component
+            in self._message_component_acks.get(
+                key,
+                set(),
+            )
+        )
+
+    async def _append_message_component(
+        self,
+        message: EngineMessage,
+        component: _MessageComponent,
+        operation: Callable[[], Awaitable[None]],
+    ) -> None:
+        key = message.idempotency_key
+        if key is None:
+            await operation()
+            return
+        if component in self._message_component_acks.get(key, set()):
+            return
+        task_key = (key, component)
+        task = self._message_component_tasks.get(task_key)
+        if task is None:
+
+            async def execute() -> None:
+                await operation()
+                self._message_component_acks.setdefault(key, set()).add(
+                    component
+                )
+
+            task = create_task(execute())
+            self._message_component_tasks[task_key] = task
+            task.add_done_callback(
+                lambda completed: self._message_component_done(
+                    task_key,
+                    completed,
+                )
+            )
+        await shield(task)
+
+    def _message_component_done(
+        self,
+        task_key: tuple[EngineMessageIdempotencyKey, _MessageComponent],
+        task: Task[None],
+    ) -> None:
+        if self._message_component_tasks.get(task_key) is task:
+            self._message_component_tasks.pop(task_key, None)
+        if not task.cancelled():
+            task.exception()
 
     async def continue_session(
         self,

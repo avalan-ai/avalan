@@ -1,7 +1,8 @@
-from ....entities import EngineMessage, EngineMessageScored, Message
+from ....entities import EngineMessage, EngineMessageScored
 from ....memory import MemoryStore
 from ....memory.permanent import (
     PermanentMessage,
+    PermanentMessageMemory,
     PermanentMessageScored,
     RecordNotFoundException,
     RecordNotSavedException,
@@ -321,15 +322,18 @@ class PgsqlMemory(BasePgsqlMemory[T]):
     ) -> list[EngineMessage] | list[EngineMessageScored]:
         if scored:
             scored_messages = cast(list[PermanentMessageScored], messages)
-            engine_messages_scored: list[EngineMessageScored] = [
-                EngineMessageScored(
-                    agent_id=m.agent_id,
-                    model_id=m.model_id,
-                    message=Message(role=m.author, content=m.data),
-                    score=m.score,
+            engine_messages_scored: list[EngineMessageScored] = []
+            for message in scored_messages:
+                decoded = PermanentMessageMemory._decode_message(message)
+                engine_messages_scored.append(
+                    EngineMessageScored(
+                        agent_id=decoded.agent_id,
+                        model_id=decoded.model_id,
+                        message=decoded.message,
+                        idempotency_key=decoded.idempotency_key,
+                        score=message.score,
+                    )
                 )
-                for m in scored_messages
-            ]
             if reverse:
                 engine_messages_scored.reverse()
             if limit and len(engine_messages_scored) > limit:
@@ -337,12 +341,8 @@ class PgsqlMemory(BasePgsqlMemory[T]):
             return engine_messages_scored
 
         engine_messages = [
-            EngineMessage(
-                agent_id=m.agent_id,
-                model_id=m.model_id,
-                message=Message(role=m.author, content=m.data),
-            )
-            for m in messages
+            PermanentMessageMemory._decode_message(message)
+            for message in messages
         ]
         if reverse:
             engine_messages.reverse()

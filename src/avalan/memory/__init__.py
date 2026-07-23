@@ -1,4 +1,4 @@
-from ..entities import EngineMessage
+from ..entities import EngineMessage, EngineMessageIdempotencyKey
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -38,20 +38,33 @@ class MessageMemory(MemoryStore[EngineMessage], ABC):
 class RecentMessageMemory(MessageMemory):
     _lock: Lock
     _data: list[EngineMessage]
+    _keyed_data: dict[EngineMessageIdempotencyKey, EngineMessage]
 
     def __init__(self) -> None:
         self._lock = Lock()
         self._data = []
+        self._keyed_data = {}
         super().__init__()
 
     async def append(self, agent_id: UUID, data: EngineMessage) -> None:
         del agent_id
         with self._lock:
+            key = data.idempotency_key
+            if key is not None:
+                existing = self._keyed_data.get(key)
+                if existing is not None:
+                    if existing != data:
+                        raise ValueError(
+                            "idempotency key identifies a different message"
+                        )
+                    return
+                self._keyed_data[key] = data
             self._data.append(data)
 
     async def reset(self) -> None:
         with self._lock:
             self._data = []
+            self._keyed_data = {}
 
     async def search(self, query: str) -> list[EngineMessage] | None:
         del query

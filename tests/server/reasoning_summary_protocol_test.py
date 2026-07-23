@@ -48,9 +48,11 @@ class _CanonicalResponse:
 class _SyncingOrchestrator:
     def __init__(self) -> None:
         self.synced = 0
+        self.synced_response: object | None = None
 
-    async def sync_messages(self) -> None:
+    async def sync_messages(self, response: object) -> None:
         self.synced += 1
+        self.synced_response = response
 
 
 class _A2AUpdater:
@@ -220,6 +222,7 @@ async def _project_mcp(
     items: tuple[CanonicalStreamItem, ...],
 ) -> tuple[dict[str, object], ...]:
     orchestrator = _SyncingOrchestrator()
+    response = _CanonicalResponse(items)
     payloads: list[dict[str, object]] = []
     async for chunk in mcp_router._stream_mcp_response(
         request_id="protocol-summary-request",
@@ -228,7 +231,7 @@ async def _project_mcp(
             messages=[ChatMessage(role=MessageRole.USER, content="question")],
             stream=True,
         ),
-        response=cast(Any, _CanonicalResponse(items)),
+        response=cast(Any, response),
         response_id=uuid4(),
         timestamp=1,
         progress_token="protocol-summary-progress",
@@ -244,6 +247,7 @@ async def _project_mcp(
             if line
         )
     assert orchestrator.synced == 1
+    assert orchestrator.synced_response is response
     return tuple(payloads)
 
 

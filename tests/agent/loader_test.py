@@ -15,6 +15,7 @@ from uuid import uuid4
 from async_helpers import run_async
 from jinja2 import Environment, FileSystemLoader
 
+from avalan.agent.execution import AgentExecution
 from avalan.agent.loader import (
     OrchestratorLoader,
     _merge_shell_tool_settings,
@@ -61,6 +62,7 @@ from avalan.isolation import (
     trusted_isolation_source,
 )
 from avalan.model import ModelCapabilityCatalog
+from avalan.model.capability import ProviderCapabilitySupport
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.tool import ToolSet
 from avalan.tool.browser import BrowserToolSettings
@@ -438,21 +440,50 @@ async def _loaded_agent_model_input(
         async def __call__(self, context: Any) -> object:
             captured_contexts.append(context)
             self.last_prompt = (context.input, None, None, None)
-            return MagicMock(
+            self.output = MagicMock(
                 input_token_count=1,
                 output_token_count=1,
                 usage=None,
             )
+            return self.output
 
-        async def sync_messages(self) -> None:
+        async def sync_messages(
+            self,
+            execution: AgentExecution | None = None,
+        ) -> None:
+            assert execution is None or isinstance(execution, AgentExecution)
             return None
+
+        def acknowledge_provider_handoff(self, response: object) -> None:
+            assert response is self.output
+
+        async def drain_pending_provider_cleanups(
+            self,
+            execution: AgentExecution | None = None,
+            *,
+            abandon_unclaimed: bool = False,
+        ) -> tuple[BaseException, ...]:
+            assert execution is None or isinstance(execution, AgentExecution)
+            assert isinstance(abandon_unclaimed, bool)
+            return ()
 
         def __str__(self) -> str:
             return "capturing-template-engine-agent"
 
+    class CapturingOrchestratorResponse:
+        execution = None
+        ownership_cleanup_complete = True
+
+        async def aclose(self) -> None:
+            return None
+
+        async def sync_messages(self) -> None:
+            return None
+
     fake_engine = MagicMock(model_id="m", tokenizer=None)
     fake_engine.__enter__.return_value = fake_engine
     fake_engine.__exit__.return_value = None
+    fake_engine.provider_capability_support = ProviderCapabilitySupport()
 
     model_manager = MagicMock()
     model_manager.__enter__.return_value = model_manager
@@ -502,7 +533,7 @@ async def _loaded_agent_model_input(
                 ),
                 patch(
                     "avalan.agent.orchestrator.OrchestratorResponse",
-                    return_value="resp",
+                    return_value=CapturingOrchestratorResponse(),
                 ),
                 patch("avalan.agent.loader.HAS_GRAPH_DEPENDENCIES", False),
                 patch("avalan.agent.loader.HAS_CODE_DEPENDENCIES", False),

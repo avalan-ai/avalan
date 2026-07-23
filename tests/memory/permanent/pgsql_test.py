@@ -14,7 +14,12 @@ try:
 except ImportError:
     pytest.skip("psycopg pq wrapper is unavailable", allow_module_level=True)
 
-from avalan.entities import EngineMessage, Message, MessageRole
+from avalan.entities import (
+    EngineMessage,
+    EngineMessageIdempotencyKey,
+    Message,
+    MessageRole,
+)
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import VectorFunction
 from avalan.memory.permanent.pgsql.message import PgsqlMessageMemory
@@ -346,6 +351,123 @@ class PgsqlMessageMemoryTestCase(IsolatedAsyncioTestCase):
             .startswith("INSERT INTO")
         )
         cursor_mock.close.assert_awaited_once()
+
+    async def test_keyed_append_retry_reuses_one_transactional_row(self):
+        pool_mock, connection_mock, cursor_mock, _ = self.mock_insert()
+        memory = await PgsqlMessageMemory.create_instance_from_pool(
+            pool=pool_mock,
+            logger=MagicMock(),
+        )
+        session_id = uuid4()
+        memory._session_id = session_id
+        key = EngineMessageIdempotencyKey(
+            value=UUID("44444444-4444-4444-4444-444444444444")
+        )
+        agent_id = uuid4()
+        engine_message = EngineMessage(
+            agent_id=agent_id,
+            model_id="model",
+            message=Message(role=MessageRole.USER, content="hi"),
+            idempotency_key=key,
+        )
+        partitions = [
+            TextPartition(data="hi", embeddings=rand(1), total_tokens=1)
+        ]
+        cursor_mock.fetchone.side_effect = [
+            {"id": str(key.value)},
+            None,
+            {
+                "agent_id": str(agent_id),
+                "model_id": "model",
+                "session_id": str(session_id),
+                "author": str(MessageRole.USER),
+                "data": "hi",
+                "partitions": 1,
+            },
+        ]
+
+        await memory.append_with_partitions(engine_message, partitions)
+        await memory.append_with_partitions(engine_message, partitions)
+
+        statements = [
+            sub(r"\s+", " ", call.args[0].strip())
+            for call in cursor_mock.execute.await_args_list
+        ]
+        self.assertEqual(
+            sum('ON CONFLICT ("id") DO NOTHING' in sql for sql in statements),
+            2,
+        )
+        self.assertEqual(
+            sum('UPDATE "sessions"' in sql for sql in statements),
+            1,
+        )
+        cursor_mock.executemany.assert_awaited_once()
+
+    async def test_keyed_append_rejects_conflicting_storage(self):
+        pool_mock, _, cursor_mock, _ = self.mock_insert()
+        memory = await PgsqlMessageMemory.create_instance_from_pool(
+            pool=pool_mock,
+            logger=MagicMock(),
+        )
+        key = EngineMessageIdempotencyKey(value=uuid4())
+        agent_id = uuid4()
+        engine_message = EngineMessage(
+            agent_id=agent_id,
+            model_id="model",
+            message=Message(role=MessageRole.USER, content="expected"),
+            idempotency_key=key,
+        )
+        cursor_mock.fetchone.side_effect = [
+            None,
+            {
+                "agent_id": str(agent_id),
+                "model_id": "model",
+                "session_id": None,
+                "author": str(MessageRole.USER),
+                "data": "different",
+                "partitions": 1,
+            },
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "conflicts with storage"):
+            await memory.append_with_partitions(
+                engine_message,
+                [
+                    TextPartition(
+                        data="expected",
+                        embeddings=rand(1),
+                        total_tokens=1,
+                    )
+                ],
+            )
+        cursor_mock.executemany.assert_not_awaited()
+
+    async def test_keyed_append_rejects_disappearing_conflict_row(self):
+        pool_mock, _, cursor_mock, _ = self.mock_insert()
+        memory = await PgsqlMessageMemory.create_instance_from_pool(
+            pool=pool_mock,
+            logger=MagicMock(),
+        )
+        cursor_mock.fetchone.side_effect = [None, None]
+        engine_message = EngineMessage(
+            agent_id=uuid4(),
+            model_id="model",
+            message=Message(role=MessageRole.USER, content="expected"),
+            idempotency_key=EngineMessageIdempotencyKey(value=uuid4()),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "disappeared"):
+            await memory.append_with_partitions(
+                engine_message,
+                [
+                    TextPartition(
+                        data="expected",
+                        embeddings=rand(1),
+                        total_tokens=1,
+                    )
+                ],
+            )
+        cursor_mock.executemany.assert_not_awaited()
 
     async def test_append_with_partitions_without_session(self):
         pool_mock, connection_mock, cursor_mock, _ = self.mock_insert()

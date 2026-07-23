@@ -61,9 +61,11 @@ class _CanonicalResponse:
 class _SyncingOrchestrator:
     def __init__(self) -> None:
         self.synced = False
+        self.synced_response: object | None = None
 
-    async def sync_messages(self) -> None:
+    async def sync_messages(self, response: object) -> None:
         self.synced = True
+        self.synced_response = response
 
 
 def test_canonical_trace_conforms_across_public_stream_surfaces() -> None:
@@ -664,6 +666,7 @@ async def _assert_mcp_projection(
         )
 
     assert orchestrator.synced is True
+    assert orchestrator.synced_response is response
     tool_result_index = next(
         index
         for index, payload in enumerate(payloads)

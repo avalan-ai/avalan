@@ -205,16 +205,16 @@ def test_type_contract_manifest_and_runner_are_strict(
     loaded = _VERIFIER.verify_input_types(
         real_path,
         repo_root=_ROOT,
-        through_phase=3,
+        through_phase=4,
         acceptance_manifest_path=_FIXTURES / "acceptance_manifest.json",
     )
-    assert loaded.current_phase == 3
+    assert loaded.current_phase == 4
     active_fixture_ids = [
         fixture.id
         for fixture in loaded.fixtures
         if fixture.lifecycle == "active"
     ]
-    assert len(active_fixture_ids) == 18
+    assert len(active_fixture_ids) == 21
     assert active_fixture_ids == [
         "deterministic-fixtures-positive",
         "canonical-answers-positive",
@@ -234,6 +234,9 @@ def test_type_contract_manifest_and_runner_are_strict(
         "tool-catalog-interchange-negative",
         "capability-binding-identity-interchange-negative",
         "capability-payload-result-shape-negative",
+        "execution-state-positive",
+        "execution-context-interchange-negative",
+        "synchronous-execution-id-factory-negative",
     ]
 
     invalid = deepcopy(manifest)
@@ -316,6 +319,77 @@ def test_type_contract_manifest_and_runner_are_strict(
             through_phase=0,
             acceptance_manifest_path=acceptance_path,
         )
+
+
+def test_current_type_fixture_inventory_and_sources_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """Reject omitted descriptors and any current fixture source drift."""
+    raw_manifest = _read_manifest()
+    loaded = _VERIFIER.load_manifest(_FIXTURES / "type_contract_manifest.json")
+    omitted_id = _VERIFIER._EXPECTED_CURRENT_FIXTURE_IDS[0]
+    fixtures = tuple(
+        fixture for fixture in loaded.fixtures if fixture.id != omitted_id
+    )
+    raw_fixtures = [
+        fixture
+        for fixture in raw_manifest["fixtures"]
+        if fixture["id"] != omitted_id
+    ]
+    with pytest.raises(
+        _VERIFIER.TypeContractVerificationError,
+        match="current type fixture inventory changed",
+    ):
+        _VERIFIER._validate_current_fixture_inventory(
+            fixtures,
+            raw_fixtures,
+            4,
+        )
+
+    changed_descriptors = deepcopy(raw_manifest["fixtures"])
+    changed_current = next(
+        fixture
+        for fixture in changed_descriptors
+        if fixture["id"] == omitted_id
+    )
+    changed_current["path"] = (
+        "tests/input_type_contracts/unreviewed_execution_state.py"
+    )
+    with pytest.raises(
+        _VERIFIER.TypeContractVerificationError,
+        match="current type fixture inventory changed",
+    ):
+        _VERIFIER._validate_current_fixture_inventory(
+            loaded.fixtures,
+            changed_descriptors,
+            4,
+        )
+
+    for fixture in loaded.fixtures:
+        if fixture.active_from_phase != 4:
+            continue
+        source = _ROOT / fixture.path
+        destination = tmp_path / fixture.path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            source.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    _VERIFIER._validate_current_fixture_sources(loaded, tmp_path)
+    changed_source = tmp_path / next(
+        fixture.path
+        for fixture in loaded.fixtures
+        if fixture.active_from_phase == 4
+    )
+    changed_source.write_text(
+        changed_source.read_text(encoding="utf-8") + "# source drift\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        _VERIFIER.TypeContractVerificationError,
+        match="current type fixture sources changed",
+    ):
+        _VERIFIER._validate_current_fixture_sources(loaded, tmp_path)
 
 
 def test_planned_type_replacements_are_exact_and_append_only(

@@ -1176,6 +1176,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             model_ids = {"m"}
 
             def __init__(self) -> None:
+                self._pending_response: object | None = None
                 self.sync_count = 0
                 self.response_count = 0
 
@@ -1184,9 +1185,15 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 source = Source(self.response_count)
                 self.response_count += 1
                 source_refs.append(ref(source))
+                self._pending_response = source
                 return source
 
-            async def sync_messages(self) -> None:  # type: ignore[override]
+            async def sync_messages(  # type: ignore[override]
+                self,
+                response: object,
+            ) -> None:
+                assert response is self._pending_response
+                self._pending_response = None
                 self.sync_count += 1
 
         orchestrator = StreamingOrchestrator()

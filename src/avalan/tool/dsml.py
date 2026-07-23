@@ -1,10 +1,16 @@
-from ..entities import MessageRole, MessageToolCall, ToolCall, ToolValue
+from ..entities import (
+    MessageRole,
+    MessageToolCall,
+    ToolCall,
+    ToolValue,
+    normalize_tool_arguments,
+)
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
 from types import ModuleType
-from typing import Any, cast
+from typing import cast
 from uuid import uuid4
 
 
@@ -222,10 +228,11 @@ class DsmlTools:
 
     @staticmethod
     def _to_message_tool_call(call: object) -> MessageToolCall:
+        arguments: object = getattr(call, "arguments", {})
         return MessageToolCall(
             id=cast(str | None, getattr(call, "id", None)),
             name=cast(str, getattr(call, "name")),
-            arguments=cast(Any, getattr(call, "arguments", {})),
+            arguments=normalize_tool_arguments(arguments),
         )
 
     @staticmethod

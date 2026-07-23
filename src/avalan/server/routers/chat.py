@@ -229,7 +229,7 @@ async def create_chat_completion(
                     yield sse_message("[DONE]")
 
                 if stream_terminal_succeeded(terminal):
-                    await orchestrator.sync_messages()
+                    await orchestrator.sync_messages(response)
             except CancelledError:
                 cancelled = True
                 raise
@@ -279,7 +279,7 @@ async def create_chat_completion(
         final_response,
     )
 
-    await orchestrator.sync_messages()
+    await orchestrator.sync_messages(response)
 
     return final_response
 

@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -21,6 +22,9 @@ from typing import (
 from uuid import UUID
 
 if TYPE_CHECKING:
+    from .agent.execution import AgentExecution, BranchInteractionBroker
+    from .interaction.entities import ExecutionOrigin
+
     from numpy.typing import NDArray
     from torch import Tensor, dtype
 else:
@@ -707,8 +711,61 @@ MessageContent = MessageContentText | MessageContentImage | MessageContentFile
 class MessageToolCall:
     id: str | None = None
     name: str
-    arguments: list[Any]
+    arguments: dict[str, ToolValue]
     content_type: Literal["json"] = "json"
+
+    def __post_init__(self) -> None:
+        if self.id is not None and not isinstance(self.id, str):
+            raise TypeError("id must be a string or None")
+        if not isinstance(self.name, str):
+            raise TypeError("name must be a string")
+        if self.content_type != "json":
+            raise ValueError("content_type must be json")
+        object.__setattr__(
+            self,
+            "arguments",
+            normalize_tool_arguments(self.arguments),
+        )
+
+
+def normalize_tool_arguments(value: object) -> dict[str, ToolValue]:
+    """Return one detached JSON-object tool-argument value."""
+    if not isinstance(value, Mapping):
+        raise TypeError("tool arguments must be a JSON object")
+    result: dict[str, ToolValue] = {}
+    for key in value:
+        if not isinstance(key, str):
+            raise TypeError("tool argument keys must be strings")
+        result[key] = _normalize_tool_argument_value(
+            value[key],
+            f"arguments.{key}",
+        )
+    return result
+
+
+def _normalize_tool_argument_value(value: object, path: str) -> ToolValue:
+    if value is None or isinstance(value, bool | int | str):
+        return value
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise ValueError(f"{path} must be a finite JSON number")
+        return value
+    if isinstance(value, tuple | list):
+        return [
+            _normalize_tool_argument_value(item, f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if isinstance(value, Mapping):
+        result: dict[str, object] = {}
+        for key in value:
+            if not isinstance(key, str):
+                raise TypeError(f"{path} keys must be strings")
+            result[key] = _normalize_tool_argument_value(
+                value[key],
+                f"{path}.{key}",
+            )
+        return result
+    raise TypeError(f"{path} must contain only JSON values")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -992,11 +1049,39 @@ class ReasoningOrchestratorResponse:
     reasoning: str | None = None
 
 
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EngineMessageIdempotencyKey:
+    """Identify one retry-stable message append operation."""
+
+    value: UUID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, UUID):
+            raise TypeError("value must be a UUID")
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class EngineMessage:
     agent_id: UUID
     model_id: str
     message: Message
+    idempotency_key: EngineMessageIdempotencyKey | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.agent_id, UUID):
+            raise TypeError("agent_id must be a UUID")
+        if not isinstance(self.model_id, str):
+            raise TypeError("model_id must be a string")
+        if not isinstance(self.message, Message):
+            raise TypeError("message must be a message")
+        if self.idempotency_key is not None and not isinstance(
+            self.idempotency_key,
+            EngineMessageIdempotencyKey,
+        ):
+            raise TypeError(
+                "idempotency_key must be an engine-message key or None"
+            )
 
     @property
     def is_from_agent(self) -> bool:
@@ -1295,6 +1380,9 @@ class ToolCallContext:
         Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
     ) = None
     flow_tool_node: bool = False
+    execution: "AgentExecution | None" = None
+    execution_origin: "ExecutionOrigin | None" = None
+    interaction_broker: "BranchInteractionBroker | None" = None
 
     def __post_init__(self) -> None:
         if self.skills_registry is not None:

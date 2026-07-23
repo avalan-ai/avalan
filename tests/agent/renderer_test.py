@@ -65,8 +65,6 @@ class RendererTestCase(TestCase):
         self.assertEqual(renderer.from_string(tmpl), tmpl)
 
     def test_template_caching(self):
-        # clear cache to observe calls
-        self.Renderer._templates.clear()
         renderer = self.Renderer()
         with patch.object(
             renderer._environment,
@@ -76,6 +74,19 @@ class RendererTestCase(TestCase):
             renderer("agent.md", name="A")
             renderer("agent.md", name="B")
             self.assertEqual(mock.call_count, 1)
+
+    def test_template_caches_are_isolated_by_renderer(self):
+        with TemporaryDirectory() as first, TemporaryDirectory() as second:
+            for directory, text in ((first, "first"), (second, "second")):
+                template_path = path.join(directory, "shared.txt")
+                with open(template_path, "w", encoding="utf-8") as file:
+                    file.write(text)
+
+            first_renderer = self.Renderer(first)
+            second_renderer = self.Renderer(second)
+
+            self.assertEqual(first_renderer("shared.txt"), "first")
+            self.assertEqual(second_renderer("shared.txt"), "second")
 
     def test_no_clean_spaces(self):
         renderer = self.Renderer(clean_spaces=False)

@@ -23,7 +23,7 @@
     "25",
     "26"
   ],
-  "catalog_sha256": "5f73b948ccf2f817fad54952b1b4864b6403a2f4928dd82d1d38e28d54b57ea1",
+  "catalog_sha256": "f333a13de1678a7d139acc384d673df15f861c66cfbbffbcd77b8dcc2dc79c80",
   "requirements": [
     {
       "id": "INPUT-N-001",
@@ -46,11 +46,26 @@
       "paraphrase": "Convert every invocation of the reserved capability into a runtime input_required interaction.",
       "owner": "attached runtime and interaction broker",
       "implementation_artifacts": [
-        "planned:tests/input/attached_runtime_e2e_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/input/attached_runtime_e2e_test.py",
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_suspension_adversarial_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py"
       ],
       "test_node_ids": [
-        "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required"
+        "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_complete_reserved_call_suspends_without_read_ahead",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_streaming_input_required_terminates_cleanly",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_conversions_and_wrappers_expose_input_required",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_default_stream_has_exact_input_required_order",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_preamble_order_and_materialization_match_streaming",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_drained_reserved_call_starts_attached_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_attached_runtime",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_abandons_failed_scheduling",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_task_input_rejects_failed_admission",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_unpublished_interaction_needs_no_canonical_cancel",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_reserved_call_validation_failure_restages_batch"
       ]
     },
     {
@@ -110,11 +125,86 @@
         "tests/interaction/interaction_codec_test.py",
         "tests/interaction/interaction_e2e_test.py",
         "tests/model/model_stream_interaction_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_direct_iteration_cancellation_test.py",
+        "tests/agent/execution_isolation_integration_test.py",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/execution_sequential_response_sync_test.py",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/agent/execution_suspension_adversarial_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py",
+        "tests/agent/execution_memory_idempotency_test.py",
+        "tests/agent/execution_message_exactness_test.py",
+        "tests/agent/json_orchestrator_test.py",
+        "tests/agent/orchestrator_cleanup_ownership_test.py",
+        "tests/agent/orchestrator_convergence_coverage_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/memory/permanent/structured_message_codec_test.py"
       ],
       "test_node_ids": [
         "tests/input/canonical_contract_test.py::test_requirement_input_n_006",
-        "tests/input/interaction_boundary_e2e_test.py::test_canonical_interaction_boundary_e2e"
+        "tests/input/interaction_boundary_e2e_test.py::test_canonical_interaction_boundary_e2e",
+        "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_consumer_cancel_after_result_append_converges",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_definition_sync_and_tool_configuration_are_stable",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_empty_model_output_is_not_added_to_memory",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_hydrates_prompt_without_resyncing_prefix",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_recursively_snapshots_mapping_proxies",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_failed_sink_stays_owned_and_retries_without_duplicates",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_parent_exit_syncs_two_concurrent_owned_responses",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_server_boundary_syncs_its_exact_response",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_active_responses_remain_isolated",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_blocked_active_sync_does_not_block_new_root",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_explicit_running_sync_retains_response_until_exit",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_failed_automatic_sync_retries_before_model_dispatch",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_next_root_call_syncs_completed_exchange",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotRevisionReplayTest::test_response_cursor_tail_requires_its_own_revision",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_streaming_continuation_failure_is_terminal",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_rejects_invalid_synchronized_prefixes",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_tracks_an_already_synchronized_prefix",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_failed_memory_sink_retries_only_the_unacknowledged_tail",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_prompt_response_and_sync_are_ledger_authoritative",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_repeated_sync_never_duplicates_assistant_output",
+        "tests/agent/execution_test.py::InteractionStateTest::test_attached_result_resumes_same_run_on_new_turn",
+        "tests/agent/execution_test.py::InteractionStateTest::test_input_required_replay_and_new_stream_resume",
+        "tests/agent/execution_transcript_adversarial_test.py::TranscriptTruthTest::test_completion_materializes_final_assistant_transcript",
+        "tests/agent/execution_transcript_adversarial_test.py::TranscriptTruthTest::test_same_task_overlapping_runs_sync_explicit_executions",
+        "tests/agent/execution_transcript_adversarial_test.py::RetrySafeSynchronizationTest::test_cancelled_append_keeps_entry_retryable",
+        "tests/agent/execution_transcript_adversarial_test.py::RetrySafeSynchronizationTest::test_failed_message_and_response_append_retry_without_loss",
+        "tests/agent/execution_transcript_adversarial_test.py::StreamTerminalTruthTest::test_empty_tool_observation_completes_execution_once",
+        "tests/agent/execution_transcript_adversarial_test.py::InteractionResumeAdversarialTest::test_resume_rejects_missing_correlated_result_message",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_conversions_and_wrappers_expose_input_required",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_default_stream_has_exact_input_required_order",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_preamble_order_and_materialization_match_streaming",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_later_recent_failure_does_not_repeat_permanent",
+        "tests/agent/execution_memory_idempotency_test.py::StructuredToolMemoryTest::test_contentless_tool_call_round_trips_both_stores",
+        "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_engine_helpers_normalize_bootstrap_and_reasoning_summary",
+        "tests/agent/execution_message_exactness_test.py::ResponseMaterializationTest::test_transcript_response_must_be_one_exact_message",
+        "tests/agent/execution_message_exactness_test.py::CorrelatedInteractionMessagesTest::test_result_messages_reject_order_substitution_and_extras",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_and_completion_commit_atomically",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_loser_records_nothing",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_rolls_back_partial_failure",
+        "tests/agent/json_orchestrator_test.py::JsonUsageResponseHelperTestCase::test_usage_responses_from_preserves_tuple_property",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_commit_then_raise_completion_keeps_canonical_winner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_cancellation_winner_has_no_success_projection",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_completion_winner_is_cached_success",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_cancellation_winner_is_typed_terminal",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_completion_winner_is_typed_terminal",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_acknowledged_continuation_has_one_exit_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_explicit_sync_retries_failed_iteration_cleanup",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorExecutionMessageCoverageTest::test_execution_messages_normalize_text_and_homogeneous_lists",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_completed_tool_outcome_records_execution_messages",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_rejects_already_applied_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_records_cancelled_model_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_canonical_answer_text_ignores_other_channels",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_plain_text_stays_exact_and_prefix_collision_is_escaped",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_none_and_empty_thinking_round_trip_distinctly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_structured_tool_call_and_result_round_trip_exactly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_multimodal_content_round_trips_exactly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_tool_errors_and_diagnostics_use_safe_closed_values",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_sequential_resolved_interactions_share_one_stream"
       ]
     },
     {
@@ -139,10 +229,18 @@
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
         "tests/input/canonical_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/orchestrator_test.py",
+        "tests/model/engine_test.py"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_008"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_008",
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_host_support_intersects_model_adapter_proof",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_advertises_incapable_without_provider_proof",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_rejects_untrusted_provider_support",
+        "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned"
       ]
     },
     {
@@ -153,10 +251,15 @@
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
         "tests/input/canonical_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/orchestrator_test.py"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_009"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_009",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_host_support_intersects_model_adapter_proof",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_advertises_incapable_without_provider_proof",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_rejects_untrusted_provider_support"
       ]
     },
     {
@@ -167,10 +270,39 @@
       "owner": "interaction domain and capability catalog",
       "implementation_artifacts": [
         "tests/input/canonical_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_suspension_adversarial_test.py",
+        "tests/agent/execution_test.py",
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/orchestrator_cleanup_ownership_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py"
       ],
       "test_node_ids": [
-        "tests/input/canonical_contract_test.py::test_requirement_input_n_010"
+        "tests/input/canonical_contract_test.py::test_requirement_input_n_010",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_streaming_continuation_failure_is_terminal",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_cancel_and_fail_accept_nonrunning_nonterminal_states",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_typed_suspension_and_termination_errors",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_model_visible_declined_cancelled_and_unavailable_outcomes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancellation_after_provider_cancels_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_nonreturning_cancel_is_owned_until_late_failure_drains",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancelled_cleanup_task_is_preserved_as_a_note",
+        "tests/agent/execution_test.py::InteractionStateTest::test_provider_exit_fallback_is_terminal_and_idempotent",
+        "tests/agent/execution_test.py::InteractionStateTest::test_provider_exit_retains_both_transition_failures_for_retry",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_settlement_is_coalesced",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_uses_first_owner_classification",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_blocked_after_listener_cancellation_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_repeated_cancellation_cannot_interrupt_local_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_cancel_base_exception_does_not_skip_unowned_close",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_registration_cancellation_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_nonreturning_cancel_does_not_block_later_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_cancellation_winner_has_no_success_projection",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_cancellation_winner_is_typed_terminal",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_caller_cancellation_cleans_local_waiters",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_item_notification_cancels_session_watcher",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_records_cancelled_model_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_unpublished_interaction_needs_no_canonical_cancel"
       ]
     },
     {
@@ -240,11 +372,13 @@
         "src/avalan/task/event.py",
         "tests/input/security_contract_test.py",
         "tests/task/interaction_event_sanitization_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/attached_runtime_matrix_test.py"
       ],
       "test_node_ids": [
         "tests/input/security_contract_test.py::test_requirement_input_n_015",
-        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content"
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_protected_action_waits_for_separate_explicit_approval"
       ]
     },
     {
@@ -255,10 +389,13 @@
       "owner": "interaction security boundary",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/attached_runtime_matrix_test.py"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_016"
+        "tests/input/security_contract_test.py::test_requirement_input_n_016",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_clarification_words_do_not_approve_protected_action",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_protected_action_waits_for_separate_explicit_approval"
       ]
     },
     {
@@ -282,7 +419,6 @@
       "paraphrase": "Never collect authentication material through the normal task-input contract.",
       "owner": "interaction security boundary",
       "implementation_artifacts": [
-        "planned:tests/input/security_contract_test.py",
         "tests/input/security_contract_test.py",
         "tests/interaction/interaction_codec_test.py",
         "tests/fixtures/input/contract_decisions.json"
@@ -302,12 +438,214 @@
       "implementation_artifacts": [
         "src/avalan/interaction/",
         "tests/input/broker_contract_test.py",
-        "planned:tests/input/attached_runtime_e2e_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/input/attached_runtime_e2e_test.py",
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_attached_boundaries_test.py",
+        "tests/agent/execution_cancellation_integration_test.py",
+        "tests/agent/execution_direct_iteration_cancellation_test.py",
+        "tests/agent/execution_isolation_integration_test.py",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/execution_sequential_response_sync_test.py",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/agent/execution_suspension_adversarial_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/agent/execution_memory_idempotency_test.py",
+        "tests/agent/orchestrator_cleanup_ownership_test.py",
+        "tests/agent/orchestrator_convergence_coverage_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/agent/orchestrator_test.py",
+        "tests/memory/permanent/elasticsearch_message_memory_test.py",
+        "tests/memory/permanent/pgsql_test.py",
+        "tests/memory/permanent/s3vectors_message_memory_test.py",
+        "tests/memory/permanent/structured_message_codec_test.py"
       ],
       "test_node_ids": [
+        "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required",
         "tests/input/broker_contract_test.py::test_requirement_input_n_019",
-        "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required"
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
+        "tests/input/security_contract_test.py::test_requirement_input_n_101",
+        "tests/input/public_interaction_e2e_test.py::test_idempotency_and_staleness",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_handler_wait",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_next_provider_call",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_publication",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_request_creation",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_resolution_commit",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_result_append",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cleanup_failure_retries_once_without_rewriting_cancel",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedConcurrencyIsolationTest::test_waiting_run_does_not_block_second_attached_run",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_continuation_read_closes_exactly_once",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_initial_provider_read_closes_exactly_once",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_waiting_attached_branch_does_not_block_unrelated_run",
+        "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_checker_after_continuation_start_converges",
+        "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_consumer_cancel_after_result_append_converges",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_invocations_are_fully_isolated",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_prompts_share_only_the_prior_snapshot",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_definition_sync_and_tool_configuration_are_stable",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_empty_model_output_is_not_added_to_memory",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_hydrates_prompt_without_resyncing_prefix",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_recursively_snapshots_mapping_proxies",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_contexts_reject_broker_calls_outside_their_branch",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_failed_sink_stays_owned_and_retries_without_duplicates",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_parent_exit_syncs_two_concurrent_owned_responses",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_server_boundary_syncs_its_exact_response",
+        "tests/agent/execution_response_ownership_adversarial_test.py::EngineLifetimeAdversarialTest::test_closing_one_engine_does_not_close_another",
+        "tests/agent/execution_response_ownership_adversarial_test.py::EngineLifetimeAdversarialTest::test_engine_provider_support_defaults_to_incapable",
+        "tests/agent/execution_response_ownership_adversarial_test.py::EngineLifetimeAdversarialTest::test_engines_own_independent_lifecycle_state",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_active_responses_remain_isolated",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_blocked_active_sync_does_not_block_new_root",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_explicit_running_sync_retains_response_until_exit",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_failed_automatic_sync_retries_before_model_dispatch",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_next_root_call_syncs_completed_exchange",
+        "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_broker_result_must_match_every_requested_field",
+        "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_pending_request_must_match_reserved_call",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_cleanup_failure_is_surfaced_and_retryable",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_initial_checker_cancellation_closes_provider_once",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_ledger_records_each_typed_payload",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_ledger_rejects_invalid_fields_and_payload_shapes",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_prompt_accepts_every_input_variant_and_rejects_mixed_input",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_prompt_freezes_list_input_and_validates_text_fields",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_attached_runtime_preserves_real_task_and_branch_ids",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_mints_genuine_ids_and_stable_definition",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_rejects_invalid_synchronized_prefixes",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_tracks_an_already_synchronized_prefix",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_validates_runtime_trust_and_types",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_enforces_attached_runtime_origin",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_rejects_invalid_dependencies",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_transcript_and_prompt_snapshot_nested_mutable_payloads",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_uuid_factory_mints_distinct_ids",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_terminal_transitions_and_cleanup_are_exactly_once",
+        "tests/agent/execution_test.py::InteractionStateTest::test_attached_result_resumes_same_run_on_new_turn",
+        "tests/agent/execution_test.py::ExecutionConcurrencyTest::test_cancellation_wins_while_turn_identity_awaits",
+        "tests/agent/execution_test.py::ExecutionConcurrencyTest::test_cancelled_identity_await_leaves_snapshot_unchanged",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_runtime_accepts_an_async_callable_object",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_runtime_accepts_defaults_and_rejects_invalid_dependencies",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_inconsistent_state",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_post_terminal_work_and_origin_drift",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_typed_suspension_and_termination_errors",
+        "tests/agent/execution_transcript_adversarial_test.py::TranscriptTruthTest::test_same_task_overlapping_runs_sync_explicit_executions",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_permanent_commit_then_raise_retries_same_key_once",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_pre_commit_failure_remains_retryable",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_later_recent_failure_does_not_repeat_permanent",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_acknowledged_component_wins_staggered_retry",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_payloadless_and_conflicting_keyed_messages_fail_closed",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_engine_execution_context_properties_and_guards",
+        "tests/agent/execution_memory_idempotency_test.py::StructuredToolMemoryTest::test_contentless_tool_call_round_trips_both_stores",
+        "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_generation_settings_dataclass_base_merges_nested_override",
+        "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_engine_helpers_normalize_bootstrap_and_reasoning_summary",
+        "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_message_and_key_types_are_strict",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_runtime_error_after_provider_fails_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancellation_after_provider_cancels_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_base_exit_after_provider_fails_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_outer_agent_event_keeps_provider_owned",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_persistent_public_fail_preserves_primary_and_falls_back",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cleanup_failures_are_notes_on_the_primary_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_retries_two_close_failures_to_third_success",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_nonreturning_cancel_is_owned_until_late_failure_drains",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_drain_has_no_owner_head_of_line_blocking",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_drain_skips_healthy_handoff_until_abandoned",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_first_owner_wins_mixed_intent",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_close_timeout_remains_owned_for_late_success",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_close_must_confirm_provider_closure",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_settlement_timeout_retains_late_failure_for_retry",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_preclosed_executionless_response",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_timeout_completion_races",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_nonprovider_settlement_preserves_primary",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_notes_exclude_primary_and_duplicates",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_setup_failure_preserves_primary",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_unexpected_cleanup_failure_cannot_mask_event_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_failure_is_only_a_secondary_note",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_creates_and_releases_a_durable_owner",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_captures_owner_creation_and_convergence_failures",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_unhanded_cleanup_captures_unexpected_convergence_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_exact_execution_drain_skips_other_owner",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_drain_aggregates_unexpected_owner_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_retain_rejects_provider_ownership_collision",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancelled_cleanup_task_is_preserved_as_a_note",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_memory_entry_rejects_every_untyped_identity_field",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_blocked_after_listener_cancellation_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_after_listener_error_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_after_event_keyboard_interrupt_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_repeated_cancellation_cannot_interrupt_local_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_wrapper_error_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_registration_error_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_cancel_base_exception_does_not_skip_unowned_close",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_close_base_exception_does_not_skip_terminalization",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_terminalization_base_exception_is_secondary",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_explicit_close_base_exception_keeps_closed_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_registration_cancellation_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_public_sync_skips_provider_still_transferring",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_claims_transferring_owner_before_registration",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_closes_running_registered_response",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_closes_input_required_response_and_branch",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_unowned_close_retry_retains_owner_until_public_sync",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_nonreturning_cancel_does_not_block_later_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_provider_base_exits_cleanup_all_consumption_boundaries",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_errored_provider_close_retry_coalesces_before_release",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_preserves_body_primary_and_runs_every_stage",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_pre_provider_base_exits_terminalize_without_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_handoff_installation_failures_preserve_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_unexpected_owner_convergence_cannot_mask_primary",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_commit_then_raise_completion_keeps_canonical_winner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_cancellation_winner_has_no_success_projection",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_completion_winner_is_cached_success",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_cancellation_winner_is_typed_terminal",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_completion_winner_is_typed_terminal",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_acknowledged_continuation_has_one_exit_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_public_aclose_retries_before_explicit_sync_release",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_explicit_sync_retries_failed_iteration_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_all_response_sync_retries_failed_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_orchestrator_exit_retries_failed_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_provider_close_retry_coalesces_before_ownership_release",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorExecutionMessageCoverageTest::test_execution_messages_normalize_text_and_homogeneous_lists",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_cancelled_cleanup_task_is_attached_to_primary_failure",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_sync_owned_only_skips_unowned_response",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_sync_rechecks_new_terminal_before_release",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_aclose_delegates_after_completed_execution",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_terminal_iterator_waits_for_pending_tool_batch",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_iterator_preserves_stop_without_canonical_item",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_drained_reserved_call_starts_attached_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_stream_cleanup_finishes_state_before_provider_error",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_completed_tool_outcome_records_execution_messages",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_abort_batch_with_execution_is_consumed",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_attached_runtime",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_abandons_failed_scheduling",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_caller_cancellation_cleans_local_waiters",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_item_notification_cancels_session_watcher",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_task_input_rejects_failed_admission",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_terminated_returns_for_streaming_consumer",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_terminated_raises_for_materialized_consumer",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_append_terminal_rejects_nonterminal_request",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_rejects_already_applied_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_records_cancelled_model_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_unpublished_interaction_needs_no_canonical_cancel",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_reserved_call_validation_failure_restages_batch",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_child_context_can_reuse_current_execution_origin",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_canonical_answer_text_ignores_other_channels",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_finalize_execution_rejects_nonterminal_kind",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_cancelled_initial_model_dispatch_cancels_execution",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_failed_initial_model_dispatch_fails_execution",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_aexit_runs_all_cleanup_on_keyboard_interrupt",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_aexit_runs_response_cleanup_on_cancelled_error",
+        "tests/memory/permanent/elasticsearch_message_memory_test.py::ElasticsearchMessageMemoryTestCase::test_keyed_append_uses_stable_document_and_vector_ids",
+        "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_retry_reuses_one_transactional_row",
+        "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_rejects_conflicting_storage",
+        "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_rejects_disappearing_conflict_row",
+        "tests/memory/permanent/s3vectors_message_memory_test.py::S3VectorsMessageMemoryTestCase::test_keyed_append_uses_stable_object_and_vector_ids",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_plain_text_stays_exact_and_prefix_collision_is_escaped",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_none_and_empty_thinking_round_trip_distinctly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_structured_tool_call_and_result_round_trip_exactly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_multimodal_content_round_trips_exactly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_single_content_item_round_trips_and_invalid_item_fails",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_tool_errors_and_diagnostics_use_safe_closed_values",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_public_values_and_payloadless_message",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_nested_message_fields",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_tool_result_error_and_diagnostic_fields",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_finite_diagnostic_duration",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_json_tool_outcome_values",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_forged_or_drifted_envelopes",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity"
       ]
     },
     {
@@ -364,13 +702,22 @@
         "tests/input/model_capability_contract_test.py",
         "tests/interaction/interaction_entities_test.py",
         "tests/interaction/interaction_e2e_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/agent/orchestrator_test.py",
+        "tests/model/engine_test.py"
       ],
       "test_node_ids": [
         "tests/input/model_capability_contract_test.py::test_requirement_input_n_023",
         "tests/input/model_capability_contract_test.py::test_local_capability_support_matrix",
         "tests/interaction/interaction_entities_test.py::test_request_enforces_lifecycle_and_aggregate_invariants",
-        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_host_support_intersects_model_adapter_proof",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_every_question_type_crosses_the_attached_runtime",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_advertises_incapable_without_provider_proof",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_rejects_untrusted_provider_support",
+        "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned"
       ]
     },
     {
@@ -431,13 +778,18 @@
         "tests/input/model_capability_contract_test.py",
         "tests/agent/orchestrator_response_capability_test.py",
         "tests/interaction/interaction_codec_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py"
       ],
       "test_node_ids": [
         "tests/input/model_capability_contract_test.py::test_requirement_input_n_027",
         "tests/input/model_capability_contract_test.py::test_reserved_schema_rejects_control_and_secret_injection",
         "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_rejected_structured_batches_have_zero_domain_side_effects",
-        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json"
+        "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
+        "tests/agent/execution_strict_invariants_test.py::MessageToolCallArgumentsTest::test_arguments_are_closed_normalized_and_detached",
+        "tests/agent/execution_strict_invariants_test.py::MessageToolCallArgumentsTest::test_arguments_reject_non_json_shapes",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_malformed_request_invokes_no_broker_or_continuation"
       ]
     },
     {
@@ -449,12 +801,16 @@
       "implementation_artifacts": [
         "tests/input/model_capability_contract_test.py",
         "tests/agent/orchestrator_response_capability_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_test.py",
+        "tests/input/attached_runtime_matrix_test.py"
       ],
       "test_node_ids": [
         "tests/input/model_capability_contract_test.py::test_requirement_input_n_028",
         "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_rejected_structured_batches_have_zero_domain_side_effects",
-        "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_valid_reserved_call_preserves_exact_provider_id"
+        "tests/agent/orchestrator_response_capability_test.py::OrchestratorCapabilityBatchTestCase::test_valid_reserved_call_preserves_exact_provider_id",
+        "tests/agent/execution_test.py::InteractionStateTest::test_equivalent_request_limit_is_separate_and_bounded",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_equivalent_input_reaches_its_bound_without_tool_cycles"
       ]
     },
     {
@@ -471,7 +827,13 @@
         "tests/interaction/interaction_validation_test.py",
         "tests/interaction/interaction_codec_test.py",
         "tests/model/model_stream_interaction_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_isolation_integration_test.py",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/agent/execution_message_exactness_test.py",
+        "tests/memory/permanent/structured_message_codec_test.py"
       ],
       "test_node_ids": [
         "tests/input/canonical_contract_test.py::test_requirement_input_n_029",
@@ -479,7 +841,42 @@
         "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_projects_correlated_input_required",
         "tests/interaction/interaction_validation_test.py::test_invalid_primitives",
         "tests/interaction/interaction_codec_test.py::test_codec_rejects_invalid_root_types_and_unsupported_variants",
-        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation"
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_prompts_share_only_the_prior_snapshot",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_recursively_snapshots_mapping_proxies",
+        "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_pending_request_must_match_reserved_call",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_forged_derived_state",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_illegal_transition_and_revision",
+        "tests/agent/execution_strict_invariants_test.py::MessageToolCallArgumentsTest::test_arguments_are_closed_normalized_and_detached",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_ledger_records_each_typed_payload",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_ledger_rejects_invalid_fields_and_payload_shapes",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_prompt_accepts_every_input_variant_and_rejects_mixed_input",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_prompt_freezes_list_input_and_validates_text_fields",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_attached_runtime_preserves_real_task_and_branch_ids",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_mints_genuine_ids_and_stable_definition",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_rejects_invalid_synchronized_prefixes",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_tracks_an_already_synchronized_prefix",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_validates_runtime_trust_and_types",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_enforces_attached_runtime_origin",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_rejects_invalid_dependencies",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_transcript_and_prompt_snapshot_nested_mutable_payloads",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_uuid_factory_mints_distinct_ids",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_reducer_rejects_logical_identity_drift",
+        "tests/agent/execution_test.py::InteractionStateTest::test_conflicting_replay_and_wrong_correlation_fail_closed",
+        "tests/agent/execution_test.py::InteractionStateTest::test_input_required_rejects_wrong_correlation",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_inconsistent_state",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_post_terminal_work_and_origin_drift",
+        "tests/agent/execution_transcript_adversarial_test.py::InteractionResumeAdversarialTest::test_resume_rejects_missing_correlated_result_message",
+        "tests/agent/execution_transcript_adversarial_test.py::SnapshotInvariantTest::test_public_snapshot_rejects_impossible_status_shapes",
+        "tests/agent/execution_message_exactness_test.py::ResponseMaterializationTest::test_transcript_response_must_be_one_exact_message",
+        "tests/agent/execution_message_exactness_test.py::CorrelatedInteractionMessagesTest::test_result_messages_reject_order_substitution_and_extras",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_memory_entry_rejects_every_untyped_identity_field",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_plain_text_stays_exact_and_prefix_collision_is_escaped",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_none_and_empty_thinking_round_trip_distinctly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_structured_tool_call_and_result_round_trip_exactly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_multimodal_content_round_trips_exactly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_tool_errors_and_diagnostics_use_safe_closed_values",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity"
       ]
     },
     {
@@ -649,7 +1046,25 @@
         "src/avalan/interaction/",
         "tests/input/canonical_contract_test.py",
         "tests/input/interaction_boundary_e2e_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_attached_boundaries_test.py",
+        "tests/agent/execution_cancellation_integration_test.py",
+        "tests/agent/execution_direct_iteration_cancellation_test.py",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/agent/execution_suspension_adversarial_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/orchestrator_cleanup_ownership_test.py",
+        "tests/agent/orchestrator_convergence_coverage_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/agent/orchestrator_test.py",
+        "tests/interaction/interaction_codec_test.py",
+        "tests/interaction/interaction_e2e_test.py",
+        "tests/interaction/interaction_entities_test.py",
+        "tests/interaction/interaction_state_test.py",
+        "tests/model/model_stream_interaction_test.py"
       ],
       "test_node_ids": [
         "tests/input/canonical_contract_test.py::test_requirement_input_n_040",
@@ -666,7 +1081,137 @@
         "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_missing_and_mixed_correlation",
         "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_rejects_illegal_lifecycle_order",
         "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
-        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix"
+        "tests/input/interaction_boundary_e2e_test.py::test_terminal_nonanswer_outcome_matrix",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_handler_wait",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_next_provider_call",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_publication",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_request_creation",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_resolution_commit",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_result_append",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cleanup_failure_retries_once_without_rewriting_cancel",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedConcurrencyIsolationTest::test_waiting_run_does_not_block_second_attached_run",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_continuation_read_closes_exactly_once",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_initial_provider_read_closes_exactly_once",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_waiting_attached_branch_does_not_block_unrelated_run",
+        "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_checker_after_continuation_start_converges",
+        "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_consumer_cancel_after_result_append_converges",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_forged_derived_state",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_illegal_transition_and_revision",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotRevisionReplayTest::test_response_cursor_tail_requires_its_own_revision",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_cleanup_failure_is_surfaced_and_retryable",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_initial_checker_cancellation_closes_provider_once",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_cancel_and_fail_accept_nonrunning_nonterminal_states",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_mutations_reject_bad_types_and_stale_revisions",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_reducer_rejects_logical_identity_drift",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_revision_exhaustion_fails_without_mutation",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_terminal_transitions_and_cleanup_are_exactly_once",
+        "tests/agent/execution_test.py::InteractionStateTest::test_abandon_releases_reservation_without_rolling_back_count",
+        "tests/agent/execution_test.py::InteractionStateTest::test_input_required_rejects_wrong_correlation",
+        "tests/agent/execution_test.py::InteractionStateTest::test_invalid_interaction_transitions_leave_state_unchanged",
+        "tests/agent/execution_test.py::InteractionStateTest::test_request_lifecycle_and_immutable_contract_fail_closed",
+        "tests/agent/execution_test.py::InteractionStateTest::test_result_requires_waiting_state_and_exact_request",
+        "tests/agent/execution_test.py::InteractionStateTest::test_terminal_request_is_recorded_and_replayed_exactly_once",
+        "tests/agent/execution_test.py::ExecutionConcurrencyTest::test_cancellation_wins_while_turn_identity_awaits",
+        "tests/agent/execution_test.py::ExecutionConcurrencyTest::test_cancelled_identity_await_leaves_snapshot_unchanged",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_inconsistent_state",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_post_terminal_work_and_origin_drift",
+        "tests/agent/execution_transcript_adversarial_test.py::TranscriptTruthTest::test_completion_materializes_final_assistant_transcript",
+        "tests/agent/execution_transcript_adversarial_test.py::RetrySafeSynchronizationTest::test_cancelled_append_keeps_entry_retryable",
+        "tests/agent/execution_transcript_adversarial_test.py::RetrySafeSynchronizationTest::test_failed_message_and_response_append_retry_without_loss",
+        "tests/agent/execution_transcript_adversarial_test.py::StreamTerminalTruthTest::test_empty_tool_observation_completes_execution_once",
+        "tests/agent/execution_transcript_adversarial_test.py::SnapshotInvariantTest::test_public_snapshot_rejects_impossible_status_shapes",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_model_visible_declined_cancelled_and_unavailable_outcomes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_runtime_error_after_provider_fails_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancellation_after_provider_cancels_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_base_exit_after_provider_fails_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_outer_agent_event_keeps_provider_owned",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_persistent_public_fail_preserves_primary_and_falls_back",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cleanup_failures_are_notes_on_the_primary_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_retries_two_close_failures_to_third_success",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_nonreturning_cancel_is_owned_until_late_failure_drains",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_drain_has_no_owner_head_of_line_blocking",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_drain_skips_healthy_handoff_until_abandoned",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_first_owner_wins_mixed_intent",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_close_timeout_remains_owned_for_late_success",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_close_must_confirm_provider_closure",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_settlement_timeout_retains_late_failure_for_retry",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_preclosed_executionless_response",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_timeout_completion_races",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_nonprovider_settlement_preserves_primary",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_notes_exclude_primary_and_duplicates",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_setup_failure_preserves_primary",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_unexpected_cleanup_failure_cannot_mask_event_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_failure_is_only_a_secondary_note",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_creates_and_releases_a_durable_owner",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_captures_owner_creation_and_convergence_failures",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_unhanded_cleanup_captures_unexpected_convergence_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_exact_execution_drain_skips_other_owner",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_drain_aggregates_unexpected_owner_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_retain_rejects_provider_ownership_collision",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancelled_cleanup_task_is_preserved_as_a_note",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_and_completion_commit_atomically",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_loser_records_nothing",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_rolls_back_partial_failure",
+        "tests/agent/execution_test.py::InteractionStateTest::test_provider_exit_fallback_is_terminal_and_idempotent",
+        "tests/agent/execution_test.py::InteractionStateTest::test_provider_exit_retains_both_transition_failures_for_retry",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_settlement_is_coalesced",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_uses_first_owner_classification",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_blocked_after_listener_cancellation_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_after_listener_error_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_after_event_keyboard_interrupt_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_repeated_cancellation_cannot_interrupt_local_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_wrapper_error_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_registration_error_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_cancel_base_exception_does_not_skip_unowned_close",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_close_base_exception_does_not_skip_terminalization",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_terminalization_base_exception_is_secondary",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_explicit_close_base_exception_keeps_closed_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_registration_cancellation_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_public_sync_skips_provider_still_transferring",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_claims_transferring_owner_before_registration",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_closes_running_registered_response",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_closes_input_required_response_and_branch",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_unowned_close_retry_retains_owner_until_public_sync",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_nonreturning_cancel_does_not_block_later_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_provider_base_exits_cleanup_all_consumption_boundaries",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_errored_provider_close_retry_coalesces_before_release",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_preserves_body_primary_and_runs_every_stage",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_pre_provider_base_exits_terminalize_without_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_handoff_installation_failures_preserve_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_unexpected_owner_convergence_cannot_mask_primary",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_commit_then_raise_completion_keeps_canonical_winner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_cancellation_winner_has_no_success_projection",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_completion_winner_is_cached_success",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_cancellation_winner_is_typed_terminal",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_completion_winner_is_typed_terminal",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_acknowledged_continuation_has_one_exit_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_public_aclose_retries_before_explicit_sync_release",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_explicit_sync_retries_failed_iteration_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_all_response_sync_retries_failed_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_orchestrator_exit_retries_failed_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_provider_close_retry_coalesces_before_ownership_release",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_cancelled_cleanup_task_is_attached_to_primary_failure",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_sync_rechecks_new_terminal_before_release",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_terminal_iterator_waits_for_pending_tool_batch",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_stream_cleanup_finishes_state_before_provider_error",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_abort_batch_with_execution_is_consumed",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_caller_cancellation_cleans_local_waiters",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_item_notification_cancels_session_watcher",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_task_input_rejects_failed_admission",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_terminated_returns_for_streaming_consumer",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_terminated_raises_for_materialized_consumer",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_append_terminal_rejects_nonterminal_request",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_rejects_already_applied_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_records_cancelled_model_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_unpublished_interaction_needs_no_canonical_cancel",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_finalize_execution_rejects_nonterminal_kind",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_cancelled_initial_model_dispatch_cancels_execution",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_failed_initial_model_dispatch_fails_execution",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_aexit_runs_all_cleanup_on_keyboard_interrupt",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_aexit_runs_response_cleanup_on_cancelled_error",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_sequential_resolved_interactions_share_one_stream",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_overlapping_interactions_remain_invalid"
       ]
     },
     {
@@ -678,11 +1223,23 @@
       "implementation_artifacts": [
         "tests/input/canonical_contract_test.py",
         "tests/interaction/interaction_e2e_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/agent/execution_message_exactness_test.py",
+        "tests/memory/permanent/structured_message_codec_test.py"
       ],
       "test_node_ids": [
         "tests/input/canonical_contract_test.py::test_requirement_input_n_041",
-        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
+        "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_broker_result_must_match_every_requested_field",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_human_answer_provenance_is_preserved_separately",
+        "tests/agent/execution_message_exactness_test.py::ResponseMaterializationTest::test_transcript_response_must_be_one_exact_message",
+        "tests/agent/execution_message_exactness_test.py::CorrelatedInteractionMessagesTest::test_result_messages_reject_order_substitution_and_extras",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_structured_tool_call_and_result_round_trip_exactly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_tool_errors_and_diagnostics_use_safe_closed_values",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_tool_result_error_and_diagnostic_fields",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_finite_diagnostic_duration"
       ]
     },
     {
@@ -695,12 +1252,16 @@
         "tests/input/canonical_contract_test.py",
         "tests/interaction/interaction_state_test.py",
         "tests/interaction/interaction_e2e_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/attached_runtime_matrix_test.py"
       ],
       "test_node_ids": [
         "tests/input/canonical_contract_test.py::test_requirement_input_n_042",
         "tests/interaction/interaction_state_test.py::test_trusted_defaults_must_equal_declared_defaults",
-        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_human_answer_provenance_is_preserved_separately",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_trusted_default_uses_broker_owned_provenance"
       ]
     },
     {
@@ -717,7 +1278,15 @@
         "tests/interaction/interaction_state_test.py",
         "tests/interaction/interaction_validation_test.py",
         "tests/interaction/interaction_e2e_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py",
+        "tests/agent/execution_memory_idempotency_test.py",
+        "tests/agent/execution_message_exactness_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/memory/permanent/structured_message_codec_test.py"
       ],
       "test_node_ids": [
         "tests/input/canonical_contract_test.py::test_requirement_input_n_043",
@@ -731,7 +1300,56 @@
         "tests/interaction/interaction_state_test.py::test_pending_transition_rejects_invalid_preconditions_and_overflow",
         "tests/interaction/interaction_state_test.py::test_resolution_transition_rejects_revision_and_resolution_errors",
         "tests/interaction/interaction_validation_test.py::test_invalid_primitives",
-        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle"
+        "tests/interaction/interaction_e2e_test.py::test_provider_free_request_resolution_lifecycle",
+        "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_broker_result_must_match_every_requested_field",
+        "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_pending_request_must_match_reserved_call",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_forged_derived_state",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_illegal_transition_and_revision",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotRevisionReplayTest::test_response_cursor_tail_requires_its_own_revision",
+        "tests/agent/execution_strict_invariants_test.py::MessageToolCallArgumentsTest::test_arguments_are_closed_normalized_and_detached",
+        "tests/agent/execution_strict_invariants_test.py::MessageToolCallArgumentsTest::test_arguments_reject_non_json_shapes",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_ledger_rejects_invalid_fields_and_payload_shapes",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_prompt_accepts_every_input_variant_and_rejects_mixed_input",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_rejects_invalid_synchronized_prefixes",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_tracks_an_already_synchronized_prefix",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_validates_runtime_trust_and_types",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_rejects_invalid_dependencies",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_mutations_reject_bad_types_and_stale_revisions",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_reducer_rejects_logical_identity_drift",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_revision_exhaustion_fails_without_mutation",
+        "tests/agent/execution_test.py::InteractionStateTest::test_abandon_releases_reservation_without_rolling_back_count",
+        "tests/agent/execution_test.py::InteractionStateTest::test_conflicting_replay_and_wrong_correlation_fail_closed",
+        "tests/agent/execution_test.py::InteractionStateTest::test_input_required_rejects_wrong_correlation",
+        "tests/agent/execution_test.py::InteractionStateTest::test_invalid_interaction_transitions_leave_state_unchanged",
+        "tests/agent/execution_test.py::InteractionStateTest::test_nonmatching_committed_result_is_not_an_idempotent_replay",
+        "tests/agent/execution_test.py::InteractionStateTest::test_request_lifecycle_and_immutable_contract_fail_closed",
+        "tests/agent/execution_test.py::InteractionStateTest::test_result_requires_waiting_state_and_exact_request",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_runtime_accepts_an_async_callable_object",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_runtime_accepts_defaults_and_rejects_invalid_dependencies",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_inconsistent_state",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_post_terminal_work_and_origin_drift",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_typed_suspension_and_termination_errors",
+        "tests/agent/execution_transcript_adversarial_test.py::InteractionResumeAdversarialTest::test_resume_rejects_missing_correlated_result_message",
+        "tests/agent/execution_transcript_adversarial_test.py::SnapshotInvariantTest::test_public_snapshot_rejects_impossible_status_shapes",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_invalid_resolution_retries_without_continuation",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_malformed_request_invokes_no_broker_or_continuation",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_payloadless_and_conflicting_keyed_messages_fail_closed",
+        "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_message_and_key_types_are_strict",
+        "tests/agent/execution_message_exactness_test.py::ResponseMaterializationTest::test_transcript_response_must_be_one_exact_message",
+        "tests/agent/execution_message_exactness_test.py::CorrelatedInteractionMessagesTest::test_result_messages_reject_order_substitution_and_extras",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_memory_entry_rejects_every_untyped_identity_field",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_task_input_rejects_failed_admission",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_append_terminal_rejects_nonterminal_request",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_rejects_already_applied_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_reserved_call_validation_failure_restages_batch",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_finalize_execution_rejects_nonterminal_kind",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_single_content_item_round_trips_and_invalid_item_fails",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_public_values_and_payloadless_message",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_nested_message_fields",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_tool_result_error_and_diagnostic_fields",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_finite_diagnostic_duration",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_json_tool_outcome_values",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_forged_or_drifted_envelopes"
       ]
     },
     {
@@ -741,11 +1359,61 @@
       "paraphrase": "Stop consuming model tokens and executing dependent tools while a required request is unresolved, following the attached or detached continuation lifecycle.",
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_attached_boundaries_test.py",
+        "tests/agent/execution_cancellation_integration_test.py",
+        "tests/agent/execution_direct_iteration_cancellation_test.py",
+        "tests/agent/execution_sequential_response_sync_test.py",
+        "tests/agent/execution_suspension_adversarial_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py",
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/input/broker_contract_test.py",
+        "tests/model/model_stream_interaction_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_044"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_044",
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_handler_wait",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_next_provider_call",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_publication",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_request_creation",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_resolution_commit",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_result_append",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cleanup_failure_retries_once_without_rewriting_cancel",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedConcurrencyIsolationTest::test_waiting_run_does_not_block_second_attached_run",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_continuation_read_closes_exactly_once",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_initial_provider_read_closes_exactly_once",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_waiting_attached_branch_does_not_block_unrelated_run",
+        "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_checker_after_continuation_start_converges",
+        "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_consumer_cancel_after_result_append_converges",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_blocked_active_sync_does_not_block_new_root",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_cleanup_failure_is_surfaced_and_retryable",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_complete_reserved_call_suspends_without_read_ahead",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_initial_checker_cancellation_closes_provider_once",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_streaming_input_required_terminates_cleanly",
+        "tests/agent/execution_test.py::InteractionStateTest::test_attached_result_resumes_same_run_on_new_turn",
+        "tests/agent/execution_test.py::InteractionStateTest::test_equivalent_request_limit_is_separate_and_bounded",
+        "tests/agent/execution_test.py::InteractionStateTest::test_turn_advance_rejects_an_interaction_boundary",
+        "tests/agent/execution_test.py::ExecutionConcurrencyTest::test_cancellation_wins_while_turn_identity_awaits",
+        "tests/agent/execution_test.py::ExecutionConcurrencyTest::test_cancelled_identity_await_leaves_snapshot_unchanged",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_typed_suspension_and_termination_errors",
+        "tests/agent/execution_transcript_adversarial_test.py::InteractionResumeAdversarialTest::test_input_required_cannot_advance_without_resolution",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_conversions_and_wrappers_expose_input_required",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_default_stream_has_exact_input_required_order",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_invalid_resolution_retries_without_continuation",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_equivalent_input_reaches_its_bound_without_tool_cycles",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_every_question_type_crosses_the_attached_runtime",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_drained_reserved_call_starts_attached_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_attached_runtime",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_abandons_failed_scheduling",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_task_input_rejects_failed_admission",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_unpublished_interaction_needs_no_canonical_cancel",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_reserved_call_validation_failure_restages_batch",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_sequential_resolved_interactions_share_one_stream"
       ]
     },
     {
@@ -755,11 +1423,16 @@
       "paraphrase": "Keep required input unresolved until an explicit terminal resolution category occurs.",
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/input/broker_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_045"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_045",
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
+        "tests/agent/execution_test.py::InteractionStateTest::test_turn_advance_rejects_an_interaction_boundary",
+        "tests/agent/execution_transcript_adversarial_test.py::InteractionResumeAdversarialTest::test_input_required_cannot_advance_without_resolution"
       ]
     },
     {
@@ -769,11 +1442,13 @@
       "paraphrase": "Never silently select a required default because a timer elapsed.",
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/input/broker_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_046"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_046",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default"
       ]
     },
     {
@@ -783,11 +1458,14 @@
       "paraphrase": "Return an explicit non-answer outcome to the model when required input cannot be presented or resumed.",
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/input/broker_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_047"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_047",
+        "tests/input/cli_contract_test.py::test_requirement_input_n_056",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_model_visible_declined_cancelled_and_unavailable_outcomes"
       ]
     },
     {
@@ -798,10 +1476,12 @@
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/attached_runtime_matrix_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_048"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_048",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default"
       ]
     },
     {
@@ -812,10 +1492,12 @@
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/attached_runtime_matrix_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_049"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_049",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default"
       ]
     },
     {
@@ -826,10 +1508,13 @@
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/attached_runtime_matrix_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_050"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_050",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_trusted_default_uses_broker_owned_provenance"
       ]
     },
     {
@@ -1316,10 +2001,42 @@
       "owner": "flow and nested orchestration",
       "implementation_artifacts": [
         "planned:tests/input/orchestration_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_isolation_integration_test.py",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/agent/execution_memory_idempotency_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/model/engine_test.py"
       ],
       "test_node_ids": [
-        "tests/input/orchestration_contract_test.py::test_requirement_input_n_085"
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_085",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_invocations_are_fully_isolated",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_prompts_share_only_the_prior_snapshot",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_definition_sync_and_tool_configuration_are_stable",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_empty_model_output_is_not_added_to_memory",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_hydrates_prompt_without_resyncing_prefix",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_recursively_snapshots_mapping_proxies",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_contexts_reject_broker_calls_outside_their_branch",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_attached_runtime_preserves_real_task_and_branch_ids",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_creation_mints_genuine_ids_and_stable_definition",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_enforces_attached_runtime_origin",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_uuid_factory_mints_distinct_ids",
+        "tests/agent/execution_transcript_adversarial_test.py::TranscriptTruthTest::test_same_task_overlapping_runs_sync_explicit_executions",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_engine_execution_context_properties_and_guards",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_drain_has_no_owner_head_of_line_blocking",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_drain_skips_healthy_handoff_until_abandoned",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_first_owner_wins_mixed_intent",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_preclosed_executionless_response",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_timeout_completion_races",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_creates_and_releases_a_durable_owner",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_captures_owner_creation_and_convergence_failures",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_exact_execution_drain_skips_other_owner",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_drain_aggregates_unexpected_owner_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_retain_rejects_provider_ownership_collision",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_child_context_can_reuse_current_execution_origin",
+        "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned"
       ]
     },
     {
@@ -1344,10 +2061,28 @@
       "owner": "flow and nested orchestration",
       "implementation_artifacts": [
         "planned:tests/input/orchestration_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_attached_boundaries_test.py",
+        "tests/agent/execution_cancellation_integration_test.py",
+        "tests/agent/execution_isolation_integration_test.py",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_memory_idempotency_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/agent/renderer_test.py"
       ],
       "test_node_ids": [
-        "tests/input/orchestration_contract_test.py::test_requirement_input_n_087"
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_087",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedConcurrencyIsolationTest::test_waiting_run_does_not_block_second_attached_run",
+        "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_waiting_attached_branch_does_not_block_unrelated_run",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_invocations_are_fully_isolated",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_prompts_share_only_the_prior_snapshot",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_contexts_reject_broker_calls_outside_their_branch",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_attached_runtime_preserves_real_task_and_branch_ids",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_enforces_attached_runtime_origin",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_engine_execution_context_properties_and_guards",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_child_context_can_reuse_current_execution_origin",
+        "tests/agent/renderer_test.py::RendererTestCase::test_template_caches_are_isolated_by_renderer"
       ]
     },
     {
@@ -1358,10 +2093,16 @@
       "owner": "flow and nested orchestration",
       "implementation_artifacts": [
         "planned:tests/input/orchestration_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/agent/execution_test.py",
+        "tests/model/model_stream_interaction_test.py"
       ],
       "test_node_ids": [
-        "tests/input/orchestration_contract_test.py::test_requirement_input_n_088"
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_088",
+        "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_pending_request_must_match_reserved_call",
+        "tests/agent/execution_test.py::InteractionStateTest::test_request_lifecycle_and_immutable_contract_fail_closed",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_overlapping_interactions_remain_invalid"
       ]
     },
     {
@@ -1386,10 +2127,14 @@
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
         "tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_090"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_090",
+        "tests/agent/execution_test.py::InteractionStateTest::test_conflicting_replay_and_wrong_correlation_fail_closed",
+        "tests/agent/execution_test.py::InteractionStateTest::test_input_required_replay_and_new_stream_resume",
+        "tests/agent/execution_test.py::InteractionStateTest::test_result_compare_and_swap_allows_one_concurrent_winner"
       ]
     },
     {
@@ -1400,10 +2145,30 @@
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
         "tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_memory_idempotency_test.py",
+        "tests/memory/permanent/elasticsearch_message_memory_test.py",
+        "tests/memory/permanent/pgsql_test.py",
+        "tests/memory/permanent/s3vectors_message_memory_test.py",
+        "tests/memory/permanent/structured_message_codec_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_091"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_091",
+        "tests/agent/execution_test.py::InteractionStateTest::test_input_required_replay_and_new_stream_resume",
+        "tests/agent/execution_test.py::InteractionStateTest::test_result_compare_and_swap_allows_one_concurrent_winner",
+        "tests/agent/execution_test.py::InteractionStateTest::test_terminal_request_is_recorded_and_replayed_exactly_once",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_permanent_commit_then_raise_retries_same_key_once",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_pre_commit_failure_remains_retryable",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_acknowledged_component_wins_staggered_retry",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_payloadless_and_conflicting_keyed_messages_fail_closed",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_loser_records_nothing",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_settlement_is_coalesced",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_uses_first_owner_classification",
+        "tests/memory/permanent/elasticsearch_message_memory_test.py::ElasticsearchMessageMemoryTestCase::test_keyed_append_uses_stable_document_and_vector_ids",
+        "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_retry_reuses_one_transactional_row",
+        "tests/memory/permanent/s3vectors_message_memory_test.py::S3VectorsMessageMemoryTestCase::test_keyed_append_uses_stable_object_and_vector_ids",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity"
       ]
     },
     {
@@ -1414,10 +2179,25 @@
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
         "tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_memory_idempotency_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/memory/permanent/pgsql_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_092"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_092",
+        "tests/agent/execution_test.py::InteractionStateTest::test_conflicting_replay_and_wrong_correlation_fail_closed",
+        "tests/agent/execution_test.py::InteractionStateTest::test_nonmatching_committed_result_is_not_an_idempotent_replay",
+        "tests/agent/execution_test.py::InteractionStateTest::test_result_compare_and_swap_allows_one_concurrent_winner",
+        "tests/agent/execution_test.py::InteractionStateTest::test_terminal_request_is_recorded_and_replayed_exactly_once",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_payloadless_and_conflicting_keyed_messages_fail_closed",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_loser_records_nothing",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_settlement_is_coalesced",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_uses_first_owner_classification",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_rejects_already_applied_continuation",
+        "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_rejects_conflicting_storage",
+        "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_rejects_disappearing_conflict_row"
       ]
     },
     {
@@ -1428,10 +2208,12 @@
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
         "tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_093"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_093",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_mutations_reject_bad_types_and_stale_revisions"
       ]
     },
     {
@@ -1484,10 +2266,13 @@
       "owner": "interaction security policy",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/attached_runtime_matrix_test.py"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_097"
+        "tests/input/security_contract_test.py::test_requirement_input_n_097",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_clarification_words_do_not_approve_protected_action",
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_protected_action_waits_for_separate_explicit_approval"
       ]
     },
     {
@@ -1497,7 +2282,6 @@
       "paraphrase": "Never request passwords, keys, tokens, private keys, financial credentials, or authentication challenges through normal task input.",
       "owner": "interaction security policy",
       "implementation_artifacts": [
-        "planned:tests/input/security_contract_test.py",
         "tests/input/security_contract_test.py",
         "tests/interaction/interaction_codec_test.py",
         "tests/fixtures/input/contract_decisions.json"
@@ -1733,10 +2517,215 @@
       "owner": "cross-surface failure contract",
       "implementation_artifacts": [
         "planned:tests/input/failure_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_attached_boundaries_test.py",
+        "tests/agent/execution_direct_iteration_cancellation_test.py",
+        "tests/agent/execution_isolation_integration_test.py",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/execution_sequential_response_sync_test.py",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/agent/execution_suspension_adversarial_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py",
+        "tests/agent/execution_memory_idempotency_test.py",
+        "tests/agent/execution_message_exactness_test.py",
+        "tests/agent/json_orchestrator_test.py",
+        "tests/agent/orchestrator_cleanup_ownership_test.py",
+        "tests/agent/orchestrator_convergence_coverage_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/agent/orchestrator_test.py",
+        "tests/agent/renderer_test.py",
+        "tests/memory/permanent/elasticsearch_message_memory_test.py",
+        "tests/memory/permanent/pgsql_test.py",
+        "tests/memory/permanent/s3vectors_message_memory_test.py",
+        "tests/memory/permanent/structured_message_codec_test.py",
+        "tests/model/engine_test.py",
+        "tests/model/model_stream_interaction_test.py"
       ],
       "test_node_ids": [
-        "tests/input/failure_contract_test.py::test_requirement_input_n_107"
+        "tests/input/failure_contract_test.py::test_requirement_input_n_107",
+        "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cleanup_failure_retries_once_without_rewriting_cancel",
+        "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_checker_after_continuation_start_converges",
+        "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_consumer_cancel_after_result_append_converges",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_prompts_share_only_the_prior_snapshot",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_definition_sync_and_tool_configuration_are_stable",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_empty_model_output_is_not_added_to_memory",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_hydrates_prompt_without_resyncing_prefix",
+        "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_prior_history_recursively_snapshots_mapping_proxies",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_failed_sink_stays_owned_and_retries_without_duplicates",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_parent_exit_syncs_two_concurrent_owned_responses",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_server_boundary_syncs_its_exact_response",
+        "tests/agent/execution_response_ownership_adversarial_test.py::EngineLifetimeAdversarialTest::test_closing_one_engine_does_not_close_another",
+        "tests/agent/execution_response_ownership_adversarial_test.py::EngineLifetimeAdversarialTest::test_engine_provider_support_defaults_to_incapable",
+        "tests/agent/execution_response_ownership_adversarial_test.py::EngineLifetimeAdversarialTest::test_engines_own_independent_lifecycle_state",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_active_responses_remain_isolated",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_blocked_active_sync_does_not_block_new_root",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_explicit_running_sync_retains_response_until_exit",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_failed_automatic_sync_retries_before_model_dispatch",
+        "tests/agent/execution_sequential_response_sync_test.py::SequentialResponseSynchronizationTest::test_next_root_call_syncs_completed_exchange",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_forged_derived_state",
+        "tests/agent/execution_strict_invariants_test.py::SnapshotLedgerReplayTest::test_snapshot_rejects_illegal_transition_and_revision",
+        "tests/agent/execution_strict_invariants_test.py::MessageToolCallArgumentsTest::test_arguments_reject_non_json_shapes",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_cleanup_failure_is_surfaced_and_retryable",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_initial_checker_cancellation_closes_provider_once",
+        "tests/agent/execution_suspension_adversarial_test.py::ExecutionSuspensionAdversarialTest::test_streaming_continuation_failure_is_terminal",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_ledger_records_each_typed_payload",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_ledger_rejects_invalid_fields_and_payload_shapes",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_prompt_accepts_every_input_variant_and_rejects_mixed_input",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_prompt_freezes_list_input_and_validates_text_fields",
+        "tests/agent/execution_test.py::ExecutionCreationTest::test_transcript_and_prompt_snapshot_nested_mutable_payloads",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_failed_memory_sink_retries_only_the_unacknowledged_tail",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_prompt_response_and_sync_are_ledger_authoritative",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_repeated_sync_never_duplicates_assistant_output",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_terminal_transitions_and_cleanup_are_exactly_once",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_inconsistent_state",
+        "tests/agent/execution_test.py::RuntimeValidationTest::test_snapshot_rejects_post_terminal_work_and_origin_drift",
+        "tests/agent/execution_transcript_adversarial_test.py::TranscriptTruthTest::test_completion_materializes_final_assistant_transcript",
+        "tests/agent/execution_transcript_adversarial_test.py::TranscriptTruthTest::test_same_task_overlapping_runs_sync_explicit_executions",
+        "tests/agent/execution_transcript_adversarial_test.py::RetrySafeSynchronizationTest::test_cancelled_append_keeps_entry_retryable",
+        "tests/agent/execution_transcript_adversarial_test.py::RetrySafeSynchronizationTest::test_failed_message_and_response_append_retry_without_loss",
+        "tests/agent/execution_transcript_adversarial_test.py::StreamTerminalTruthTest::test_empty_tool_observation_completes_execution_once",
+        "tests/agent/execution_transcript_adversarial_test.py::SnapshotInvariantTest::test_public_snapshot_rejects_impossible_status_shapes",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_malformed_request_invokes_no_broker_or_continuation",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_preamble_order_and_materialization_match_streaming",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_permanent_commit_then_raise_retries_same_key_once",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_pre_commit_failure_remains_retryable",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_later_recent_failure_does_not_repeat_permanent",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_acknowledged_component_wins_staggered_retry",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_payloadless_and_conflicting_keyed_messages_fail_closed",
+        "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_engine_execution_context_properties_and_guards",
+        "tests/agent/execution_memory_idempotency_test.py::StructuredToolMemoryTest::test_contentless_tool_call_round_trips_both_stores",
+        "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_generation_settings_dataclass_base_merges_nested_override",
+        "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_engine_helpers_normalize_bootstrap_and_reasoning_summary",
+        "tests/agent/execution_memory_idempotency_test.py::EngineMessageContractTest::test_message_and_key_types_are_strict",
+        "tests/agent/execution_message_exactness_test.py::ResponseMaterializationTest::test_transcript_response_must_be_one_exact_message",
+        "tests/agent/execution_message_exactness_test.py::CorrelatedInteractionMessagesTest::test_result_messages_reject_order_substitution_and_extras",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_runtime_error_after_provider_fails_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancellation_after_provider_cancels_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_base_exit_after_provider_fails_and_closes",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_outer_agent_event_keeps_provider_owned",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_persistent_public_fail_preserves_primary_and_falls_back",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cleanup_failures_are_notes_on_the_primary_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_retries_two_close_failures_to_third_success",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_nonreturning_cancel_is_owned_until_late_failure_drains",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_drain_has_no_owner_head_of_line_blocking",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_drain_skips_healthy_handoff_until_abandoned",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_first_owner_wins_mixed_intent",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_close_timeout_remains_owned_for_late_success",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_close_must_confirm_provider_closure",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_settlement_timeout_retains_late_failure_for_retry",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_preclosed_executionless_response",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_owner_handles_timeout_completion_races",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_nonprovider_settlement_preserves_primary",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_notes_exclude_primary_and_duplicates",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_engine_cleanup_setup_failure_preserves_primary",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_unexpected_cleanup_failure_cannot_mask_event_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_failure_is_only_a_secondary_note",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_creates_and_releases_a_durable_owner",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_recovery_captures_owner_creation_and_convergence_failures",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_unhanded_cleanup_captures_unexpected_convergence_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_exact_execution_drain_skips_other_owner",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_drain_aggregates_unexpected_owner_exit",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_retain_rejects_provider_ownership_collision",
+        "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_cancelled_cleanup_task_is_preserved_as_a_note",
+        "tests/agent/execution_test.py::PromptAndLedgerValidationTest::test_memory_entry_rejects_every_untyped_identity_field",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_and_completion_commit_atomically",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_loser_records_nothing",
+        "tests/agent/execution_test.py::ExecutionMutationTest::test_response_completion_rolls_back_partial_failure",
+        "tests/agent/execution_test.py::InteractionStateTest::test_provider_exit_fallback_is_terminal_and_idempotent",
+        "tests/agent/execution_test.py::InteractionStateTest::test_provider_exit_retains_both_transition_failures_for_retry",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_settlement_is_coalesced",
+        "tests/agent/execution_test.py::InteractionStateTest::test_concurrent_provider_exit_uses_first_owner_classification",
+        "tests/agent/json_orchestrator_test.py::JsonUsageResponseHelperTestCase::test_usage_responses_from_preserves_tuple_property",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_blocked_after_listener_cancellation_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_after_listener_error_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_after_event_keyboard_interrupt_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_repeated_cancellation_cannot_interrupt_local_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_wrapper_error_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_registration_error_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_cancel_base_exception_does_not_skip_unowned_close",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_close_base_exception_does_not_skip_terminalization",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_terminalization_base_exception_is_secondary",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_explicit_close_base_exception_keeps_closed_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_registration_cancellation_settles_provider",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_public_sync_skips_provider_still_transferring",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_claims_transferring_owner_before_registration",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_closes_running_registered_response",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_closes_input_required_response_and_branch",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_unowned_close_retry_retains_owner_until_public_sync",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_nonreturning_cancel_does_not_block_later_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_provider_base_exits_cleanup_all_consumption_boundaries",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_errored_provider_close_retry_coalesces_before_release",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_exit_preserves_body_primary_and_runs_every_stage",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_pre_provider_base_exits_terminalize_without_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_handoff_installation_failures_preserve_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_unexpected_owner_convergence_cannot_mask_primary",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_commit_then_raise_completion_keeps_canonical_winner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_cancellation_winner_has_no_success_projection",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_to_str_completion_winner_is_cached_success",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_cancellation_winner_is_typed_terminal",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_iteration_completion_winner_is_typed_terminal",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_acknowledged_continuation_has_one_exit_owner",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_public_aclose_retries_before_explicit_sync_release",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_explicit_sync_retries_failed_iteration_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_all_response_sync_retries_failed_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_orchestrator_exit_retries_failed_cleanup",
+        "tests/agent/orchestrator_cleanup_ownership_test.py::OrchestratorCleanupOwnershipTest::test_provider_close_retry_coalesces_before_ownership_release",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorExecutionMessageCoverageTest::test_execution_messages_normalize_text_and_homogeneous_lists",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_cancelled_cleanup_task_is_attached_to_primary_failure",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_sync_owned_only_skips_unowned_response",
+        "tests/agent/orchestrator_convergence_coverage_test.py::OrchestratorOwnershipCoverageTest::test_sync_rechecks_new_terminal_before_release",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_aclose_delegates_after_completed_execution",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_terminal_iterator_waits_for_pending_tool_batch",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_iterator_preserves_stop_without_canonical_item",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_drained_reserved_call_starts_attached_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_stream_cleanup_finishes_state_before_provider_error",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_completed_tool_outcome_records_execution_messages",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_abort_batch_with_execution_is_consumed",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_attached_runtime",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_abandons_failed_scheduling",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_caller_cancellation_cleans_local_waiters",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_item_notification_cancels_session_watcher",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_task_input_rejects_failed_admission",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_terminated_returns_for_streaming_consumer",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_terminated_raises_for_materialized_consumer",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_append_terminal_rejects_nonterminal_request",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_rejects_already_applied_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_resume_records_cancelled_model_continuation",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_unpublished_interaction_needs_no_canonical_cancel",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_reserved_call_validation_failure_restages_batch",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_child_context_can_reuse_current_execution_origin",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_canonical_answer_text_ignores_other_channels",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_finalize_execution_rejects_nonterminal_kind",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_cancelled_initial_model_dispatch_cancels_execution",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_failed_initial_model_dispatch_fails_execution",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_rejects_untrusted_provider_support",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_aexit_runs_all_cleanup_on_keyboard_interrupt",
+        "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_aexit_runs_response_cleanup_on_cancelled_error",
+        "tests/agent/renderer_test.py::RendererTestCase::test_template_caches_are_isolated_by_renderer",
+        "tests/memory/permanent/elasticsearch_message_memory_test.py::ElasticsearchMessageMemoryTestCase::test_keyed_append_uses_stable_document_and_vector_ids",
+        "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_retry_reuses_one_transactional_row",
+        "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_rejects_conflicting_storage",
+        "tests/memory/permanent/pgsql_test.py::PgsqlMessageMemoryTestCase::test_keyed_append_rejects_disappearing_conflict_row",
+        "tests/memory/permanent/s3vectors_message_memory_test.py::S3VectorsMessageMemoryTestCase::test_keyed_append_uses_stable_object_and_vector_ids",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_plain_text_stays_exact_and_prefix_collision_is_escaped",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_none_and_empty_thinking_round_trip_distinctly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_structured_tool_call_and_result_round_trip_exactly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_multimodal_content_round_trips_exactly",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_single_content_item_round_trips_and_invalid_item_fails",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_tool_errors_and_diagnostics_use_safe_closed_values",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_public_values_and_payloadless_message",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_nested_message_fields",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_invalid_tool_result_error_and_diagnostic_fields",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_finite_diagnostic_duration",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_json_tool_outcome_values",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_forged_or_drifted_envelopes",
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity",
+        "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_sequential_resolved_interactions_share_one_stream",
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_overlapping_interactions_remain_invalid"
       ]
     },
     {
@@ -1902,10 +2891,14 @@
       "paraphrase": "Freeze complete behavioral and public-scenario traceability.",
       "owner": "requirements traceability",
       "implementation_artifacts": [
-        "tests/fixtures/input/requirements_traceability.json"
+        "tests/fixtures/input/requirements_traceability.json",
+        "tests/input_acceptance_verifier_test.py",
+        "tests/input_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input_contract_test.py::test_requirement_catalog_is_complete"
+        "tests/input_contract_test.py::test_requirement_catalog_is_complete",
+        "tests/input_acceptance_verifier_test.py::test_current_runtime_manifest_inventory_fails_closed",
+        "tests/input_acceptance_verifier_test.py::test_current_regression_classification_fails_closed"
       ]
     },
     {
@@ -1915,11 +2908,16 @@
       "paraphrase": "Enforce planned versus active acceptance lifecycle and append-only activation.",
       "owner": "acceptance inventory",
       "implementation_artifacts": [
-        "tests/fixtures/input/acceptance_manifest.json"
+        "tests/fixtures/input/acceptance_manifest.json",
+        "tests/input_acceptance_verifier_test.py",
+        "tests/input_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input_contract_test.py::test_acceptance_manifest_lifecycle_is_monotonic",
-        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory"
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_invalid_inventory",
+        "tests/input_acceptance_verifier_test.py::test_current_runtime_manifest_inventory_fails_closed",
+        "tests/input_acceptance_verifier_test.py::test_current_runtime_file_inventory_fails_closed",
+        "tests/input_acceptance_verifier_test.py::test_current_regression_classification_fails_closed"
       ]
     },
     {
@@ -1929,7 +2927,9 @@
       "paraphrase": "Freeze and exhaustively verify every failure-condition and surface cell.",
       "owner": "failure inventory",
       "implementation_artifacts": [
-        "tests/fixtures/input/failure_matrix.json"
+        "tests/fixtures/input/failure_matrix.json",
+        "tests/input_acceptance_verifier_test.py",
+        "tests/input_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input_contract_test.py::test_failure_matrix_is_complete",
@@ -1943,12 +2943,16 @@
       "paraphrase": "Collect and execute exact acceptance nodes while rejecting non-evidence outcomes.",
       "owner": "acceptance runner",
       "implementation_artifacts": [
-        "scripts/verify_input_acceptance.py"
+        "scripts/verify_input_acceptance.py",
+        "tests/input_acceptance_verifier_test.py"
       ],
       "test_node_ids": [
         "tests/input_acceptance_verifier_test.py::test_acceptance_cli_executes_exact_synthetic_node",
         "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_pytest_non_evidence",
-        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_placeholder_and_execution_tricks"
+        "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_placeholder_and_execution_tricks",
+        "tests/input_acceptance_verifier_test.py::test_current_runtime_manifest_inventory_fails_closed",
+        "tests/input_acceptance_verifier_test.py::test_current_runtime_file_inventory_fails_closed",
+        "tests/input_acceptance_verifier_test.py::test_current_regression_classification_fails_closed"
       ]
     },
     {
@@ -1963,7 +2967,8 @@
         "tests/fixtures/input/coverage_exclusions_phase1.json",
         "tests/fixtures/input/coverage_exclusion_relocations_phase1.json",
         "tests/fixtures/input/coverage_exclusions_phase2.json",
-        "tests/fixtures/input/coverage_exclusion_relocations_phase2.json"
+        "tests/fixtures/input/coverage_exclusion_relocations_phase2.json",
+        "tests/src_coverage_verifier_test.py"
       ],
       "test_node_ids": [
         "tests/src_coverage_verifier_test.py::test_exact_coverage_accepts_empty_module_variants",
@@ -1978,7 +2983,10 @@
       "paraphrase": "Provide fail-fast exact Make and database-backed quality targets with CI metadata locks.",
       "owner": "project quality gate",
       "implementation_artifacts": [
-        "Makefile"
+        "Makefile",
+        "tests/input_contract_harness_test.py",
+        "tests/input_contract_metadata_test.py",
+        "tests/project_metadata_test.py"
       ],
       "test_node_ids": [
         "tests/input_contract_metadata_test.py::test_exact_make_target_fails_closed_on_pytest_failure",
@@ -1998,10 +3006,12 @@
       "paraphrase": "Track and execute lifecycle-aware positive and negative static type contracts.",
       "owner": "type contract gate",
       "implementation_artifacts": [
-        "scripts/verify_input_types.py"
+        "scripts/verify_input_types.py",
+        "tests/input_type_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input_type_contract_test.py::test_type_contract_manifest_and_runner_are_strict"
+        "tests/input_type_contract_test.py::test_type_contract_manifest_and_runner_are_strict",
+        "tests/input_type_contract_test.py::test_current_type_fixture_inventory_and_sources_fail_closed"
       ]
     },
     {
@@ -2011,7 +3021,8 @@
       "paraphrase": "Provide typed deterministic clocks, IDs, providers, barriers, principals, correlations, and local peers.",
       "owner": "deterministic test infrastructure",
       "implementation_artifacts": [
-        "tests/input_contract_fixtures.py"
+        "tests/input_contract_fixtures.py",
+        "tests/input_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input_contract_test.py::test_deterministic_fixtures_are_reproducible"
@@ -2024,7 +3035,8 @@
       "paraphrase": "Freeze every identity, state, outcome, capability, protocol, privacy, error, bound, replay, and activation decision.",
       "owner": "contract decision inventory",
       "implementation_artifacts": [
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input_contract_test.py::test_contract_decisions_are_frozen"
@@ -2037,7 +3049,8 @@
       "paraphrase": "Inventory every obsolete coupling, result shape, correlation, mutable field, and assertion for atomic removal.",
       "owner": "replacement inventory",
       "implementation_artifacts": [
-        "tests/fixtures/input/no_bc_removals.json"
+        "tests/fixtures/input/no_bc_removals.json",
+        "tests/input_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input_contract_test.py::test_no_bc_removal_inventory_is_frozen"
@@ -2050,7 +3063,8 @@
       "paraphrase": "Record passing baseline and implementation evidence with exact commands and counts.",
       "owner": "implementation evidence",
       "implementation_artifacts": [
-        "tests/fixtures/input/baseline_evidence.json"
+        "tests/fixtures/input/baseline_evidence.json",
+        "tests/input_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input_contract_test.py::test_baseline_evidence_is_complete"
@@ -2064,7 +3078,8 @@
       "owner": "activation guard",
       "implementation_artifacts": [
         "tests/fixtures/input/baseline_evidence.json",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input_contract_test.py::test_capability_remains_dormant"

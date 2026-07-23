@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "current_phase": 3,
+  "current_phase": 4,
   "activation_history": [
     {
       "phase": 0,
@@ -39,6 +39,14 @@
         "tool-catalog-interchange-negative",
         "capability-binding-identity-interchange-negative",
         "capability-payload-result-shape-negative"
+      ]
+    },
+    {
+      "phase": 4,
+      "fixture_ids": [
+        "execution-state-positive",
+        "execution-context-interchange-negative",
+        "synchronous-execution-id-factory-negative"
       ]
     }
   ],
@@ -105,6 +113,33 @@
         "capability-payload-result-shape-negative"
       ],
       "sha256": "2ed240f41243be102360d31981ecef0d340b9129bb81bd0fd13f1b9af0b0afe6"
+    },
+    {
+      "phase": 4,
+      "fixture_ids": [
+        "deterministic-fixtures-positive",
+        "canonical-answers-positive",
+        "async-handler-positive",
+        "synchronous-handler-negative",
+        "untyped-handler-result-negative",
+        "broker-identity-interchange-negative",
+        "store-revision-interchange-negative",
+        "controller-identity-interchange-negative",
+        "synchronous-resumer-negative",
+        "candidate-resolution-variants-negative",
+        "strict-resolution-variants-negative",
+        "typed-resolution-payload-negative",
+        "input-required-identity-negative",
+        "unchecked-any-leak-negative",
+        "model-capability-catalog-positive",
+        "tool-catalog-interchange-negative",
+        "capability-binding-identity-interchange-negative",
+        "capability-payload-result-shape-negative",
+        "execution-state-positive",
+        "execution-context-interchange-negative",
+        "synchronous-execution-id-factory-negative"
+      ],
+      "sha256": "56536229b94c33269c53007e32e87fdf1c6950f4595a38e3c5f2d3d3d1c07a21"
     }
   ],
   "planned_replacements": [
@@ -365,6 +400,39 @@
         "tests/input_type_contracts/capability_payload_result_shape_negative.py:16:25: error: Argument 1 to \"decode_call\" of \"ModelCapabilityCatalog\" has incompatible type \"object\"; expected \"ProviderCapabilityCall\"  [arg-type]",
         "tests/input_type_contracts/capability_payload_result_shape_negative.py:25:34: error: Argument 2 to \"project_result\" of \"ModelCapabilityCatalog\" has incompatible type \"Mapping[str, object]\"; expected \"InputAnsweredResult | InputDeclinedResult | InputCancelledResult | InputTimedOutResult | InputUnavailableResult\"  [arg-type]",
         "tests/input_type_contracts/capability_payload_result_shape_negative.py:34:17: error: Argument \"payload\" to \"CorrelatedCapabilityResult\" has incompatible type \"list[object]\"; expected \"Mapping[str, JsonValue]\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "execution-state-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "path": "tests/input_type_contracts/execution_state_positive.py",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "execution-context-interchange-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "path": "tests/input_type_contracts/execution_context_interchange_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/execution_context_interchange_negative.py:19:19: error: Argument \"execution\" to \"ModelCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"AgentExecution | None\"  [arg-type]",
+        "tests/input_type_contracts/execution_context_interchange_negative.py:20:26: error: Argument \"execution_origin\" to \"ModelCallContext\" has incompatible type \"AgentExecution\"; expected \"ExecutionOrigin | None\"  [arg-type]",
+      "tests/input_type_contracts/execution_context_interchange_negative.py:21:28: error: Argument \"interaction_broker\" to \"ModelCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"BranchInteractionBroker | None\"  [arg-type]",
+        "tests/input_type_contracts/execution_context_interchange_negative.py:24:19: error: Argument \"execution\" to \"ToolCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"AgentExecution | None\"  [arg-type]",
+        "tests/input_type_contracts/execution_context_interchange_negative.py:25:26: error: Argument \"execution_origin\" to \"ToolCallContext\" has incompatible type \"AgentExecution\"; expected \"ExecutionOrigin | None\"  [arg-type]",
+      "tests/input_type_contracts/execution_context_interchange_negative.py:26:28: error: Argument \"interaction_broker\" to \"ToolCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"BranchInteractionBroker | None\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "synchronous-execution-id-factory-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "path": "tests/input_type_contracts/synchronous_execution_id_factory_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/synchronous_execution_id_factory_negative.py:32:31: error: Incompatible types in assignment (expression has type \"SynchronousExecutionIdFactory\", variable has type \"ExecutionIdFactory\")  [assignment]"
       ]
     }
   ]

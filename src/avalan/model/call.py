@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 if TYPE_CHECKING:
+    from ..agent.execution import AgentExecution, BranchInteractionBroker
+    from ..interaction.entities import ExecutionOrigin
     from .engine import Engine
 
 
@@ -21,6 +23,9 @@ class ModelCallContext:
     agent_id: UUID | None = None
     participant_id: UUID | None = None
     session_id: UUID | None = None
+    execution: "AgentExecution | None" = None
+    execution_origin: "ExecutionOrigin | None" = None
+    interaction_broker: "BranchInteractionBroker | None" = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

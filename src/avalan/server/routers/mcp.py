@@ -1086,6 +1086,7 @@ class StreamResponse(Protocol):
     _response_iterator: AsyncIterator[ResponseItem] | None
 
     async def to_str(self) -> str: ...
+    async def sync_messages(self) -> None: ...
     def __aiter__(self) -> AsyncIterator[ResponseItem]: ...
 
 
@@ -1693,7 +1694,7 @@ async def _stream_mcp_response(
             resource_store, state.resources
         )
         await resource_store.prune_closed()
-        await orchestrator.sync_messages()
+        await orchestrator.sync_messages(response)
         raise
     except CancelledError:
         cancel_event.set()
@@ -1738,7 +1739,7 @@ async def _stream_mcp_response(
                 for payload in emit(message):
                     yield payload
         finally:
-            await orchestrator.sync_messages()
+            await orchestrator.sync_messages(response)
         return
 
     if finished_normally:
@@ -1772,7 +1773,7 @@ async def _stream_mcp_response(
                     for payload in emit(message):
                         yield payload
             finally:
-                await orchestrator.sync_messages()
+                await orchestrator.sync_messages(response)
             return
 
         snapshot = state.accumulator.snapshot()
@@ -1795,7 +1796,7 @@ async def _stream_mcp_response(
                     for payload in emit(message):
                         yield payload
             finally:
-                await orchestrator.sync_messages()
+                await orchestrator.sync_messages(response)
             return
         if snapshot.terminal_outcome is StreamTerminalOutcome.ERRORED:
             await _cleanup_mcp_stream_sources(
@@ -1822,7 +1823,7 @@ async def _stream_mcp_response(
                     for payload in emit(message):
                         yield payload
             finally:
-                await orchestrator.sync_messages()
+                await orchestrator.sync_messages(response)
             return
 
         answer_text = sanitize_model_visible_server_protocol_text(
@@ -1889,7 +1890,7 @@ async def _stream_mcp_response(
                 for payload in emit(message):
                     yield payload
         finally:
-            await orchestrator.sync_messages()
+            await orchestrator.sync_messages(response)
 
 
 async def _mcp_notifications(

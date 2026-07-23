@@ -5,7 +5,12 @@ from uuid import UUID, uuid4
 
 import numpy as np
 
-from avalan.entities import EngineMessage, Message, MessageRole
+from avalan.entities import (
+    EngineMessage,
+    EngineMessageIdempotencyKey,
+    Message,
+    MessageRole,
+)
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import VectorFunction
 from avalan.memory.permanent.s3vectors.message import S3VectorsMessageMemory
@@ -69,6 +74,43 @@ class S3VectorsMessageMemoryTestCase(IsolatedAsyncioTestCase):
             )
         self.assertTrue(memory._client.put_object.called)
         self.assertEqual(memory._client.put_vector.call_count, 2)
+
+    async def test_keyed_append_uses_stable_object_and_vector_ids(self):
+        client = AsyncMock()
+        memory = S3VectorsMessageMemory(
+            bucket="b", collection="c", client=client, logger=MagicMock()
+        )
+        session_id = uuid4()
+        memory._session_id = session_id
+        key = EngineMessageIdempotencyKey(
+            value=UUID("22222222-2222-2222-2222-222222222222")
+        )
+        engine_message = EngineMessage(
+            agent_id=uuid4(),
+            model_id="m",
+            message=Message(role=MessageRole.USER, content="hi"),
+            idempotency_key=key,
+        )
+
+        await memory.append_with_partitions(
+            engine_message,
+            partitions=[
+                TextPartition(
+                    data="hi",
+                    embeddings=np.array([0.1]),
+                    total_tokens=1,
+                )
+            ],
+        )
+
+        self.assertEqual(
+            client.put_object.await_args.kwargs["Key"],
+            f"c/{session_id}/{key.value}.json",
+        )
+        self.assertEqual(
+            client.put_vector.await_args.kwargs["Id"],
+            f"{key.value}:1",
+        )
 
     async def test_get_recent_messages(self):
         client = MagicMock()

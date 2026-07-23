@@ -111,23 +111,37 @@ class ModelStreamInteractionTestCase(TestCase):
         self,
         items: tuple[CanonicalStreamItem, ...],
         message: str,
-    ) -> None:
-        with self.assertRaisesRegex(StreamValidationError, message):
+    ) -> tuple[str, str, str]:
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            message,
+        ) as validation_error:
             validate_canonical_stream_items(items)
-        with self.assertRaisesRegex(StreamValidationError, message):
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            message,
+        ) as accumulator_error:
             CanonicalStreamAccumulator().add_many(items)
         projection = StreamProjectionState(
             stream_session_id="stream-1",
             run_id="run-1",
             turn_id="turn-1",
         )
-        with self.assertRaisesRegex(StreamValidationError, message):
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            message,
+        ) as projection_error:
             for item in items:
                 projection.project(
                     item,
                     item.sequence,
                     unsupported_message="unsupported",
                 )
+        return (
+            str(validation_error.exception),
+            str(accumulator_error.exception),
+            str(projection_error.exception),
+        )
 
     def test_every_interaction_stream_id_rejects_observer_smuggling(
         self,
@@ -442,6 +456,100 @@ class ModelStreamInteractionTestCase(TestCase):
                         unsupported_message="unsupported",
                     )
                 projection.validate_complete()
+
+    def test_sequential_resolved_interactions_share_one_stream(self) -> None:
+        first = _correlation(request_id="request-1")
+        second = _correlation(
+            request_id="request-2",
+            continuation_id="continuation-2",
+        )
+        items = (
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            _item(
+                StreamItemKind.INTERACTION_CREATED,
+                1,
+                correlation=first,
+            ),
+            _item(
+                StreamItemKind.INTERACTION_PENDING,
+                2,
+                correlation=first,
+            ),
+            _item(
+                StreamItemKind.INTERACTION_ANSWERED,
+                3,
+                correlation=first,
+            ),
+            _item(
+                StreamItemKind.INTERACTION_CREATED,
+                4,
+                correlation=second,
+            ),
+            _item(
+                StreamItemKind.INTERACTION_PENDING,
+                5,
+                correlation=second,
+            ),
+            _item(
+                StreamItemKind.INTERACTION_DECLINED,
+                6,
+                correlation=second,
+            ),
+            _item(
+                StreamItemKind.STREAM_COMPLETED,
+                7,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                usage={},
+            ),
+        )
+
+        self.assertEqual(validate_canonical_stream_items(items), items)
+        accumulator = CanonicalStreamAccumulator().add_many(items)
+        self.assertEqual(accumulator.validate_complete(), items)
+        projection = StreamProjectionState(
+            stream_session_id="stream-1",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+        for item in items:
+            projection.project(
+                item,
+                item.sequence,
+                unsupported_message="unsupported",
+            )
+        projection.validate_complete()
+
+    def test_overlapping_interactions_remain_invalid(self) -> None:
+        first = _correlation(request_id="request-1")
+        second = _correlation(
+            request_id="request-2",
+            continuation_id="continuation-2",
+        )
+        items = (
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            _item(
+                StreamItemKind.INTERACTION_PENDING,
+                1,
+                correlation=first,
+            ),
+            _item(
+                StreamItemKind.INTERACTION_CREATED,
+                2,
+                correlation=second,
+            ),
+        )
+
+        rejection_messages = self._assert_rejected_by_all_state_paths(
+            items,
+            "multiple interaction requests in one stream",
+        )
+        self.assertEqual(
+            tuple(
+                "multiple interaction requests in one stream" in detail
+                for detail in rejection_messages
+            ),
+            (True, True, True),
+        )
 
     def test_interaction_stream_projects_correlated_input_required(
         self,

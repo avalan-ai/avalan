@@ -128,6 +128,24 @@ class EnginePropertyTestCase(TestCase):
         self.assertEqual(engine.parameter_types, {"float32"})
         self.assertEqual(engine.tokenizer_config, "tok_cfg")
 
+    def test_runtime_state_and_capability_proof_are_instance_owned(self):
+        first = DummyEngine()
+        second = DummyEngine()
+
+        self.assertIsNot(first._exit_stack, second._exit_stack)
+        first._loaded_model = True
+        first._loaded_tokenizer = True
+        first._model = object()
+        first._tokenizer = object()
+
+        self.assertFalse(second._loaded_model)
+        self.assertFalse(second._loaded_tokenizer)
+        self.assertIsNone(second._model)
+        self.assertIsNone(second._tokenizer)
+        self.assertFalse(
+            second.provider_capability_support.structured_invocation
+        )
+
 
 class EngineIsRunnableTestCase(TestCase):
     def test_returns_none_without_params(self):

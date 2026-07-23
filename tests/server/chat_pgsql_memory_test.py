@@ -79,13 +79,18 @@ class PgsqlChatCompletionTestCase(IsolatedAsyncioTestCase):
         class MemoryOrchestrator(Orchestrator):
             def __init__(self, memory):
                 self._memory = memory
+                self._pending_response: object | None = None
 
             async def __call__(self, messages, settings=None):
-                return TextGenerationResponse(
+                response = TextGenerationResponse(
                     lambda: "ok", logger=getLogger(), use_async_generator=False
                 )
+                self._pending_response = response
+                return response
 
-            async def sync_messages(self):
+            async def sync_messages(self, response: object):
+                assert response is self._pending_response
+                self._pending_response = None
                 await self._memory.append_message(
                     EngineMessage(
                         agent_id=AGENT_ID,

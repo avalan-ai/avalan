@@ -131,17 +131,16 @@ class OrchestratorCoverageTestCase(unittest.IsolatedAsyncioTestCase):
             [self.operation],
         )
         self.agent = AsyncMock()
+        self.agent.acknowledge_provider_handoff = MagicMock()
         self.agent.engine = DummyEngine()
         env_patch = patch(
             "avalan.agent.orchestrator.dumps", lambda *a, **k: "hash"
         )
         self.addCleanup(env_patch.stop)
         env_patch.start()
-        Orchestrator._engine_agents = {}
 
     async def test_id_and_reset(self):
-        self.orch._operation_step = 0
-        Orchestrator._engine_agents["hash"] = self.agent
+        self.orch._engine_agents["hash"] = self.agent
         await self.orch("text")
         self.agent.assert_awaited_once()
         self.assertEqual(self.orch.id, self.orch._id)

@@ -1,0 +1,347 @@
+{
+  "schema_version": 4,
+  "baseline_snapshot_sha256": "eed04bcca2fbe223d9fe418df5a4b5f6d3bf2e10f12a3fcbe4320eb3feb44799",
+  "current_snapshot_sha256": "2ac7bbe973d9fbf38c6afb1ce1210f9a43d9781807d7078b3e57519008d1187d",
+  "directive_count_before": 55,
+  "directive_count_after": 55,
+  "report_excluded_line_count_before": 1327,
+  "report_excluded_line_count_after": 1356,
+  "directive_relocations": [
+    {
+      "identity": "bdcc2f173666d9075fbbca70a09bb72bc2d366e67925d97066228a4d9080a292",
+      "path": "src/avalan/server/routers/mcp.py",
+      "text": "        except Exception:  # pragma: no cover - best effort cleanup",
+      "occurrence": 1,
+      "from_line": 2749,
+      "to_line": 2750,
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The response synchronization protocol member moved the unchanged best-effort iterator cleanup directive down by one line."
+    }
+  ],
+  "report_exclusion_relocations": [
+    {
+      "path": "src/avalan/agent/engine.py",
+      "from_lines": [
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44
+      ],
+      "to_lines": [
+        261,
+        262,
+        263,
+        264,
+        265,
+        266,
+        267,
+        268,
+        269,
+        270
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The attached-execution cleanup implementation moved the unchanged input-token protocol block to its current line range."
+    },
+    {
+      "path": "src/avalan/entities.py",
+      "from_lines": [
+        23,
+        24,
+        25
+      ],
+      "to_lines": [
+        24,
+        25,
+        26,
+        28,
+        29
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The execution and interaction ownership imports add two reviewed parser-excluded lines and shift the existing type-checking branch."
+    },
+    {
+      "path": "src/avalan/memory/permanent/pgsql/__init__.py",
+      "from_lines": [
+        294,
+        295,
+        296,
+        297,
+        298,
+        299,
+        300,
+        301,
+        302,
+        303,
+        304,
+        305,
+        306,
+        307,
+        308,
+        309,
+        310,
+        311,
+        312,
+        313
+      ],
+      "to_lines": [
+        295,
+        296,
+        297,
+        298,
+        299,
+        300,
+        301,
+        302,
+        303,
+        304,
+        305,
+        306,
+        307,
+        308,
+        309,
+        310,
+        311,
+        312,
+        313,
+        314
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The idempotent message persistence import shifts the unchanged overload parser-exclusion block down by one line."
+    },
+    {
+      "path": "src/avalan/model/call.py",
+      "from_lines": [
+        9,
+        10
+      ],
+      "to_lines": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The execution and interaction ownership imports add two reviewed parser-excluded lines to the existing type-checking branch."
+    },
+    {
+      "path": "src/avalan/model/engine.py",
+      "from_lines": [
+        25,
+        26,
+        27,
+        28,
+        29
+      ],
+      "to_lines": [
+        26,
+        27,
+        28,
+        29,
+        30
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The capability catalog import shifts the unchanged type-checking parser-exclusion block down by one line."
+    },
+    {
+      "path": "src/avalan/server/routers/mcp.py",
+      "from_lines": [
+        137,
+        138,
+        139,
+        945,
+        946,
+        1012,
+        1013,
+        1039,
+        1042,
+        1087,
+        1088,
+        1089,
+        1090,
+        1091,
+        2749,
+        2750
+      ],
+      "to_lines": [
+        137,
+        138,
+        139,
+        945,
+        946,
+        1012,
+        1013,
+        1039,
+        1042,
+        1087,
+        1088,
+        1089,
+        1090,
+        1091,
+        1092,
+        2750,
+        2751
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The response synchronization protocol member adds one reviewed parser-excluded line while later cleanup code moves down by one line."
+    }
+  ],
+  "report_exclusion_additions": [
+    {
+      "path": "src/avalan/agent/engine.py",
+      "lines": [
+        261,
+        262,
+        263,
+        264,
+        265,
+        266,
+        267,
+        268,
+        269,
+        270
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The attached-execution refactor adds this exact parser-excluded line set relative to the prior snapshot."
+    },
+    {
+      "path": "src/avalan/agent/execution.py",
+      "lines": [
+        265,
+        266,
+        267,
+        934,
+        935,
+        938,
+        939,
+        942,
+        943,
+        946,
+        947,
+        950,
+        951,
+        954,
+        955,
+        956,
+        965,
+        966,
+        972,
+        973,
+        974
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The execution lifecycle module adds reviewed structural Protocol parser exclusions for memory, identity, and branch-scoped interaction contracts."
+    },
+    {
+      "path": "src/avalan/agent/orchestrator/__init__.py",
+      "lines": [
+        94,
+        95,
+        96
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The exact-response memory synchronization Protocol adds reviewed structural parser exclusions for its asynchronous contract."
+    },
+    {
+      "path": "src/avalan/entities.py",
+      "lines": [
+        26,
+        28,
+        29
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The execution and interaction ownership imports add this exact parser-excluded line set relative to the prior snapshot."
+    },
+    {
+      "path": "src/avalan/memory/permanent/pgsql/__init__.py",
+      "lines": [
+        314
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The idempotent message persistence import shifts the overload block and adds this exact parser-excluded line."
+    },
+    {
+      "path": "src/avalan/model/call.py",
+      "lines": [
+        11,
+        12
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The execution and interaction ownership imports add this exact parser-excluded line set relative to the prior snapshot."
+    },
+    {
+      "path": "src/avalan/model/engine.py",
+      "lines": [
+        30
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The capability catalog import shifts the type-checking block and adds this exact parser-excluded line."
+    },
+    {
+      "path": "src/avalan/server/routers/mcp.py",
+      "lines": [
+        1092,
+        2751
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The response synchronization member and shifted cleanup add this exact parser-excluded line set."
+    }
+  ],
+  "report_exclusion_removals": [
+    {
+      "path": "src/avalan/agent/engine.py",
+      "lines": [
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The attached-execution refactor removes this exact prior parser-excluded line set."
+    },
+    {
+      "path": "src/avalan/entities.py",
+      "lines": [
+        23
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The shifted type-checking branch removes this exact prior parser-excluded line."
+    },
+    {
+      "path": "src/avalan/memory/permanent/pgsql/__init__.py",
+      "lines": [
+        294
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The shifted overload block removes this exact prior parser-excluded line."
+    },
+    {
+      "path": "src/avalan/model/engine.py",
+      "lines": [
+        25
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The shifted type-checking block removes this exact prior parser-excluded line."
+    },
+    {
+      "path": "src/avalan/server/routers/mcp.py",
+      "lines": [
+        2749
+      ],
+      "reviewed_by": "/root/a2a_contract_review",
+      "reason": "The shifted cleanup block removes this exact prior parser-excluded line."
+    }
+  ],
+  "ledger_sha256": "8000a76131ea2fd0d7747adbc3057084fc0c4217c62694f62c02a547622c6c5f"
+}
