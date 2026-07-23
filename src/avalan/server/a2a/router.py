@@ -1110,7 +1110,7 @@ class AvalanA2AAgentExecutor:
                 await translator.process(item)
             await translator.finish()
             if translator.succeeded:
-                await orchestrator.sync_messages()
+                await orchestrator.sync_messages(response)
         except CancelledError:
             if translator is None:
                 await updater.cancel()

@@ -17,7 +17,18 @@ from input_contract_json import StrictJsonError, strict_json_path
 _FEATURE = "structured_task_input"
 _MAX_PHASE = 12
 _EXPECTED_TYPE_LEDGER_SHA256 = (
-    "ba64e36a52141c4ea72cae2148be6b014d8135d163efafd6b79bb7ba22611a31"
+    "a7c73a112c67e4dbac893394be9bbf5a0ac944034df157b4c19f1f403288d011"
+)
+_EXPECTED_CURRENT_FIXTURE_IDS = (
+    "execution-state-positive",
+    "execution-context-interchange-negative",
+    "synchronous-execution-id-factory-negative",
+)
+_EXPECTED_CURRENT_FIXTURE_SHA256 = (
+    "deaaba77909963af88741d6f07de211e1fa58b13497f1ae2a4acca6a680d03c3"
+)
+_EXPECTED_CURRENT_FIXTURE_SOURCE_SHA256 = (
+    "f6fd2f128d4c16e7fb070965dd6075f4e0bec6b48a834861c5069936be336666"
 )
 
 
@@ -111,6 +122,11 @@ def load_manifest(path: Path) -> TypeContractManifest:
         (item.path for item in fixtures if item.lifecycle != "replaced"),
         "fixture path",
     )
+    _validate_current_fixture_inventory(
+        fixtures,
+        cast(list[object], raw_fixtures),
+        current_phase,
+    )
     _planned_replacements(
         payload.get("planned_replacements"),
         fixtures,
@@ -132,6 +148,64 @@ def load_manifest(path: Path) -> TypeContractManifest:
         current_phase=current_phase,
         fixtures=fixtures,
     )
+
+
+def _validate_current_fixture_inventory(
+    fixtures: tuple[TypeFixture, ...],
+    raw_fixtures: list[object],
+    current_phase: int,
+) -> None:
+    """Require the exact reviewed current static fixture inventory."""
+    if current_phase < 4:
+        return
+    current = tuple(
+        fixture for fixture in fixtures if fixture.active_from_phase == 4
+    )
+    raw_current = [
+        value
+        for value in raw_fixtures
+        if isinstance(value, dict) and value.get("active_from_phase") == 4
+    ]
+    digest = sha256(
+        dumps(
+            raw_current,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    if (
+        tuple(fixture.id for fixture in current)
+        != _EXPECTED_CURRENT_FIXTURE_IDS
+        or digest != _EXPECTED_CURRENT_FIXTURE_SHA256
+    ):
+        raise TypeContractVerificationError(
+            "current type fixture inventory changed without verifier review"
+        )
+
+
+def _validate_current_fixture_sources(
+    manifest: TypeContractManifest,
+    root: Path,
+) -> None:
+    """Require exact source content for every current static fixture."""
+    digest = sha256()
+    for fixture in manifest.fixtures:
+        if fixture.active_from_phase != 4:
+            continue
+        path = _fixture_path(fixture.path, root)
+        if not path.is_file():
+            raise TypeContractVerificationError(
+                f"active type fixture does not exist: {fixture.path}"
+            )
+        digest.update(fixture.path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    if digest.hexdigest() != _EXPECTED_CURRENT_FIXTURE_SOURCE_SHA256:
+        raise TypeContractVerificationError(
+            "current type fixture sources changed without verifier review"
+        )
 
 
 def verify_input_types(
@@ -157,6 +231,8 @@ def verify_input_types(
         raise TypeContractVerificationError(
             "through-phase must be implemented by the current manifest"
         )
+    if through_phase >= 4:
+        _validate_current_fixture_sources(manifest, root)
     selected = tuple(
         fixture
         for fixture in manifest.fixtures

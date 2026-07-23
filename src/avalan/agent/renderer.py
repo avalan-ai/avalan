@@ -26,12 +26,13 @@ class Renderer:
     _TEMPLATES_DIR = "templates"
     _environment: TemplateEnvironment
     _clean_spaces: bool
-    _templates: dict[str, Template] = {}
+    _templates: dict[str, Template]
 
     def __init__(
         self, templates_path: str | None = None, clean_spaces: bool = True
     ) -> None:
         self._clean_spaces = clean_spaces
+        self._templates = {}
         self._environment = TemplateEnvironment(
             loader=FileSystemLoader(
                 templates_path or join(dirname(__file__), self._TEMPLATES_DIR)

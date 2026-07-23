@@ -983,7 +983,7 @@ class BedrockClient(TextGenerationVendor):
                         "toolUse": {
                             "toolUseId": tool_call.id,
                             "name": provider_name,
-                            "input": tool_call.arguments or [],
+                            "input": tool_call.arguments or {},
                         }
                     }
                 )

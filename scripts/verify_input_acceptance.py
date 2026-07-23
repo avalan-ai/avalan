@@ -4,36 +4,56 @@
 from argparse import ArgumentParser, Namespace
 from ast import (
     AST,
+    AnnAssign,
     Assert,
+    Assign,
     AsyncFor,
     AsyncFunctionDef,
     AsyncWith,
     Attribute,
+    AugAssign,
+    BinOp,
+    BoolOp,
     Break,
     Call,
     ClassDef,
     Compare,
     Constant,
     Continue,
+    Delete,
+    DictComp,
     Eq,
     Expr,
     For,
     FunctionDef,
+    GeneratorExp,
     If,
+    IfExp,
+    Import,
     ImportFrom,
     Is,
+    Lambda,
+    ListComp,
     Load,
     Match,
     MatchAs,
+    MatchMapping,
+    MatchStar,
+    Module,
     Name,
+    NamedExpr,
     Pass,
     Raise,
     Return,
+    SetComp,
+    Starred,
     Subscript,
     Try,
+    TryStar,
     While,
     With,
     dump,
+    iter_child_nodes,
     parse,
     walk,
 )
@@ -49,7 +69,13 @@ from ast import (
 from ast import (
     Tuple as AstTuple,
 )
-from collections.abc import Iterable, Sequence
+from ast import (
+    expr as AstExpression,
+)
+from ast import (
+    stmt as AstStatement,
+)
+from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
@@ -102,6 +128,120 @@ _PROHIBITED_EXECUTION_NAMES = frozenset(("exec", "compile"))
 _PROHIBITED_TEST_SYMBOLS = (
     _PROHIBITED_TEST_CONTROLS | _PROHIBITED_EXECUTION_NAMES
 )
+_ALIAS_CONTEXTLIB = "contextlib_module"
+_ALIAS_BUILTINS = "builtins_module"
+_ALIAS_PYTEST = "pytest_module"
+_ALIAS_TEMPFILE = "tempfile_module"
+_ALIAS_UNITTEST = "unittest_module"
+_ALIAS_UNITTEST_MOCK = "unittest_mock_module"
+_ALIAS_UNITTEST_PATCH = "unittest_mock_patch"
+_ALIAS_UNITTEST_TEST_CASE = "unittest_test_case"
+_ALIAS_SUPPRESS = "contextlib_suppress"
+_ALIAS_NULLCONTEXT = "contextlib_nullcontext"
+_ALIAS_CHECK_CONTEXT = "recognized_check_context"
+_ALIAS_SAFE_CONTEXT = "recognized_safe_context"
+_ALIAS_SAFE_CONTEXT_INSTANCE = "recognized_safe_context_instance"
+_ALIAS_EXCEPTIONS = "exception_names"
+_ALIAS_UNKNOWN = "unknown"
+_ALIAS_END_POSITION = (1_000_000_000, 1_000_000_000)
+_CHECK_FAILURE_EXCEPTION_NAMES = frozenset(
+    (
+        "AssertionError",
+        "BaseException",
+        "Exception",
+    )
+)
+_KNOWN_BUILTIN_EXCEPTION_NAMES = frozenset(
+    (
+        "ArithmeticError",
+        "AssertionError",
+        "AttributeError",
+        "BaseException",
+        "BaseExceptionGroup",
+        "BlockingIOError",
+        "BrokenPipeError",
+        "BufferError",
+        "BytesWarning",
+        "ChildProcessError",
+        "ConnectionAbortedError",
+        "ConnectionError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "DeprecationWarning",
+        "EOFError",
+        "EncodingWarning",
+        "EnvironmentError",
+        "Exception",
+        "ExceptionGroup",
+        "FileExistsError",
+        "FileNotFoundError",
+        "FloatingPointError",
+        "FutureWarning",
+        "GeneratorExit",
+        "IOError",
+        "ImportError",
+        "ImportWarning",
+        "IndentationError",
+        "IndexError",
+        "InterruptedError",
+        "IsADirectoryError",
+        "KeyError",
+        "KeyboardInterrupt",
+        "LookupError",
+        "MemoryError",
+        "ModuleNotFoundError",
+        "NameError",
+        "NotADirectoryError",
+        "NotImplementedError",
+        "OSError",
+        "OverflowError",
+        "PendingDeprecationWarning",
+        "PermissionError",
+        "ProcessLookupError",
+        "RecursionError",
+        "ReferenceError",
+        "ResourceWarning",
+        "RuntimeError",
+        "RuntimeWarning",
+        "StopAsyncIteration",
+        "StopIteration",
+        "SyntaxError",
+        "SyntaxWarning",
+        "SystemError",
+        "SystemExit",
+        "TabError",
+        "TimeoutError",
+        "TypeError",
+        "UnboundLocalError",
+        "UnicodeDecodeError",
+        "UnicodeEncodeError",
+        "UnicodeError",
+        "UnicodeTranslateError",
+        "UnicodeWarning",
+        "UserWarning",
+        "ValueError",
+        "Warning",
+        "ZeroDivisionError",
+    )
+)
+_PYTEST_CHECK_CONTEXT_NAMES = frozenset(("raises", "warns"))
+_TEMPFILE_SAFE_CONTEXT_NAMES = frozenset(
+    (
+        "NamedTemporaryFile",
+        "TemporaryDirectory",
+        "TemporaryFile",
+    )
+)
+_UNITTEST_CHECK_CONTEXT_NAMES = frozenset(
+    (
+        "assertRaises",
+        "assertRaisesRegex",
+        "assertWarns",
+        "assertWarnsRegex",
+    )
+)
+_UNITTEST_SAFE_CONTEXT_NAMES = frozenset(("subTest",))
+_UNITTEST_TEST_CASE_NAMES = frozenset(("IsolatedAsyncioTestCase", "TestCase"))
 _JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 _PUBLIC_SCHEMA_MUTATIONS = (
     "missing_required_field",
@@ -161,6 +301,44 @@ _PUBLIC_CROSS_FIELD_INVARIANTS = {
 _COLLECT_SENTINEL = "__INPUT_ACCEPTANCE_COLLECT__"
 _EXECUTE_SENTINEL = "__INPUT_ACCEPTANCE_EXECUTE__"
 _PROCESS_TIMEOUT_SECONDS = 300
+_EXPECTED_CURRENT_RUNTIME_FILES = (
+    "tests/agent/execution_attached_boundaries_test.py",
+    "tests/agent/execution_cancellation_integration_test.py",
+    "tests/agent/execution_direct_iteration_cancellation_test.py",
+    "tests/agent/execution_isolation_integration_test.py",
+    "tests/agent/execution_memory_idempotency_test.py",
+    "tests/agent/execution_message_exactness_test.py",
+    "tests/agent/execution_response_ownership_adversarial_test.py",
+    "tests/agent/execution_sequential_response_sync_test.py",
+    "tests/agent/execution_strict_invariants_test.py",
+    "tests/agent/execution_suspension_adversarial_test.py",
+    "tests/agent/execution_test.py",
+    "tests/agent/execution_transcript_adversarial_test.py",
+    "tests/agent/execution_wrapper_input_required_test.py",
+    "tests/agent/json_orchestrator_test.py",
+    "tests/agent/orchestrator_cleanup_ownership_test.py",
+    "tests/agent/orchestrator_convergence_coverage_test.py",
+    "tests/agent/orchestrator_response_convergence_coverage_test.py",
+    "tests/agent/orchestrator_test.py",
+    "tests/agent/renderer_test.py",
+    "tests/input/attached_runtime_e2e_test.py",
+    "tests/input/attached_runtime_matrix_test.py",
+    "tests/input/broker_contract_test.py",
+    "tests/memory/permanent/elasticsearch_message_memory_test.py",
+    "tests/memory/permanent/pgsql_test.py",
+    "tests/memory/permanent/s3vectors_message_memory_test.py",
+    "tests/memory/permanent/structured_message_codec_test.py",
+    "tests/model/engine_test.py",
+    "tests/model/model_stream_interaction_test.py",
+)
+_EXPECTED_CURRENT_RUNTIME_NODE_COUNT = 249
+_EXPECTED_CURRENT_RUNTIME_NODE_SHA256 = (
+    "41ec33710c3a014309798077e3ef75484d315e0781309aa4f62756253c5e0be4"
+)
+_EXPECTED_CURRENT_FOCUSED_COMMAND = (
+    "poetry run python scripts/verify_input_acceptance.py --through-phase 4"
+    " --runtime-only"
+)
 _COVERAGE_EXCLUSION_PATTERN = compile_regex(
     r"#\s*(?:pragma\s*:?\s*no\s*cover|coverage\s*:?\s*ignore)",
     IGNORECASE,
@@ -232,7 +410,7 @@ _EXPECTED_NO_BC_IDS = frozenset(
     }
 )
 _EXPECTED_REQUIREMENTS_SHA256 = (
-    "5f73b948ccf2f817fad54952b1b4864b6403a2f4928dd82d1d38e28d54b57ea1"
+    "f333a13de1678a7d139acc384d673df15f861c66cfbbffbcd77b8dcc2dc79c80"
 )
 _EXPECTED_FAILURE_MATRIX_SHA256 = (
     "e5ce3aac0d441897b80a09d6a693853c65d4a446ed7e4c0184b3e3bc0b212c08"
@@ -244,13 +422,13 @@ _EXPECTED_NO_BC_SHA256 = (
     "c75145467fe15a1cd55b6bb10e7dd16fc5ff8e4b25b530c2d7f147ab3c641887"
 )
 _EXPECTED_ACCEPTANCE_LEDGER_SHA256 = (
-    "e9b5258995b4b0769c9276141e0bb89161c03099dc9db08c5afa7190fb179bbb"
+    "51c73d84e7292cff0dbc0698708ae0a8d162309c41d77b79d5880b72decbc2a2"
 )
 _EXPECTED_EVIDENCE_SHA256 = (
-    "59788e2441bec0bd34a61ff94f8b14459ca229a37fcf693ae6b94fb8106e8ab9"
+    "e3546c8702c933b8861db39a72e499f7d5bec80523eb9650c3f2bb7a52c0ecba"
 )
 _EXPECTED_REVIEW_HISTORY_SHA256 = (
-    "f59a5cb66ee765407b15134bfe8e2a2c19600b807dcca550a89ef68b2caaee1c"
+    "ce375482081e5180ba4904bf4d7517af8069cd21f82a1e7771c5077c7ba0cfdd"
 )
 _EXPECTED_PHASE0_REVIEW_SHA256 = (
     "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b"
@@ -260,6 +438,9 @@ _EXPECTED_PHASE1_REVIEW_SHA256 = (
 )
 _EXPECTED_PHASE2_REVIEW_SHA256 = (
     "7c94eb4806501ecb3ae82f1447fd94ed95e31d185d41e9fbcba2f31ce448a408"
+)
+_EXPECTED_PRIOR_REVIEW_SHA256 = (
+    "f59a5cb66ee765407b15134bfe8e2a2c19600b807dcca550a89ef68b2caaee1c"
 )
 _EXPECTED_PHASE2_PENDING_REVIEW_SHA256 = (
     "a83a4e9545ac72c99c23d6fd316c7661f5a6bfef86c8c39a5c209ee6185a852a"
@@ -276,8 +457,14 @@ _EXPECTED_PHASE2_QUALITY_SHA256 = (
 _EXPECTED_PHASE2_EVIDENCE_SHA256 = (
     "d0e276493609d2e7254c576bf50552a933e4e54cb67c9ec6e6a71f94a17f0302"
 )
+_EXPECTED_PRIOR_QUALITY_SHA256 = (
+    "62c94da810be0c995525580c19df034b35aee2700f6e9e8fa51c69ba778e0102"
+)
+_EXPECTED_PRIOR_EVIDENCE_SHA256 = (
+    "59788e2441bec0bd34a61ff94f8b14459ca229a37fcf693ae6b94fb8106e8ab9"
+)
 _EXPECTED_QUALITY_HISTORY_SHA256 = (
-    "0bc69e337549c1308468fd095e26a5a680440e8d60181527469b52b13497710f"
+    "c1798ede412d1b56848dede3f7d242b1067ced5a871e60bbb9a4f9098df5b875"
 )
 _EXPECTED_IMPLEMENTATION_OWNER = "/root"
 _EXPECTED_INDEPENDENT_REVIEWER = "/root/input_contract_audit"
@@ -308,16 +495,128 @@ _EXPECTED_REVIEW_OCCURRENCES = (
         "approved",
     ),
     (3, "gate", "/root/terminal_review", "approved"),
+    (4, "semantic", "/root/execution_runtime_review", "approved"),
+    (4, "gate", "/root/execution_gate_review", "approved"),
 )
 _EXPECTED_CURRENT_SEMANTIC_REVIEW_STATUS = "approved"
 _EXPECTED_CURRENT_GATE_REVIEW_STATUS = "approved"
 _EXPECTED_BASELINE_HEAD = "609aa091c17756ab952cf5fe668ca3d867f0e311"
 _EXPECTED_BASELINE_SUBJECT = "Bump version to v1.5.8 (#1067)"
+_EXPECTED_CURRENT_BASELINE_HEAD = "d538fba47d9721755675fa8752403203e08fe025"
+_EXPECTED_CURRENT_REGRESSION_NODE_COUNT = 26
+_EXPECTED_CURRENT_SUPPORT_SURFACE_COUNT = 43
+_EXPECTED_CURRENT_TEST_FILE_COUNT = 51
+_EXPECTED_CURRENT_UNCHANGED_SUPPORT_SURFACE_COUNT = 8
+_ABSENT_TEST_DEFINITION_SHA256 = (
+    "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479"
+)
+_ABSENT_TEST_SUPPORT_SHA256 = (
+    "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872"
+)
+_EXPECTED_CURRENT_CHANGED_SUPPORT_PATHS = frozenset(
+    (
+        "tests/agent/additional_coverage_test.py",
+        "tests/agent/default_orchestrator_test.py",
+        "tests/agent/execution_attached_boundaries_test.py",
+        "tests/agent/execution_cancellation_integration_test.py",
+        "tests/agent/execution_coverage_regression_test.py",
+        "tests/agent/execution_direct_iteration_cancellation_test.py",
+        "tests/agent/execution_isolation_integration_test.py",
+        "tests/agent/execution_memory_idempotency_test.py",
+        "tests/agent/execution_message_exactness_test.py",
+        "tests/agent/execution_response_ownership_adversarial_test.py",
+        "tests/agent/execution_sequential_response_sync_test.py",
+        "tests/agent/execution_strict_invariants_test.py",
+        "tests/agent/execution_suspension_adversarial_test.py",
+        "tests/agent/execution_test.py",
+        "tests/agent/execution_transcript_adversarial_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py",
+        "tests/agent/json_orchestrator_test.py",
+        "tests/agent/loader_test.py",
+        "tests/agent/orchestrator_cleanup_gap_coverage_test.py",
+        "tests/agent/orchestrator_cleanup_ownership_test.py",
+        "tests/agent/orchestrator_convergence_coverage_test.py",
+        "tests/agent/orchestrator_response_cleanup_coverage_test.py",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/agent/orchestrator_response_test.py",
+        "tests/agent/orchestrator_test.py",
+        "tests/input/attached_runtime_e2e_test.py",
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/input/broker_contract_test.py",
+        "tests/input_acceptance_verifier_test.py",
+        "tests/input_contract_test.py",
+        "tests/memory/permanent/elasticsearch_message_memory_test.py",
+        "tests/memory/permanent/pgsql_test.py",
+        "tests/memory/permanent/s3vectors_message_memory_test.py",
+        "tests/memory/permanent/structured_message_codec_test.py",
+        "tests/model/model_stream_interaction_test.py",
+        "tests/model/text_generation_response_additional_test.py",
+        "tests/project_metadata_test.py",
+        "tests/server/protocol_streaming_e2e_test.py",
+        "tests/server/reasoning_summary_protocol_test.py",
+        "tests/server/responses_test.py",
+        "tests/server/streaming_conformance_test.py",
+        "tests/src_coverage_verifier_test.py",
+        "tests/tool/a2a_tool_test.py",
+    )
+)
+_CURRENT_DUPLICATE_PGSQL_NODE = (
+    "tests/memory/permanent/pgsql_test.py::"
+    "PgsqlMessageMemoryTestCase::test_search_messages"
+)
+_EXPECTED_CURRENT_DUPLICATE_TEST_DEFINITIONS = {
+    _CURRENT_DUPLICATE_PGSQL_NODE: (
+        2,
+        "4631cf0ad47b3977417207f7d6afaf5194b9aed18bcd1d8a05f3cf691ac680c2",
+        "4631cf0ad47b3977417207f7d6afaf5194b9aed18bcd1d8a05f3cf691ac680c2",
+    ),
+}
+_EXPECTED_CURRENT_REGRESSION_SHA256 = (
+    "e7e18a868cdda568f185b8620cf1460cb51916dd1c6bc14080398c63fd08c24a"
+)
+_EXPECTED_CURRENT_ACTIVE_LEGACY_NODE_COUNT = 10
+_EXPECTED_CURRENT_ACTIVE_LEGACY_SHA256 = (
+    "9d54e8c0522016cb357d2042553297d1e0022b23e0928ea1fafe5ba1e98b625c"
+)
+_EXPECTED_CURRENT_ACTIVE_LEGACY_GATE_NODES = frozenset(
+    (
+        (
+            "tests/input_acceptance_verifier_test.py::"
+            "test_evidence_state_and_review_history_fail_closed"
+        ),
+    )
+)
+_EXPECTED_CURRENT_SEMANTIC_REPLACEMENTS = (
+    (
+        (
+            "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::"
+            "test_aexit_skips_message_sync_on_keyboard_interrupt"
+        ),
+        "811e85fdb87372d567e68dc4c10d81b1732fc520bb98b763aea4e279713ff12e",
+        (
+            "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::"
+            "test_aexit_runs_all_cleanup_on_keyboard_interrupt"
+        ),
+        "835f38e34bc443fbd1a5388c2f9299cbb9bf71565c49673f759f11ad16628d71",
+    ),
+    (
+        (
+            "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::"
+            "test_aexit_skips_message_sync_on_cancelled_error"
+        ),
+        "d2a0ff40f479e33ce7a75e1cbf5aa095a3f4308d41d05a7fad549fa0807abbc0",
+        (
+            "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::"
+            "test_aexit_runs_response_cleanup_on_cancelled_error"
+        ),
+        "fd4c2a19fd5c30d826e5ca4a392ede1bb23c2c3b0718614c4f70469cfdf3f4e7",
+    ),
+)
 _EXPECTED_PENDING_SOURCE_INVENTORY = (
-    "32cd39d8285af3b782ca095bda1a80de5e991e98e4baf1ba1cf003c5d02a80ba",
-    424,
-    108402,
-    1327,
+    "a803978249761cdf9b9f8ebf019ca4df9fa7e33d18b9281a424c104dca4c4563",
+    426,
+    111511,
+    1356,
 )
 _EXPECTED_BOUNDARY_PATHS = frozenset(
     {
@@ -331,10 +630,12 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "scripts/verify_src_coverage.py",
         "src/avalan/agent/",
         "src/avalan/cli/",
+        "src/avalan/entities.py",
         "src/avalan/event/__init__.py",
         "src/avalan/event/manager.py",
         "src/avalan/flow/registry.py",
         "src/avalan/interaction/",
+        "src/avalan/memory/",
         "src/avalan/model/",
         "src/avalan/server/a2a/router.py",
         "src/avalan/server/routers/chat.py",
@@ -357,6 +658,7 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "tests/input_type_contracts/",
         "tests/interaction/",
         "tests/interaction_type_contracts/",
+        "tests/memory/",
         "tests/model/",
         "tests/project_metadata_test.py",
         "tests/reasoning_summary_phase1_test.py",
@@ -370,10 +672,12 @@ _EXPECTED_PRODUCTION_SOURCE_PATHS = frozenset(
     {
         "src/avalan/agent/",
         "src/avalan/cli/",
+        "src/avalan/entities.py",
         "src/avalan/event/__init__.py",
         "src/avalan/event/manager.py",
         "src/avalan/flow/registry.py",
         "src/avalan/interaction/",
+        "src/avalan/memory/",
         "src/avalan/model/",
         "src/avalan/server/a2a/router.py",
         "src/avalan/server/routers/chat.py",
@@ -389,9 +693,9 @@ _EXPECTED_ORDERED_COMMON_GATE_COMMANDS = (
     "make test-coverage-exact no-install",
     (
         "poetry run python scripts/verify_input_acceptance.py"
-        + " --through-phase 3"
+        + " --through-phase 4"
     ),
-    "make typecheck-input-contract INPUT_PHASE=3",
+    "make typecheck-input-contract INPUT_PHASE=4",
     "make lint",
     "git diff --check",
 )
@@ -604,6 +908,45 @@ class _CheckPaths:
     return_states: frozenset[bool] = frozenset()
     break_states: frozenset[bool] = frozenset()
     continue_states: frozenset[bool] = frozenset()
+    failed_check_states: frozenset[bool] = frozenset()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _SuppressContextAliases:
+    """Store lexical scopes used to resolve context-manager aliases."""
+
+    scopes: tuple[AST, ...]
+    class_scope_index: int | None = None
+    instance_names: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _AliasBinding:
+    """Store one ordered lexical name binding."""
+
+    name: str
+    position: tuple[int, int]
+    value: AST | None = None
+    direct_kind: str | None = None
+    direct_exception_names: frozenset[str] = frozenset()
+    imported_attribute: str | None = None
+    definite: bool = True
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _ResolvedAlias:
+    """Store one resolved module, callable, or exception alias."""
+
+    kind: str
+    exception_names: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _AttributeMutation:
+    """Store exact or dynamically unknown attribute mutation targets."""
+
+    names: frozenset[str] | None
+    owners: tuple[AST, ...] | None
 
 
 def repository_root() -> Path:
@@ -683,6 +1026,8 @@ def load_manifest(path: Path) -> AcceptanceManifest:
         nodes,
         current_phase,
     )
+    if current_phase >= 4:
+        _validate_current_manifest_inventory(nodes)
     return AcceptanceManifest(
         path=path,
         current_phase=current_phase,
@@ -690,6 +1035,142 @@ def load_manifest(path: Path) -> AcceptanceManifest:
         requirement_activation_slices=requirement_activation_slices,
         parameter_expansions=parameter_expansions,
     )
+
+
+def _current_runtime_node_ids(
+    nodes: tuple[AcceptanceNode, ...],
+) -> tuple[str, ...]:
+    """Return exact current behavioral nodes from the inventory."""
+    return tuple(
+        node.node_id
+        for node in nodes
+        if node.active_from_phase == 4
+        and any(
+            requirement_id in _BEHAVIOR_REQUIREMENT_IDS
+            for requirement_id in node.requirement_ids
+        )
+    )
+
+
+def _validate_current_manifest_inventory(
+    nodes: tuple[AcceptanceNode, ...],
+) -> None:
+    """Require the reviewed current behavioral files and node digest."""
+    runtime_files = frozenset(_EXPECTED_CURRENT_RUNTIME_FILES)
+    runtime_nodes = tuple(
+        node
+        for node in nodes
+        if node.active_from_phase == 4
+        and any(
+            requirement_id in _BEHAVIOR_REQUIREMENT_IDS
+            for requirement_id in node.requirement_ids
+        )
+    )
+    invalid = tuple(
+        node.node_id
+        for node in runtime_nodes
+        if node.lifecycle != "active"
+        or node.category == "public_e2e"
+        or any(
+            requirement_id in _GATE_REQUIREMENT_IDS
+            for requirement_id in node.requirement_ids
+        )
+    )
+    observed_files = frozenset(
+        node.node_id.split("::", 1)[0] for node in runtime_nodes
+    )
+    node_ids = tuple(node.node_id for node in runtime_nodes)
+    digest = sha256("\n".join(sorted(node_ids)).encode("utf-8")).hexdigest()
+    if (
+        invalid
+        or observed_files != runtime_files
+        or len(node_ids) != _EXPECTED_CURRENT_RUNTIME_NODE_COUNT
+        or digest != _EXPECTED_CURRENT_RUNTIME_NODE_SHA256
+    ):
+        raise AcceptanceVerificationError(
+            "current runtime acceptance inventory changed:"
+            f" invalid={list(invalid)},"
+            f" missing_files={sorted(runtime_files - observed_files)},"
+            f" unexpected_files={sorted(observed_files - runtime_files)},"
+            f" nodes={len(node_ids)}, digest={digest}"
+        )
+
+
+def _validate_current_runtime_collection(
+    manifest: AcceptanceManifest,
+    root: Path,
+) -> None:
+    """Collect every reviewed current node and reject node or file drift."""
+    missing_files = tuple(
+        relative
+        for relative in _EXPECTED_CURRENT_RUNTIME_FILES
+        if not (root / relative).is_file()
+    )
+    if missing_files:
+        raise AcceptanceVerificationError(
+            "current runtime test-file inventory changed:"
+            f" missing={list(missing_files)}"
+        )
+    expected = _current_runtime_node_ids(manifest.nodes)
+    collection = _run_probe(
+        _COLLECT_DRIVER,
+        _COLLECT_SENTINEL,
+        expected,
+        root,
+    )
+    _verify_collection(expected, collection)
+
+
+def _current_runtime_instance_ids(
+    manifest: AcceptanceManifest,
+) -> tuple[str, ...]:
+    """Return exact collected instances for current behavioral nodes."""
+    expansions = {
+        expansion.node_id: expansion.instance_node_ids
+        for expansion in manifest.parameter_expansions
+    }
+    return tuple(
+        instance
+        for node_id in _current_runtime_node_ids(manifest.nodes)
+        for instance in expansions.get(node_id, (node_id,))
+    )
+
+
+def verify_current_runtime(
+    manifest_path: Path | None = None,
+    *,
+    repo_root: Path | None = None,
+) -> AcceptanceManifest:
+    """Validate and execute only the exact current behavioral inventory."""
+    root = (repo_root or repository_root()).resolve()
+    path = manifest_path or default_manifest_path()
+    manifest = load_manifest(path)
+    if manifest.current_phase < 4:
+        raise AcceptanceVerificationError(
+            "current runtime verification requires an implemented current"
+            " manifest"
+        )
+    _validate_current_runtime_collection(manifest, root)
+    node_ids = _current_runtime_node_ids(manifest.nodes)
+    instance_node_ids = _current_runtime_instance_ids(manifest)
+    _validate_execution_scope(path, node_ids, root)
+    for node_id in node_ids:
+        _validate_test_implementation(node_id, root)
+    collection = _run_probe(
+        _COLLECT_DRIVER,
+        _COLLECT_SENTINEL,
+        node_ids,
+        root,
+    )
+    collected_node_ids = _verify_collection(instance_node_ids, collection)
+    execution = _run_probe(
+        _EXECUTE_DRIVER,
+        _EXECUTE_SENTINEL,
+        node_ids,
+        root,
+    )
+    _verify_execution(instance_node_ids, execution, collected_node_ids)
+    return manifest
 
 
 def verify_acceptance(
@@ -709,6 +1190,8 @@ def verify_acceptance(
             f"requested={through_phase}, current={manifest.current_phase}"
         )
     fixtures = contract_fixture_root or path.parent
+    if through_phase >= 4:
+        _validate_current_runtime_collection(manifest, root)
     _validate_contract_fixtures(manifest, fixtures, root)
     active = manifest.active_nodes(through_phase)
     if not active:
@@ -2879,6 +3362,7 @@ def _validate_evidence(
             "review_history_phase0_sha256",
             "review_history_phase1_sha256",
             "review_history_phase2_sha256",
+            "review_history_prior_sha256",
             "review_history",
             "quality_history_sha256",
             "quality_history",
@@ -2887,6 +3371,7 @@ def _validate_evidence(
             "baseline",
             "boundary",
             "pending_structural_inventory",
+            "current_regression_classification",
             "inventory",
             "quality_gate",
             "typing_async_audit",
@@ -2916,6 +3401,7 @@ def _validate_evidence(
         payload.get("review_history_phase0_sha256"),
         payload.get("review_history_phase1_sha256"),
         payload.get("review_history_phase2_sha256"),
+        payload.get("review_history_prior_sha256"),
         manifest.current_phase,
         implementation_owner,
     )
@@ -3067,6 +3553,9 @@ def _validate_evidence(
 
     _validate_pending_structural_inventory(
         payload.get("pending_structural_inventory"), root
+    )
+    _validate_current_regression_classification(
+        payload.get("current_regression_classification"), manifest, root
     )
 
     failure = _strict_mapping(path.with_name("failure_matrix.json"), "failure")
@@ -3375,6 +3864,708 @@ def _validate_pending_structural_inventory(raw: object, root: Path) -> None:
         )
 
 
+def _test_definition_digests(
+    source: str,
+    relative: str,
+) -> dict[str, str]:
+    """Return AST digests for every pytest definition in one source."""
+    tree = _parse_test_source(source, relative)
+    definition_digests: dict[str, list[str]] = {}
+
+    def visit(body: Sequence[AST], parents: tuple[str, ...]) -> None:
+        for statement in body:
+            if isinstance(statement, ClassDef):
+                visit(statement.body, (*parents, statement.name))
+                continue
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef)):
+                if not statement.name.startswith("test_"):
+                    continue
+                node_id = "::".join((relative, *parents, statement.name))
+                definition_digests.setdefault(node_id, []).append(
+                    sha256(
+                        dump(statement, include_attributes=False).encode(
+                            "utf-8"
+                        )
+                    ).hexdigest()
+                )
+                continue
+            for nested_body in _structural_statement_bodies(statement):
+                visit(nested_body, parents)
+
+    visit(tree.body, ())
+    definitions: dict[str, str] = {}
+    for node_id, digests in definition_digests.items():
+        if len(digests) > 1:
+            if _EXPECTED_CURRENT_DUPLICATE_TEST_DEFINITIONS.get(
+                node_id,
+                (0, "", ""),
+            )[0] != len(digests):
+                raise AcceptanceVerificationError(
+                    f"duplicate changed test definition: {node_id}"
+                )
+            definitions[node_id] = sha256(
+                dumps(
+                    digests,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            continue
+        definitions[node_id] = digests[0]
+    return definitions
+
+
+def _test_support_surface_digest(source: str, relative: str) -> str:
+    """Return one normalized digest for non-test collection support."""
+    tree = deepcopy(_parse_test_source(source, relative))
+
+    def replace_tests(
+        body: Sequence[AstStatement],
+    ) -> list[AstStatement]:
+        normalized: list[AstStatement] = []
+        has_tests = False
+        for statement in body:
+            if isinstance(statement, ClassDef):
+                statement.body = replace_tests(statement.body)
+                normalized.append(statement)
+                continue
+            if isinstance(
+                statement, (FunctionDef, AsyncFunctionDef)
+            ) and statement.name.startswith("test_"):
+                has_tests = True
+                continue
+            _replace_structural_test_bodies(statement, replace_tests)
+            normalized.append(statement)
+        if has_tests:
+            normalized.append(
+                Expr(value=Constant(value="current-test-placeholder"))
+            )
+        return normalized
+
+    tree.body = replace_tests(tree.body)
+    return sha256(
+        dump(tree, include_attributes=False).encode("utf-8")
+    ).hexdigest()
+
+
+def _structural_statement_bodies(
+    statement: AST,
+) -> tuple[Sequence[AstStatement], ...]:
+    """Return structural child bodies without entering function scopes."""
+    if isinstance(statement, If):
+        return (statement.body, statement.orelse)
+    if isinstance(statement, (For, AsyncFor, While)):
+        return (statement.body, statement.orelse)
+    if isinstance(statement, (With, AsyncWith)):
+        return (statement.body,)
+    if isinstance(statement, (Try, TryStar)):
+        return (
+            statement.body,
+            *(handler.body for handler in statement.handlers),
+            statement.orelse,
+            statement.finalbody,
+        )
+    if isinstance(statement, Match):
+        return tuple(case.body for case in statement.cases)
+    return ()
+
+
+def _replace_structural_test_bodies(
+    statement: AstStatement,
+    replace_tests: Callable[
+        [Sequence[AstStatement]],
+        list[AstStatement],
+    ],
+) -> None:
+    """Replace tests recursively in structural child bodies."""
+    if isinstance(statement, If):
+        statement.body = replace_tests(statement.body)
+        statement.orelse = replace_tests(statement.orelse)
+    elif isinstance(statement, (For, AsyncFor, While)):
+        statement.body = replace_tests(statement.body)
+        statement.orelse = replace_tests(statement.orelse)
+    elif isinstance(statement, (With, AsyncWith)):
+        statement.body = replace_tests(statement.body)
+    elif isinstance(statement, (Try, TryStar)):
+        statement.body = replace_tests(statement.body)
+        statement.orelse = replace_tests(statement.orelse)
+        for handler in statement.handlers:
+            handler.body = replace_tests(handler.body)
+        statement.finalbody = replace_tests(statement.finalbody)
+    elif isinstance(statement, Match):
+        for case in statement.cases:
+            case.body = replace_tests(case.body)
+
+
+def _parse_test_source(source: str, relative: str) -> Module:
+    """Parse one changed test file or fail with stable context."""
+    try:
+        return parse(source, filename=relative)
+    except SyntaxError as exc:
+        raise AcceptanceVerificationError(
+            f"cannot inspect changed test definitions in {relative}: {exc}"
+        ) from exc
+
+
+def _current_baseline_source(root: Path, relative: str) -> str | None:
+    """Return one test source from the frozen current baseline."""
+    revision_path = f"{_EXPECTED_CURRENT_BASELINE_HEAD}:{relative}"
+    if _git_returncode(root, "cat-file", "-e", revision_path) != 0:
+        return None
+    completed = run(
+        ("git", "show", revision_path),
+        cwd=root,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        raise AcceptanceVerificationError(
+            "cannot read current baseline test source:"
+            f" {relative}: {completed.stderr.strip()}"
+        )
+    return completed.stdout
+
+
+def _current_changed_test_definitions(
+    root: Path,
+) -> tuple[dict[str, str], dict[str, str], frozenset[str]]:
+    """Return baseline/current definitions for every changed test file."""
+    if (
+        _git_returncode(
+            root,
+            "merge-base",
+            "--is-ancestor",
+            _EXPECTED_CURRENT_BASELINE_HEAD,
+            "HEAD",
+        )
+        != 0
+    ):
+        raise AcceptanceVerificationError(
+            "current test classification baseline is not an ancestor"
+        )
+    changed = set(
+        _git_lines(
+            root,
+            "diff",
+            "--name-only",
+            f"{_EXPECTED_CURRENT_BASELINE_HEAD}..HEAD",
+            "--",
+            "tests",
+        )
+    )
+    changed.update(
+        _git_lines(root, "diff", "--name-only", "HEAD", "--", "tests")
+    )
+    changed.update(
+        _git_lines(
+            root,
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "tests",
+        )
+    )
+    paths = frozenset(
+        relative for relative in changed if _is_default_pytest_path(relative)
+    )
+    baseline: dict[str, str] = {}
+    current: dict[str, str] = {}
+    live_paths: list[str] = []
+    for relative in sorted(paths):
+        source = _current_baseline_source(root, relative)
+        baseline_file: dict[str, str] = {}
+        if source is not None:
+            baseline_file = _test_definition_digests(source, relative)
+            baseline.update(baseline_file)
+        path = root / relative
+        if path.is_file():
+            live_paths.append(relative)
+            try:
+                live_source = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                raise AcceptanceVerificationError(
+                    f"cannot read changed test source {relative}: {exc}"
+                ) from exc
+            current_file = _test_definition_digests(live_source, relative)
+            current.update(current_file)
+            if not _common_test_definition_order_is_preserved(
+                baseline_file,
+                current_file,
+            ):
+                raise AcceptanceVerificationError(
+                    "changed test definitions reordered relative to the"
+                    f" current baseline: {relative}"
+                )
+        elif source is not None:
+            raise AcceptanceVerificationError(
+                f"current baseline test file was deleted: {relative}"
+            )
+    _validate_frozen_duplicate_test_definitions(baseline, current)
+    if live_paths:
+        payload = _run_probe(
+            _COLLECT_DRIVER,
+            _COLLECT_SENTINEL,
+            tuple(live_paths),
+            root,
+        )
+        collected_bases: set[str] = set()
+        for node_id in _collection_node_ids(
+            payload,
+            reject_disallowed_markers=False,
+        ):
+            matches = tuple(
+                base
+                for base in current
+                if node_id == base or node_id.startswith(f"{base}[")
+            )
+            if len(matches) != 1:
+                raise AcceptanceVerificationError(
+                    "collected changed test does not map to one static"
+                    f" definition: {node_id}"
+                )
+            collected_bases.add(matches[0])
+        if collected_bases != current.keys():
+            raise AcceptanceVerificationError(
+                "collected changed test definitions differ from static"
+                " definitions:"
+                f" missing={sorted(current.keys() - collected_bases)},"
+                f" extra={sorted(collected_bases - current.keys())}"
+            )
+    return baseline, current, paths
+
+
+def _is_default_pytest_path(relative: str) -> bool:
+    """Return whether a path matches either default pytest file pattern."""
+    name = PurePosixPath(relative).name
+    return name.endswith(".py") and (
+        name.startswith("test_") or name.endswith("_test.py")
+    )
+
+
+def _common_test_definition_order_is_preserved(
+    baseline: dict[str, str],
+    current: dict[str, str],
+) -> bool:
+    """Return whether common pytest node IDs retain their source order."""
+    common = baseline.keys() & current.keys()
+    baseline_order = tuple(
+        node_id for node_id in baseline if node_id in common
+    )
+    current_order = tuple(node_id for node_id in current if node_id in common)
+    return baseline_order == current_order
+
+
+def _validate_frozen_duplicate_test_definitions(
+    baseline: dict[str, str],
+    current: dict[str, str],
+) -> None:
+    """Require the exact ordered legacy duplicate definitions."""
+    for node_id, (
+        _,
+        baseline_digest,
+        current_digest,
+    ) in _EXPECTED_CURRENT_DUPLICATE_TEST_DEFINITIONS.items():
+        if (
+            baseline.get(node_id) != baseline_digest
+            or current.get(node_id) != current_digest
+        ):
+            raise AcceptanceVerificationError(
+                "frozen duplicate test definition changed or disappeared:"
+                f" {node_id}"
+            )
+
+
+def _current_changed_test_support_surfaces(
+    root: Path,
+    paths: frozenset[str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Return normalized residual AST digests for every changed test file."""
+    baseline: dict[str, str] = {}
+    current: dict[str, str] = {}
+    for relative in sorted(paths):
+        source = _current_baseline_source(root, relative)
+        if source is None:
+            baseline[relative] = _ABSENT_TEST_SUPPORT_SHA256
+        else:
+            baseline[relative] = _test_support_surface_digest(
+                source,
+                relative,
+            )
+        path = root / relative
+        if not path.is_file():
+            raise AcceptanceVerificationError(
+                f"current baseline test file was deleted: {relative}"
+            )
+        try:
+            live_source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise AcceptanceVerificationError(
+                f"cannot read changed test source {relative}: {exc}"
+            ) from exc
+        current[relative] = _test_support_surface_digest(
+            live_source,
+            relative,
+        )
+    return baseline, current
+
+
+def _validate_current_regression_classification(
+    raw: object,
+    manifest: AcceptanceManifest,
+    root: Path,
+) -> None:
+    """Validate every changed current test definition exactly."""
+    classification = _evidence_mapping(
+        raw, "current regression classification"
+    )
+    _exact_keys(
+        classification,
+        {
+            "catalog_sha256",
+            "mechanical_nodes",
+            "reviewed_nonsemantic_nodes",
+            "support_surfaces",
+        },
+        "current regression classification",
+    )
+    raw_mechanical = classification.get("mechanical_nodes")
+    raw_nonsemantic = classification.get("reviewed_nonsemantic_nodes")
+    raw_support = classification.get("support_surfaces")
+    if (
+        not isinstance(raw_mechanical, list)
+        or not isinstance(raw_nonsemantic, list)
+        or not isinstance(raw_support, list)
+    ):
+        raise AcceptanceVerificationError(
+            "current regression classification buckets must be lists"
+        )
+    _verify_digest(
+        {
+            "mechanical_nodes": raw_mechanical,
+            "reviewed_nonsemantic_nodes": raw_nonsemantic,
+            "support_surfaces": raw_support,
+        },
+        classification.get("catalog_sha256"),
+        _EXPECTED_CURRENT_REGRESSION_SHA256,
+        "current regression classification",
+    )
+    if len(raw_mechanical) != _EXPECTED_CURRENT_REGRESSION_NODE_COUNT:
+        raise AcceptanceVerificationError(
+            "current mechanical regression node inventory changed"
+        )
+    if len(raw_support) != _EXPECTED_CURRENT_SUPPORT_SURFACE_COUNT:
+        raise AcceptanceVerificationError(
+            "current support-surface inventory changed"
+        )
+    baseline, current, changed_paths = _current_changed_test_definitions(root)
+    baseline_support, current_support = _current_changed_test_support_surfaces(
+        root, changed_paths
+    )
+    changed_support_paths = frozenset(
+        relative
+        for relative in baseline_support.keys() & current_support.keys()
+        if baseline_support[relative] != current_support[relative]
+    )
+    unchanged_support_paths = frozenset(baseline_support) - (
+        changed_support_paths
+    )
+    if (
+        baseline_support.keys() != current_support.keys()
+        or len(baseline_support) != _EXPECTED_CURRENT_TEST_FILE_COUNT
+        or changed_support_paths != _EXPECTED_CURRENT_CHANGED_SUPPORT_PATHS
+        or len(unchanged_support_paths)
+        != _EXPECTED_CURRENT_UNCHANGED_SUPPORT_SURFACE_COUNT
+    ):
+        raise AcceptanceVerificationError(
+            "current changed test support-surface inventory differs from"
+            " the frozen baseline"
+        )
+    support_paths: list[str] = []
+    for value in raw_support:
+        entry = _evidence_mapping(value, "current support surface")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "baseline_ast_sha256",
+                "current_ast_sha256",
+                "change_kind",
+                "reviewed_by",
+                "evidence",
+            },
+            "current support surface",
+        )
+        relative = _nonempty_string(
+            entry.get("path"),
+            "current support-surface path",
+        )
+        support_paths.append(relative)
+        baseline_digest = _sha256_string(
+            entry.get("baseline_ast_sha256"),
+            "support-surface baseline AST SHA-256",
+        )
+        current_digest = _sha256_string(
+            entry.get("current_ast_sha256"),
+            "support-surface current AST SHA-256",
+        )
+        if (
+            entry.get("change_kind")
+            not in {
+                "gate_support",
+                "mechanical_fixture_migration",
+                "semantic_support",
+            }
+            or entry.get("reviewed_by") != _EXPECTED_IMPLEMENTATION_OWNER
+            or len(
+                _nonempty_string(
+                    entry.get("evidence"),
+                    "support-surface evidence",
+                )
+            )
+            < 20
+            or baseline_support.get(relative) != baseline_digest
+            or current_support.get(relative) != current_digest
+            or baseline_digest == current_digest
+            or relative not in changed_paths
+        ):
+            raise AcceptanceVerificationError(
+                "current support surface differs from its exact reviewed"
+                f" file: {relative}"
+            )
+    _unique(support_paths, "current support-surface path")
+    if frozenset(support_paths) != changed_support_paths:
+        raise AcceptanceVerificationError(
+            "changed test support surfaces lack exact classification:"
+            f" missing={sorted(changed_support_paths - set(support_paths))},"
+            f" extra={sorted(set(support_paths) - changed_support_paths)}"
+        )
+    manifest_node_ids = frozenset(node.node_id for node in manifest.nodes)
+    active_manifest_ids = frozenset(
+        node.node_id for node in manifest.nodes if node.lifecycle == "active"
+    )
+    mechanical_ids: list[str] = []
+    for value in raw_mechanical:
+        entry = _evidence_mapping(value, "current mechanical regression")
+        _exact_keys(
+            entry,
+            {
+                "node_id",
+                "baseline_ast_sha256",
+                "current_ast_sha256",
+                "disposition",
+                "evidence",
+            },
+            "current mechanical regression",
+        )
+        node_id = _node_id(entry.get("node_id"))
+        mechanical_ids.append(node_id)
+        baseline_digest = _sha256_string(
+            entry.get("baseline_ast_sha256"),
+            "mechanical baseline AST SHA-256",
+        )
+        current_digest = _sha256_string(
+            entry.get("current_ast_sha256"),
+            "mechanical current AST SHA-256",
+        )
+        if (
+            entry.get("disposition")
+            != "mechanical_fixture_or_assertion_migration"
+            or len(
+                _nonempty_string(
+                    entry.get("evidence"), "mechanical regression evidence"
+                )
+            )
+            < 20
+            or baseline.get(node_id) != baseline_digest
+            or current.get(node_id) != current_digest
+            or baseline_digest == current_digest
+            or node_id in manifest_node_ids
+            or node_id.split("::", 1)[0] not in changed_paths
+        ):
+            raise AcceptanceVerificationError(
+                "current mechanical regression differs from its exact"
+                f" reviewed node: {node_id}"
+            )
+    _unique(mechanical_ids, "current mechanical regression node ID")
+
+    reviewed_ids: list[str] = []
+    for value in raw_nonsemantic:
+        entry = _evidence_mapping(value, "reviewed support test")
+        _exact_keys(
+            entry,
+            {
+                "node_id",
+                "baseline_ast_sha256",
+                "current_ast_sha256",
+                "disposition",
+                "reviewed_by",
+                "evidence",
+            },
+            "reviewed support test",
+        )
+        node_id = _node_id(entry.get("node_id"))
+        reviewed_ids.append(node_id)
+        in_baseline = node_id in baseline
+        in_current = node_id in current
+        baseline_digest = _sha256_string(
+            entry.get("baseline_ast_sha256"),
+            "reviewed support baseline AST SHA-256",
+        )
+        current_digest = _sha256_string(
+            entry.get("current_ast_sha256"),
+            "reviewed support current AST SHA-256",
+        )
+        if (
+            entry.get("disposition")
+            not in {
+                "gate_support",
+                "reviewed_nonsemantic",
+                "semantic_support",
+            }
+            or entry.get("reviewed_by") != _EXPECTED_IMPLEMENTATION_OWNER
+            or len(
+                _nonempty_string(
+                    entry.get("evidence"), "support review evidence"
+                )
+            )
+            < 20
+            or node_id in manifest_node_ids
+            or (
+                baseline.get(node_id, _ABSENT_TEST_DEFINITION_SHA256)
+                != baseline_digest
+            )
+            or (
+                current.get(node_id, _ABSENT_TEST_DEFINITION_SHA256)
+                != current_digest
+            )
+            or in_baseline == in_current
+            and (not in_baseline or baseline[node_id] == current[node_id])
+            or node_id.split("::", 1)[0] not in changed_paths
+        ):
+            raise AcceptanceVerificationError(
+                f"invalid reviewed support test disposition: {node_id}"
+            )
+    _unique(reviewed_ids, "reviewed support test node ID")
+    if set(mechanical_ids) & set(reviewed_ids):
+        raise AcceptanceVerificationError(
+            "current test classifications overlap"
+        )
+    baseline_ids = frozenset(baseline)
+    current_ids = frozenset(current)
+    new_definitions = current_ids - baseline_ids
+    removed_definitions = baseline_ids - current_ids
+    modified_definitions = frozenset(
+        node_id
+        for node_id in baseline_ids & current_ids
+        if baseline[node_id] != current[node_id]
+    )
+    semantic_new = frozenset(
+        node.node_id
+        for node in manifest.nodes
+        if node.lifecycle == "active" and node.active_from_phase == 4
+    )
+    reviewed_new = frozenset(
+        node_id for node_id in reviewed_ids if node_id in new_definitions
+    )
+    reviewed_modified = frozenset(
+        node_id for node_id in reviewed_ids if node_id in modified_definitions
+    )
+    reviewed_removed = frozenset(
+        node_id for node_id in reviewed_ids if node_id in removed_definitions
+    )
+    expected_new = semantic_new | reviewed_new
+    if new_definitions != expected_new:
+        raise AcceptanceVerificationError(
+            "new test definitions lack semantic acceptance or explicit"
+            " nonsemantic review:"
+            f" missing={sorted(expected_new - new_definitions)},"
+            f" unclassified={sorted(new_definitions - expected_new)}"
+        )
+
+    semantic_removed: set[str] = set()
+    replacement_targets: set[str] = set()
+    for (
+        removed_id,
+        removed_digest,
+        replacement_id,
+        replacement_digest,
+    ) in _EXPECTED_CURRENT_SEMANTIC_REPLACEMENTS:
+        semantic_removed.add(removed_id)
+        replacement_targets.add(replacement_id)
+        if (
+            baseline.get(removed_id) != removed_digest
+            or removed_id in current
+            or replacement_id in baseline
+            or current.get(replacement_id) != replacement_digest
+            or replacement_id not in semantic_new
+        ):
+            raise AcceptanceVerificationError(
+                "current semantic replacement differs from its exact"
+                f" reviewed transition: {removed_id} -> {replacement_id}"
+            )
+    _unique(
+        (
+            *semantic_removed,
+            *replacement_targets,
+        ),
+        "current semantic replacement node ID",
+    )
+    expected_removed = frozenset(semantic_removed) | reviewed_removed
+    if removed_definitions != expected_removed:
+        raise AcceptanceVerificationError(
+            "removed test definitions lack exact semantic replacement or"
+            " explicit nonsemantic review:"
+            f" missing={sorted(expected_removed - removed_definitions)},"
+            f" unclassified={sorted(removed_definitions - expected_removed)}"
+        )
+
+    active_legacy_ids = (
+        modified_definitions & active_manifest_ids
+    ) | _EXPECTED_CURRENT_ACTIVE_LEGACY_GATE_NODES
+    if (
+        not _EXPECTED_CURRENT_ACTIVE_LEGACY_GATE_NODES <= modified_definitions
+        or _EXPECTED_CURRENT_ACTIVE_LEGACY_GATE_NODES & manifest_node_ids
+    ):
+        raise AcceptanceVerificationError(
+            "current active legacy gate definition inventory changed"
+        )
+    active_legacy_entries = [
+        {
+            "node_id": node_id,
+            "baseline_ast_sha256": baseline[node_id],
+            "current_ast_sha256": current[node_id],
+        }
+        for node_id in sorted(active_legacy_ids)
+    ]
+    active_legacy_digest = sha256(
+        dumps(
+            active_legacy_entries,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    if (
+        len(active_legacy_entries)
+        != _EXPECTED_CURRENT_ACTIVE_LEGACY_NODE_COUNT
+        or active_legacy_digest != _EXPECTED_CURRENT_ACTIVE_LEGACY_SHA256
+    ):
+        raise AcceptanceVerificationError(
+            "current active legacy acceptance definition inventory changed"
+        )
+    expected_modified = (
+        active_legacy_ids | frozenset(mechanical_ids) | reviewed_modified
+    )
+    if modified_definitions != expected_modified:
+        raise AcceptanceVerificationError(
+            "legacy test-definition changes lack exact classification:"
+            f" unclassified={sorted(modified_definitions - expected_modified)}"
+        )
+
+
 def _git_lines(root: Path, *arguments: str) -> tuple[str, ...]:
     completed = run(
         ("git", *arguments),
@@ -3420,6 +4611,7 @@ def _validate_review_history(
     raw_phase0_digest: object,
     raw_phase1_digest: object,
     raw_phase2_digest: object,
+    raw_prior_digest: object,
     current_phase: int,
     implementation_owner: str,
 ) -> None:
@@ -3462,6 +4654,16 @@ def _validate_review_history(
         raw_phase2_digest,
         _EXPECTED_PHASE2_REVIEW_SHA256,
         "phase-2 review prefix",
+    )
+    if len(raw) < 16:
+        raise AcceptanceVerificationError(
+            "review history lost its historical prefix"
+        )
+    _verify_digest(
+        raw[:16],
+        raw_prior_digest,
+        _EXPECTED_PRIOR_REVIEW_SHA256,
+        "historical review prefix",
     )
     latest_status: dict[tuple[int, str], str] = {}
     recorded_times: list[str] = []
@@ -3528,15 +4730,22 @@ def _validate_review_history(
                 raise AcceptanceVerificationError(
                     "phase-0 review must preserve its approval"
                 )
-            direct_current_semantic_approval = (
+            direct_current_approval = (
                 phase == current_phase
+                and role in {"semantic", "gate"}
+                and status == "approved"
+            )
+            preserved_prior_semantic_approval = (
+                phase == 3
                 and role == "semantic"
+                and reviewer == "/root/acceptance_review"
                 and status == "approved"
             )
             if (
                 phase > 0
                 and status != "pending"
-                and not direct_current_semantic_approval
+                and not direct_current_approval
+                and not preserved_prior_semantic_approval
             ):
                 raise AcceptanceVerificationError(
                     "new review roles must begin pending"
@@ -3618,6 +4827,10 @@ def _validate_quality_history(
                 _EXPECTED_PHASE2_QUALITY_SHA256,
                 _EXPECTED_PHASE2_EVIDENCE_SHA256,
             ),
+            3: (
+                _EXPECTED_PRIOR_QUALITY_SHA256,
+                _EXPECTED_PRIOR_EVIDENCE_SHA256,
+            ),
         }
         expected_digests = expected_historical_digests.get(phase)
         if (
@@ -3694,11 +4907,10 @@ def _validate_quality_gate_evidence(
             "implementation evidence omits a common gate command"
         )
     focused = required - _EXPECTED_COMMON_GATE_COMMANDS
-    if len(focused) != 1 or not next(iter(focused)).startswith(
-        "poetry run pytest --verbose -s tests/"
-    ):
+    if focused != frozenset((_EXPECTED_CURRENT_FOCUSED_COMMAND,)):
         raise AcceptanceVerificationError(
-            "implementation evidence lacks one exact focused pytest command"
+            "implementation evidence lacks the exact current focused pytest"
+            " command"
         )
     raw_results = quality_gate.get("results")
     if not isinstance(raw_results, list):
@@ -3771,47 +4983,63 @@ def _validate_quality_gate_evidence(
             "completed quality results must preserve required command order"
         )
     focused_command = next(iter(focused))
-    for command in (
-        "poetry run pytest --verbose -s",
-        focused_command,
-    ):
-        result = results[command]
-        _exact_keys(
-            result,
-            {
-                "command",
-                "exit_code",
-                "passed",
-                "skipped",
-                "subtests_passed",
-                "seconds",
-                "deselected",
-                "xfail",
-                "xpass",
-            },
-            "test quality-gate evidence",
+    test_command = "poetry run pytest --verbose -s"
+    test_result = results[test_command]
+    _exact_keys(
+        test_result,
+        {
+            "command",
+            "exit_code",
+            "passed",
+            "skipped",
+            "subtests_passed",
+            "seconds",
+            "deselected",
+            "xfail",
+            "xpass",
+        },
+        "test quality-gate evidence",
+    )
+    test_counts = {
+        name: _nonnegative_int(test_result.get(name), f"quality {name}")
+        for name in (
+            "passed",
+            "skipped",
+            "subtests_passed",
+            "deselected",
+            "xfail",
+            "xpass",
         )
-        counts = {
-            name: _nonnegative_int(result.get(name), f"quality {name}")
-            for name in (
-                "passed",
-                "skipped",
-                "subtests_passed",
-                "deselected",
-                "xfail",
-                "xpass",
-            )
-        }
-        _positive_number(result.get("seconds"), f"quality seconds: {command}")
-        if (
-            counts["passed"] == 0
-            or counts["deselected"] != 0
-            or counts["xfail"] != 0
-            or counts["xpass"] != 0
-        ):
-            raise AcceptanceVerificationError(
-                f"test quality-gate evidence is incomplete: {command}"
-            )
+    }
+    _positive_number(
+        test_result.get("seconds"),
+        f"quality seconds: {test_command}",
+    )
+    if (
+        test_counts["passed"] == 0
+        or test_counts["deselected"] != 0
+        or test_counts["xfail"] != 0
+        or test_counts["xpass"] != 0
+    ):
+        raise AcceptanceVerificationError(
+            f"test quality-gate evidence is incomplete: {test_command}"
+        )
+    focused_result = results[focused_command]
+    _exact_keys(
+        focused_result,
+        {"command", "exit_code", "active_nodes", "active_instances"},
+        "focused runtime acceptance evidence",
+    )
+    if (
+        focused_result.get("active_nodes")
+        != _EXPECTED_CURRENT_RUNTIME_NODE_COUNT
+        or focused_result.get("active_instances")
+        != _EXPECTED_CURRENT_RUNTIME_NODE_COUNT
+    ):
+        raise AcceptanceVerificationError(
+            "current focused result differs from the exact collected and"
+            " passing runtime inventory"
+        )
     legacy_coverage = results["make test-coverage -- -100 src/"]
     _exact_keys(
         legacy_coverage,
@@ -3881,7 +5109,7 @@ def _validate_quality_gate_evidence(
         )
     acceptance = results[
         "poetry run python scripts/verify_input_acceptance.py"
-        " --through-phase 3"
+        " --through-phase 4"
     ]
     _exact_keys(
         acceptance,
@@ -3895,7 +5123,7 @@ def _validate_quality_gate_evidence(
         raise AcceptanceVerificationError(
             "acceptance gate evidence has stale node or instance counts"
         )
-    type_result = results["make typecheck-input-contract INPUT_PHASE=3"]
+    type_result = results["make typecheck-input-contract INPUT_PHASE=4"]
     _exact_keys(
         type_result,
         {"command", "exit_code", "active_fixtures"},
@@ -4504,9 +5732,12 @@ def _probe_payload(
     return result
 
 
-def _verify_collection(
-    expected: tuple[str, ...], payload: dict[str, object]
+def _collection_node_ids(
+    payload: dict[str, object],
+    *,
+    reject_disallowed_markers: bool = True,
 ) -> tuple[str, ...]:
+    """Return validated node IDs from one collection probe."""
     _exact_keys(
         payload,
         {
@@ -4541,13 +5772,25 @@ def _verify_collection(
         _exact_keys(item, {"nodeid", "markers"}, "collection item")
         node_id = _nonempty_string(item.get("nodeid"), "collected nodeid")
         markers = _string_list_allow_empty(item.get("markers"), "markers")
-        disallowed = sorted(set(markers) & _DISALLOWED_MARKERS)
+        disallowed = (
+            sorted(set(markers) & _DISALLOWED_MARKERS)
+            if reject_disallowed_markers
+            else []
+        )
         if disallowed:
             raise AcceptanceVerificationError(
                 f"{node_id} has disallowed markers: {disallowed}"
             )
         observed.append(node_id)
     collected = tuple(observed)
+    _unique(collected, "collected node ID")
+    return collected
+
+
+def _verify_collection(
+    expected: tuple[str, ...], payload: dict[str, object]
+) -> tuple[str, ...]:
+    collected = _collection_node_ids(payload)
     _verify_identical_nodes(expected, collected, "collected")
     return collected
 
@@ -4756,14 +5999,22 @@ def _validate_test_implementation(node_id: str, root: Path) -> None:
             "acceptance test is a placeholder or unconditional pass:"
             f" {node_id}"
         )
-    check_paths = _check_sequence(body, frozenset({False}))
+    class_scope = scope if isinstance(scope, ClassDef) else None
+    aliases = _contextlib_suppress_aliases(
+        tree,
+        function,
+        class_scope=class_scope,
+    )
+    check_paths = _check_sequence(body, frozenset({False}), aliases)
     successful_paths = check_paths.next_states | check_paths.return_states
-    if not successful_paths or False in successful_paths:
+    if (
+        not successful_paths or False in successful_paths
+    ) and not _has_static_nonempty_checked_loop(function, aliases):
         raise AcceptanceVerificationError(
             "acceptance test has a reachable successful path without a"
             f" meaningful check: {node_id}"
         )
-    _validate_prohibited_test_constructs(tree, node_id)
+    _validate_prohibited_test_constructs(function, node_id, tree)
     segment = "\n".join(
         source.splitlines()[function.lineno - 1 : function.end_lineno]
     )
@@ -4772,6 +6023,169 @@ def _validate_test_implementation(node_id: str, root: Path) -> None:
             "acceptance test uses a feature-specific coverage exclusion:"
             f" {node_id}"
         )
+
+
+def _has_static_nonempty_checked_loop(
+    function: FunctionDef | AsyncFunctionDef,
+    aliases: _SuppressContextAliases,
+) -> bool:
+    """Return whether a non-empty local literal drives a checked loop."""
+    for index, statement in enumerate(function.body):
+        if not isinstance(statement, (For, AsyncFor)):
+            continue
+        iterator_name = (
+            statement.iter.id
+            if isinstance(statement.iter, Name)
+            else (
+                statement.iter.args[0].id
+                if isinstance(statement.iter, Call)
+                and isinstance(statement.iter.func, Name)
+                and statement.iter.func.id in {"enumerate", "iter", "reversed"}
+                and len(statement.iter.args) == 1
+                and not statement.iter.keywords
+                and isinstance(statement.iter.args[0], Name)
+                else None
+            )
+        )
+        if iterator_name is None or not _name_is_statically_nonempty(
+            function.body[:index],
+            iterator_name,
+        ):
+            continue
+        paths = _check_sequence(
+            statement.body,
+            frozenset({False}),
+            aliases,
+        )
+        successful = (
+            paths.next_states
+            | paths.return_states
+            | paths.break_states
+            | paths.continue_states
+        )
+        prefix = _check_sequence(
+            function.body[:index],
+            frozenset({False}),
+            aliases,
+        )
+        if (
+            prefix.next_states
+            and False not in prefix.return_states
+            and successful
+            and False not in successful
+        ):
+            return True
+    return False
+
+
+def _name_is_statically_nonempty(
+    statements: Sequence[AST],
+    name: str,
+) -> bool:
+    """Return whether the latest reachable binding is a non-empty literal."""
+    nonempty = False
+    for statement in statements:
+        binds_name, value = _direct_name_binding(statement, name)
+        if binds_name:
+            nonempty = value is not None and _statically_nonempty_iter(value)
+    return nonempty
+
+
+def _direct_name_binding(
+    statement: AST,
+    name: str,
+) -> tuple[bool, AST | None]:
+    """Return a conservative direct binding made by one statement."""
+    if isinstance(statement, Assign):
+        values = tuple(
+            item_value
+            for target in statement.targets
+            for target_name, item_value in _assignment_bindings(
+                target,
+                statement.value,
+            )
+            if target_name == name
+        )
+        if values:
+            return True, values[-1]
+    elif isinstance(statement, AnnAssign):
+        values = tuple(
+            item_value
+            for target_name, item_value in _assignment_bindings(
+                statement.target,
+                statement.value,
+            )
+            if target_name == name
+        )
+        if values:
+            return True, values[-1]
+    elif isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
+        return statement.name == name, None
+    elif isinstance(statement, Import):
+        return (
+            any(
+                (item.asname or item.name.split(".", 1)[0]) == name
+                for item in statement.names
+            ),
+            None,
+        )
+    elif isinstance(statement, ImportFrom):
+        return (
+            any(
+                (item.asname or item.name) == name for item in statement.names
+            ),
+            None,
+        )
+    if any(
+        isinstance(node, Name)
+        and node.id == name
+        and not isinstance(node.ctx, Load)
+        for node in walk(statement)
+    ):
+        return True, None
+    if _statement_may_empty_iterable(statement, name):
+        return True, None
+    return False, None
+
+
+def _statement_may_empty_iterable(statement: AST, name: str) -> bool:
+    """Return whether a statement may shrink or expose an iterable."""
+    if isinstance(
+        statement, (Assign, AnnAssign, AugAssign, NamedExpr)
+    ) and any(
+        isinstance(node, Name)
+        and node.id == name
+        and isinstance(node.ctx, Load)
+        for node in walk(statement)
+    ):
+        return True
+    for node in walk(statement):
+        if isinstance(node, Subscript) and not isinstance(node.ctx, Load):
+            if any(
+                isinstance(child, Name) and child.id == name
+                for child in walk(node.value)
+            ):
+                return True
+        if not isinstance(node, Call):
+            continue
+        references = tuple(
+            child
+            for child in walk(node)
+            if isinstance(child, Name) and child.id == name
+        )
+        if not references:
+            continue
+        if (
+            isinstance(node.func, Attribute)
+            and isinstance(node.func.value, Name)
+            and node.func.value.id == name
+            and node.func.attr
+            in {"append", "extend", "insert", "reverse", "sort"}
+            and len(references) == 1
+        ):
+            continue
+        return True
+    return False
 
 
 def _placeholder_statement(statement: AST) -> bool:
@@ -4828,7 +6242,1460 @@ def _is_check(node: AST) -> bool:
     return False
 
 
-def _validate_prohibited_test_constructs(tree: AST, node_id: str) -> None:
+def _node_position(node: AST) -> tuple[int, int]:
+    """Return a stable source position for one AST node."""
+    return (
+        cast(int, getattr(node, "lineno", -1)),
+        cast(int, getattr(node, "col_offset", -1)),
+    )
+
+
+def _assignment_bindings(
+    target: AST,
+    value: AST | None,
+) -> tuple[tuple[str, AST | None], ...]:
+    """Return simple names and corresponding values from an assignment."""
+    if isinstance(target, Name):
+        return ((target.id, value),)
+    if isinstance(target, Starred):
+        starred_value = (
+            AstList(elts=value.elts, ctx=Load())
+            if isinstance(value, (AstList, AstTuple))
+            else None
+        )
+        return _assignment_bindings(target.value, starred_value)
+    if isinstance(target, (AstList, AstTuple)):
+        values: list[AST | None] = [None] * len(target.elts)
+        if isinstance(value, (AstList, AstTuple)):
+            starred = tuple(
+                index
+                for index, item in enumerate(target.elts)
+                if isinstance(item, Starred)
+            )
+            if not starred and len(value.elts) == len(target.elts):
+                values = list(value.elts)
+            elif len(starred) == 1:
+                starred_index = starred[0]
+                trailing = len(target.elts) - starred_index - 1
+                if len(value.elts) >= starred_index + trailing:
+                    values[:starred_index] = value.elts[:starred_index]
+                    if trailing:
+                        values[-trailing:] = value.elts[-trailing:]
+                    end = len(value.elts) - trailing if trailing else None
+                    values[starred_index] = AstList(
+                        elts=value.elts[starred_index:end],
+                        ctx=Load(),
+                    )
+        elif value is not None:
+            expression_value = cast(AstExpression, value)
+            starred = tuple(
+                index
+                for index, item in enumerate(target.elts)
+                if isinstance(item, Starred)
+            )
+            possible_starred_index: int | None = (
+                starred[0] if len(starred) == 1 else None
+            )
+            for index, item in enumerate(target.elts):
+                if isinstance(item, Starred):
+                    values[index] = Starred(
+                        value=expression_value,
+                        ctx=Load(),
+                    )
+                    continue
+                subscript_index = (
+                    index
+                    if possible_starred_index is None
+                    or index < possible_starred_index
+                    else index - len(target.elts)
+                )
+                values[index] = Subscript(
+                    value=expression_value,
+                    slice=Constant(value=subscript_index),
+                    ctx=Load(),
+                )
+        return tuple(
+            binding
+            for item, item_value in zip(target.elts, values, strict=True)
+            for binding in _assignment_bindings(item, item_value)
+        )
+    return ()
+
+
+def _append_target_alias_bindings(
+    bindings: list[_AliasBinding],
+    target: AST,
+    value: AST | None,
+    position: tuple[int, int],
+    definite: bool,
+) -> None:
+    """Append target bindings with one control-flow certainty."""
+    bindings.extend(
+        _AliasBinding(
+            name=name,
+            position=position,
+            value=item_value,
+            definite=definite,
+        )
+        for name, item_value in _assignment_bindings(target, value)
+    )
+
+
+def _collect_expression_alias_bindings(
+    expression: AST,
+    bindings: list[_AliasBinding],
+    definite: bool,
+) -> None:
+    """Collect walrus bindings while respecting expression short-circuiting."""
+    if isinstance(expression, Lambda):
+        return
+    if isinstance(expression, NamedExpr):
+        _collect_expression_alias_bindings(
+            expression.value,
+            bindings,
+            definite,
+        )
+        _append_target_alias_bindings(
+            bindings,
+            expression.target,
+            expression.value,
+            _node_position(expression),
+            definite,
+        )
+        return
+    if isinstance(expression, BoolOp):
+        next_definite = definite
+        for value in expression.values:
+            _collect_expression_alias_bindings(
+                value,
+                bindings,
+                next_definite,
+            )
+            if isinstance(value, Constant):
+                short_circuits = (
+                    not bool(value.value)
+                    if type(expression.op).__name__ == "And"
+                    else bool(value.value)
+                )
+                if short_circuits:
+                    break
+                continue
+            next_definite = False
+        return
+    if isinstance(expression, IfExp):
+        _collect_expression_alias_bindings(
+            expression.test,
+            bindings,
+            definite,
+        )
+        if isinstance(expression.test, Constant):
+            branch = (
+                expression.body
+                if bool(expression.test.value)
+                else expression.orelse
+            )
+            _collect_expression_alias_bindings(branch, bindings, definite)
+            return
+        _collect_expression_alias_bindings(
+            expression.body,
+            bindings,
+            False,
+        )
+        _collect_expression_alias_bindings(
+            expression.orelse,
+            bindings,
+            False,
+        )
+        return
+    if isinstance(expression, Compare):
+        _collect_expression_alias_bindings(
+            expression.left,
+            bindings,
+            definite,
+        )
+        for index, comparator in enumerate(expression.comparators):
+            _collect_expression_alias_bindings(
+                comparator,
+                bindings,
+                definite if index == 0 else False,
+            )
+        return
+    nested_definite = (
+        False
+        if isinstance(
+            expression,
+            (DictComp, GeneratorExp, ListComp, SetComp),
+        )
+        else definite
+    )
+    for child in iter_child_nodes(expression):
+        _collect_expression_alias_bindings(
+            child,
+            bindings,
+            nested_definite,
+        )
+
+
+def _iterable_alias_values(expression: AST) -> tuple[AST, ...] | None:
+    """Return statically possible values yielded by an iterable."""
+    if isinstance(expression, (AstList, AstSet, AstTuple)):
+        return tuple(expression.elts)
+    if isinstance(expression, BinOp) and type(expression.op).__name__ == "Add":
+        left = _iterable_alias_values(expression.left)
+        right = _iterable_alias_values(expression.right)
+        if left is not None and right is not None:
+            return (*left, *right)
+    if (
+        isinstance(expression, (GeneratorExp, ListComp, SetComp))
+        and len(expression.generators) == 1
+    ):
+        generator = expression.generators[0]
+        values = _iterable_alias_values(generator.iter)
+        if (
+            values is not None
+            and isinstance(generator.target, Name)
+            and isinstance(expression.elt, Name)
+            and expression.elt.id == generator.target.id
+        ):
+            return values
+        return (expression.elt,)
+    return None
+
+
+def _collect_scope_statement_bindings(
+    statements: Sequence[AST],
+    bindings: list[_AliasBinding],
+    definite: bool,
+) -> None:
+    """Collect may-alias bindings across one sequence of statements."""
+    for statement in statements:
+        position = _node_position(statement)
+        if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            bindings.append(
+                _AliasBinding(
+                    name=statement.name,
+                    position=position,
+                    definite=definite,
+                )
+            )
+            continue
+        if isinstance(statement, Import):
+            for item in statement.names:
+                name = item.asname or item.name.split(".", 1)[0]
+                direct_kind = {
+                    "builtins": _ALIAS_BUILTINS,
+                    "contextlib": _ALIAS_CONTEXTLIB,
+                    "pytest": _ALIAS_PYTEST,
+                    "tempfile": _ALIAS_TEMPFILE,
+                    "unittest": _ALIAS_UNITTEST,
+                    "unittest.mock": (
+                        _ALIAS_UNITTEST_MOCK
+                        if item.asname is not None
+                        else _ALIAS_UNITTEST
+                    ),
+                }.get(item.name)
+                bindings.append(
+                    _AliasBinding(
+                        name=name,
+                        position=position,
+                        direct_kind=direct_kind,
+                        definite=definite,
+                    )
+                )
+            continue
+        if isinstance(statement, ImportFrom):
+            canonical_module = (
+                statement.module if statement.level == 0 else None
+            )
+            for item in statement.names:
+                if item.name == "*":
+                    if canonical_module == "contextlib":
+                        for name, direct_kind in (
+                            ("nullcontext", _ALIAS_NULLCONTEXT),
+                            ("suppress", _ALIAS_SUPPRESS),
+                        ):
+                            bindings.append(
+                                _AliasBinding(
+                                    name=name,
+                                    position=position,
+                                    direct_kind=direct_kind,
+                                    imported_attribute=name,
+                                    definite=definite,
+                                )
+                            )
+                    elif canonical_module == "pytest":
+                        for name in _PYTEST_CHECK_CONTEXT_NAMES:
+                            bindings.append(
+                                _AliasBinding(
+                                    name=name,
+                                    position=position,
+                                    direct_kind=_ALIAS_CHECK_CONTEXT,
+                                    imported_attribute=name,
+                                    definite=definite,
+                                )
+                            )
+                    elif canonical_module == "tempfile":
+                        for name in _TEMPFILE_SAFE_CONTEXT_NAMES:
+                            bindings.append(
+                                _AliasBinding(
+                                    name=name,
+                                    position=position,
+                                    direct_kind=_ALIAS_SAFE_CONTEXT,
+                                    imported_attribute=name,
+                                    definite=definite,
+                                )
+                            )
+                    elif canonical_module == "unittest":
+                        for name in _UNITTEST_TEST_CASE_NAMES:
+                            bindings.append(
+                                _AliasBinding(
+                                    name=name,
+                                    position=position,
+                                    direct_kind=_ALIAS_UNITTEST_TEST_CASE,
+                                    imported_attribute=name,
+                                    definite=definite,
+                                )
+                            )
+                    elif canonical_module == "unittest.mock":
+                        bindings.append(
+                            _AliasBinding(
+                                name="patch",
+                                position=position,
+                                direct_kind=_ALIAS_UNITTEST_PATCH,
+                                imported_attribute="patch",
+                                definite=definite,
+                            )
+                        )
+                    continue
+                imported_kind: str | None = None
+                exception_names: frozenset[str] = frozenset()
+                if (
+                    canonical_module == "contextlib"
+                    and item.name == "suppress"
+                ):
+                    imported_kind = _ALIAS_SUPPRESS
+                elif (
+                    canonical_module == "contextlib"
+                    and item.name == "nullcontext"
+                ):
+                    imported_kind = _ALIAS_NULLCONTEXT
+                elif (
+                    canonical_module == "builtins"
+                    and item.name in _KNOWN_BUILTIN_EXCEPTION_NAMES
+                ):
+                    imported_kind = _ALIAS_EXCEPTIONS
+                    exception_names = frozenset((item.name,))
+                elif (
+                    canonical_module == "pytest"
+                    and item.name in _PYTEST_CHECK_CONTEXT_NAMES
+                ):
+                    imported_kind = _ALIAS_CHECK_CONTEXT
+                elif (
+                    canonical_module == "tempfile"
+                    and item.name in _TEMPFILE_SAFE_CONTEXT_NAMES
+                ):
+                    imported_kind = _ALIAS_SAFE_CONTEXT
+                elif (
+                    canonical_module == "unittest"
+                    and item.name in _UNITTEST_TEST_CASE_NAMES
+                ):
+                    imported_kind = _ALIAS_UNITTEST_TEST_CASE
+                elif canonical_module == "unittest" and item.name == "mock":
+                    imported_kind = _ALIAS_UNITTEST_MOCK
+                elif (
+                    canonical_module == "unittest.mock"
+                    and item.name == "patch"
+                ):
+                    imported_kind = _ALIAS_UNITTEST_PATCH
+                elif canonical_module == "builtins" and item.name == "open":
+                    imported_kind = _ALIAS_SAFE_CONTEXT
+                bindings.append(
+                    _AliasBinding(
+                        name=item.asname or item.name,
+                        position=position,
+                        direct_kind=imported_kind,
+                        direct_exception_names=exception_names,
+                        imported_attribute=(
+                            item.name if imported_kind is not None else None
+                        ),
+                        definite=definite,
+                    )
+                )
+            continue
+        if isinstance(statement, Assign):
+            _collect_expression_alias_bindings(
+                statement.value,
+                bindings,
+                definite,
+            )
+            for target in statement.targets:
+                _append_target_alias_bindings(
+                    bindings,
+                    target,
+                    statement.value,
+                    position,
+                    definite,
+                )
+            continue
+        if isinstance(statement, AnnAssign):
+            if statement.value is not None:
+                _collect_expression_alias_bindings(
+                    statement.value,
+                    bindings,
+                    definite,
+                )
+            _append_target_alias_bindings(
+                bindings,
+                statement.target,
+                statement.value,
+                position,
+                definite,
+            )
+            continue
+        if isinstance(statement, AugAssign):
+            _collect_expression_alias_bindings(
+                statement.value,
+                bindings,
+                definite,
+            )
+            _append_target_alias_bindings(
+                bindings,
+                statement.target,
+                None,
+                position,
+                definite,
+            )
+            continue
+        if isinstance(statement, Delete):
+            for target in statement.targets:
+                _append_target_alias_bindings(
+                    bindings,
+                    target,
+                    None,
+                    position,
+                    definite,
+                )
+            continue
+        if isinstance(statement, If):
+            _collect_expression_alias_bindings(
+                statement.test,
+                bindings,
+                definite,
+            )
+            if isinstance(statement.test, Constant):
+                branch = (
+                    statement.body
+                    if bool(statement.test.value)
+                    else statement.orelse
+                )
+                _collect_scope_statement_bindings(
+                    branch,
+                    bindings,
+                    definite,
+                )
+                continue
+            _collect_scope_statement_bindings(
+                statement.body,
+                bindings,
+                False,
+            )
+            _collect_scope_statement_bindings(
+                statement.orelse,
+                bindings,
+                False,
+            )
+            continue
+        if isinstance(statement, (For, AsyncFor)):
+            _collect_expression_alias_bindings(
+                statement.iter,
+                bindings,
+                definite,
+            )
+            values = _iterable_alias_values(statement.iter)
+            if values is None:
+                values = (Starred(value=statement.iter, ctx=Load()),)
+            for value in values:
+                _append_target_alias_bindings(
+                    bindings,
+                    statement.target,
+                    value,
+                    position,
+                    False,
+                )
+            _collect_scope_statement_bindings(
+                statement.body,
+                bindings,
+                False,
+            )
+            _collect_scope_statement_bindings(
+                statement.orelse,
+                bindings,
+                False,
+            )
+            continue
+        if isinstance(statement, While):
+            _collect_expression_alias_bindings(
+                statement.test,
+                bindings,
+                definite,
+            )
+            if isinstance(statement.test, Constant) and not bool(
+                statement.test.value
+            ):
+                _collect_scope_statement_bindings(
+                    statement.orelse,
+                    bindings,
+                    definite,
+                )
+                continue
+            _collect_scope_statement_bindings(
+                statement.body,
+                bindings,
+                False,
+            )
+            _collect_scope_statement_bindings(
+                statement.orelse,
+                bindings,
+                False,
+            )
+            continue
+        if isinstance(statement, (With, AsyncWith)):
+            for context_item in statement.items:
+                _collect_expression_alias_bindings(
+                    context_item.context_expr,
+                    bindings,
+                    definite,
+                )
+                if context_item.optional_vars is not None:
+                    context_value = (
+                        context_item.context_expr.args[0]
+                        if isinstance(context_item.context_expr, Call)
+                        and context_item.context_expr.args
+                        else context_item.context_expr
+                    )
+                    _append_target_alias_bindings(
+                        bindings,
+                        context_item.optional_vars,
+                        context_value,
+                        position,
+                        False,
+                    )
+            _collect_scope_statement_bindings(
+                statement.body,
+                bindings,
+                False,
+            )
+            continue
+        if isinstance(statement, Try):
+            _collect_scope_statement_bindings(
+                statement.body,
+                bindings,
+                False,
+            )
+            _collect_scope_statement_bindings(
+                statement.orelse,
+                bindings,
+                False,
+            )
+            for handler in statement.handlers:
+                if handler.name is not None:
+                    bindings.append(
+                        _AliasBinding(
+                            name=handler.name,
+                            position=_node_position(handler),
+                            definite=False,
+                        )
+                    )
+                _collect_scope_statement_bindings(
+                    handler.body,
+                    bindings,
+                    False,
+                )
+            _collect_scope_statement_bindings(
+                statement.finalbody,
+                bindings,
+                False,
+            )
+            continue
+        if isinstance(statement, Match):
+            _collect_expression_alias_bindings(
+                statement.subject,
+                bindings,
+                definite,
+            )
+            for case in statement.cases:
+                capture_value = Starred(
+                    value=statement.subject,
+                    ctx=Load(),
+                )
+                for name in _match_capture_names(case.pattern):
+                    bindings.append(
+                        _AliasBinding(
+                            name=name,
+                            position=_node_position(case.pattern),
+                            value=capture_value,
+                            definite=False,
+                        )
+                    )
+                if case.guard is not None:
+                    _collect_expression_alias_bindings(
+                        case.guard,
+                        bindings,
+                        False,
+                    )
+                _collect_scope_statement_bindings(
+                    case.body,
+                    bindings,
+                    False,
+                )
+            continue
+        _collect_expression_alias_bindings(statement, bindings, definite)
+
+
+def _match_capture_names(pattern: AST) -> frozenset[str]:
+    """Return every name that a structural pattern may capture."""
+    names: set[str] = set()
+    for node in walk(pattern):
+        if isinstance(node, (MatchAs, MatchStar)) and node.name is not None:
+            names.add(node.name)
+        elif isinstance(node, MatchMapping) and node.rest is not None:
+            names.add(node.rest)
+    return frozenset(names)
+
+
+def _scope_alias_bindings(scope: AST) -> tuple[_AliasBinding, ...]:
+    """Return control-flow-aware aliases and invalidations in one scope."""
+    bindings: list[_AliasBinding] = []
+    if isinstance(scope, (FunctionDef, AsyncFunctionDef)):
+        arguments = (
+            *scope.args.posonlyargs,
+            *scope.args.args,
+            *scope.args.kwonlyargs,
+        )
+        for argument in arguments:
+            bindings.append(
+                _AliasBinding(
+                    name=argument.arg,
+                    position=(scope.lineno, -1),
+                )
+            )
+        for optional_argument in (scope.args.vararg, scope.args.kwarg):
+            if optional_argument is not None:
+                bindings.append(
+                    _AliasBinding(
+                        name=optional_argument.arg,
+                        position=(scope.lineno, -1),
+                    )
+                )
+    _collect_scope_statement_bindings(
+        cast(Sequence[AST], getattr(scope, "body", ())),
+        bindings,
+        True,
+    )
+    return tuple(sorted(bindings, key=lambda binding: binding.position))
+
+
+def _contextlib_suppress_aliases(
+    module_tree: AST,
+    function: FunctionDef | AsyncFunctionDef,
+    enclosing_functions: Sequence[FunctionDef | AsyncFunctionDef] = (),
+    class_scope: ClassDef | None = None,
+) -> _SuppressContextAliases:
+    """Return lexical scopes used to resolve contextlib.suppress aliases."""
+    scopes: tuple[AST, ...] = (
+        (module_tree, class_scope, *enclosing_functions, function)
+        if class_scope is not None
+        else (module_tree, *enclosing_functions, function)
+    )
+    instance_names = frozenset(
+        argument.arg
+        for scope in (*enclosing_functions, function)
+        for argument in (*scope.args.posonlyargs, *scope.args.args)[:1]
+        if argument.arg in {"self", "cls"}
+    )
+    return _SuppressContextAliases(
+        scopes=scopes,
+        class_scope_index=1 if class_scope is not None else None,
+        instance_names=instance_names,
+    )
+
+
+def _direct_aliases(binding: _AliasBinding) -> frozenset[_ResolvedAlias]:
+    """Return the exact abstract value for a direct binding."""
+    if binding.direct_kind is None:
+        return frozenset()
+    return frozenset(
+        (
+            _ResolvedAlias(
+                kind=binding.direct_kind,
+                exception_names=binding.direct_exception_names,
+            ),
+        )
+    )
+
+
+def _unknown_aliases() -> frozenset[_ResolvedAlias]:
+    """Return the abstract value for an unproved runtime object."""
+    return frozenset((_ResolvedAlias(kind=_ALIAS_UNKNOWN),))
+
+
+def _resolve_alias_name(
+    name: str,
+    aliases: _SuppressContextAliases,
+    position: tuple[int, int],
+    maximum_scope_index: int,
+    visiting: frozenset[tuple[int, str, tuple[int, int]]],
+    expand_sequences: bool,
+    include_class_scope: bool = False,
+) -> frozenset[_ResolvedAlias]:
+    """Resolve every possible value of one lexical name without cycles."""
+    if maximum_scope_index < 0:
+        if name == "open":
+            return frozenset((_ResolvedAlias(kind=_ALIAS_SAFE_CONTEXT),))
+        return (
+            frozenset(
+                (
+                    _ResolvedAlias(
+                        kind=_ALIAS_EXCEPTIONS,
+                        exception_names=frozenset((name,)),
+                    ),
+                )
+            )
+            if name in _KNOWN_BUILTIN_EXCEPTION_NAMES
+            else _unknown_aliases()
+        )
+    scope = aliases.scopes[maximum_scope_index]
+    if isinstance(scope, ClassDef) and not include_class_scope:
+        return _resolve_alias_name(
+            name,
+            aliases,
+            _ALIAS_END_POSITION,
+            maximum_scope_index - 1,
+            visiting,
+            expand_sequences,
+            False,
+        )
+    named = tuple(
+        binding
+        for binding in _scope_alias_bindings(scope)
+        if binding.name == name
+    )
+    local_shadow = isinstance(scope, (FunctionDef, AsyncFunctionDef)) and bool(
+        named
+    )
+    if local_shadow:
+        possibilities: frozenset[_ResolvedAlias] = frozenset()
+    else:
+        outer_position = (
+            _ALIAS_END_POSITION if maximum_scope_index - 1 == 0 else position
+        )
+        possibilities = _resolve_alias_name(
+            name,
+            aliases,
+            outer_position,
+            maximum_scope_index - 1,
+            visiting,
+            expand_sequences,
+            include_class_scope,
+        )
+    for binding in named:
+        if binding.position >= position:
+            continue
+        key = (id(scope), name, binding.position)
+        if key in visiting:
+            continue
+        if binding.direct_kind is not None:
+            binding_values = _direct_aliases(binding)
+            if (
+                binding.imported_attribute is not None
+                and not _scope_attribute_is_unmodified(
+                    binding.imported_attribute,
+                    scope,
+                    binding.position,
+                )
+            ):
+                binding_values |= _unknown_aliases()
+        elif binding.value is None:
+            binding_values = _unknown_aliases()
+        else:
+            binding_values = _resolve_alias_expression(
+                binding.value,
+                aliases,
+                binding.position,
+                maximum_scope_index,
+                visiting | frozenset((key,)),
+                expand_sequences,
+                include_class_scope,
+            )
+            if isinstance(binding.value, (AstDict, AstList, AstSet)):
+                binding_values |= _unknown_aliases()
+        possibilities = (
+            binding_values
+            if binding.definite
+            else possibilities | binding_values
+        )
+    return possibilities
+
+
+def _class_is_unittest_test_case(aliases: _SuppressContextAliases) -> bool:
+    """Return whether unittest wins before every unknown direct base."""
+    if aliases.class_scope_index is None:
+        return False
+    class_scope = aliases.scopes[aliases.class_scope_index]
+    if not isinstance(class_scope, ClassDef) or not class_scope.bases:
+        return False
+    values = _resolve_alias_expression(
+        class_scope.bases[0],
+        aliases,
+        _node_position(class_scope),
+        aliases.class_scope_index - 1,
+    )
+    return bool(values) and all(
+        value.kind == _ALIAS_UNITTEST_TEST_CASE for value in values
+    )
+
+
+def _scope_runtime_nodes(scope: AST) -> Iterable[AST]:
+    """Yield nodes evaluated in one scope without nested scope bodies."""
+    pending = list(cast(Sequence[AST], getattr(scope, "body", ())))
+    while pending:
+        node = pending.pop()
+        yield node
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)):
+            continue
+        pending.extend(iter_child_nodes(node))
+
+
+def _attribute_is_unmodified(
+    name: str,
+    aliases: _SuppressContextAliases,
+    position: tuple[int, int],
+) -> bool:
+    """Return whether no lexical path may replace a resolved attribute."""
+    for index, scope in enumerate(aliases.scopes):
+        limit = (
+            position
+            if index == len(aliases.scopes) - 1
+            else _ALIAS_END_POSITION
+        )
+        if not _scope_attribute_is_unmodified(name, scope, limit):
+            return False
+    return True
+
+
+def _scope_attribute_is_unmodified(
+    name: str,
+    scope: AST,
+    limit: tuple[int, int],
+) -> bool:
+    """Return whether a scope has no prior mutation for an attribute."""
+    return not any(
+        _mutation_may_target(_attribute_mutation(node), name)
+        and _node_position(node) < limit
+        for node in _scope_runtime_nodes(scope)
+    )
+
+
+def _mutation_may_target(
+    mutation: _AttributeMutation | None,
+    name: str,
+) -> bool:
+    """Return whether one mutation may replace an attribute name."""
+    return mutation is not None and (
+        mutation.names is None or name in mutation.names
+    )
+
+
+def _attribute_mutation(node: AST) -> _AttributeMutation | None:
+    """Return attribute names mutated by one syntax node."""
+    if isinstance(node, Attribute) and not isinstance(node.ctx, Load):
+        return _AttributeMutation(
+            names=(
+                None if node.attr == "__dict__" else frozenset((node.attr,))
+            ),
+            owners=(node.value,),
+        )
+    if (
+        isinstance(node, Subscript)
+        and not isinstance(node.ctx, Load)
+        and _is_attribute_namespace(node.value)
+    ):
+        owner = _attribute_namespace_owner(node.value)
+        return _mutation_from_name(
+            node.slice,
+            owners=(owner,) if owner is not None else None,
+        )
+    if isinstance(node, Call):
+        return _call_attribute_mutation(node)
+    return None
+
+
+def _call_attribute_mutation(call: Call) -> _AttributeMutation | None:
+    """Return attribute names mutated by one recognized runtime call."""
+    if isinstance(call.func, Name) and call.func.id in {"delattr", "setattr"}:
+        return (
+            _mutation_from_name(call.args[1], owners=(call.args[0],))
+            if len(call.args) >= 2
+            else _AttributeMutation(names=None, owners=None)
+        )
+    if isinstance(call.func, Name) and call.func.id == "patch":
+        return (
+            _mutation_from_name(call.args[0], dotted=True, owners=None)
+            if call.args
+            else _AttributeMutation(names=None, owners=None)
+        )
+    if not isinstance(call.func, Attribute):
+        return None
+    method = call.func.attr
+    if method in {"__delattr__", "__setattr__"}:
+        object_method = (
+            isinstance(call.func.value, Name)
+            and call.func.value.id == "object"
+        )
+        index = 1 if object_method else 0
+        owner = (
+            call.args[0] if object_method and call.args else call.func.value
+        )
+        return (
+            _mutation_from_name(call.args[index], owners=(owner,))
+            if len(call.args) > index
+            else _AttributeMutation(names=None, owners=(owner,))
+        )
+    if method in {"delattr", "setattr"}:
+        if len(call.args) >= 3:
+            return _mutation_from_name(
+                call.args[1],
+                owners=(call.args[0],),
+            )
+        if len(call.args) >= 2 and isinstance(call.args[0], Constant):
+            return _mutation_from_name(
+                call.args[0],
+                dotted=True,
+                owners=None,
+            )
+        return (
+            _mutation_from_name(
+                call.args[1],
+                owners=(call.args[0],),
+            )
+            if len(call.args) >= 2
+            else _AttributeMutation(names=None, owners=None)
+        )
+    if method == "object":
+        return (
+            _mutation_from_name(
+                call.args[1],
+                owners=(call.args[0],),
+            )
+            if len(call.args) >= 2
+            else _AttributeMutation(names=None, owners=None)
+        )
+    if method == "multiple":
+        if any(keyword.arg is None for keyword in call.keywords):
+            return _AttributeMutation(names=None, owners=None)
+        return _AttributeMutation(
+            names=frozenset(
+                cast(str, keyword.arg) for keyword in call.keywords
+            ),
+            owners=(call.args[0],) if call.args else None,
+        )
+    if not _is_attribute_namespace(call.func.value):
+        return None
+    namespace_owner = _attribute_namespace_owner(call.func.value)
+    owners = (namespace_owner,) if namespace_owner is not None else None
+    if method in {"__delitem__", "__setitem__", "pop", "setdefault"}:
+        return (
+            _mutation_from_name(call.args[0], owners=owners)
+            if call.args
+            else _AttributeMutation(names=None, owners=owners)
+        )
+    if method in {"clear", "popitem"}:
+        return _AttributeMutation(names=None, owners=owners)
+    if method != "update":
+        return None
+    names = {
+        keyword.arg for keyword in call.keywords if keyword.arg is not None
+    }
+    if any(keyword.arg is None for keyword in call.keywords):
+        return _AttributeMutation(names=None, owners=owners)
+    for argument in call.args:
+        argument_names = _mapping_attribute_names(argument)
+        if argument_names is None:
+            return _AttributeMutation(names=None, owners=owners)
+        names.update(argument_names)
+    return _AttributeMutation(names=frozenset(names), owners=owners)
+
+
+def _mutation_from_name(
+    expression: AST,
+    dotted: bool = False,
+    owners: tuple[AST, ...] | None = None,
+) -> _AttributeMutation:
+    """Return an exact attribute name or a dynamic mutation target."""
+    if isinstance(expression, Constant) and isinstance(expression.value, str):
+        name = (
+            expression.value.rsplit(".", 1)[-1] if dotted else expression.value
+        )
+        return _AttributeMutation(names=frozenset((name,)), owners=owners)
+    return _AttributeMutation(names=None, owners=owners)
+
+
+def _mapping_attribute_names(expression: AST) -> frozenset[str] | None:
+    """Return exact string keys from a literal attribute mapping."""
+    if not isinstance(expression, AstDict):
+        return None
+    names: set[str] = set()
+    for key in expression.keys:
+        if (
+            key is None
+            or not isinstance(key, Constant)
+            or not isinstance(key.value, str)
+        ):
+            return None
+        names.add(key.value)
+    return frozenset(names)
+
+
+def _is_attribute_namespace(expression: AST) -> bool:
+    """Return whether an expression denotes an object's attribute mapping."""
+    if isinstance(expression, Attribute):
+        return expression.attr == "__dict__"
+    return isinstance(expression, Call) and (
+        isinstance(expression.func, Name)
+        and expression.func.id in {"globals", "locals", "vars"}
+        or isinstance(expression.func, Attribute)
+        and expression.func.attr in {"globals", "locals", "vars"}
+    )
+
+
+def _attribute_namespace_owner(expression: AST) -> AST | None:
+    """Return the object whose attribute mapping an expression denotes."""
+    if isinstance(expression, Attribute) and expression.attr == "__dict__":
+        return expression.value
+    if (
+        isinstance(expression, Call)
+        and isinstance(expression.func, Name)
+        and expression.func.id == "vars"
+        and len(expression.args) == 1
+    ):
+        return expression.args[0]
+    return None
+
+
+def _class_inherits_unmodified_unittest_attribute(
+    name: str,
+    aliases: _SuppressContextAliases,
+    position: tuple[int, int],
+) -> bool:
+    """Return whether a standard TestCase attribute is not overridden."""
+    if not _class_is_unittest_test_case(aliases):
+        return False
+    class_scope_index = aliases.class_scope_index
+    assert class_scope_index is not None
+    if any(
+        binding.name == name
+        for binding in _scope_alias_bindings(aliases.scopes[class_scope_index])
+    ):
+        return False
+    return _attribute_is_unmodified(name, aliases, position)
+
+
+def _resolve_alias_expression(
+    expression: AST,
+    aliases: _SuppressContextAliases,
+    position: tuple[int, int] | None = None,
+    maximum_scope_index: int | None = None,
+    visiting: frozenset[tuple[int, str, tuple[int, int]]] = frozenset(),
+    expand_sequences: bool = False,
+    include_class_scope: bool = False,
+) -> frozenset[_ResolvedAlias]:
+    """Resolve every possible module, callable, or exception alias."""
+    resolved_position = position or _node_position(expression)
+    scope_index = (
+        len(aliases.scopes) - 1
+        if maximum_scope_index is None
+        else maximum_scope_index
+    )
+    if isinstance(expression, Name):
+        return _resolve_alias_name(
+            expression.id,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            expand_sequences,
+            include_class_scope,
+        )
+    if isinstance(expression, NamedExpr):
+        return _resolve_alias_expression(
+            expression.value,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            expand_sequences,
+            include_class_scope,
+        )
+    if isinstance(expression, Attribute):
+        if (
+            isinstance(expression.value, Name)
+            and expression.value.id in aliases.instance_names
+            and aliases.class_scope_index is not None
+        ):
+            if not _attribute_is_unmodified(
+                expression.attr,
+                aliases,
+                resolved_position,
+            ):
+                return _unknown_aliases()
+            if (
+                expression.attr in _UNITTEST_CHECK_CONTEXT_NAMES
+                and _class_inherits_unmodified_unittest_attribute(
+                    expression.attr,
+                    aliases,
+                    resolved_position,
+                )
+            ):
+                return frozenset((_ResolvedAlias(kind=_ALIAS_CHECK_CONTEXT),))
+            if (
+                expression.attr in _UNITTEST_SAFE_CONTEXT_NAMES
+                and _class_inherits_unmodified_unittest_attribute(
+                    expression.attr,
+                    aliases,
+                    resolved_position,
+                )
+            ):
+                return frozenset((_ResolvedAlias(kind=_ALIAS_SAFE_CONTEXT),))
+            return _resolve_alias_name(
+                expression.attr,
+                aliases,
+                _ALIAS_END_POSITION,
+                aliases.class_scope_index,
+                visiting,
+                expand_sequences,
+                True,
+            )
+        owners = _resolve_alias_expression(
+            expression.value,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            expand_sequences,
+            include_class_scope,
+        )
+        resolved: set[_ResolvedAlias] = set()
+        attribute_unmodified = _attribute_is_unmodified(
+            expression.attr,
+            aliases,
+            resolved_position,
+        )
+        for owner in owners:
+            if not attribute_unmodified:
+                resolved.add(_ResolvedAlias(kind=_ALIAS_UNKNOWN))
+                continue
+            if (
+                owner.kind == _ALIAS_CONTEXTLIB
+                and expression.attr == "suppress"
+            ):
+                resolved.add(_ResolvedAlias(kind=_ALIAS_SUPPRESS))
+            elif (
+                owner.kind == _ALIAS_CONTEXTLIB
+                and expression.attr == "nullcontext"
+            ):
+                resolved.add(_ResolvedAlias(kind=_ALIAS_NULLCONTEXT))
+            elif (
+                owner.kind == _ALIAS_PYTEST
+                and expression.attr in _PYTEST_CHECK_CONTEXT_NAMES
+            ):
+                resolved.add(_ResolvedAlias(kind=_ALIAS_CHECK_CONTEXT))
+            elif (
+                owner.kind == _ALIAS_TEMPFILE
+                and expression.attr in _TEMPFILE_SAFE_CONTEXT_NAMES
+            ):
+                resolved.add(_ResolvedAlias(kind=_ALIAS_SAFE_CONTEXT))
+            elif (
+                owner.kind == _ALIAS_UNITTEST
+                and expression.attr in _UNITTEST_TEST_CASE_NAMES
+            ):
+                resolved.add(_ResolvedAlias(kind=_ALIAS_UNITTEST_TEST_CASE))
+            elif owner.kind == _ALIAS_UNITTEST and expression.attr == "mock":
+                resolved.add(_ResolvedAlias(kind=_ALIAS_UNITTEST_MOCK))
+            elif (
+                owner.kind == _ALIAS_UNITTEST_MOCK
+                and expression.attr == "patch"
+            ):
+                resolved.add(_ResolvedAlias(kind=_ALIAS_UNITTEST_PATCH))
+            elif owner.kind == _ALIAS_UNITTEST_PATCH and expression.attr in {
+                "dict",
+                "multiple",
+                "object",
+            }:
+                resolved.add(_ResolvedAlias(kind=_ALIAS_SAFE_CONTEXT))
+            elif (
+                owner.kind == _ALIAS_BUILTINS
+                and expression.attr in _KNOWN_BUILTIN_EXCEPTION_NAMES
+            ):
+                resolved.add(
+                    _ResolvedAlias(
+                        kind=_ALIAS_EXCEPTIONS,
+                        exception_names=frozenset((expression.attr,)),
+                    )
+                )
+            else:
+                resolved.add(_ResolvedAlias(kind=_ALIAS_UNKNOWN))
+        return frozenset(resolved)
+    if isinstance(expression, Starred):
+        return _resolve_alias_expression(
+            expression.value,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            True,
+            include_class_scope,
+        )
+    if isinstance(expression, IfExp):
+        if isinstance(expression.test, Constant):
+            branch = (
+                expression.body
+                if bool(expression.test.value)
+                else expression.orelse
+            )
+            return _resolve_alias_expression(
+                branch,
+                aliases,
+                resolved_position,
+                scope_index,
+                visiting,
+                expand_sequences,
+                include_class_scope,
+            )
+        return _resolve_alias_expression(
+            expression.body,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            expand_sequences,
+            include_class_scope,
+        ) | _resolve_alias_expression(
+            expression.orelse,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            expand_sequences,
+            include_class_scope,
+        )
+    if isinstance(expression, Subscript):
+        values = _iterable_alias_values(expression.value)
+        if (
+            values is not None
+            and isinstance(expression.slice, Constant)
+            and isinstance(expression.slice.value, int)
+        ):
+            try:
+                selected = values[expression.slice.value]
+            except IndexError:
+                return _unknown_aliases()
+            return _resolve_alias_expression(
+                selected,
+                aliases,
+                resolved_position,
+                scope_index,
+                visiting,
+                expand_sequences,
+                include_class_scope,
+            )
+        return _resolve_alias_expression(
+            expression.value,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            True,
+            include_class_scope,
+        )
+    if expand_sequences and isinstance(
+        expression,
+        (AstList, AstSet, AstTuple),
+    ):
+        return frozenset().union(
+            *(
+                _resolve_alias_expression(
+                    item,
+                    aliases,
+                    resolved_position,
+                    scope_index,
+                    visiting,
+                    True,
+                    include_class_scope,
+                )
+                for item in expression.elts
+            )
+        )
+    if (
+        expand_sequences
+        and isinstance(expression, BinOp)
+        and type(expression.op).__name__ == "Add"
+    ):
+        return _resolve_alias_expression(
+            expression.left,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            True,
+            include_class_scope,
+        ) | _resolve_alias_expression(
+            expression.right,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            True,
+            include_class_scope,
+        )
+    if expand_sequences and isinstance(
+        expression,
+        (GeneratorExp, ListComp, SetComp),
+    ):
+        if (
+            len(expression.generators) == 1
+            and isinstance(expression.generators[0].target, Name)
+            and isinstance(expression.elt, Name)
+            and expression.elt.id == expression.generators[0].target.id
+        ):
+            return _resolve_alias_expression(
+                expression.generators[0].iter,
+                aliases,
+                resolved_position,
+                scope_index,
+                visiting,
+                True,
+                include_class_scope,
+            )
+        values = _iterable_alias_values(expression) or (expression.elt,)
+        return frozenset().union(
+            *(
+                _resolve_alias_expression(
+                    value,
+                    aliases,
+                    resolved_position,
+                    scope_index,
+                    visiting,
+                    True,
+                    include_class_scope,
+                )
+                for value in values
+            )
+        )
+    if isinstance(expression, Call):
+        targets = _resolve_alias_expression(
+            expression.func,
+            aliases,
+            resolved_position,
+            scope_index,
+            visiting,
+            expand_sequences,
+            include_class_scope,
+        )
+        if targets and all(
+            target.kind
+            in {
+                _ALIAS_NULLCONTEXT,
+                _ALIAS_SAFE_CONTEXT,
+                _ALIAS_UNITTEST_PATCH,
+            }
+            for target in targets
+        ):
+            return frozenset(
+                (_ResolvedAlias(kind=_ALIAS_SAFE_CONTEXT_INSTANCE),)
+            )
+        return _unknown_aliases()
+    return _unknown_aliases()
+
+
+def _is_assertion_safe_context(
+    expression: AST,
+    aliases: _SuppressContextAliases,
+) -> bool:
+    """Return whether a context cannot hide an enclosed failed check."""
+    if not isinstance(expression, Call):
+        targets = _resolve_alias_expression(expression, aliases)
+        return bool(targets) and all(
+            target.kind == _ALIAS_SAFE_CONTEXT_INSTANCE for target in targets
+        )
+    targets = _resolve_alias_expression(expression.func, aliases)
+    if not targets:
+        return False
+    for target in targets:
+        if target.kind in {
+            _ALIAS_NULLCONTEXT,
+            _ALIAS_SAFE_CONTEXT,
+            _ALIAS_UNITTEST_PATCH,
+        }:
+            continue
+        if target.kind == _ALIAS_CHECK_CONTEXT:
+            if not expression.args:
+                return False
+            continue
+        if target.kind != _ALIAS_SUPPRESS:
+            return False
+        if expression.keywords or not all(
+            _is_proven_unrelated_exception(argument, aliases)
+            for argument in expression.args
+        ):
+            return False
+    return True
+
+
+def _is_proven_unrelated_exception(
+    expression: AST,
+    aliases: _SuppressContextAliases,
+) -> bool:
+    """Return whether an argument cannot match a failed assertion."""
+    resolved = _resolve_alias_expression(expression, aliases)
+    if not resolved:
+        return (
+            isinstance(expression, Starred)
+            and _iterable_alias_values(expression.value) == ()
+        )
+    return all(
+        value.kind == _ALIAS_EXCEPTIONS
+        and bool(value.exception_names)
+        and not value.exception_names & _CHECK_FAILURE_EXCEPTION_NAMES
+        for value in resolved
+    )
+
+
+def _is_recognized_check_context(
+    expression: AST,
+    aliases: _SuppressContextAliases,
+) -> bool:
+    """Return whether a context is always a real pytest/unittest check."""
+    if not isinstance(expression, Call) or not expression.args:
+        return False
+    targets = _resolve_alias_expression(expression.func, aliases)
+    return bool(targets) and all(
+        target.kind == _ALIAS_CHECK_CONTEXT for target in targets
+    )
+
+
+def _validate_prohibited_test_constructs(
+    tree: AST,
+    node_id: str,
+    module_tree: AST | None = None,
+) -> None:
+    aliases: dict[str, str] = {}
+    for statement in getattr(module_tree, "body", ()):
+        if not isinstance(statement, ImportFrom):
+            continue
+        for item in statement.names:
+            imported = item.name.rsplit(".", 1)[-1]
+            if imported in _PROHIBITED_TEST_SYMBOLS:
+                aliases[item.asname or imported] = imported
     for node in walk(tree):
         prohibited: str | None = None
         if isinstance(node, ImportFrom):
@@ -4843,9 +7710,9 @@ def _validate_prohibited_test_constructs(tree: AST, node_id: str) -> None:
         elif (
             isinstance(node, Name)
             and isinstance(node.ctx, Load)
-            and node.id in _PROHIBITED_TEST_SYMBOLS
+            and (node.id in _PROHIBITED_TEST_SYMBOLS or node.id in aliases)
         ):
-            prohibited = node.id
+            prohibited = aliases.get(node.id, node.id)
         elif (
             isinstance(node, Attribute)
             and node.attr in _PROHIBITED_TEST_SYMBOLS
@@ -4894,43 +7761,69 @@ def _validate_prohibited_test_constructs(tree: AST, node_id: str) -> None:
 def _check_sequence(
     statements: Sequence[AST],
     initial_states: frozenset[bool],
+    aliases: _SuppressContextAliases,
+    checks_suppressed: bool = False,
 ) -> _CheckPaths:
     next_states = set(initial_states)
     return_states: set[bool] = set()
     break_states: set[bool] = set()
     continue_states: set[bool] = set()
+    failed_check_states: set[bool] = set()
     for statement in statements:
         if not next_states:
             break
         statement_paths = _merge_check_paths(
-            _check_statement(statement, state) for state in next_states
+            _check_statement(
+                statement,
+                state,
+                aliases,
+                checks_suppressed,
+            )
+            for state in next_states
         )
         next_states = set(statement_paths.next_states)
         return_states.update(statement_paths.return_states)
         break_states.update(statement_paths.break_states)
         continue_states.update(statement_paths.continue_states)
+        failed_check_states.update(statement_paths.failed_check_states)
     return _CheckPaths(
         next_states=frozenset(next_states),
         return_states=frozenset(return_states),
         break_states=frozenset(break_states),
         continue_states=frozenset(continue_states),
+        failed_check_states=frozenset(failed_check_states),
     )
 
 
-def _check_statement(statement: AST, checked: bool) -> _CheckPaths:
+def _check_statement(
+    statement: AST,
+    checked: bool,
+    aliases: _SuppressContextAliases,
+    checks_suppressed: bool,
+) -> _CheckPaths:
     if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
         return _CheckPaths(next_states=frozenset({checked}))
     if isinstance(statement, Assert):
+        if checks_suppressed:
+            return _CheckPaths(next_states=frozenset({checked}))
         if isinstance(statement.test, Constant):
             if bool(statement.test.value):
                 return _CheckPaths(next_states=frozenset({checked}))
             return _CheckPaths()
-        state = checked or _is_check(statement)
-        return _CheckPaths(next_states=frozenset({state}))
+        meaningful = _is_check(statement)
+        state = checked or meaningful
+        return _CheckPaths(
+            next_states=frozenset({state}),
+            failed_check_states=(
+                frozenset({checked}) if meaningful else frozenset()
+            ),
+        )
     if isinstance(statement, Return):
         return _CheckPaths(return_states=frozenset({checked}))
     if isinstance(statement, Raise):
-        return _CheckPaths()
+        if checks_suppressed:
+            return _CheckPaths(next_states=frozenset({checked}))
+        return _CheckPaths(failed_check_states=frozenset({checked}))
     if isinstance(statement, Break):
         return _CheckPaths(break_states=frozenset({checked}))
     if isinstance(statement, Continue):
@@ -4948,49 +7841,118 @@ def _check_statement(statement: AST, checked: bool) -> _CheckPaths:
         else:
             branches = (statement.body, statement.orelse)
         return _merge_check_paths(
-            _check_sequence(branch, frozenset({checked}))
+            _check_sequence(
+                branch,
+                frozenset({checked}),
+                aliases,
+                checks_suppressed,
+            )
             for branch in branches
         )
     if isinstance(statement, (For, AsyncFor)):
-        body = _check_sequence(statement.body, frozenset({checked}))
+        body = _check_sequence(
+            statement.body,
+            frozenset({checked}),
+            aliases,
+            checks_suppressed,
+        )
         natural_states = body.next_states | body.continue_states
         if not _statically_nonempty_iter(statement.iter):
             natural_states |= frozenset({checked})
-        orelse = _check_sequence(statement.orelse, natural_states)
+        orelse = _check_sequence(
+            statement.orelse,
+            natural_states,
+            aliases,
+            checks_suppressed,
+        )
         return _CheckPaths(
             next_states=orelse.next_states | body.break_states,
             return_states=body.return_states | orelse.return_states,
             break_states=orelse.break_states,
             continue_states=orelse.continue_states,
+            failed_check_states=(
+                body.failed_check_states | orelse.failed_check_states
+            ),
         )
     if isinstance(statement, While):
         if isinstance(statement.test, Constant) and not bool(
             statement.test.value
         ):
-            return _check_sequence(statement.orelse, frozenset({checked}))
-        body = _check_sequence(statement.body, frozenset({checked}))
+            return _check_sequence(
+                statement.orelse,
+                frozenset({checked}),
+                aliases,
+                checks_suppressed,
+            )
+        body = _check_sequence(
+            statement.body,
+            frozenset({checked}),
+            aliases,
+            checks_suppressed,
+        )
         if isinstance(statement.test, Constant):
             natural_states = frozenset()
         else:
             natural_states = body.next_states | body.continue_states
             natural_states |= frozenset({checked})
-        orelse = _check_sequence(statement.orelse, natural_states)
+        orelse = _check_sequence(
+            statement.orelse,
+            natural_states,
+            aliases,
+            checks_suppressed,
+        )
         return _CheckPaths(
             next_states=orelse.next_states | body.break_states,
             return_states=body.return_states | orelse.return_states,
             break_states=orelse.break_states,
             continue_states=orelse.continue_states,
+            failed_check_states=(
+                body.failed_check_states | orelse.failed_check_states
+            ),
         )
     if isinstance(statement, (With, AsyncWith)):
-        state = checked or any(
-            _is_check(item.context_expr) for item in statement.items
+        suppressing = checks_suppressed or any(
+            not _is_assertion_safe_context(item.context_expr, aliases)
+            for item in statement.items
         )
-        return _check_sequence(statement.body, frozenset({state}))
+        recognized_check = not suppressing and any(
+            _is_recognized_check_context(item.context_expr, aliases)
+            for item in statement.items
+        )
+        body = _check_sequence(
+            statement.body,
+            frozenset({checked or recognized_check}),
+            aliases,
+            suppressing,
+        )
+        if not recognized_check:
+            return body
+        return _merge_check_paths(
+            (
+                body,
+                _CheckPaths(failed_check_states=frozenset({checked})),
+            )
+        )
     if isinstance(statement, Try):
-        body = _check_sequence(statement.body, frozenset({checked}))
-        normal = _check_sequence(statement.orelse, body.next_states)
+        body = _check_sequence(
+            statement.body,
+            frozenset({checked}),
+            aliases,
+            checks_suppressed,
+        )
+        normal = _check_sequence(
+            statement.orelse,
+            body.next_states,
+            aliases,
+            checks_suppressed,
+        )
         handlers = _merge_check_paths(
-            _check_sequence(handler.body, frozenset({checked}))
+            _check_sequence(
+                handler.body,
+                frozenset({checked}),
+                aliases,
+                checks_suppressed,
+            )
             for handler in statement.handlers
         )
         combined = _merge_check_paths(
@@ -5002,14 +7964,27 @@ def _check_statement(statement: AST, checked: bool) -> _CheckPaths:
                     continue_states=(
                         body.continue_states | normal.continue_states
                     ),
+                    failed_check_states=(
+                        body.failed_check_states | normal.failed_check_states
+                    ),
                 ),
                 handlers,
             )
         )
-        return _apply_finally(combined, statement.finalbody)
+        return _apply_finally(
+            combined,
+            statement.finalbody,
+            aliases,
+            checks_suppressed,
+        )
     if isinstance(statement, Match):
         paths = [
-            _check_sequence(case.body, frozenset({checked}))
+            _check_sequence(
+                case.body,
+                frozenset({checked}),
+                aliases,
+                checks_suppressed,
+            )
             for case in statement.cases
         ]
         if not any(
@@ -5020,8 +7995,13 @@ def _check_statement(statement: AST, checked: bool) -> _CheckPaths:
         ):
             paths.append(_CheckPaths(next_states=frozenset({checked})))
         return _merge_check_paths(paths)
-    state = checked or _statement_executes_check(statement)
-    return _CheckPaths(next_states=frozenset({state}))
+    meaningful = not checks_suppressed and _statement_executes_check(statement)
+    return _CheckPaths(
+        next_states=frozenset({checked or meaningful}),
+        failed_check_states=(
+            frozenset({checked}) if meaningful else frozenset()
+        ),
+    )
 
 
 def _statement_executes_check(statement: AST) -> bool:
@@ -5035,21 +8015,27 @@ def _merge_check_paths(paths: Iterable[_CheckPaths]) -> _CheckPaths:
     return_states: set[bool] = set()
     break_states: set[bool] = set()
     continue_states: set[bool] = set()
+    failed_check_states: set[bool] = set()
     for path in paths:
         next_states.update(path.next_states)
         return_states.update(path.return_states)
         break_states.update(path.break_states)
         continue_states.update(path.continue_states)
+        failed_check_states.update(path.failed_check_states)
     return _CheckPaths(
         next_states=frozenset(next_states),
         return_states=frozenset(return_states),
         break_states=frozenset(break_states),
         continue_states=frozenset(continue_states),
+        failed_check_states=frozenset(failed_check_states),
     )
 
 
 def _apply_finally(
-    paths: _CheckPaths, statements: Sequence[AST]
+    paths: _CheckPaths,
+    statements: Sequence[AST],
+    aliases: _SuppressContextAliases,
+    checks_suppressed: bool,
 ) -> _CheckPaths:
     if not statements:
         return paths
@@ -5059,17 +8045,25 @@ def _apply_finally(
         ("return", paths.return_states),
         ("break", paths.break_states),
         ("continue", paths.continue_states),
+        ("failed_check", paths.failed_check_states),
     ):
         for state in states:
-            final = _check_sequence(statements, frozenset({state}))
+            final = _check_sequence(
+                statements,
+                frozenset({state}),
+                aliases,
+                checks_suppressed,
+            )
             if outcome == "next":
                 preserved = _CheckPaths(next_states=final.next_states)
             elif outcome == "return":
                 preserved = _CheckPaths(return_states=final.next_states)
             elif outcome == "break":
                 preserved = _CheckPaths(break_states=final.next_states)
-            else:
+            elif outcome == "continue":
                 preserved = _CheckPaths(continue_states=final.next_states)
+            else:
+                preserved = _CheckPaths(failed_check_states=final.next_states)
             transformed.extend(
                 (
                     preserved,
@@ -5077,6 +8071,7 @@ def _apply_finally(
                         return_states=final.return_states,
                         break_states=final.break_states,
                         continue_states=final.continue_states,
+                        failed_check_states=final.failed_check_states,
                     ),
                 )
             )
@@ -5106,6 +8101,14 @@ def _same_expression(left: AST, right: AST) -> bool:
 
 
 def _statically_nonempty_iter(expression: AST) -> bool:
+    if (
+        isinstance(expression, Call)
+        and isinstance(expression.func, Name)
+        and expression.func.id in {"enumerate", "iter", "reversed"}
+        and len(expression.args) == 1
+        and not expression.keywords
+    ):
+        return _statically_nonempty_iter(expression.args[0])
     if isinstance(expression, (AstList, AstSet, AstTuple)):
         return bool(expression.elts)
     if isinstance(expression, AstDict):
@@ -5276,6 +8279,11 @@ def _parse_args() -> Namespace:
         "--manifest", type=Path, default=default_manifest_path()
     )
     parser.add_argument("--repo-root", type=Path, default=repository_root())
+    parser.add_argument(
+        "--runtime-only",
+        action="store_true",
+        help="execute only the exact current behavioral node inventory",
+    )
     return parser.parse_args()
 
 
@@ -5283,16 +8291,32 @@ def main() -> int:
     """Run acceptance verification from the command line."""
     args = _parse_args()
     try:
-        manifest = verify_acceptance(
-            args.manifest,
-            repo_root=args.repo_root,
-            through_phase=args.through_phase,
-        )
+        if args.runtime_only:
+            if args.through_phase != 4:
+                raise AcceptanceVerificationError(
+                    "--runtime-only requires --through-phase 4"
+                )
+            manifest = verify_current_runtime(
+                args.manifest,
+                repo_root=args.repo_root,
+            )
+        else:
+            manifest = verify_acceptance(
+                args.manifest,
+                repo_root=args.repo_root,
+                through_phase=args.through_phase,
+            )
     except (AcceptanceVerificationError, TimeoutExpired) as exc:
         print(f"structured-input acceptance failed: {exc}", file=stderr)
         return 1
-    active_count = len(manifest.active_nodes(args.through_phase))
-    instance_count = len(manifest.active_pytest_instances(args.through_phase))
+    if args.runtime_only:
+        active_count = len(_current_runtime_node_ids(manifest.nodes))
+        instance_count = len(_current_runtime_instance_ids(manifest))
+    else:
+        active_count = len(manifest.active_nodes(args.through_phase))
+        instance_count = len(
+            manifest.active_pytest_instances(args.through_phase)
+        )
     print(
         "structured-input acceptance passed: "
         f"through_phase={args.through_phase} nodes={active_count}"

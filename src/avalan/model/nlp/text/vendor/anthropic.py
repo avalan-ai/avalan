@@ -10,6 +10,7 @@ from .....entities import (
     ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
+    normalize_tool_arguments,
 )
 from .....model.provider import ProviderFamily
 from .....model.stream import (
@@ -828,7 +829,7 @@ class AnthropicClient(TextGenerationVendor):
                 or diagnostic.requested_name
                 or "tool"
             ),
-            arguments=cast(Any, message.arguments or {}),
+            arguments=normalize_tool_arguments(message.arguments or {}),
         )
 
     @staticmethod

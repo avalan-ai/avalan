@@ -22,6 +22,7 @@ from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.model import TextGenerationResponse
+from avalan.model.capability import ProviderCapabilitySupport
 from avalan.model.manager import ModelManager
 from avalan.task.usage import (
     UsageSource,
@@ -61,6 +62,11 @@ class InvalidUsageResponses:
     usage_responses = "private invalid shape"
 
 
+class TupleUsageResponses:
+    def __init__(self, responses: tuple[object, ...]) -> None:
+        self.usage_responses = responses
+
+
 class JsonUsageResponseHelperTestCase(TestCase):
     def test_usage_responses_from_accepts_callable_list(self) -> None:
         first = object()
@@ -82,6 +88,22 @@ class JsonUsageResponseHelperTestCase(TestCase):
 
     def test_usage_responses_from_ignores_invalid_shape(self) -> None:
         self.assertEqual(_usage_responses_from(InvalidUsageResponses()), ())
+
+    def test_usage_responses_from_preserves_tuple_property(self) -> None:
+        first = object()
+        second = object()
+        output = JsonOrchestratorOutput(
+            '{"value": "ok"}',
+            usage=first,
+            usage_responses=(first, second),
+        )
+
+        self.assertEqual(
+            _usage_responses_from(TupleUsageResponses((first, second))),
+            (first, second),
+        )
+        self.assertIs(output.usage, first)
+        self.assertEqual(output.usage_responses, (first, second))
 
 
 class JsonOrchestratorInitTestCase(TestCase):
@@ -282,6 +304,8 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         engine.__enter__.return_value = engine
         engine.__exit__.return_value = False
         engine.model_id = "m"
+        engine.provider_capability_support = ProviderCapabilitySupport()
+        engine.tokenizer = None
         model_manager.load_engine.return_value = engine
 
         def output_fn(*args, **kwargs):
@@ -316,9 +340,12 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
 
         agent_mock.assert_awaited_once()
         context = agent_mock.await_args.args[0]
-        self.assertIsInstance(context.input, Message)
-        self.assertEqual(context.input.content, "hi")
-        self.assertEqual(context.input.role, MessageRole.USER)
+        self.assertIsInstance(context.input, list)
+        assert isinstance(context.input, list)
+        self.assertEqual(len(context.input), 1)
+        self.assertIsInstance(context.input[0], Message)
+        self.assertEqual(context.input[0].content, "hi")
+        self.assertEqual(context.input[0].role, MessageRole.USER)
         self.assertEqual(
             context.specification.role, Role(persona=["assistant"])
         )
@@ -372,6 +399,8 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         engine.__enter__.return_value = engine
         engine.__exit__.return_value = False
         engine.model_id = "m"
+        engine.provider_capability_support = ProviderCapabilitySupport()
+        engine.tokenizer = None
         model_manager.load_engine.return_value = engine
 
         response = TextGenerationResponse(
@@ -456,6 +485,8 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         engine.__enter__.return_value = engine
         engine.__exit__.return_value = False
         engine.model_id = "m"
+        engine.provider_capability_support = ProviderCapabilitySupport()
+        engine.tokenizer = None
         model_manager.load_engine.return_value = engine
 
         response = TextGenerationResponse(

@@ -83,9 +83,11 @@ class _TrackedDirectCanonicalResponse:
 class _SyncingOrchestrator:
     def __init__(self) -> None:
         self.synced = False
+        self.synced_response: object | None = None
 
-    async def sync_messages(self) -> None:
+    async def sync_messages(self, response: object) -> None:
         self.synced = True
+        self.synced_response = response
 
 
 class _LegacyRejectionResponse:
@@ -601,6 +603,8 @@ async def _assert_lossy_cli_projection(
 async def _assert_simple_mcp_projection(
     items: tuple[CanonicalStreamItem, ...],
 ) -> None:
+    response = _CanonicalResponse(items)
+    orchestrator = _SyncingOrchestrator()
     request_model = ChatCompletionRequest(
         model="test-model",
         messages=[ChatMessage(role=MessageRole.USER, content="hi")],
@@ -610,11 +614,11 @@ async def _assert_simple_mcp_projection(
     async for chunk in mcp_router._stream_mcp_response(
         request_id="req-simple",
         request_model=request_model,
-        response=_CanonicalResponse(items),
+        response=response,
         response_id=uuid4(),
         timestamp=1,
         progress_token="progress-simple",
-        orchestrator=_SyncingOrchestrator(),
+        orchestrator=orchestrator,
         logger=getLogger("test.protocol.mcp.simple"),
         resource_store=mcp_router.MCPResourceStore(),
         base_path="/mcp",
@@ -624,6 +628,7 @@ async def _assert_simple_mcp_projection(
             loads(part) for part in chunk.decode("utf-8").splitlines() if part
         )
 
+    assert orchestrator.synced_response is response
     progress = [
         _mcp_progress(payload)
         for payload in payloads
@@ -649,6 +654,7 @@ async def _collect_mcp_payloads(
     ),
     request_id: str,
 ) -> tuple[dict[str, object], ...]:
+    orchestrator = _SyncingOrchestrator()
     request_model = ChatCompletionRequest(
         model="test-model",
         messages=[ChatMessage(role=MessageRole.USER, content="hi")],
@@ -662,7 +668,7 @@ async def _collect_mcp_payloads(
         response_id=uuid4(),
         timestamp=1,
         progress_token=f"progress-{request_id}",
-        orchestrator=_SyncingOrchestrator(),
+        orchestrator=orchestrator,
         logger=getLogger(f"test.protocol.mcp.{request_id}"),
         resource_store=mcp_router.MCPResourceStore(),
         base_path="/mcp",
@@ -674,6 +680,7 @@ async def _collect_mcp_payloads(
             payload = loads(part)
             assert isinstance(payload, dict)
             payloads.append(cast(dict[str, object], payload))
+    assert orchestrator.synced_response is response
     return tuple(payloads)
 
 
@@ -767,6 +774,7 @@ async def _assert_mcp_projection(
         )
 
     assert orchestrator.synced is True
+    assert orchestrator.synced_response is response
     progress = [
         _mcp_progress(payload)
         for payload in payloads

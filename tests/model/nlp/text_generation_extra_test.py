@@ -613,7 +613,7 @@ class TokenizeInputHarmonyContentTestCase(TestCase):
         model._tokenizer = tokenizer
         model._log = MagicMock()
 
-        tool_call = MessageToolCall(id="c1", name="fn", arguments=[])
+        tool_call = MessageToolCall(id="c1", name="fn", arguments={})
         message = Message(
             role=MessageRole.ASSISTANT,
             content=(

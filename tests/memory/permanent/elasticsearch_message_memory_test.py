@@ -15,7 +15,12 @@ from uuid import UUID, uuid4  # noqa: E402
 
 import numpy as np  # noqa: E402
 
-from avalan.entities import EngineMessage, Message, MessageRole  # noqa: E402
+from avalan.entities import (  # noqa: E402
+    EngineMessage,
+    EngineMessageIdempotencyKey,
+    Message,
+    MessageRole,
+)
 from avalan.memory.partitioner.text import TextPartition  # noqa: E402
 from avalan.memory.permanent import VectorFunction  # noqa: E402
 from avalan.memory.permanent.elasticsearch.message import (  # noqa: E402
@@ -81,6 +86,47 @@ class ElasticsearchMessageMemoryTestCase(IsolatedAsyncioTestCase):
             )
         self.assertTrue(memory._client.index.called)
         self.assertEqual(memory._client.index_vector.call_count, 2)
+
+    async def test_keyed_append_uses_stable_document_and_vector_ids(self):
+        client = AsyncMock()
+        memory = ElasticsearchMessageMemory(
+            index="idx", client=client, logger=MagicMock()
+        )
+        session_id = uuid4()
+        memory._session_id = session_id
+        key = EngineMessageIdempotencyKey(
+            value=UUID("22222222-2222-2222-2222-222222222222")
+        )
+        engine_message = EngineMessage(
+            agent_id=uuid4(),
+            model_id="m",
+            message=Message(role=MessageRole.USER, content="hi"),
+            idempotency_key=key,
+        )
+
+        await memory.append_with_partitions(
+            engine_message,
+            partitions=[
+                TextPartition(
+                    data="hi",
+                    embeddings=np.array([0.1]),
+                    total_tokens=1,
+                )
+            ],
+        )
+
+        self.assertEqual(
+            client.index.await_args.kwargs["id"],
+            f"idx/{session_id}/{key.value}.json",
+        )
+        self.assertEqual(
+            client.index.await_args.kwargs["document"]["id"],
+            str(key.value),
+        )
+        self.assertEqual(
+            client.index_vector.await_args.kwargs["id"],
+            f"{key.value}:1",
+        )
 
     async def test_get_recent_messages(self):
         client = MagicMock()

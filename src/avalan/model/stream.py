@@ -2789,7 +2789,10 @@ def _validate_interaction_boundary(
 
     next_state = _INTERACTION_KIND_STATES[item.kind]
     if current is None:
-        if states:
+        if any(
+            state.state in {RequestState.CREATED, RequestState.PENDING}
+            for state in states.values()
+        ):
             raise StreamValidationError(
                 "multiple interaction requests in one stream"
             )
@@ -2832,7 +2835,7 @@ def _validate_interaction_terminal_outcome(
         if state.state is RequestState.CREATED
     )
     if outcome is StreamTerminalOutcome.INPUT_REQUIRED:
-        if len(states) != 1 or len(pending) != 1:
+        if len(pending) != 1 or created:
             raise StreamValidationError(
                 "input_required requires exactly one pending interaction"
             )

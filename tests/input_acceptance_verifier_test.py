@@ -1,6 +1,7 @@
 """Exercise the fail-closed structured-input acceptance verifier."""
 
 from copy import deepcopy
+from dataclasses import replace
 from hashlib import sha256
 from importlib.util import module_from_spec, spec_from_file_location
 from json import dumps, loads
@@ -690,7 +691,7 @@ def test_acceptance_rejects_invalid_inventory(
     )
     path = tmp_path / "manifest.json"
     _write(path, manifest)
-    assert _VERIFIER.load_manifest(path).current_phase == 3
+    assert _VERIFIER.load_manifest(path).current_phase == 4
 
     invalid = deepcopy(manifest)
     invalid["categories"].append("unit")
@@ -877,6 +878,632 @@ def test_acceptance_rejects_invalid_inventory(
         for requirement in synthetic_requirements["requirements"]
     )
     assert observed_reads
+
+
+def test_current_runtime_manifest_inventory_fails_closed() -> None:
+    """Reject missing, extra, moved, inactive, or public current nodes."""
+    manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
+    runtime_nodes = tuple(
+        node
+        for node in manifest.nodes
+        if node.node_id.split("::", 1)[0]
+        in _VERIFIER._EXPECTED_CURRENT_RUNTIME_FILES
+    )
+    assert runtime_nodes
+
+    missing = tuple(
+        node for node in manifest.nodes if node is not runtime_nodes[0]
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="current runtime acceptance inventory changed",
+    ):
+        _VERIFIER._validate_current_manifest_inventory(missing)
+
+    extra = replace(
+        runtime_nodes[0],
+        id="current-unreviewed-runtime",
+        node_id=(
+            runtime_nodes[0].node_id.split("::", 1)[0]
+            + "::test_unreviewed_runtime"
+        ),
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="current runtime acceptance inventory changed",
+    ):
+        _VERIFIER._validate_current_manifest_inventory(
+            (
+                *manifest.nodes,
+                extra,
+            )
+        )
+
+    moved = replace(
+        runtime_nodes[0],
+        node_id="tests/agent/unreviewed_semantic_test.py::test_runtime",
+    )
+    moved_nodes = tuple(
+        moved if node is runtime_nodes[0] else node for node in manifest.nodes
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="current runtime acceptance inventory changed",
+    ):
+        _VERIFIER._validate_current_manifest_inventory(moved_nodes)
+
+    for changed in (
+        replace(runtime_nodes[0], lifecycle="planned"),
+        replace(runtime_nodes[0], category="public_e2e"),
+    ):
+        changed_nodes = tuple(
+            changed if node is runtime_nodes[0] else node
+            for node in manifest.nodes
+        )
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="current runtime acceptance inventory changed",
+        ):
+            _VERIFIER._validate_current_manifest_inventory(changed_nodes)
+
+
+def test_current_runtime_file_inventory_fails_closed(tmp_path: Path) -> None:
+    """Reject a missing reviewed file before current collection."""
+    for relative in _VERIFIER._EXPECTED_CURRENT_RUNTIME_FILES:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
+    missing = tmp_path / _VERIFIER._EXPECTED_CURRENT_RUNTIME_FILES[0]
+    missing.unlink()
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="current runtime test-file inventory changed",
+    ):
+        _VERIFIER._validate_current_runtime_collection(manifest, tmp_path)
+
+
+def test_current_regression_classification_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Reject structural drift and any new test hidden as mechanical."""
+    manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
+    evidence = _read("baseline_evidence.json")
+    classification = evidence["current_regression_classification"]
+    _VERIFIER._validate_current_regression_classification(
+        classification, manifest, _ROOT
+    )
+
+    baseline, current, paths = _VERIFIER._current_changed_test_definitions(
+        _ROOT
+    )
+    support_baseline, support_current = (
+        _VERIFIER._current_changed_test_support_surfaces(_ROOT, paths)
+    )
+    changed_support = {
+        relative
+        for relative in support_baseline
+        if support_baseline[relative] != support_current[relative]
+    }
+    assert len(support_baseline) == 51
+    assert len(changed_support) == 43
+    assert len(support_baseline.keys() - changed_support) == 8
+    assert changed_support == set(
+        _VERIFIER._EXPECTED_CURRENT_CHANGED_SUPPORT_PATHS
+    )
+
+    support_source = (
+        "import pytest\n\nVALUE = 1\n\nclass Base:\n    pass\n\n"
+        "class TestCase(Base):\n    def helper(self):\n"
+        "        return VALUE\n\n    def test_case(self):\n"
+        "        assert self.helper() == 1\n"
+    )
+    mechanical_source = support_source.replace(
+        "        assert self.helper() == 1\n",
+        "        # formatting-only\n"
+        "        assert (\n            self.helper()\n        ) == 1\n",
+    )
+    decorated_test_source = support_source.replace(
+        "    def test_case(self):\n",
+        "    @pytest.mark.skip\n    def test_case(self):\n",
+    )
+    support_digest = _VERIFIER._test_support_surface_digest(
+        support_source,
+        "tests/example_test.py",
+    )
+    assert (
+        _VERIFIER._test_support_surface_digest(
+            mechanical_source,
+            "tests/example_test.py",
+        )
+        == support_digest
+    )
+    assert (
+        _VERIFIER._test_support_surface_digest(
+            decorated_test_source,
+            "tests/example_test.py",
+        )
+        == support_digest
+    )
+    support_mutations = (
+        support_source.replace(
+            "class TestCase(Base):",
+            "@pytest.mark.skip\nclass TestCase(Base):",
+        ),
+        support_source.replace("VALUE = 1", "pytestmark = pytest.mark.skip"),
+        support_source.replace(
+            "class Base:",
+            "@pytest.fixture\ndef shared_value():\n    return 1\n\n"
+            "class Base:",
+        ),
+        support_source.replace("return VALUE", "return VALUE + 1"),
+        support_source.replace("class TestCase(Base):", "class TestCase:"),
+    )
+    for changed_source in support_mutations:
+        assert (
+            _VERIFIER._test_support_surface_digest(
+                changed_source,
+                "tests/example_test.py",
+            )
+            != support_digest
+        )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="cannot inspect changed test definitions",
+    ):
+        _VERIFIER._test_support_surface_digest(
+            "def test_case(:\n    pass\n",
+            "tests/example_test.py",
+        )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="duplicate changed test definition",
+    ):
+        _VERIFIER._test_definition_digests(
+            "def test_case():\n    pass\n\ndef test_case():\n    pass\n",
+            "tests/example_test.py",
+        )
+    legacy_duplicate_path = "tests/memory/permanent/pgsql_test.py"
+    legacy_duplicate_source = (
+        "class PgsqlMessageMemoryTestCase:\n"
+        "    def test_search_messages(self):\n        assert value == 1\n"
+        "    def test_search_messages(self):\n        assert value == 2\n"
+    )
+    reversed_legacy_duplicate_source = (
+        legacy_duplicate_source.replace(
+            "assert value == 1",
+            "assert value == temporary",
+        )
+        .replace("assert value == 2", "assert value == 1")
+        .replace(
+            "assert value == temporary",
+            "assert value == 2",
+        )
+    )
+    legacy_duplicate_id = (
+        f"{legacy_duplicate_path}::PgsqlMessageMemoryTestCase::"
+        "test_search_messages"
+    )
+    ordered_duplicate_digest = _VERIFIER._test_definition_digests(
+        legacy_duplicate_source,
+        legacy_duplicate_path,
+    )[legacy_duplicate_id]
+    reversed_duplicate_digest = _VERIFIER._test_definition_digests(
+        reversed_legacy_duplicate_source,
+        legacy_duplicate_path,
+    )[legacy_duplicate_id]
+    assert ordered_duplicate_digest != reversed_duplicate_digest
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="duplicate changed test definition",
+    ):
+        _VERIFIER._test_definition_digests(
+            legacy_duplicate_source
+            + "    def test_search_messages(self):\n"
+            "        assert value == 3\n",
+            legacy_duplicate_path,
+        )
+    assert _VERIFIER._common_test_definition_order_is_preserved(
+        {"first": "1", "second": "2"},
+        {"first": "3", "second": "4"},
+    )
+    assert not _VERIFIER._common_test_definition_order_is_preserved(
+        {"first": "1", "second": "2"},
+        {"second": "4", "first": "3"},
+    )
+    structural_source = (
+        "if True:\n"
+        "    class TestConditional:\n"
+        "        try:\n"
+        "            def test_visible(self):\n"
+        "                assert True\n"
+        "        except Exception:\n"
+        "            pass\n\n"
+        "def helper():\n"
+        "    def test_local():\n"
+        "        assert False\n"
+        "    return test_local\n"
+    )
+    structural_definitions = _VERIFIER._test_definition_digests(
+        structural_source,
+        "tests/test_structural.py",
+    )
+    assert tuple(structural_definitions) == (
+        "tests/test_structural.py::TestConditional::test_visible",
+    )
+
+    changed_paths = (
+        "tests/combined_test.py",
+        "tests/test_changed_pattern.py",
+    )
+    for relative, source in (
+        (
+            changed_paths[0],
+            "def test_suffix_pattern():\n    assert True\n",
+        ),
+        (
+            changed_paths[1],
+            (
+                "import pytest\n\n"
+                "if True:\n"
+                "    @pytest.mark.parametrize(\n"
+                "        'value', [1], ids=['value::[edge]']\n"
+                "    )\n"
+                "    def test_conditional(value):\n"
+                "        assert value == 1\n\n"
+                "def helper():\n"
+                "    def test_local():\n"
+                "        assert False\n"
+                "    return test_local\n"
+            ),
+        ),
+    ):
+        changed_path = tmp_path / relative
+        changed_path.parent.mkdir(parents=True, exist_ok=True)
+        changed_path.write_text(source, encoding="utf-8")
+    collect_calls: list[tuple[str, ...]] = []
+    original_run_probe = _VERIFIER._run_probe
+
+    def collect_once(
+        driver: str,
+        sentinel: str,
+        node_ids: tuple[str, ...],
+        root: Path,
+    ) -> dict[str, object]:
+        collect_calls.append(node_ids)
+        result: dict[str, object] = original_run_probe(
+            driver,
+            sentinel,
+            node_ids,
+            root,
+        )
+        return result
+
+    with monkeypatch.context() as patch_context:
+        patch_context.setattr(_VERIFIER, "_git_returncode", lambda *_args: 0)
+        patch_context.setattr(
+            _VERIFIER,
+            "_git_lines",
+            lambda *_args: changed_paths,
+        )
+        patch_context.setattr(
+            _VERIFIER,
+            "_current_baseline_source",
+            lambda *_args: None,
+        )
+        patch_context.setattr(
+            _VERIFIER,
+            "_validate_frozen_duplicate_test_definitions",
+            lambda *_args: None,
+        )
+        patch_context.setattr(_VERIFIER, "_run_probe", collect_once)
+        synthetic_baseline, synthetic_current, synthetic_paths = (
+            _VERIFIER._current_changed_test_definitions(tmp_path)
+        )
+    assert not synthetic_baseline
+    assert synthetic_paths == frozenset(changed_paths)
+    assert set(synthetic_current) == {
+        "tests/combined_test.py::test_suffix_pattern",
+        "tests/test_changed_pattern.py::test_conditional",
+    }
+    assert collect_calls == [tuple(sorted(changed_paths))]
+
+    mismatch_path = "tests/test_collection_mismatch.py"
+    mismatch_file = tmp_path / mismatch_path
+    support_module = tmp_path / "imported_support.py"
+    support_module.write_text(
+        "def test_imported():\n    assert True\n",
+        encoding="utf-8",
+    )
+    mismatch_sources = (
+        "def template():\n    assert True\n\ntest_dynamic = template\n",
+        "from imported_support import test_imported\n",
+    )
+    for mismatch_source in mismatch_sources:
+        mismatch_file.write_text(mismatch_source, encoding="utf-8")
+        with monkeypatch.context() as patch_context:
+            patch_context.setattr(
+                _VERIFIER,
+                "_git_returncode",
+                lambda *_args: 0,
+            )
+            patch_context.setattr(
+                _VERIFIER,
+                "_git_lines",
+                lambda *_args: (mismatch_path,),
+            )
+            patch_context.setattr(
+                _VERIFIER,
+                "_current_baseline_source",
+                lambda *_args: None,
+            )
+            patch_context.setattr(
+                _VERIFIER,
+                "_validate_frozen_duplicate_test_definitions",
+                lambda *_args: None,
+            )
+            with pytest.raises(
+                _VERIFIER.AcceptanceVerificationError,
+                match="does not map to one static definition",
+            ):
+                _VERIFIER._current_changed_test_definitions(tmp_path)
+
+    support_path = "tests/test_new_support.py"
+    support_file = tmp_path / support_path
+    support_source = (
+        "VALUE = 1\n\n"
+        "if VALUE:\n"
+        "    def helper():\n"
+        "        return VALUE\n\n"
+        "    def test_case():\n"
+        "        assert helper() == 1\n"
+    )
+    support_file.write_text(support_source, encoding="utf-8")
+    with monkeypatch.context() as patch_context:
+        patch_context.setattr(
+            _VERIFIER,
+            "_current_baseline_source",
+            lambda *_args: None,
+        )
+        new_baseline, new_current = (
+            _VERIFIER._current_changed_test_support_surfaces(
+                tmp_path,
+                frozenset((support_path,)),
+            )
+        )
+        assert new_baseline == {
+            support_path: _VERIFIER._ABSENT_TEST_SUPPORT_SHA256
+        }
+        original_support_digest = new_current[support_path]
+        support_file.write_text(
+            support_source.replace("helper() == 1", "helper() == VALUE"),
+            encoding="utf-8",
+        )
+        _, test_body_current = (
+            _VERIFIER._current_changed_test_support_surfaces(
+                tmp_path,
+                frozenset((support_path,)),
+            )
+        )
+        assert test_body_current[support_path] == original_support_digest
+        for drifted_support in (
+            support_source.replace("return VALUE", "return VALUE + 1"),
+            support_source.replace("if VALUE:", "if not VALUE:"),
+        ):
+            support_file.write_text(drifted_support, encoding="utf-8")
+            _, drifted_current = (
+                _VERIFIER._current_changed_test_support_surfaces(
+                    tmp_path,
+                    frozenset((support_path,)),
+                )
+            )
+            assert drifted_current[support_path] != original_support_digest
+
+    with monkeypatch.context() as patch_context:
+        patch_context.setattr(
+            _VERIFIER,
+            "_git_returncode",
+            lambda *_args: 0,
+        )
+        patch_context.setattr(
+            _VERIFIER,
+            "_git_lines",
+            lambda *_args: ("tests/deleted_test.py",),
+        )
+        patch_context.setattr(
+            _VERIFIER,
+            "_current_baseline_source",
+            lambda *_args: "def test_deleted():\n    assert value\n",
+        )
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="baseline test file was deleted",
+        ):
+            _VERIFIER._current_changed_test_definitions(tmp_path)
+    duplicate_id, duplicate_record = next(
+        iter(_VERIFIER._EXPECTED_CURRENT_DUPLICATE_TEST_DEFINITIONS.items())
+    )
+    duplicate_baseline = {duplicate_id: duplicate_record[1]}
+    duplicate_current = {duplicate_id: duplicate_record[2]}
+    _VERIFIER._validate_frozen_duplicate_test_definitions(
+        duplicate_baseline,
+        duplicate_current,
+    )
+    duplicate_drifts: tuple[tuple[dict[str, str], dict[str, str]], ...] = (
+        ({}, duplicate_current),
+        (duplicate_baseline, {duplicate_id: "0" * 64}),
+    )
+    for drifted_duplicates in duplicate_drifts:
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="frozen duplicate test definition changed",
+        ):
+            _VERIFIER._validate_frozen_duplicate_test_definitions(
+                *drifted_duplicates
+            )
+
+    stale_support = deepcopy(classification)
+    stale_support["support_surfaces"][0]["current_ast_sha256"] = "0" * 64
+    stale_digest_value = {
+        "mechanical_nodes": stale_support["mechanical_nodes"],
+        "reviewed_nonsemantic_nodes": stale_support[
+            "reviewed_nonsemantic_nodes"
+        ],
+        "support_surfaces": stale_support["support_surfaces"],
+    }
+    stale_digest = _canonical_digest(stale_digest_value)
+    stale_support["catalog_sha256"] = stale_digest
+    with monkeypatch.context() as patch_context:
+        patch_context.setattr(
+            _VERIFIER,
+            "_EXPECTED_CURRENT_REGRESSION_SHA256",
+            stale_digest,
+        )
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="support surface differs from its exact reviewed file",
+        ):
+            _VERIFIER._validate_current_regression_classification(
+                stale_support,
+                manifest,
+                _ROOT,
+            )
+
+    support_variants: list[tuple[dict[str, Any], str]] = []
+    equal_support = deepcopy(classification)
+    equal_support["support_surfaces"][0]["current_ast_sha256"] = equal_support[
+        "support_surfaces"
+    ][0]["baseline_ast_sha256"]
+    support_variants.append(
+        (
+            equal_support,
+            "support surface differs from its exact reviewed file",
+        )
+    )
+    missing_support = deepcopy(classification)
+    missing_support["support_surfaces"].pop()
+    support_variants.append(
+        (
+            missing_support,
+            "support surfaces lack exact classification",
+        )
+    )
+    duplicate_support = deepcopy(classification)
+    duplicate_support["support_surfaces"].append(
+        deepcopy(duplicate_support["support_surfaces"][0])
+    )
+    support_variants.append(
+        (
+            duplicate_support,
+            "duplicate current support-surface path",
+        )
+    )
+    new_only_support = deepcopy(classification)
+    new_only_support["support_surfaces"][0]["path"] = "tests/new_only_test.py"
+    support_variants.append(
+        (
+            new_only_support,
+            "support surface differs from its exact reviewed file",
+        )
+    )
+    for support_variant, message in support_variants:
+        variant_digest_value = {
+            "mechanical_nodes": support_variant["mechanical_nodes"],
+            "reviewed_nonsemantic_nodes": support_variant[
+                "reviewed_nonsemantic_nodes"
+            ],
+            "support_surfaces": support_variant["support_surfaces"],
+        }
+        variant_digest = _canonical_digest(variant_digest_value)
+        support_variant["catalog_sha256"] = variant_digest
+        with monkeypatch.context() as patch_context:
+            patch_context.setattr(
+                _VERIFIER,
+                "_EXPECTED_CURRENT_REGRESSION_SHA256",
+                variant_digest,
+            )
+            patch_context.setattr(
+                _VERIFIER,
+                "_EXPECTED_CURRENT_SUPPORT_SURFACE_COUNT",
+                len(support_variant["support_surfaces"]),
+            )
+            with pytest.raises(
+                _VERIFIER.AcceptanceVerificationError,
+                match=message,
+            ):
+                _VERIFIER._validate_current_regression_classification(
+                    support_variant,
+                    manifest,
+                    _ROOT,
+                )
+
+    legacy = (
+        "tests/agent/additional_coverage_test.py::"
+        "EngineAgentCoverageTestCase::test_output_property"
+    )
+    drifted = {**current, legacy: "0" * 64}
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_current_changed_test_definitions",
+        lambda root: (baseline, drifted, paths),
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="legacy test-definition changes lack exact classification",
+    ):
+        _VERIFIER._validate_current_regression_classification(
+            classification, manifest, _ROOT
+        )
+
+    removed = dict(current)
+    removed.pop(legacy)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_current_changed_test_definitions",
+        lambda root: (baseline, removed, paths),
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="removed test definitions lack exact semantic replacement",
+    ):
+        _VERIFIER._validate_current_regression_classification(
+            classification, manifest, _ROOT
+        )
+
+    hidden = "tests/agent/unreviewed_semantic_test.py::test_hidden_behavior"
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_current_changed_test_definitions",
+        lambda root: (baseline, {**current, hidden: "0" * 64}, paths),
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="new test definitions lack semantic acceptance",
+    ):
+        _VERIFIER._validate_current_regression_classification(
+            classification, manifest, _ROOT
+        )
+
+    mechanical = deepcopy(classification)
+    mechanical["mechanical_nodes"][0]["node_id"] = hidden
+    digest_value = {
+        "mechanical_nodes": mechanical["mechanical_nodes"],
+        "reviewed_nonsemantic_nodes": mechanical["reviewed_nonsemantic_nodes"],
+        "support_surfaces": mechanical["support_surfaces"],
+    }
+    digest = _canonical_digest(digest_value)
+    mechanical["catalog_sha256"] = digest
+    monkeypatch.setattr(
+        _VERIFIER, "_EXPECTED_CURRENT_REGRESSION_SHA256", digest
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="mechanical regression differs",
+    ):
+        _VERIFIER._validate_current_regression_classification(
+            mechanical, manifest, _ROOT
+        )
 
 
 def test_production_capability_history_is_atomic() -> None:
@@ -1069,12 +1696,21 @@ def test_evidence_state_and_review_history_fail_closed(
 ) -> None:
     """Reject premature gate claims and non-append-only review changes."""
     evidence = _read("baseline_evidence.json")
+    inventory = evidence["inventory"]
+    assert isinstance(inventory, dict)
+    active_acceptance_nodes = inventory["active_acceptance_nodes"]
+    active_pytest_instances = inventory["active_pytest_instances"]
+    type_manifest = _read("type_contract_manifest.json")
+    active_type_fixtures = sum(
+        fixture["lifecycle"] == "active"
+        for fixture in type_manifest["fixtures"]
+    )
     complete_fixture = deepcopy(evidence["quality_gate"])
     _VERIFIER._validate_quality_gate_evidence(
         complete_fixture,
-        active_acceptance_nodes=99,
-        active_pytest_instances=187,
-        active_type_fixtures=18,
+        active_acceptance_nodes=active_acceptance_nodes,
+        active_pytest_instances=active_pytest_instances,
+        active_type_fixtures=active_type_fixtures,
         root=_ROOT,
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
@@ -1092,13 +1728,30 @@ def test_evidence_state_and_review_history_fail_closed(
     }
     _VERIFIER._validate_quality_gate_evidence(
         pending,
-        active_acceptance_nodes=99,
-        active_pytest_instances=187,
-        active_type_fixtures=18,
+        active_acceptance_nodes=active_acceptance_nodes,
+        active_pytest_instances=active_pytest_instances,
+        active_type_fixtures=active_type_fixtures,
         root=_ROOT,
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
     )
+    incomplete_focused_command = deepcopy(pending)
+    incomplete_focused_command["required_commands"][
+        -1
+    ] = "poetry run pytest --verbose -s tests/agent/execution_test.py"
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="exact current focused pytest command",
+    ):
+        _VERIFIER._validate_quality_gate_evidence(
+            incomplete_focused_command,
+            active_acceptance_nodes=active_acceptance_nodes,
+            active_pytest_instances=active_pytest_instances,
+            active_type_fixtures=active_type_fixtures,
+            root=_ROOT,
+            preserved_untracked=("docs/examples/skills/code/",),
+            evidence_payload=evidence,
+        )
     premature = deepcopy(pending)
     premature["results"] = [{"command": "not executed"}]
     with pytest.raises(
@@ -1107,9 +1760,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             premature,
-            active_acceptance_nodes=99,
-            active_pytest_instances=187,
-            active_type_fixtures=18,
+            active_acceptance_nodes=active_acceptance_nodes,
+            active_pytest_instances=active_pytest_instances,
+            active_type_fixtures=active_type_fixtures,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1150,10 +1803,14 @@ def test_evidence_state_and_review_history_fail_closed(
         {
             "command": commands[3],
             "exit_code": 0,
-            "active_nodes": 99,
-            "active_instances": 187,
+            "active_nodes": active_acceptance_nodes,
+            "active_instances": active_pytest_instances,
         },
-        {"command": commands[4], "exit_code": 0, "active_fixtures": 18},
+        {
+            "command": commands[4],
+            "exit_code": 0,
+            "active_fixtures": active_type_fixtures,
+        },
         {
             "command": commands[5],
             "exit_code": 0,
@@ -1164,13 +1821,8 @@ def test_evidence_state_and_review_history_fail_closed(
         {
             "command": focused,
             "exit_code": 0,
-            "passed": 1,
-            "skipped": 0,
-            "subtests_passed": 1,
-            "seconds": 1.0,
-            "deselected": 0,
-            "xfail": 0,
-            "xpass": 0,
+            "active_nodes": _VERIFIER._EXPECTED_CURRENT_RUNTIME_NODE_COUNT,
+            "active_instances": _VERIFIER._EXPECTED_CURRENT_RUNTIME_NODE_COUNT,
         },
     ]
     tree_binding = {
@@ -1230,13 +1882,28 @@ def test_evidence_state_and_review_history_fail_closed(
     )
     _VERIFIER._validate_quality_gate_evidence(
         complete,
-        active_acceptance_nodes=99,
-        active_pytest_instances=187,
-        active_type_fixtures=18,
+        active_acceptance_nodes=active_acceptance_nodes,
+        active_pytest_instances=active_pytest_instances,
+        active_type_fixtures=active_type_fixtures,
         root=_ROOT,
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
     )
+    stale_focused = deepcopy(complete)
+    stale_focused["results"][-1]["active_instances"] -= 1
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="current focused result",
+    ):
+        _VERIFIER._validate_quality_gate_evidence(
+            stale_focused,
+            active_acceptance_nodes=active_acceptance_nodes,
+            active_pytest_instances=active_pytest_instances,
+            active_type_fixtures=active_type_fixtures,
+            root=_ROOT,
+            preserved_untracked=("docs/examples/skills/code/",),
+            evidence_payload=evidence,
+        )
     missing_report = {
         "meta": {"format": 3},
         "files": {
@@ -1284,9 +1951,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             complete,
-            active_acceptance_nodes=99,
-            active_pytest_instances=187,
-            active_type_fixtures=18,
+            active_acceptance_nodes=active_acceptance_nodes,
+            active_pytest_instances=active_pytest_instances,
+            active_type_fixtures=active_type_fixtures,
             root=tmp_path,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1304,9 +1971,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_tree,
-            active_acceptance_nodes=99,
-            active_pytest_instances=187,
-            active_type_fixtures=18,
+            active_acceptance_nodes=active_acceptance_nodes,
+            active_pytest_instances=active_pytest_instances,
+            active_type_fixtures=active_type_fixtures,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1319,9 +1986,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_report,
-            active_acceptance_nodes=99,
-            active_pytest_instances=187,
-            active_type_fixtures=18,
+            active_acceptance_nodes=active_acceptance_nodes,
+            active_pytest_instances=active_pytest_instances,
+            active_type_fixtures=active_type_fixtures,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1334,9 +2001,9 @@ def test_evidence_state_and_review_history_fail_closed(
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_coverage,
-            active_acceptance_nodes=99,
-            active_pytest_instances=187,
-            active_type_fixtures=18,
+            active_acceptance_nodes=active_acceptance_nodes,
+            active_pytest_instances=active_pytest_instances,
+            active_type_fixtures=active_type_fixtures,
             root=_ROOT,
             preserved_untracked=("docs/examples/skills/code/",),
             evidence_payload=evidence,
@@ -1349,14 +2016,15 @@ def test_evidence_state_and_review_history_fail_closed(
         evidence["review_history_phase0_sha256"],
         evidence["review_history_phase1_sha256"],
         evidence["review_history_phase2_sha256"],
-        3,
+        evidence["review_history_prior_sha256"],
+        4,
         "/root",
     )
     quality_history = deepcopy(evidence["quality_history"])
     _VERIFIER._validate_quality_history(
         quality_history,
         evidence["quality_history_sha256"],
-        3,
+        4,
     )
     rewritten_quality = deepcopy(quality_history)
     rewritten_quality[0]["quality_gate_sha256"] = "0" * 64
@@ -1373,7 +2041,7 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_quality,
             rewritten_quality_digest,
-            3,
+            4,
         )
 
     rewritten_phase2_quality = deepcopy(quality_history)
@@ -1393,11 +2061,29 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_phase2_quality,
             rewritten_phase2_quality_digest,
-            3,
+            4,
+        )
+
+    rewritten_prior_quality = deepcopy(quality_history)
+    rewritten_prior_quality[2]["quality_gate_sha256"] = "2" * 64
+    rewritten_prior_quality_digest = _canonical_digest(rewritten_prior_quality)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_QUALITY_HISTORY_SHA256",
+        rewritten_prior_quality_digest,
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="lost its phase-3 record",
+    ):
+        _VERIFIER._validate_quality_history(
+            rewritten_prior_quality,
+            rewritten_prior_quality_digest,
+            4,
         )
 
     wrong_terminal_reviewer = deepcopy(history)
-    wrong_terminal_reviewer[9]["reviewer"] = "/root/acceptance_review"
+    wrong_terminal_reviewer[16]["reviewer"] = "/root/acceptance_review"
     wrong_terminal_reviewer_digest = _canonical_digest(wrong_terminal_reviewer)
     monkeypatch.setattr(
         _VERIFIER,
@@ -1414,7 +2100,8 @@ def test_evidence_state_and_review_history_fail_closed(
             evidence["review_history_phase0_sha256"],
             evidence["review_history_phase1_sha256"],
             evidence["review_history_phase2_sha256"],
-            3,
+            evidence["review_history_prior_sha256"],
+            4,
             "/root",
         )
     for index, message in (
@@ -1422,6 +2109,7 @@ def test_evidence_state_and_review_history_fail_closed(
         (3, "phase-1 review prefix digest mismatch"),
         (5, "phase-2 pending review prefix digest mismatch"),
         (7, "phase-2 review prefix digest mismatch"),
+        (9, "historical review prefix digest mismatch"),
     ):
         rewritten = deepcopy(history)
         rewritten[index]["evidence"] += " rewritten"
@@ -1441,7 +2129,8 @@ def test_evidence_state_and_review_history_fail_closed(
                 evidence["review_history_phase0_sha256"],
                 evidence["review_history_phase1_sha256"],
                 evidence["review_history_phase2_sha256"],
-                3,
+                evidence["review_history_prior_sha256"],
+                4,
                 "/root",
             )
 
@@ -1653,7 +2342,7 @@ def test_acceptance_cli_executes_exact_synthetic_node(
         node_ids: tuple[str, ...],
         root: Path,
     ) -> dict[str, object]:
-        del driver, root
+        del driver
         common: dict[str, object] = {
             "exit_code": 0,
             "deselected": [],
@@ -1662,10 +2351,21 @@ def test_acceptance_cli_executes_exact_synthetic_node(
             "probe_stderr": "",
         }
         if sentinel == _VERIFIER._COLLECT_SENTINEL:
+            collected_node_ids = node_ids
+            if all(node_id.endswith(".py") for node_id in node_ids):
+                collected_node_ids = tuple(
+                    definition
+                    for relative in node_ids
+                    for definition in _VERIFIER._test_definition_digests(
+                        (root / relative).read_text(encoding="utf-8"),
+                        relative,
+                    )
+                )
             return {
                 **common,
                 "items": [
-                    {"nodeid": node_id, "markers": []} for node_id in node_ids
+                    {"nodeid": node_id, "markers": []}
+                    for node_id in collected_node_ids
                 ],
             }
         assert sentinel == _VERIFIER._EXECUTE_SENTINEL
@@ -1784,7 +2484,10 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
         ]
         with pytest.raises(
             _VERIFIER.AcceptanceVerificationError,
-            match="acceptance nodes were not exactly collected",
+            match=(
+                "acceptance nodes were not exactly collected"
+                "|duplicate collected node ID"
+            ),
         ):
             _VERIFIER._verify_collection(
                 parameter_instances,
@@ -1890,6 +2593,60 @@ def test_acceptance_rejects_placeholder_and_execution_tricks(
             "def test_case():\n    try:\n        pass\n    except Exception:\n"
             "        assert len('x') == 1\n"
         ),
+        (
+            "def test_case():\n    try:\n"
+            "        assert len('x') == 2\n"
+            "    finally:\n        return\n"
+        ),
+        (
+            "def test_case():\n    for _ in (1,):\n        try:\n"
+            "            assert len('x') == 2\n"
+            "        finally:\n            break\n"
+        ),
+        (
+            "def test_case():\n    for _ in (1,):\n        try:\n"
+            "            assert len('x') == 2\n"
+            "        finally:\n            continue\n"
+        ),
+        (
+            "def test_case():\n    try:\n"
+            "        assert len('x') == 2\n"
+            "    except AssertionError:\n        pass\n"
+        ),
+        (
+            "def test_case():\n    try:\n"
+            "        assert len('x') == 2\n"
+            "    except Exception:\n        return\n"
+        ),
+        (
+            "def test_case():\n    try:\n"
+            "        assert len('x') == 2\n"
+            "    except BaseException:\n        pass\n"
+        ),
+        (
+            "def test_case():\n    try:\n        pass\n"
+            "    except RuntimeError:\n        raise\n"
+            "    else:\n        assert len('x') == 2\n"
+            "    finally:\n        return\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n        try:\n"
+            "            assert len('x') == 2\n"
+            "        finally:\n            return\n"
+            "    checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    try:\n        checked()\n"
+            "    finally:\n        return\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n        try:\n"
+            "            assert len('x') == 2\n"
+            "        except AssertionError:\n            pass\n"
+            "    checked()\n"
+        ),
         "def test_case():\n    value = object()\n    assert value == value\n",
         (
             "def test_case():\n    value = object()\n    assert value is not"
@@ -1962,14 +2719,1084 @@ def test_acceptance_rejects_placeholder_and_execution_tricks(
             "from builtins import compile as build\n\ndef test_case():\n"
             "    assert len('x') == 1\n    build('1', 'x', 'eval')\n"
         ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 1\n    value = object()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 1\n    False and checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 1\n    1 < 0 < checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 1\n    return\n    checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 1\n    checked()\n"
+        ),
+        (
+            "def checked():\n    assert len('x') == 1\n\n"
+            "def test_case():\n    checked()\n"
+        ),
+        (
+            "def checked():\n    assert len('x') == 1\n\n"
+            "def test_case():\n    callback = lambda: checked()\n"
+            "    callback()\n"
+        ),
+        (
+            "import unittest\n\ndef test_case():\n"
+            "    case = unittest.TestCase()\n"
+            "    callback = lambda: case.assertEqual(len('x'), 1)\n"
+            "    callback()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 1\n"
+            "    alias = checked\n    alias()\n"
+        ),
+        (
+            "def invoke(callback):\n    callback()\n\n"
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 1\n    invoke(checked)\n"
+        ),
+        (
+            "def checked():\n    assert len('x') == 1\n\n"
+            "def test_case():\n    alias = checked\n"
+            "    def rebind():\n        nonlocal alias\n"
+            "        alias = checked\n"
+            "    rebind()\n    alias()\n"
+        ),
+        (
+            "def checked():\n    assert len('x') == 1\n\n"
+            "def test_case():\n    globals()['alias'] = checked\n"
+            "    globals()['alias']()\n"
+        ),
+        (
+            "async def test_case():\n    async def checked():\n"
+            "        assert len('x') == 1\n    await checked()\n"
+        ),
+        (
+            "from asyncio import run as runner\n\ndef test_case():\n"
+            "    async def checked():\n"
+            "        assert len('x') == 1\n    runner(checked())\n"
+        ),
+        (
+            "def test_case():\n    values = ('x',)\n    return\n"
+            "    for value in values:\n        assert len(value) == 1\n"
+        ),
+        (
+            "def test_case():\n    values = ('x',)\n"
+            "    for value in values:\n        if value:\n"
+            "            break\n        assert len(value) == 1\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 1\n"
+            "    [checked() for _ in ()]\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    with suppress(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress as guard\n\ndef test_case():\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "def test_case():\n"
+            "    from contextlib import suppress as guard\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "import contextlib as guards\n\ndef test_case():\n"
+            "    with guards.suppress(Exception):\n"
+            "        with guards.suppress(AssertionError):\n"
+            "            assert len('x') == 2\n"
+        ),
+        (
+            "import contextlib\nimport pytest\n\ndef test_case():\n"
+            "    with contextlib.suppress(Exception):\n"
+            "        with pytest.raises(ValueError):\n"
+            "            int('x')\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    with suppress(AssertionError):\n"
+            "        checked()\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    guard = suppress\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "import contextlib\n\ndef test_case():\n"
+            "    guards = contextlib\n"
+            "    with guards.suppress(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "import contextlib\n\n"
+            "guard = contextlib.suppress\n\ndef test_case():\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    guard: object = suppress\n"
+            "    failure = AssertionError\n"
+            "    failures = (ValueError, failure)\n"
+            "    with guard(*failures):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    with suppress(BaseException):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    *rest, guard = (suppress,)\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    guard, *rest = (suppress,)\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    values = (suppress,)\n"
+            "    *rest, guard = values\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    guard = suppress\n"
+            "    if False:\n"
+            "        guard = nullcontext\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "guard = suppress\n"
+            "if False:\n"
+            "    guard = nullcontext\n\n"
+            "def test_case():\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    guard = suppress\n"
+            "    for guard in ():\n"
+            "        pass\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    guard = suppress\n"
+            "    False and (guard := nullcontext)\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import *\n\ndef test_case():\n"
+            "    with suppress(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def enabled():\n"
+            "    return True\n\ndef test_case():\n"
+            "    if enabled():\n"
+            "        guard = suppress\n"
+            "    else:\n"
+            "        guard = nullcontext\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    guard = suppress\n"
+            "    while False:\n"
+            "        guard = nullcontext\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    guard = suppress\n"
+            "    try:\n"
+            "        pass\n"
+            "    except RuntimeError:\n"
+            "        guard = nullcontext\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef enabled():\n"
+            "    return False\n\ndef test_case():\n"
+            "    guard = suppress\n"
+            "    if enabled():\n"
+            "        del guard\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    for guard in (suppress,):\n"
+            "        pass\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    with nullcontext(suppress) as guard:\n"
+            "        with guard(AssertionError):\n"
+            "            assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    errors = (error for error in (AssertionError,))\n"
+            "    with suppress(*errors):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    base = (AssertionError,)\n"
+            "    errors = (error for error in base)\n"
+            "    with suppress(*errors):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    errors = (ValueError,) + (AssertionError,)\n"
+            "    with suppress(*errors):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def enabled():\n"
+            "    return True\n\ndef test_case():\n"
+            "    guard = suppress if enabled() else nullcontext\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    guard = (nullcontext, suppress)[1]\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def choose(*values):\n"
+            "    return values[0]\n\ndef test_case():\n"
+            "    guard = choose(nullcontext, suppress)\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    guard = suppress\n"
+            "    [guard := nullcontext for _ in ()]\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    guard = suppress\n"
+            "    match object():\n"
+            "        case None:\n"
+            "            guard = nullcontext\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    with (guard := suppress)(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    match suppress:\n        case guard:\n            pass\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n    guard = suppress\n"
+            "    1 > 2 > (guard := nullcontext)\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 1\n"
+            "    checked = lambda: None\n    checked()\n"
+        ),
+        (
+            "async def test_case():\n    async def checked():\n"
+            "        assert len('x') == 1\n    checked()\n"
+        ),
+        (
+            "from .contextlib import nullcontext\n\n"
+            "def test_case():\n    with nullcontext():\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from .asyncio import run\n\n"
+            "def test_case():\n    async def checked():\n"
+            "        assert len('x') == 2\n    run(checked())\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    checked.__code__ = (lambda: None).__code__\n"
+            "    checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    alias = checked\n"
+            "    alias.__code__ = (lambda: None).__code__\n"
+            "    checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    first = checked\n    second = first\n"
+            "    second.__code__ = (lambda: None).__code__\n"
+            "    first()\n"
+        ),
+        (
+            "def choose(value):\n    return value\n\n"
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    alias = choose(checked)\n"
+            "    alias.__code__ = (lambda: None).__code__\n"
+            "    checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    first = second\n    second = first\n"
+            "    first.__code__ = (lambda: None).__code__\n"
+            "    checked()\n"
+        ),
+        (
+            "import asyncio\n\ndef test_case():\n"
+            "    async def checked():\n"
+            "        assert len('x') == 2\n"
+            "    asyncio.run.__code__ = (lambda _value: None).__code__\n"
+            "    asyncio.run(checked())\n"
+        ),
+        (
+            "import asyncio\n\ndef test_case():\n"
+            "    async def checked():\n"
+            "        assert len('x') == 2\n"
+            "    runner = asyncio.run\n"
+            "    runner.__code__ = (lambda _value: None).__code__\n"
+            "    asyncio.run(checked())\n"
+        ),
+        (
+            "from asyncio import run\n\ndef test_case():\n"
+            "    async def checked():\n"
+            "        assert len('x') == 2\n"
+            "    run.__code__ = (lambda _value: None).__code__\n"
+            "    run(checked())\n"
+        ),
+        (
+            "from asyncio import run\n\ndef test_case():\n"
+            "    async def checked():\n"
+            "        assert len('x') == 2\n"
+            "    first = run\n    second = first\n"
+            "    second.__code__ = (lambda _value: None).__code__\n"
+            "    run(checked())\n"
+        ),
+        (
+            "import asyncio\n\ndef test_case():\n"
+            "    def checked():\n        assert len('x') == 2\n"
+            "    asyncio.checked = checked\n"
+            "    asyncio.checked.__code__ = (lambda: None).__code__\n"
+            "    checked()\n"
+        ),
+        (
+            "import asyncio\n\ndef test_case():\n"
+            "    async def checked():\n"
+            "        assert len('x') == 2\n"
+            "    asyncio.runner = asyncio.run\n"
+            "    asyncio.runner.__code__ = "
+            "(lambda _value: None).__code__\n"
+            "    asyncio.run(checked())\n"
+        ),
+        (
+            "import asyncio\n\ndef test_case():\n"
+            "    def checked():\n        assert len('x') == 2\n"
+            "    asyncio.first = checked\n"
+            "    asyncio.second = asyncio.first\n"
+            "    asyncio.second.__defaults__ = ()\n"
+            "    checked()\n"
+        ),
+        (
+            "import asyncio\n\ndef enabled():\n    return True\n\n"
+            "def test_case():\n"
+            "    def checked():\n        assert len('x') == 2\n"
+            "    def unrelated():\n        return None\n"
+            "    asyncio.target = (checked if enabled() else unrelated)\n"
+            "    asyncio.target.__code__ = (lambda: None).__code__\n"
+            "    checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    mutate = setattr\n"
+            "    mutate(checked, '__code__', (lambda: None).__code__)\n"
+            "    checked()\n"
+        ),
+        (
+            "import builtins\n\ndef test_case():\n"
+            "    def checked():\n        assert len('x') == 2\n"
+            "    runtime = builtins\n    mutate = runtime.setattr\n"
+            "    mutate(checked, '__code__', (lambda: None).__code__)\n"
+            "    checked()\n"
+        ),
+        (
+            "import asyncio\n\ndef test_case():\n"
+            "    def checked():\n        assert len('x') == 2\n"
+            "    asyncio.mutate = setattr\n"
+            "    mutate = asyncio.mutate\n"
+            "    mutate(checked, '__code__', (lambda: None).__code__)\n"
+            "    checked()\n"
+        ),
+        (
+            "from builtins import setattr as replace\n\ndef test_case():\n"
+            "    def checked():\n        assert len('x') == 2\n"
+            "    first = replace\n    mutate = first\n"
+            "    mutate(checked, '__defaults__', ())\n"
+            "    checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    mutate = checked.__setattr__\n"
+            "    mutate('__code__', (lambda: None).__code__)\n"
+            "    checked()\n"
+        ),
+        (
+            "import asyncio\n\ndef test_case():\n"
+            "    async def checked():\n"
+            "        assert len('x') == 2\n"
+            "    mutate = asyncio.run.__setattr__\n"
+            "    mutate('__code__', (lambda _value: None).__code__)\n"
+            "    asyncio.run(checked())\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    mutate = object.__setattr__\n"
+            "    mutate(checked, '__code__', (lambda: None).__code__)\n"
+            "    checked()\n"
+        ),
+        (
+            "from builtins import object as root\n\ndef test_case():\n"
+            "    def checked():\n        assert len('x') == 2\n"
+            "    first = root.__setattr__\n    mutate = first\n"
+            "    mutate(checked, '__code__', (lambda: None).__code__)\n"
+            "    checked()\n"
+        ),
+        (
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    remove = delattr\n"
+            "    remove(checked, '__defaults__')\n"
+            "    checked()\n"
+        ),
+        (
+            "def mutate(*_args):\n    return None\n\n"
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    mutate(checked, 'metadata')\n"
+            "    checked()\n"
+        ),
+        (
+            "def mutate(*_args):\n    return None\n\n"
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    mutate('__kwdefaults__')\n"
+            "    checked()\n"
+        ),
+        (
+            "def mutate(*_args):\n    return None\n\n"
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    attribute = '__code__'\n    mutate(attribute)\n"
+            "    checked()\n"
+        ),
+        (
+            "def mutate(**_values):\n    return None\n\n"
+            "def test_case():\n    def checked():\n"
+            "        assert len('x') == 2\n"
+            "    mutate(__code__=(lambda: None).__code__)\n"
+            "    checked()\n"
+        ),
+        (
+            "def test_case():\n    values = ()\n"
+            "    for value in values:\n        assert len(value) == 1\n"
+            "    values = ('x',)\n"
+        ),
+        (
+            "def test_case():\n    values = ('x',)\n    values = ()\n"
+            "    for value in values:\n        assert len(value) == 1\n"
+        ),
+        (
+            "def test_case():\n    values = ['x']\n    values.clear()\n"
+            "    for value in values:\n        assert len(value) == 1\n"
+        ),
+        (
+            "import pytest\nfrom contextlib import suppress\n\n"
+            "def test_case():\n    pytest.raises = suppress\n"
+            "    with pytest.raises(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "import pytest\nfrom contextlib import suppress\n\n"
+            "def test_case():\n"
+            "    setattr(pytest, 'raises', suppress)\n"
+            "    with pytest.raises(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "import pytest\nfrom contextlib import suppress\n\n"
+            "def test_case():\n    name = 'raises'\n"
+            "    pytest.__dict__[name] = suppress\n"
+            "    with pytest.raises(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "import contextlib\n\ndef test_case():\n"
+            "    contextlib.__dict__.update("
+            "{'nullcontext': contextlib.suppress})\n"
+            "    with contextlib.nullcontext(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "import asyncio\n\ndef test_case():\n"
+            "    async def checked():\n"
+            "        assert len('x') == 2\n"
+            "    name = 'run'\n"
+            "    setattr(asyncio, name, lambda _coroutine: None)\n"
+            "    asyncio.run(checked())\n"
+        ),
+        (
+            "import asyncio\n"
+            "asyncio.__dict__['run'] = lambda _coroutine: None\n"
+            "from asyncio import run\n\ndef test_case():\n"
+            "    async def checked():\n"
+            "        assert len('x') == 2\n"
+            "    run(checked())\n"
+        ),
+        (
+            "from contextlib import suppress\n\nclass Guards:\n"
+            "    guard = staticmethod(suppress)\n\ndef test_case():\n"
+            "    with Guards.guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\nclass Guard(suppress):\n"
+            "    pass\n\ndef test_case():\n"
+            "    with Guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\nclass Guards:\n"
+            "    @property\n    def guard(self):\n        return suppress\n\n"
+            "def test_case():\n"
+            "    with Guards().guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n"
+            "from functools import partial\n\n"
+            "def test_case():\n"
+            "    guard = partial(suppress, AssertionError)\n"
+            "    with guard():\n        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    guard = lambda error: suppress(error)\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef factory(guard=suppress):\n"
+            "    return guard(AssertionError)\n\ndef test_case():\n"
+            "    with factory():\n        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n    guard = suppress or nullcontext\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    guard = {'active': suppress}['active']\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "import contextlib\n\ndef test_case():\n"
+            "    guard = getattr(contextlib, 'suppress')\n"
+            "    with guard(AssertionError):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    context = suppress(AssertionError)\n    with context:\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def enabled():\n    return True\n\ndef test_case():\n"
+            "    context = (suppress(AssertionError) if enabled() "
+            "else nullcontext())\n    with context:\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import nullcontext, suppress\n\n"
+            "def test_case():\n"
+            "    context = (nullcontext(), suppress(AssertionError))[1]\n"
+            "    with context:\n        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef factory():\n"
+            "    return suppress(AssertionError)\n\ndef test_case():\n"
+            "    with factory():\n        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef choose(value):\n"
+            "    return value\n\ndef test_case():\n"
+            "    failure = choose(AssertionError)\n"
+            "    with suppress(failure):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "from contextlib import suppress\n\ndef test_case():\n"
+            "    failures = [ValueError]\n"
+            "    failures.append(AssertionError)\n"
+            "    with suppress(*failures):\n"
+            "        assert len('x') == 2\n"
+        ),
+        (
+            "class Guard:\n    def __enter__(self):\n        return self\n"
+            "    def __exit__(self, *_args):\n        return True\n\n"
+            "def test_case():\n    with Guard():\n"
+            "        assert len('x') == 2\n"
+        ),
     )
     for source in invalid_sources:
         path.write_text(source, encoding="utf-8")
         with pytest.raises(_VERIFIER.AcceptanceVerificationError):
             _VERIFIER._validate_test_implementation(node, tmp_path)
     path.write_text(
+        "import contextlib\n\nclass TestCase:\n"
+        "    guards = contextlib\n"
+        "    guard = guards.suppress\n\n"
+        "    def test_case(self):\n"
+        "        with self.guard(AssertionError):\n"
+        "            assert len('x') == 2\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(_VERIFIER.AcceptanceVerificationError):
+        _VERIFIER._validate_test_implementation(
+            "tests/case_test.py::TestCase::test_case",
+            tmp_path,
+        )
+    for source in (
+        (
+            "class TestCase:\n"
+            "    def checked(self):\n"
+            "        assert len('x') == 1\n"
+            "    def test_case(self):\n"
+            "        self.checked()\n"
+        ),
+        (
+            "import unittest\nfrom contextlib import suppress\n\n"
+            "class TestCase(unittest.TestCase):\n"
+            "    assertRaises = suppress\n\n"
+            "    def test_case(self):\n"
+            "        with self.assertRaises(AssertionError):\n"
+            "            assert len('x') == 2\n"
+        ),
+        (
+            "import unittest\nfrom contextlib import suppress\n\n"
+            "class TestCase(unittest.TestCase):\n"
+            "    def test_case(self):\n"
+            "        self.assertRaises = suppress\n"
+            "        with self.assertRaises(AssertionError):\n"
+            "            assert len('x') == 2\n"
+        ),
+        (
+            "import unittest\nfrom contextlib import suppress\n\n"
+            "class Override:\n    assertRaises = suppress\n\n"
+            "class TestCase(Override, unittest.TestCase):\n"
+            "    def test_case(self):\n"
+            "        with self.assertRaises(AssertionError):\n"
+            "            assert len('x') == 2\n"
+        ),
+        (
+            "import unittest\nfrom contextlib import suppress\n\n"
+            "class Override:\n"
+            "    def subTest(self, **_kwargs):\n"
+            "        return suppress(AssertionError)\n\n"
+            "class TestCase(Override, unittest.TestCase):\n"
+            "    def test_case(self):\n"
+            "        with self.subTest():\n"
+            "            assert len('x') == 2\n"
+        ),
+        (
+            "import unittest\nfrom contextlib import suppress\n\n"
+            "class TestCase(unittest.TestCase):\n"
+            "    def test_case(self):\n"
+            "        self.__dict__['assertRaises'] = suppress\n"
+            "        with self.assertRaises(AssertionError):\n"
+            "            assert len('x') == 2\n"
+        ),
+        (
+            "import unittest\nfrom contextlib import suppress\n\n"
+            "class TestCase(unittest.TestCase):\n"
+            "    def test_case(self):\n"
+            "        self.__dict__.update("
+            "{'subTest': lambda **_kwargs: suppress(AssertionError)})\n"
+            "        with self.subTest():\n"
+            "            assert len('x') == 2\n"
+        ),
+        (
+            "class TestCase:\n"
+            "    def checked(self):\n"
+            "        assert len('x') == 1\n"
+            "    def test_case(self):\n"
+            "        name = 'checked'\n"
+            "        setattr(self, name, lambda: None)\n"
+            "        self.checked()\n"
+        ),
+        (
+            "class TestCase:\n"
+            "    def checked(self):\n"
+            "        assert len('x') == 1\n"
+            "    def test_case(self):\n"
+            "        self.__dict__['checked'] = lambda: None\n"
+            "        self.checked()\n"
+        ),
+        (
+            "import unittest\nfrom contextlib import suppress\n\n"
+            "class Override:\n    assertRaises = suppress\n\n"
+            "unittest.__dict__['TestCase'] = Override\n"
+            "from unittest import TestCase as Base\n\n"
+            "class TestCase(Base):\n"
+            "    def test_case(self):\n"
+            "        with self.assertRaises(AssertionError):\n"
+            "            assert len('x') == 2\n"
+        ),
+    ):
+        path.write_text(source, encoding="utf-8")
+        with pytest.raises(_VERIFIER.AcceptanceVerificationError):
+            _VERIFIER._validate_test_implementation(
+                "tests/case_test.py::TestCase::test_case",
+                tmp_path,
+            )
+    path.write_text(
         "def test_case():\n    value = len('contract')\n    assert value"
         " == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    def exercise():\n"
+        "        assert len('contract') == 8\n"
+        "        return 'verified'\n"
+        "    result = exercise()\n"
+        "    assert result == 'verified'\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    def exercise():\n"
+        "        assert len('contract') == 8\n"
+        "        return 'verified'\n"
+        "    alias = exercise\n"
+        "    result = alias()\n"
+        "    assert result == 'verified'\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    def exercise():\n"
+        "        assert len('contract') == 8\n"
+        "        return 'verified'\n"
+        "    first = exercise\n    second = first\n"
+        "    result = second()\n"
+        "    assert result == 'verified'\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    def exercise():\n"
+        "        assert len('contract') == 8\n"
+        "        return 'verified'\n"
+        "    alias = exercise\n"
+        "    result = alias()\n"
+        "    alias.__code__ = (lambda: None).__code__\n"
+        "    assert result == 'verified'\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    cleaned = []\n    try:\n"
+        "        assert len('contract') == 8\n"
+        "    finally:\n        cleaned.append(True)\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    cleaned = []\n    def checked():\n"
+        "        try:\n            assert len('contract') == 8\n"
+        "        finally:\n            cleaned.append(True)\n"
+        "    checked()\n"
+        "    assert cleaned == [True]\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    cleaned = []\n    try:\n"
+        "        assert len('contract') == 8\n"
+        "    except AssertionError:\n        raise\n"
+        "    finally:\n        cleaned.append(True)\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    values = ('contract',)\n"
+        "    for value in values:\n        assert len(value) == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    values = ['contract']\n"
+        "    values.append('second')\n"
+        "    for value in values:\n        assert len(value) > 0\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import nullcontext\n\ndef test_case():\n"
+        "    with nullcontext():\n"
+        "        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import nullcontext, suppress\n\n"
+        "guard = suppress\n"
+        "guard = nullcontext\n\ndef test_case():\n"
+        "    with guard():\n"
+        "        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import nullcontext, suppress\n\n"
+        "def test_case():\n"
+        "    guard = nullcontext\n"
+        "    if False:\n"
+        "        guard = suppress\n"
+        "    with guard():\n"
+        "        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import nullcontext, suppress\n\n"
+        "def test_case():\n"
+        "    guard = (suppress, nullcontext)[1]\n"
+        "    with guard():\n"
+        "        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import suppress\n\ndef test_case():\n"
+        "    with suppress(ValueError):\n"
+        "        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import nullcontext, suppress\n\n"
+        "def test_case():\n"
+        "    guard = suppress\n"
+        "    guard = nullcontext\n"
+        "    with guard():\n"
+        "        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import suppress\n\ndef test_case():\n"
+        "    failure = ValueError\n"
+        "    failures = (failure,)\n"
+        "    with suppress(*failures):\n"
+        "        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import suppress\n\ndef test_case():\n"
+        "    with suppress(AssertionError):\n"
+        "        assert len('contract') == 7\n"
+        "    assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "import pytest\n\ndef test_case():\n"
+        "    with pytest.raises(ValueError):\n        int('x')\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from pytest import raises as check\n\ndef test_case():\n"
+        "    with check(ValueError):\n        int('x')\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "import unittest\n\nclass TestCase(unittest.TestCase):\n"
+        "    def test_case(self):\n"
+        "        with self.assertRaises(ValueError):\n"
+        "            int('x')\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(
+        "tests/case_test.py::TestCase::test_case",
+        tmp_path,
+    )
+    for source in (
+        (
+            "import unittest\n\n"
+            "class TestCase(unittest.IsolatedAsyncioTestCase):\n"
+            "    async def test_case(self):\n"
+            "        with self.subTest(label='direct'):\n"
+            "            assert len('contract') == 8\n"
+        ),
+        (
+            "import unittest\nfrom contextlib import suppress\n\n"
+            "class Override:\n    assertRaises = suppress\n\n"
+            "class TestCase(unittest.TestCase, Override):\n"
+            "    def test_case(self):\n"
+            "        with self.assertRaises(ValueError):\n"
+            "            int('x')\n"
+        ),
+        (
+            "import unittest\nfrom contextlib import suppress\n\n"
+            "class Override:\n"
+            "    def subTest(self, **_kwargs):\n"
+            "        return suppress(AssertionError)\n\n"
+            "class TestCase(unittest.TestCase, Override):\n"
+            "    def test_case(self):\n"
+            "        self.__dict__['unrelated'] = suppress\n"
+            "        with self.subTest(label='safe-order'):\n"
+            "            assert len('contract') == 8\n"
+        ),
+    ):
+        path.write_text(source, encoding="utf-8")
+        _VERIFIER._validate_test_implementation(
+            "tests/case_test.py::TestCase::test_case",
+            tmp_path,
+        )
+    path.write_text(
+        "from tempfile import TemporaryDirectory\n"
+        "from unittest.mock import patch\n\ndef test_case():\n"
+        "    with TemporaryDirectory() as directory, patch.dict({}, {}):\n"
+        "        with open(f'{directory}/value', 'w') as stream:\n"
+        "            stream.write('value')\n"
+        "        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import nullcontext\n\ndef test_case():\n"
+        "    with (guard := nullcontext)():\n"
+        "        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import nullcontext\n\ndef test_case():\n"
+        "    match nullcontext:\n        case guard:\n            pass\n"
+        "    with guard():\n        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from contextlib import nullcontext, suppress\n\n"
+        "def test_case():\n    guard = suppress\n"
+        "    None is (guard := nullcontext) is None\n"
+        "    with guard():\n        assert len('contract') == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "async def test_case():\n    async def exercise():\n"
+        "        assert len('contract') == 8\n"
+        "        return 'verified'\n"
+        "    result = await exercise()\n"
+        "    assert result == 'verified'\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from asyncio import run\n\ndef test_case():\n"
+        "    async def exercise():\n"
+        "        assert len('contract') == 8\n"
+        "        return 'verified'\n"
+        "    result = run(exercise())\n"
+        "    assert result == 'verified'\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "class Guard:\n    def __enter__(self):\n        return self\n"
+        "    def __exit__(self, *_args):\n        return True\n\n"
+        "def test_case():\n    with Guard():\n        pass\n"
+        "    assert len('contract') == 8\n",
         encoding="utf-8",
     )
     _VERIFIER._validate_test_implementation(node, tmp_path)

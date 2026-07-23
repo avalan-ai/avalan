@@ -2,6 +2,7 @@ from asyncio import (
     CancelledError,
     Future,
     create_task,
+    current_task,
     get_running_loop,
     sleep,
     wait_for,
@@ -4918,7 +4919,11 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             tool=tool,
             enable_tool_parsing=False,
         )
-        checker = AsyncMock(side_effect=CancelledError())
+
+        async def checker() -> None:
+            if current_task() is orchestrated._pending_tool_batch_task:
+                raise CancelledError()
+
         orchestrated.set_cancellation_checker(checker)
         iterator = orchestrated.__aiter__()
 
@@ -11496,7 +11501,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         task = create_task(complete_batch())
         self.assertEqual(await task, [outcome])
         resp._pending_tool_batch_task = task
-        resp._consume_pending_tool_batch(task)
+        await resp._consume_pending_tool_batch(task)
 
         self.assertEqual(cast(list[object], resp._call_history), [result])
 
@@ -12579,7 +12584,7 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
         )
 
         parent = resp._context
-        child = resp._make_child_context(
+        child = await resp._make_child_context(
             Message(role=MessageRole.USER, content="hello")
         )
 

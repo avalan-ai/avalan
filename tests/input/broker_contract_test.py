@@ -41,6 +41,7 @@ from avalan.interaction import (
     InputRequestId,
     InputResumer,
     InputResumptionNotification,
+    InputUnavailableResult,
     InteractionActor,
     InteractionAuthorizationDecision,
     InteractionAuthorizationTarget,
@@ -75,6 +76,7 @@ from avalan.interaction import (
     ResolveInteractionApplied,
     ResolveInteractionCommand,
     ResolveInteractionRejected,
+    ResumeInputContinuation,
     RunId,
     ScopedInteractionLookup,
     ScopeSupersessionApplied,
@@ -90,6 +92,7 @@ from avalan.interaction import (
     TextAnswer,
     TurnId,
     UserId,
+    project_resolution_to_model,
 )
 from avalan.interaction.stores import MemoryInteractionStoreFactory
 
@@ -454,6 +457,7 @@ def _request(
     mode: RequirementMode = RequirementMode.REQUIRED,
     advisory_wait_seconds: int | None = None,
     continuation_ttl_seconds: int = 600,
+    default_value: bool | None = None,
     reason: str,
 ) -> InteractionBrokerRequest:
     return InteractionBrokerRequest(
@@ -466,6 +470,7 @@ def _request(
                 question_id=QuestionId("confirm"),
                 prompt="Continue?",
                 required=True,
+                default_value=default_value,
             ),
         ),
         handler=handler,
@@ -935,6 +940,199 @@ def test_requirement_input_n_021() -> None:
         _NOW,
         True,
     )
+
+
+def test_requirement_input_n_044() -> None:
+    """Keep attached work suspended for the whole unresolved wait."""
+
+    async def exercise() -> tuple[object, ...]:
+        harness = await _harness()
+        handler = _GateHandler()
+        resumer = _Resumer()
+        request = _request(
+            handler,
+            run_id="n044",
+            resumer=resumer,
+            reason="Suspend dependent execution while input is pending.",
+        )
+        request_task = create_task(harness.broker.request(request))
+        try:
+            await handler.started.wait()
+            correlation = _correlation(
+                harness.ids.request_ids[0],
+                harness.ids.continuation_ids[0],
+                request.origin,
+            )
+            pending = await _inspect(harness.broker, correlation)
+            for _ in range(5):
+                await _yield_once()
+            assert not request_task.done()
+            assert pending.request.state is RequestState.PENDING
+            assert pending.request.resolution is None
+
+            handler.release.set()
+            result = await request_task
+            assert isinstance(result.delivery, InteractionDelivery)
+            assert result.delivery.record.request.state is RequestState.PENDING
+            assert resumer.notifications == []
+            return (
+                pending.request.state,
+                pending.request.resolution,
+                result.delivery.handler_attempts,
+                result.delivery.record.presentation,
+            )
+        finally:
+            handler.release.set()
+            await harness.broker.aclose()
+
+    assert run(exercise()) == (
+        RequestState.PENDING,
+        None,
+        1,
+        InteractionPresentationState.DETACHED,
+    )
+
+
+def test_requirement_input_n_045() -> None:
+    """Keep required input pending until an explicit terminal resolution."""
+
+    async def exercise() -> tuple[object, ...]:
+        harness = await _harness()
+        resumer = _Resumer()
+        requested = await harness.broker.request(
+            _request(
+                _DetachedHandler(),
+                run_id="n045",
+                resumer=resumer,
+                continuation_ttl_seconds=60,
+                reason="Wait for an explicit required resolution.",
+            )
+        )
+        try:
+            assert isinstance(requested.delivery, InteractionDelivery)
+            pending = requested.delivery.record
+            await _wait_until(lambda: 60.0 in harness.clock.wait_calls)
+            harness.clock.advance(59)
+            for _ in range(5):
+                await _yield_once()
+            still_pending = await _inspect(
+                harness.broker,
+                pending.correlation,
+            )
+            assert still_pending.request.state is RequestState.PENDING
+            assert still_pending.request.resolution is None
+
+            declined = await harness.broker.resolve(
+                _decline(still_pending, "n045-decline")
+            )
+            assert isinstance(declined.store_result, ResolveInteractionApplied)
+            terminal = declined.store_result.record
+            assert terminal.request.state is RequestState.DECLINED
+            assert terminal.request.resolution is not None
+            return (
+                still_pending.request.state,
+                still_pending.request.resolution,
+                terminal.request.state,
+                terminal.request.resolution.status,
+            )
+        finally:
+            await harness.broker.aclose()
+
+    assert run(exercise()) == (
+        RequestState.PENDING,
+        None,
+        RequestState.DECLINED,
+        ResolutionStatus.DECLINED,
+    )
+
+
+def test_requirement_input_n_046() -> None:
+    """Never turn a required declared default into a timer answer."""
+
+    async def exercise() -> tuple[object, ...]:
+        harness = await _harness()
+        resumer = _Resumer()
+        requested = await harness.broker.request(
+            _request(
+                _DetachedHandler(),
+                run_id="n046",
+                resumer=resumer,
+                continuation_ttl_seconds=60,
+                default_value=True,
+                reason="Do not silently accept the required default.",
+            )
+        )
+        try:
+            assert isinstance(requested.delivery, InteractionDelivery)
+            pending = requested.delivery.record
+            await _wait_until(lambda: 60.0 in harness.clock.wait_calls)
+            harness.clock.advance(60)
+            await resumer.called.wait()
+            terminal = await _inspect(
+                harness.broker,
+                pending.correlation,
+            )
+            resolution = terminal.request.resolution
+            assert resolution is not None
+            assert not isinstance(resolution, AnsweredResolution)
+            question = terminal.request.questions[0]
+            assert isinstance(question, ConfirmationQuestion)
+            return (
+                question.default_value,
+                terminal.request.state,
+                resolution.status,
+                len(resumer.notifications),
+            )
+        finally:
+            await harness.broker.aclose()
+
+    assert run(exercise()) == (
+        True,
+        RequestState.EXPIRED,
+        ResolutionStatus.EXPIRED,
+        1,
+    )
+
+
+def test_requirement_input_n_047() -> None:
+    """Project failed required presentation as an explicit model result."""
+
+    async def exercise() -> tuple[object, ...]:
+        harness = await _harness()
+        try:
+            requested = await harness.broker.request(
+                _request(
+                    None,
+                    run_id="n047",
+                    reason="Required input cannot be presented.",
+                )
+            )
+            assert isinstance(requested.delivery, InteractionDelivery)
+            terminal = requested.delivery.record.request
+            outcome = project_resolution_to_model(
+                terminal,
+                containing_run_exists=True,
+            )
+            assert isinstance(outcome, ResumeInputContinuation)
+            assert isinstance(outcome.result, InputUnavailableResult)
+            return (
+                terminal.state,
+                (
+                    terminal.resolution.status
+                    if terminal.resolution is not None
+                    else None
+                ),
+                outcome.result.request_id,
+                outcome.result.provenance,
+            )
+        finally:
+            await harness.broker.aclose()
+
+    state, status, request_id, provenance = run(exercise())
+    assert state is RequestState.UNAVAILABLE
+    assert status is ResolutionStatus.UNAVAILABLE
+    assert request_id
+    assert provenance is AnswerProvenance.EXTERNAL_CONTROLLER
 
 
 def test_requirement_input_n_090() -> None:

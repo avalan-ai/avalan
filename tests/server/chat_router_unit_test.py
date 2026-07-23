@@ -925,6 +925,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 self._event_manager = EventManager(
                     mode=EventManagerMode.SERVER
                 )
+                self._pending_response: object | None = None
                 self.sync_count = 0
 
             async def __call__(self, messages, settings=None):  # type: ignore[no-untyped-def]
@@ -934,14 +935,21 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                         Event(type=EventType.START)
                     )
 
-                return TextGenerationResponse(
+                response = TextGenerationResponse(
                     lambda: _canonical_answer_gen("bounded"),
                     logger=getLogger(),
                     use_async_generator=True,
                     provider_family="transformers",
                 )
+                self._pending_response = response
+                return response
 
-            async def sync_messages(self) -> None:  # type: ignore[override]
+            async def sync_messages(  # type: ignore[override]
+                self,
+                response: object,
+            ) -> None:
+                assert response is self._pending_response
+                self._pending_response = None
                 self.sync_count += 1
 
         logger = AsyncMock(spec=Logger)

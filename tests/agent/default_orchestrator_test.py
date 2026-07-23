@@ -23,6 +23,7 @@ from avalan.event import EventPayloadKind, EventType
 from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.model import TextGenerationResponse
+from avalan.model.capability import ProviderCapabilitySupport
 from avalan.model.manager import ModelManager
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -81,6 +82,15 @@ def _canonical_response(*text_deltas: str) -> TextGenerationResponse:
         logger=getLogger(),
         use_async_generator=True,
     )
+
+
+def _single_model_input_message(input_value: object) -> Message:
+    """Return the sole normalized message passed to the model."""
+    assert isinstance(input_value, list)
+    assert len(input_value) == 1
+    message = input_value[0]
+    assert isinstance(message, Message)
+    return message
 
 
 class DefaultOrchestratorInitTestCase(TestCase):
@@ -287,7 +297,9 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         engine.__exit__.return_value = False
         engine.model_id = "m"
         engine.tokenizer = MagicMock()
+        engine.tokenizer.eos_token = None
         engine.tokenizer.encode.side_effect = [[1], [2]]
+        engine.provider_capability_support = ProviderCapabilitySupport()
         model_manager.load_engine.return_value = engine
 
         response = _canonical_response("a", "b")
@@ -329,8 +341,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
 
         agent_mock.assert_awaited_once()
         context = agent_mock.await_args.args[0]
-        self.assertIsInstance(context.input, Message)
-        message = context.input
+        message = _single_model_input_message(context.input)
         self.assertEqual(message.content, "hi")
         self.assertEqual(message.role, MessageRole.USER)
         self.assertIsNone(message.name)
@@ -439,9 +450,12 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         engine.__exit__.return_value = False
         engine.model_id = "m"
         engine.tokenizer = MagicMock()
+        engine.tokenizer.eos_token = None
+        engine.provider_capability_support = ProviderCapabilitySupport()
         model_manager.load_engine.return_value = engine
 
         agent_mock = AsyncMock()
+        agent_mock.acknowledge_provider_handoff = MagicMock()
         agent_mock.engine = engine
         agent_mock.return_value = MagicMock(spec=TextGenerationResponse)
 
@@ -466,8 +480,8 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         await orch("world")
 
         context = agent_mock.await_args.args[0]
-        self.assertIsInstance(context.input, Message)
-        self.assertEqual(context.input.content, "hello world Bob")
+        message = _single_model_input_message(context.input)
+        self.assertEqual(message.content, "hello world Bob")
 
     async def test_user_template_rendering(self):
         with TemporaryDirectory() as tmp:
@@ -504,9 +518,12 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             engine.__exit__.return_value = False
             engine.model_id = "m"
             engine.tokenizer = MagicMock()
+            engine.tokenizer.eos_token = None
+            engine.provider_capability_support = ProviderCapabilitySupport()
             model_manager.load_engine.return_value = engine
 
             agent_mock = AsyncMock()
+            agent_mock.acknowledge_provider_handoff = MagicMock()
             agent_mock.engine = engine
             agent_mock.return_value = MagicMock(spec=TextGenerationResponse)
 
@@ -534,8 +551,8 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             await orch("earth")
 
         context = agent_mock.await_args.args[0]
-        self.assertIsInstance(context.input, Message)
-        self.assertEqual(context.input.content, "hi earth Ann")
+        message = _single_model_input_message(context.input)
+        self.assertEqual(message.content, "hi earth Ann")
 
     async def test_user_prefix_rendering(self):
         engine_uri = EngineUri(
@@ -565,8 +582,11 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         engine = MagicMock()
         engine.model_id = "m"
         engine.tokenizer = MagicMock()
+        engine.tokenizer.eos_token = None
+        engine.provider_capability_support = ProviderCapabilitySupport()
 
         agent_mock = AsyncMock()
+        agent_mock.acknowledge_provider_handoff = MagicMock()
         agent_mock.engine = engine
         agent_mock.return_value = MagicMock(spec=TextGenerationResponse)
 
@@ -591,5 +611,5 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         await orch("world")
 
         context = agent_mock.await_args.args[0]
-        self.assertIsInstance(context.input, Message)
-        self.assertEqual(context.input.content, "Answer briefly.\n\nworld")
+        message = _single_model_input_message(context.input)
+        self.assertEqual(message.content, "Answer briefly.\n\nworld")
