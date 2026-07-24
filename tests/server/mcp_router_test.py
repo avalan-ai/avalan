@@ -1683,7 +1683,10 @@ class MCPUtilityTestCase(TestCase):
             {"jsonrpc": "2.0"},
         )
         payload = loads(response.body.decode("utf-8"))
-        self.assertEqual(payload["result"]["protocolVersion"], "1.0.0")
+        self.assertEqual(
+            payload["result"]["protocolVersion"],
+            mcp_router.LATEST_PROTOCOL_VERSION,
+        )
 
     def test_handle_ping_message_returns_empty_result(self) -> None:
         message = {
@@ -7156,7 +7159,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
 
         with patch.object(
             mcp_router,
-            "_expect_jsonrpc_message",
+            "_first_jsonrpc_message",
             AsyncMock(return_value=(message, empty_iter())),
         ):
             with self.assertRaises(mcp_router.HTTPException) as exc:
@@ -7924,27 +7927,66 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
 
     async def test_watch_for_cancellation_sets_event(self) -> None:
         async def generator() -> AsyncIterator[dict[str, Any]]:
-            yield {"method": "notifications/cancelled"}
+            yield {
+                "method": "notifications/cancelled",
+                "params": {"requestId": "request"},
+            }
 
         cancel_event = AsyncEvent()
         logger = MagicMock()
         await mcp_router._watch_for_cancellation(
-            generator(), cancel_event, logger
+            generator(),
+            cancel_event,
+            logger,
+            request_id="request",
         )
         self.assertTrue(cancel_event.is_set())
 
     async def test_watch_for_cancellation_ignores_non_dict(self) -> None:
         async def generator() -> AsyncIterator[Any]:
             yield "noise"
-            yield {"method": "notifications/cancelled"}
+            yield {
+                "method": "notifications/cancelled",
+                "params": {"requestId": "other"},
+            }
+            yield {
+                "method": "notifications/cancelled",
+                "params": {"requestId": "request"},
+            }
 
         cancel_event = AsyncEvent()
         logger = MagicMock()
         await mcp_router._watch_for_cancellation(
-            generator(), cancel_event, logger
+            generator(),
+            cancel_event,
+            logger,
+            request_id="request",
         )
         self.assertTrue(cancel_event.is_set())
         logger.debug.assert_called_once()
+
+    async def test_watch_for_cancellation_ignores_invalid_ids(self) -> None:
+        async def generator() -> AsyncIterator[dict[str, Any]]:
+            yield {"method": "notifications/cancelled"}
+            yield {
+                "method": "notifications/cancelled",
+                "params": {"requestId": True},
+            }
+            yield {
+                "method": "notifications/cancelled",
+                "params": {"requestId": 1},
+            }
+
+        cancel_event = AsyncEvent()
+        logger = MagicMock()
+        await mcp_router._watch_for_cancellation(
+            generator(),
+            cancel_event,
+            logger,
+            request_id="1",
+        )
+        self.assertFalse(cancel_event.is_set())
+        logger.debug.assert_not_called()
 
     async def test_close_response_iterator_handles_missing_aclose(
         self,

@@ -1,14 +1,13 @@
-import sys
 from base64 import b64encode
 from logging import getLogger
-from types import ModuleType
 from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from fastapi import FastAPI
 from httpx import ASGITransport
+from mcp import types as mcp_types
 
 from avalan.entities import (
     Message,
@@ -38,80 +37,31 @@ from avalan.tool.shell.settings import ShellToolSettings
 from avalan.tool.shell.toolset import ShellToolSet
 
 
-class _FakeResponse:
-    def __init__(
-        self,
-        *,
-        body: bytes | None = None,
-        lines: list[str] | None = None,
-        content_type: str,
-    ) -> None:
-        self._body = body or b""
-        self._lines = lines or []
-        self.headers = {"content-type": content_type}
-        self.raise_for_status = MagicMock()
+class _Dump:
+    def __init__(self, value: object) -> None:
+        self.value = value
 
-    async def __aenter__(self) -> "_FakeResponse":
-        return self
-
-    async def __aexit__(self, *args: object) -> bool:
-        return False
-
-    async def aread(self) -> bytes:
-        return self._body
-
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
-
-
-class _FakeClient:
-    def __init__(self, response: _FakeResponse, **kwargs: object) -> None:
-        self.response = response
-        self.kwargs = kwargs
-        self.stream = MagicMock(return_value=response)
-
-    async def __aenter__(self) -> "_FakeClient":
-        return self
-
-    async def __aexit__(self, *args: object) -> bool:
-        return False
-
-
-class _IncompleteMCPHTTPResponse(mcp_module._MCPHTTPResponse):
-    headers: dict[str, str] = {}
+    def model_dump(self, **_kwargs: object) -> object:
+        return self.value
 
 
 class McpCallToolTestCase(IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.addCleanup(patch.stopall)
-        self.response = _FakeResponse(
-            body=(
-                b'{"jsonrpc":"2.0","id":"req-1","result":'
-                b'{"content":[{"type":"text","text":"result"}],'
-                b'"structuredContent":{"toolCalls":[]}}}'
-            ),
-            content_type="application/json",
+        self.session_call = AsyncMock(
+            return_value={
+                "content": [{"type": "text", "text": "result"}],
+                "structuredContent": {"toolCalls": []},
+            }
         )
-        self.client = _FakeClient(self.response)
-        self.AsyncClient = MagicMock(return_value=self.client)
-        httpx_mod = ModuleType("httpx")
-        httpx_mod.AsyncClient = self.AsyncClient
-        patch.dict(sys.modules, {"httpx": httpx_mod}).start()
-        patch("avalan.tool.mcp.uuid4", return_value="req-1").start()
+        patch.object(
+            mcp_module,
+            "_call_initialized_mcp_tool",
+            self.session_call,
+        ).start()
         self.tool = McpCallTool(
             call_params={"request_id": "req-1", "timeout": 1}
         )
-
-    async def test_incomplete_http_response_methods_raise(self):
-        response = _IncompleteMCPHTTPResponse()
-
-        with self.assertRaises(NotImplementedError):
-            await response.aread()
-        with self.assertRaises(NotImplementedError):
-            response.aiter_lines()
-        with self.assertRaises(NotImplementedError):
-            response.raise_for_status()
 
     async def test_call_with_arguments_returns_full_result(self):
         context = ToolCallContext()
@@ -126,36 +76,28 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
                 "structuredContent": {"toolCalls": []},
             },
         )
-        self.AsyncClient.assert_called_once_with(
-            timeout=None,
-            headers={
-                "Accept": "application/json, text/event-stream",
-                "Content-Type": "application/json",
-            },
-        )
-        self.client.stream.assert_called_once()
-        _, uri = self.client.stream.call_args.args
-        self.assertEqual(uri, "http://host/mcp")
-        request = self.client.stream.call_args.kwargs["json"]
-        self.assertEqual(request["method"], "tools/call")
-        self.assertEqual(request["params"]["name"], "run")
+        kwargs = self.session_call.await_args.kwargs
+        self.assertEqual(kwargs["uri"], "http://host/mcp")
+        self.assertEqual(kwargs["name"], "run")
+        self.assertEqual(kwargs["arguments"], {"input_string": "hi"})
+        self.assertIs(kwargs["context"], context)
         self.assertEqual(
-            request["params"]["arguments"], {"input_string": "hi"}
+            kwargs["call_params"],
+            {"request_id": "req-1", "timeout": 1},
         )
-        self.assertEqual(request["params"]["_meta"]["progressToken"], "req-1")
-        self.assertEqual(self.client.stream.call_args.kwargs["timeout"], 1)
 
     async def test_call_without_arguments_sends_empty_arguments(self):
-        context = ToolCallContext()
         await self.tool(
             "http://host/mcp",
             "run",
             None,
             forward_input_files=True,
-            context=context,
+            context=ToolCallContext(),
         )
-        request = self.client.stream.call_args.kwargs["json"]
-        self.assertEqual(request["params"]["arguments"], {})
+        self.assertEqual(
+            self.session_call.await_args.kwargs["arguments"],
+            {},
+        )
 
     async def test_call_does_not_forward_context_input_files_without_opt_in(
         self,
@@ -180,8 +122,10 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             context=ToolCallContext(input=input_message),
         )
 
-        request = self.client.stream.call_args.kwargs["json"]
-        self.assertEqual(request["params"]["arguments"], {"query": "invoice"})
+        self.assertEqual(
+            self.session_call.await_args.kwargs["arguments"],
+            {"query": "invoice"},
+        )
 
     async def test_call_forwards_context_input_files_when_opted_in(self):
         file_data = b64encode(b"%PDF-1.7").decode("ascii")
@@ -209,8 +153,7 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             context=ToolCallContext(input=input_message),
         )
 
-        request = self.client.stream.call_args.kwargs["json"]
-        arguments = request["params"]["arguments"]
+        arguments = self.session_call.await_args.kwargs["arguments"]
         self.assertEqual(
             arguments["input_string"], "Summarize the attached PDF."
         )
@@ -252,8 +195,7 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             context=ToolCallContext(input=input_message),
         )
 
-        request = self.client.stream.call_args.kwargs["json"]
-        arguments = request["params"]["arguments"]
+        arguments = self.session_call.await_args.kwargs["arguments"]
         self.assertEqual(
             arguments["input_string"], "Summarize the attached URL."
         )
@@ -266,6 +208,15 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
                     "mimeType": "application/pdf",
                 }
             ],
+        )
+        self.assertEqual(
+            mcp_module._mcp_file_descriptor(
+                MessageContentFile(
+                    type="file",
+                    file={"url": "https://example.test/plain"},
+                )
+            ),
+            {"uri": "https://example.test/plain"},
         )
 
     async def test_call_preserves_explicit_file_arguments(self):
@@ -293,9 +244,8 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             context=ToolCallContext(input=input_message),
         )
 
-        request = self.client.stream.call_args.kwargs["json"]
         self.assertEqual(
-            request["params"]["arguments"],
+            self.session_call.await_args.kwargs["arguments"],
             {
                 "input_string": "Read explicit",
                 "files": [{"uri": "https://example.test/file.pdf"}],
@@ -303,70 +253,84 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
         )
 
     async def test_passes_client_params_and_preserves_headers(self):
+        client_params = {"headers": {"Authorization": "Bearer token"}}
         tool = McpCallTool(
-            client_params={"headers": {"Authorization": "Bearer token"}},
+            client_params=client_params,
             call_params={"request_id": "req-1"},
         )
-        context = ToolCallContext()
-        await tool("http://host/mcp", "run", None, context=context)
-        self.AsyncClient.assert_called_once_with(
-            timeout=None,
-            headers={
-                "Authorization": "Bearer token",
-                "Accept": "application/json, text/event-stream",
-                "Content-Type": "application/json",
-            },
+        await tool(
+            "http://host/mcp",
+            "run",
+            None,
+            context=ToolCallContext(),
+        )
+        self.assertIs(
+            self.session_call.await_args.kwargs["client_params"],
+            client_params,
         )
 
-    async def test_streams_mcp_notifications_to_tool_context(self):
-        self.response = _FakeResponse(
-            content_type="text/event-stream",
-            lines=[
-                (
-                    'data: {"jsonrpc":"2.0","method":"notifications/progress",'
-                    '"params":{"progressToken":"req-1","progress":1,'
-                    '"message":"{\\"type\\":\\"answer.delta\\",'
-                    '\\"delta\\":\\"tok\\"}"}}'
-                ),
-                "",
-                (
-                    'data: {"jsonrpc":"2.0","method":"notifications/message",'
-                    '"params":{"level":"info","data":{"type":"tool.call",'
-                    '"toolCallId":"call-1","name":"shell.run"}}}'
-                ),
-                "",
-                (
-                    'data: {"jsonrpc":"2.0","method":'
-                    '"notifications/resources/updated","params":{"resources":['
-                    '{"uri":"mcp://resources/1","delta":{"set":'
-                    '{"text":"stdout"}}}]}}'
-                ),
-                "",
-                (
-                    'data: {"jsonrpc":"2.0","id":"req-1","result":'
-                    '{"content":[],"structuredContent":{"toolCalls":['
-                    '{"id":"call-1","name":"shell.run"}]}}}'
-                ),
-                "",
-            ],
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
+    async def test_session_sink_streams_mcp_notifications(self):
         events: list[ToolExecutionStreamEvent] = []
 
         async def stream(event: ToolExecutionStreamEvent) -> None:
             events.append(event)
 
-        result = await self.tool(
+        await self.tool(
             "http://host/mcp",
             "run",
             {"input_string": "hi"},
             context=ToolCallContext(stream_event=stream),
         )
-
-        self.assertEqual(
-            result["structuredContent"],
-            {"toolCalls": [{"id": "call-1", "name": "shell.run"}]},
+        callbacks = self.session_call.await_args.kwargs
+        await callbacks["progress_callback"](
+            1,
+            1,
+            '{"type":"answer.delta","delta":"tok"}',
+        )
+        await callbacks["message_handler"](
+            mcp_types.ServerNotification(
+                mcp_types.ProgressNotification(
+                    params=mcp_types.ProgressNotificationParams(
+                        progressToken="req-1",
+                        progress=1,
+                        total=1,
+                        message='{"type":"answer.delta","delta":"tok"}',
+                    )
+                )
+            )
+        )
+        await callbacks["progress_callback"](1, None, None)
+        logging = mcp_types.LoggingMessageNotificationParams(
+            level="info",
+            data={"type": "tool.call", "name": "shell.run"},
+        )
+        await callbacks["logging_callback"](logging)
+        await callbacks["message_handler"](
+            mcp_types.ServerNotification(
+                mcp_types.LoggingMessageNotification(
+                    params=logging,
+                )
+            )
+        )
+        resource_params = (
+            mcp_types.ResourceUpdatedNotificationParams.model_validate(
+                {
+                    "uri": "mcp://resources/1",
+                    "resources": [
+                        {
+                            "uri": "mcp://resources/1",
+                            "delta": {"set": {"text": "stdout"}},
+                        }
+                    ],
+                }
+            )
+        )
+        await callbacks["message_handler"](
+            mcp_types.ServerNotification(
+                mcp_types.ResourceUpdatedNotification(
+                    params=resource_params,
+                )
+            )
         )
         self.assertEqual(events[0].kind, ToolExecutionStreamKind.STDOUT)
         self.assertEqual(events[0].content, "tok")
@@ -374,34 +338,17 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
         self.assertIn('"type":"tool.call"', events[1].content or "")
         self.assertEqual(events[2].kind, ToolExecutionStreamKind.LOG)
         self.assertEqual(events[2].content, "stdout")
-
-    async def test_error_response_raises(self):
-        self.response = _FakeResponse(
-            body=(
-                b'{"jsonrpc":"2.0","id":"req-1","error":'
-                b'{"code":-32603,"message":"broken"}}'
+        self.assertEqual(
+            sum(event.content == "tok" for event in events),
+            1,
+        )
+        self.assertEqual(
+            sum(
+                '"type":"tool.call"' in (event.content or "")
+                for event in events
             ),
-            content_type="application/json",
+            1,
         )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
-
-        with self.assertRaisesRegex(RuntimeError, "broken"):
-            await self.tool(
-                "http://host/mcp", "run", None, context=ToolCallContext()
-            )
-
-    async def test_invalid_json_response_raises(self):
-        self.response = _FakeResponse(
-            body=b"not-json", content_type="application/json"
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
-
-        with self.assertRaisesRegex(RuntimeError, "Invalid MCP JSON-RPC"):
-            await self.tool(
-                "http://host/mcp", "run", None, context=ToolCallContext()
-            )
 
     async def test_manager_filters_match_mcp_tool_not_remote_name(self):
         filtered_names: list[str] = []
@@ -450,9 +397,9 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(filtered_names, [])
-        request = self.client.stream.call_args.kwargs["json"]
-        self.assertEqual(request["params"]["name"], "math.calculator")
-        self.assertEqual(request["params"]["arguments"], {"a": 1})
+        kwargs = self.session_call.await_args.kwargs
+        self.assertEqual(kwargs["name"], "math.calculator")
+        self.assertEqual(kwargs["arguments"], {"a": 1})
 
     async def test_tool_display_projector_returns_projection(self):
         projection = self.tool.tool_display_projector(
@@ -465,76 +412,12 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(projection)
 
-    async def test_exhausts_json_and_sse_response_iterators(self):
-        json_response = _FakeResponse(
-            body=b'{"jsonrpc":"2.0","id":"req-1","result":{}}',
-            content_type="application/json",
-        )
-        json_messages = [
-            message
-            async for message in mcp_module._iter_mcp_response_messages(
-                json_response
-            )
-        ]
-        self.assertEqual(
-            json_messages,
-            [{"jsonrpc": "2.0", "id": "req-1", "result": {}}],
-        )
-
-        sse_response = _FakeResponse(
-            content_type="text/event-stream",
-            lines=[
-                ": keepalive",
-                (
-                    '{"jsonrpc":"2.0","method":"notifications/message",'
-                    '"params":{"level":"info","data":"raw"}}'
-                ),
-                'data: {"jsonrpc":"2.0","method":"notifications/message",',
-                'data: "params":{"level":"info","data":"tail"}}',
-            ],
-        )
-        sse_messages = [
-            message
-            async for message in mcp_module._iter_mcp_response_messages(
-                sse_response
-            )
-        ]
-        self.assertEqual(len(sse_messages), 2)
-        self.assertEqual(sse_messages[0]["params"]["data"], "raw")
-        self.assertEqual(sse_messages[1]["params"]["data"], "tail")
-
-    async def test_non_object_json_response_raises(self):
-        self.response = _FakeResponse(
-            body=b'["not-object"]', content_type="application/json"
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
-
-        with self.assertRaisesRegex(RuntimeError, "Invalid MCP JSON-RPC"):
-            await self.tool(
-                "http://host/mcp", "run", None, context=ToolCallContext()
-            )
-
-    async def test_response_without_terminal_result_raises(self):
-        self.response = _FakeResponse(
-            content_type="text/event-stream",
-            lines=[
-                (
-                    'data: {"jsonrpc":"2.0","method":"notifications/message",'
-                    '"params":{"level":"info","data":"still running"}}'
-                ),
-                "",
-            ],
-        )
-        self.client.response = self.response
-        self.client.stream.return_value = self.response
-
-        with self.assertRaisesRegex(RuntimeError, "ended without a result"):
-            await self.tool(
-                "http://host/mcp", "run", None, context=ToolCallContext()
-            )
-
     async def test_ignores_notifications_without_stream_or_params(self):
+        sink = mcp_module._McpToolEventSink(ToolCallContext())
+        await sink.logging(_Dump([]))
+        await sink.message(object())
+        await sink.message(_Dump([]))
+        await sink.message(_Dump({"method": 1}))
         await mcp_module._forward_mcp_notification(
             "notifications/message",
             {
@@ -555,6 +438,17 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             {"jsonrpc": "2.0", "method": "notifications/message"},
             ToolCallContext(stream_event=stream),
         )
+        for method in (
+            "notifications/progress",
+            "notifications/message",
+            "notifications/resources/updated",
+            "notifications/unknown",
+        ):
+            await mcp_module._forward_mcp_notification(
+                method,
+                {"params": {}},
+                ToolCallContext(stream_event=stream),
+            )
         self.assertEqual(events, [])
 
     async def test_progress_and_message_edge_cases(self):
@@ -576,13 +470,14 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
             {"message": "not-json"}, context
         )
         await mcp_module._forward_mcp_message({"message": "legacy"}, context)
+        await mcp_module._forward_mcp_message({"data": {}}, context)
         await mcp_module._forward_mcp_message({}, context)
 
         self.assertEqual(events[0].kind, ToolExecutionStreamKind.PROGRESS)
         self.assertEqual(events[0].progress, 1)
         self.assertEqual(events[1].kind, ToolExecutionStreamKind.LOG)
         self.assertEqual(events[1].content, "legacy")
-        self.assertEqual(len(events), 2)
+        self.assertEqual(len(events), 3)
 
     async def test_resource_notification_edge_cases(self):
         events: list[ToolExecutionStreamEvent] = []

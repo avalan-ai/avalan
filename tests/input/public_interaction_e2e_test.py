@@ -23,6 +23,7 @@ sys_path.append(str(Path(__file__).parents[1]))
 import attached_runtime_matrix_test as matrix_support  # noqa: E402
 import failure_matrix_task_e2e_test as task_support  # noqa: E402
 import interaction_pgsql_store_test as durable_support  # noqa: E402
+import mcp_contract_test as mcp_support  # noqa: E402
 from input_consumers.public_sdk_consumer import (  # noqa: E402
     complete_durable_run,
 )
@@ -934,3 +935,8 @@ def test_multi_agent_origin() -> None:
         assert all(task is active or task.done() for task in all_tasks())
 
     run(exercise())
+
+
+def test_mcp_projection() -> None:
+    """Run the negotiated inbound, downstream, and durable MCP paths."""
+    run(mcp_support._public_projection())

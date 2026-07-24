@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "feature": "structured_task_input",
-  "current_phase": 9,
+  "current_phase": 10,
   "categories": [
     "unit",
     "integration",
@@ -5969,7 +5969,7 @@
     {
       "id": "behavior-075",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-075"
@@ -5979,7 +5979,7 @@
     {
       "id": "behavior-076",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-076"
@@ -5989,7 +5989,7 @@
     {
       "id": "behavior-077",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-077"
@@ -5999,7 +5999,7 @@
     {
       "id": "behavior-078",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-078"
@@ -6009,7 +6009,7 @@
     {
       "id": "behavior-079",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-079"
@@ -6019,7 +6019,7 @@
     {
       "id": "behavior-080",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-080"
@@ -6300,7 +6300,7 @@
     {
       "id": "scenario-26-8",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-26.8"
@@ -6370,7 +6370,7 @@
     {
       "id": "failure-input-f-01-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -6460,7 +6460,7 @@
     {
       "id": "failure-input-f-04-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -6530,7 +6530,7 @@
     {
       "id": "failure-input-f-05-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -6600,7 +6600,7 @@
     {
       "id": "failure-input-f-06-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -6670,7 +6670,7 @@
     {
       "id": "failure-input-f-07-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -6740,7 +6740,7 @@
     {
       "id": "failure-input-f-08-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -6810,7 +6810,7 @@
     {
       "id": "failure-input-f-09-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -6880,7 +6880,7 @@
     {
       "id": "failure-input-f-10-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -6950,7 +6950,7 @@
     {
       "id": "failure-input-f-11-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -7020,7 +7020,7 @@
     {
       "id": "failure-input-f-12-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -7100,7 +7100,7 @@
     {
       "id": "failure-input-f-13-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -7180,7 +7180,7 @@
     {
       "id": "failure-input-f-14-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
@@ -7210,7 +7210,7 @@
     {
       "id": "failure-input-f-15-mcp",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "INPUT-N-106"
