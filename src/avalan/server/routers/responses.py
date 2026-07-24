@@ -23,6 +23,17 @@ from ...server.entities import (
 )
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
+from ..interaction import (
+    ServerInteractionHandling,
+    ServerInteractionHTTPError,
+    ServerInteractionSurface,
+    _error_response,
+    detached_segment,
+    extension_sse_message,
+    interaction_response_headers,
+    prepare_openai_interaction_run,
+    task_input_extension_from_request,
+)
 from ..remote_container import validate_remote_container_profile_selection
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
@@ -38,12 +49,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from logging import Logger
 from types import MappingProxyType
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 _MAX_COALESCED_DELTA_CHARS = 4096
+_NO_HTTP_REQUEST = cast(Request, None)
 
 _RESPONSE_SSE_ITEM_TYPES = {
     "reasoning",
@@ -1558,6 +1570,141 @@ class _ResponsesSSEProjector:
         return result
 
 
+@dataclass(slots=True)
+class _DetachedResponsesProjection:
+    """Retain aggregate Responses state across detached segments."""
+
+    projector: _ResponsesSSEProjector
+    response_id: str
+    created: int
+    model_id: str
+    next_event_sequence: int = 0
+    pending_event: _ResponsesSSEEvent | None = None
+    indexed_output: dict[int, dict[str, Any]] = field(default_factory=dict)
+
+    def event_message(self, event: _ResponsesSSEEvent) -> str:
+        numbered = event.with_sequence(self.next_event_sequence)
+        self.next_event_sequence += 1
+        return numbered.message()
+
+    def enqueue(self, event: _ResponsesSSEEvent) -> tuple[str, ...]:
+        self._capture(event)
+        if self.pending_event is None:
+            self.pending_event = event
+            return ()
+        if (
+            self.pending_event.can_coalesce(event)
+            and self.pending_event.coalesced_delta_length(event)
+            <= _MAX_COALESCED_DELTA_CHARS
+        ):
+            self.pending_event = self.pending_event.coalesce(event)
+            return ()
+        message = self.event_message(self.pending_event)
+        self.pending_event = event
+        return (message,)
+
+    def flush_stream(self) -> tuple[str, ...]:
+        if self.pending_event is None:
+            return ()
+        message = self.event_message(self.pending_event)
+        self.pending_event = None
+        return (message,)
+
+    def stream_messages(
+        self,
+        projection: StreamConsumerProjection,
+    ) -> tuple[str, ...]:
+        messages: list[str] = []
+        for event in self.projector.events_for(projection):
+            messages.extend(self.enqueue(event))
+        return tuple(messages)
+
+    def finish_stream(
+        self,
+        terminal: StreamConsumerProjection,
+    ) -> tuple[str, ...]:
+        messages: list[str] = []
+        for event in _terminal_response_events(
+            terminal,
+            output_redaction_settings=(
+                self.projector.output_redaction_settings
+            ),
+        ):
+            data = dict(event.data)
+            data.pop("sequence_number", None)
+            messages.extend(
+                self.enqueue(
+                    _ResponsesSSEEvent(
+                        event=event.event,
+                        data=data,
+                        correlation_key=event.correlation_key,
+                        canonical_channel=event.canonical_channel,
+                    )
+                )
+            )
+        messages.extend(self.flush_stream())
+        return tuple(messages)
+
+    def observe_json(self, projection: StreamConsumerProjection) -> None:
+        for event in self.projector.events_for(projection):
+            self._capture(event)
+
+    def json_body(
+        self,
+        terminal: StreamConsumerProjection,
+        response: object,
+    ) -> dict[str, Any]:
+        snapshot = protocol_stream_terminal_snapshot(terminal)
+        indices = sorted(self.indexed_output)
+        if indices != list(range(len(indices))):
+            raise StreamValidationError(
+                "non-contiguous Responses outward output indices"
+            )
+        status = _responses_terminal_status(snapshot.outcome)
+        input_tokens = int(getattr(response, "input_token_count", 0))
+        output_tokens = int(getattr(response, "output_token_count", 0))
+        body: dict[str, Any] = {
+            "id": self.response_id,
+            "created": self.created,
+            "model": self.model_id,
+            "type": "response",
+            "status": status,
+            "output": [self.indexed_output[index] for index in indices],
+            "usage": {
+                "input_text_tokens": input_tokens,
+                "output_text_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+            },
+        }
+        if status != "completed":
+            events = _terminal_response_events(
+                terminal,
+                output_redaction_settings=(
+                    self.projector.output_redaction_settings
+                ),
+            )
+            if events:
+                error = events[0].data.get("error")
+                if error is not None:
+                    body["error"] = error
+        return body
+
+    def _capture(self, event: _ResponsesSSEEvent) -> None:
+        if event.event != "response.output_item.done":
+            return
+        item = event.data.get("item")
+        output_index = _response_sse_index_value(
+            event.data,
+            "output_index",
+        )
+        if isinstance(item, dict) and output_index is not None:
+            if output_index in self.indexed_output:
+                raise StreamValidationError(
+                    "duplicate Responses outward output index"
+                )
+            self.indexed_output[output_index] = dict(item)
+
+
 router = APIRouter(tags=["responses"])
 
 
@@ -1579,16 +1726,37 @@ async def create_response(
     output_redaction_settings: ServerOutputRedactionSettings = Depends(
         _server_output_redaction_settings
     ),
+    http_request: Request = _NO_HTTP_REQUEST,
 ) -> dict[str, Any] | JSONResponse | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
     model_id = resolve_model_id(orchestrator, request.model)
+    interaction_run = None
+    if isinstance(http_request, Request):
+        try:
+            interaction_run = await prepare_openai_interaction_run(
+                http_request,
+                task_input_extension_from_request(request),
+                surface=ServerInteractionSurface.RESPONSES,
+            )
+        except ServerInteractionHTTPError as error:
+            return _error_response(error)
 
     try:
-        response, response_id, timestamp = await orchestrate(
-            request, logger, orchestrator
-        )
+        if interaction_run is None:
+            response, response_id, timestamp = await orchestrate(
+                request,
+                logger,
+                orchestrator,
+            )
+        else:
+            response, response_id, timestamp = await orchestrate(
+                request,
+                logger,
+                orchestrator,
+                interaction_runtime=interaction_run.runtime,
+            )
     except ReasoningSummaryCapabilityError as error:
         raise HTTPException(
             status_code=400,
@@ -1615,9 +1783,13 @@ async def create_response(
                 timestamp=timestamp,
                 model_id=model_id,
             )
-            pending_event: _ResponsesSSEEvent | None = None
+            projection_adapter = _DetachedResponsesProjection(
+                projector=projector,
+                response_id=str(response_id),
+                created=timestamp,
+                model_id=model_id,
+            )
             terminal_projection: StreamConsumerProjection | None = None
-            next_event_sequence = 0
             iterator = stream_consumer_iterator(
                 response,
                 stream_session_id="responses-sse-stream",
@@ -1628,46 +1800,38 @@ async def create_response(
                 ),
                 close_source_on_generator_exit=False,
             )
+            segment = (
+                detached_segment(
+                    iterator=iterator,
+                    response=response,
+                    orchestrator=orchestrator,
+                    protocol=ServerInteractionSurface.RESPONSES,
+                    response_id=str(response_id),
+                    created=timestamp,
+                    model_id=model_id,
+                    output_redaction_settings=output_redaction_settings,
+                    responses_projection=projection_adapter,
+                )
+                if interaction_run is not None
+                else None
+            )
             cancelled = False
             terminal_owned = False
             source_error: Exception | None = None
-
-            def event_message(event: _ResponsesSSEEvent) -> str:
-                nonlocal next_event_sequence
-                numbered = event.with_sequence(next_event_sequence)
-                next_event_sequence += 1
-                return numbered.message()
-
-            def enqueue_event(event: _ResponsesSSEEvent) -> list[str]:
-                nonlocal pending_event
-                if pending_event is None:
-                    pending_event = event
-                    return []
-                if (
-                    pending_event.can_coalesce(event)
-                    and pending_event.coalesced_delta_length(event)
-                    <= _MAX_COALESCED_DELTA_CHARS
-                ):
-                    pending_event = pending_event.coalesce(event)
-                    return []
-                messages = [event_message(pending_event)]
-                pending_event = event
-                return messages
-
-            def flush_event() -> list[str]:
-                nonlocal pending_event
-                if pending_event is None:
-                    return []
-                messages = [event_message(pending_event)]
-                pending_event = None
-                return messages
+            retained = False
 
             try:
-                yield event_message(stream_envelope.created_event())
+                yield projection_adapter.event_message(
+                    stream_envelope.created_event()
+                )
 
                 while True:
                     try:
-                        token = await anext(iterator)
+                        token = (
+                            await segment.next_projection()
+                            if segment is not None
+                            else await anext(iterator)
+                        )
                     except StopAsyncIteration:
                         break
                     except Exception as error:
@@ -1676,16 +1840,36 @@ async def create_response(
 
                     if token.is_stream_terminal:
                         terminal_projection = token
+                    if interaction_run is not None:
+                        for (
+                            extension_event
+                        ) in await interaction_run.extension_events(token):
+                            for message in projection_adapter.flush_stream():
+                                yield message
+                            yield extension_sse_message(extension_event)
+                        if (
+                            interaction_run.handling
+                            is ServerInteractionHandling.DETACHED
+                            and token.kind
+                            is StreamItemKind.INTERACTION_PENDING
+                        ):
+                            assert segment is not None
+                            await interaction_run.install_segment(segment)
+                            yield extension_sse_message(
+                                await interaction_run.input_required_event()
+                            )
+                            retained = True
+                            terminal_owned = True
+                            return
 
-                    for ev in projector.events_for(token):
-                        for message in enqueue_event(ev):
-                            yield message
+                    for message in projection_adapter.stream_messages(token):
+                        yield message
                     if projector.failure is not None:
                         break
 
                 if projector.failure is not None:
                     cancelled = True
-                    for message in enqueue_event(
+                    for message in projection_adapter.enqueue(
                         _ResponsesSSEEvent(
                             event="response.failed",
                             data={
@@ -1696,8 +1880,8 @@ async def create_response(
                     ):
                         yield message
                     terminal_owned = True
-                    for event in flush_event():
-                        yield event
+                    for message in projection_adapter.flush_stream():
+                        yield message
                     return
 
                 if terminal_projection is None:
@@ -1705,10 +1889,10 @@ async def create_response(
                         status="incomplete",
                         identity_lost=True,
                     ):
-                        for message in enqueue_event(ev):
+                        for message in projection_adapter.enqueue(ev):
                             yield message
-                    for event in flush_event():
-                        yield event
+                    for message in projection_adapter.flush_stream():
+                        yield message
                     if source_error is not None:
                         raise source_error
                     raise StreamValidationError(
@@ -1721,7 +1905,7 @@ async def create_response(
                 ):
                     data = dict(ev.data)
                     data.pop("sequence_number", None)
-                    for message in enqueue_event(
+                    for message in projection_adapter.enqueue(
                         _ResponsesSSEEvent(
                             event=ev.event,
                             data=data,
@@ -1731,8 +1915,8 @@ async def create_response(
                     ):
                         yield message
                 terminal_owned = True
-                for event in flush_event():
-                    yield event
+                for message in projection_adapter.flush_stream():
+                    yield message
 
                 if source_error is not None:
                     logger.error(
@@ -1748,17 +1932,24 @@ async def create_response(
                     await orchestrator.sync_messages(response)
             except CancelledError:
                 cancelled = True
+                if interaction_run is not None and segment is not None:
+                    try:
+                        await interaction_run.install_segment(segment)
+                    except RuntimeError:
+                        pass
+                    retained = True
                 raise
             finally:
                 cleanup_failed = False
-                try:
-                    await cleanup_stream_sources(
-                        response,
-                        iterator,
-                        cancelled=cancelled,
-                    )
-                except Exception:
-                    cleanup_failed = True
+                if not retained:
+                    try:
+                        await cleanup_stream_sources(
+                            response,
+                            iterator,
+                            cancelled=cancelled,
+                        )
+                    except Exception:
+                        cleanup_failed = True
                 if cleanup_failed:
                     logger.error(_RESPONSES_CLEANUP_ERROR_MESSAGE)
                     if (
@@ -1773,14 +1964,23 @@ async def create_response(
         return StreamingResponse(
             generate(),
             media_type="text/event-stream",
-            headers=sse_headers(),
+            headers={
+                **sse_headers(),
+                **interaction_response_headers(interaction_run),
+            },
         )
 
     projector = _ResponsesSSEProjector(
         str(response_id),
         output_redaction_settings,
     )
-    indexed_output: dict[int, dict[str, Any]] = {}
+    projection_adapter = _DetachedResponsesProjection(
+        projector=projector,
+        response_id=str(response_id),
+        created=timestamp,
+        model_id=model_id,
+    )
+    indexed_output = projection_adapter.indexed_output
     terminal_projection: StreamConsumerProjection | None = None
     source_error: Exception | None = None
     iterator = stream_consumer_iterator(
@@ -1793,43 +1993,73 @@ async def create_response(
         ),
         close_source_on_generator_exit=False,
     )
+    segment = (
+        detached_segment(
+            iterator=iterator,
+            response=response,
+            orchestrator=orchestrator,
+            protocol=ServerInteractionSurface.RESPONSES,
+            response_id=str(response_id),
+            created=timestamp,
+            model_id=model_id,
+            output_redaction_settings=output_redaction_settings,
+            responses_projection=projection_adapter,
+        )
+        if interaction_run is not None
+        else None
+    )
     cleanup_failed = False
+    retained = False
     try:
         while True:
             try:
-                projection = await anext(iterator)
+                projection = (
+                    await segment.next_projection()
+                    if segment is not None
+                    else await anext(iterator)
+                )
             except StopAsyncIteration:
                 break
+            except CancelledError:
+                if interaction_run is not None and segment is not None:
+                    try:
+                        await interaction_run.install_segment(segment)
+                    except RuntimeError:
+                        pass
+                    retained = True
+                raise
             except Exception as error:
                 source_error = error
                 break
             if projection.is_stream_terminal:
                 terminal_projection = projection
-            for event in projector.events_for(projection):
-                if event.event != "response.output_item.done":
-                    continue
-                item = event.data.get("item")
-                output_index = _response_sse_index_value(
-                    event.data,
-                    "output_index",
+            if (
+                interaction_run is not None
+                and interaction_run.handling
+                is ServerInteractionHandling.DETACHED
+                and projection.kind is StreamItemKind.INTERACTION_PENDING
+            ):
+                assert segment is not None
+                await interaction_run.install_segment(segment)
+                retained = True
+                return JSONResponse(
+                    status_code=202,
+                    content=(await interaction_run.input_required_envelope()),
+                    headers=interaction_response_headers(interaction_run),
                 )
-                if isinstance(item, dict) and output_index is not None:
-                    if output_index in indexed_output:
-                        raise StreamValidationError(
-                            "duplicate Responses outward output index"
-                        )
-                    indexed_output[output_index] = dict(item)
+            projection_adapter.observe_json(projection)
             if projector.failure is not None:
                 break
     finally:
-        try:
-            await cleanup_stream_sources(
-                response,
-                iterator,
-                cancelled=projector.failure is not None,
-            )
-        except Exception:
-            cleanup_failed = True
+        if not retained:
+            try:
+                await cleanup_stream_sources(
+                    response,
+                    iterator,
+                    cancelled=projector.failure is not None,
+                )
+            except Exception:
+                cleanup_failed = True
 
     if projector.failure is not None:
         if cleanup_failed:
@@ -1886,6 +2116,11 @@ async def create_response(
                 body["error"] = terminal_error
     if status == "completed" and source_error is None:
         await orchestrator.sync_messages(response)
+    if interaction_run is not None:
+        return JSONResponse(
+            body,
+            headers=interaction_response_headers(interaction_run),
+        )
     return body
 
 

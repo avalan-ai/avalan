@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
   "feature": "structured_task_input",
-  "current_phase": 7,
+  "current_phase": 8,
   "authoritative_gate": {
-    "command": "make test-pgsql-exact no-install INPUT_PHASE=7",
+    "command": "make test-pgsql-exact no-install INPUT_PHASE=8",
     "database_dsn_env": "AVALAN_TASK_TEST_POSTGRESQL_DSN",
     "coverage_report": "coverage.json",
     "coverage_scope": "src/",
@@ -20,5 +20,5 @@
     "exact_source_coverage": true,
     "fail_closed": true
   },
-  "evidence_sha256": "38221f06a18294c31df2052581adab1cab36a9f83aa1e1f8eef02204f87ffabb"
+  "evidence_sha256": "29fe11bfe244d1c8a71c69d469c73b38abd1a43a6dfc02b1ad35e16f0f34d58a"
 }

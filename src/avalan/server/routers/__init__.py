@@ -1,3 +1,4 @@
+from ...agent.execution import InteractionRuntime
 from ...agent.orchestrator import Orchestrator
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
@@ -48,6 +49,7 @@ async def orchestrate(
     request: ChatCompletionRequest | ResponsesRequest,
     logger: Logger,
     orchestrator: Orchestrator,
+    interaction_runtime: InteractionRuntime | None = None,
 ) -> tuple[OrchestratorResponse, str, int]:
     messages = [
         Message(role=req.role, content=to_message_content(req.content))
@@ -116,6 +118,8 @@ async def orchestrate(
         and request.instructions is not None
     ):
         call_kwargs["instructions"] = request.instructions
+    if interaction_runtime is not None:
+        call_kwargs["interaction_runtime"] = interaction_runtime
 
     response = await orchestrator(messages, **call_kwargs)
     return response, str(response_id), timestamp

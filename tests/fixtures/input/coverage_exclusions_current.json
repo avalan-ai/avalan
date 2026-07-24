@@ -1246,8 +1246,22 @@
       29
     ],
     "src/avalan/server/__init__.py": [
-      34,
-      35
+      39,
+      40
+    ],
+    "src/avalan/server/interaction.py": [
+      120,
+      121,
+      122,
+      131,
+      132,
+      138,
+      139,
+      142,
+      143,
+      150,
+      151,
+      152
     ],
     "src/avalan/server/routers/flow.py": [
       40,
@@ -2383,5 +2397,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "8a1e54c5f82f3b62e9421719dbd8ca3a8f2469d648da113e11bba85383057512"
+  "snapshot_sha256": "e3232d2c6e8051ddb2943076efdce6dc9541f9856adc7a5d57829a5264d93ded"
 }

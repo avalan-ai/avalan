@@ -14,6 +14,11 @@ from .entities import (
     ServerOutputRedactionSettings,
     server_skills_registry_metadata,
 )
+from .interaction import (
+    ServerInteractionConfiguration,
+    close_server_interactions,
+    configure_server_interactions,
+)
 from .routers import mcp as mcp_router
 
 from collections.abc import AsyncIterator, Callable
@@ -106,6 +111,7 @@ def _create_lifespan(
     agent_id: UUID | None,
     participant_id: UUID | None,
     output_redaction_settings: ServerOutputRedactionSettings | None,
+    interaction_configuration: ServerInteractionConfiguration | None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -153,6 +159,7 @@ def _create_lifespan(
             app.state.loader = loader
             app.state.logger = logger
             app.state.agent_id = agent_id
+            configure_server_interactions(app, interaction_configuration)
             _configure_remote_container_policy(app, tool_settings)
             _configure_server_runtime_envelope(
                 app,
@@ -169,7 +176,10 @@ def _create_lifespan(
                 app.state.mcp_tool_name = mcp_name or "run"
                 if mcp_description:
                     app.state.mcp_tool_description = mcp_description
-            yield
+            try:
+                yield
+            finally:
+                await close_server_interactions(app)
 
     return lifespan
 
@@ -254,6 +264,8 @@ def _include_protocol_routers(
 ) -> None:
     openai_endpoints = selected_protocols.get("openai")
     if openai_endpoints:
+        interaction_router_module = import_module("avalan.server.interaction")
+        app.include_router(interaction_router_module.router)
         if "completions" in openai_endpoints:
             chat_router_module = import_module("avalan.server.routers.chat")
             app.include_router(chat_router_module.router, prefix=openai_prefix)
@@ -330,6 +342,7 @@ def register_agent_endpoints(
     protocols: Mapping[str, set[str]] | None = None,
     tool_name_policy: ToolNamePolicySettings | None = None,
     output_redaction_settings: ServerOutputRedactionSettings | None = None,
+    interaction_configuration: ServerInteractionConfiguration | None = None,
 ) -> None:
     assert (specs_path is None) ^ (
         settings is None
@@ -353,6 +366,7 @@ def register_agent_endpoints(
         agent_id=agent_id,
         participant_id=participant_id,
         output_redaction_settings=output_redaction_settings,
+        interaction_configuration=interaction_configuration,
     )
 
     _attach_lifespan(app, lifespan)
@@ -405,6 +419,7 @@ def agents_server(
     protocols: Mapping[str, set[str]] | None = None,
     tool_name_policy: ToolNamePolicySettings | None = None,
     output_redaction_settings: ServerOutputRedactionSettings | None = None,
+    interaction_configuration: ServerInteractionConfiguration | None = None,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents."""
     assert (specs_path is None) ^ (
@@ -431,6 +446,7 @@ def agents_server(
         agent_id=agent_id,
         participant_id=participant_id,
         output_redaction_settings=output_redaction_settings,
+        interaction_configuration=interaction_configuration,
     )
     app = FastAPI(title=name, version=version, lifespan=lifespan)
 

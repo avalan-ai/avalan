@@ -1279,6 +1279,23 @@ class ResponsesTextConfig(BaseModel):
     stop: str | list[str] | None = None
 
 
+class TaskInputExtension(BaseModel):
+    """Negotiate Avalan structured-input behavior for one request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = Field(json_schema_extra={"const": "1"})
+    handling: Literal["attached", "detached", "unavailable"]
+
+
+class OpenAIRequestExtensions(BaseModel):
+    """Carry opt-in Avalan extensions beside OpenAI-compatible fields."""
+
+    model_config = ConfigDict(extra="allow")
+
+    task_input: TaskInputExtension | None = None
+
+
 class ChatCompletionRequest(BaseModel):
     model: str | None = Field(
         None,
@@ -1351,6 +1368,7 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: (
         Literal["auto", "none", "required"] | str | dict[str, object] | None
     ) = None
+    extensions: OpenAIRequestExtensions | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1394,6 +1412,7 @@ class ResponsesRequest(BaseModel):
     text: ResponsesTextConfig | None = None
     response_format: ResponseFormat | None = None
     reasoning: ReasoningConfig | None = None
+    extensions: OpenAIRequestExtensions | None = None
 
     @model_validator(mode="before")
     @classmethod
